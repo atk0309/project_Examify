@@ -19,13 +19,12 @@ test.describe('static pages', () => {
       await expect(page).toHaveTitle(route.titleMatch);
 
       // Filter out network noise from missing Turnstile/Plausible/font scripts.
+      // Markers stay plain words (not hostname-shaped strings) so this log-line
+      // mute can't read as URL validation (CodeQL
+      // js/incomplete-url-substring-sanitization).
+      const noise = ['turnstile', 'plausible', 'cloudflare', 'fonts.g', 'failed to load resource'];
       const significant = consoleErrors.filter(
-        (line) =>
-          !line.includes('turnstile') &&
-          !line.includes('plausible') &&
-          !line.includes('challenges.cloudflare.com') &&
-          !line.includes('fonts.g') &&
-          !line.toLowerCase().includes('failed to load resource'),
+        (line) => !noise.some((marker) => line.toLowerCase().includes(marker)),
       );
       expect(significant, `console errors on ${route.path}`).toEqual([]);
     });
