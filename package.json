@@ -1,0 +1,91 @@
+{
+  "name": "project-examify",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Examify — a calm, mobile-first, self-hosted exam-practice app for families. Magic-link auth, SQLite, LLM-graded free-text.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/atk0309/project_Examify.git"
+  },
+  "homepage": "https://github.com/atk0309/project_Examify#readme",
+  "engines": {
+    "node": ">=22.0.0 <23"
+  },
+  "packageManager": "pnpm@10.33.0",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "pnpm test:e2e:prepare && playwright test",
+    "test:e2e:prepare": "tsx tests/e2e/setup-db.ts",
+    "test:e2e:install": "playwright install --with-deps chromium",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx src/lib/db/migrate.ts",
+    "db:studio": "drizzle-kit studio",
+    "prepare": "husky"
+  },
+  "dependencies": {
+    "better-sqlite3": "12.10.0",
+    "clsx": "2.1.1",
+    "drizzle-orm": "0.45.2",
+    "iron-session": "8.0.4",
+    "next": "16.2.7",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "resend": "6.12.4",
+    "tailwind-merge": "3.6.0",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.60.0",
+    "@tailwindcss/postcss": "4.3.0",
+    "@testing-library/jest-dom": "6.9.1",
+    "@testing-library/react": "16.3.2",
+    "@types/better-sqlite3": "7.6.13",
+    "@types/node": "25.9.1",
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "6.0.2",
+    "drizzle-kit": "0.31.10",
+    "eslint": "9.39.4",
+    "eslint-config-next": "16.2.7",
+    "husky": "9.1.7",
+    "jsdom": "29.1.1",
+    "lint-staged": "17.0.7",
+    "postcss": "8.5.15",
+    "prettier": "3.8.3",
+    "prettier-plugin-tailwindcss": "0.8.0",
+    "tailwindcss": "4.3.0",
+    "tsx": "4.22.4",
+    "typescript": "6.0.3",
+    "vitest": "4.1.8"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3",
+      "esbuild",
+      "sharp",
+      "unrs-resolver"
+    ],
+    "overrides": {
+      "esbuild@<0.25.0": ">=0.25.0",
+      "postcss@<8.5.10": ">=8.5.10"
+    }
+  },
+  "lint-staged": {
+    "*.{ts,tsx,js,jsx,mjs,cjs}": [
+      "prettier --write",
+      "eslint --fix --max-warnings=0"
+    ],
+    "*.{json,md,mdx,css,yml,yaml}": [
+      "prettier --write"
+    ]
+  }
+}

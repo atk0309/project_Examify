@@ -1,0 +1,34 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1778488635294,
+      "tag": "0000_flat_true_believers",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1780337486908,
+      "tag": "0001_smooth_chronomancer",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1780344897566,
+      "tag": "0002_gray_black_panther",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1780382608723,
+      "tag": "0003_serious_moondragon",
+      "breakpoints": true
+    }
+  ]
+}

@@ -1,0 +1,44 @@
+# dependencies
+node_modules
+.pnpm-store
+
+# next
+.next
+out
+build
+
+# env
+.env
+.env.local
+.env.*.local
+
+# logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# os / editor
+.DS_Store
+.idea
+.vscode/*
+!.vscode/settings.json
+
+# test / coverage
+coverage
+playwright-report
+test-results
+.nyc_output
+tests/.tmp
+
+# local sqlite + drizzle generated artifacts
+*.db
+*.db-journal
+/data
+
+# next typed routes / cache
+next-env.d.ts
+*.tsbuildinfo
+
+# source exam PDFs — kept local-only; only the questions authored from them
+# (with provenance) are committed (see docs/content-authoring.md)
+content/source-pdfs/

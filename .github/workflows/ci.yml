@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PNPM_VERSION: 10.33.0
+  NODE_VERSION: 22
+
+jobs:
+  lint-type-unit:
+    name: lint + typecheck + unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Format check
+        run: pnpm format:check
+      - name: Lint
+        run: pnpm lint
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Unit tests
+        run: pnpm test
+
+  build-and-e2e:
+    name: build + e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Install Playwright browsers
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Build
+        run: pnpm build
+        env:
+          SITE_URL: http://127.0.0.1:3100
+          AUTH_SECRET: ci-secret-must-be-at-least-32-chars-long-yes
+          DATABASE_URL: file:./tests/.tmp/build.db
+          FAMILIES: '[{"child":"student@example.com","parents":["parent@example.com"]}]'
+          RESEND_API_KEY: test
+          RESEND_FROM: Examify <test@example.com>
+          NEXT_PUBLIC_TURNSTILE_SITE_KEY: 1x00000000000000000000AA
+          TURNSTILE_SECRET_KEY: 1x0000000000000000000000000000000AA
+      - name: e2e tests
+        run: |
+          set -o pipefail
+          mkdir -p tests/.tmp
+          pnpm test:e2e 2>&1 | tee tests/.tmp/playwright.log
+      - name: Post diagnostic log to PR
+        if: failure() && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set +e
+          read_file() { if [ -f "$1" ]; then tail -200 "$1"; else echo "(no $1)"; fi; }
+          pw="$(read_file tests/.tmp/playwright.log)"
+          ctx=""
+          if [ -d test-results ]; then
+            for f in $(find test-results -name 'error-context.md' ! -path '*-retry*' 2>/dev/null | sort); do
+              ctx="${ctx}--- $f ---\n$(cat "$f")\n\n"
+            done
+          fi
+          [ -z "$ctx" ] && ctx="(no error-context.md files)"
+          body="$(printf '### e2e diagnostic dump (commit %s)\n\n<details open><summary>playwright.log (last 200 lines)</summary>\n\n```\n%s\n```\n\n</details>\n\n<details><summary>error-context.md per failed test</summary>\n\n```\n%b\n```\n\n</details>\n' "${GITHUB_SHA}" "${pw}" "${ctx}")"
+          echo "$body" > /tmp/comment.md
+          gh pr comment "$PR_NUMBER" --body-file /tmp/comment.md || echo "comment failed (non-fatal)"
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report
+          path: playwright-report
+          retention-days: 7
+          if-no-files-found: ignore

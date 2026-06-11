@@ -1,0 +1,89 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: '/'
+    schedule:
+      interval: weekly
+      day: monday
+      time: '07:00'
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    versioning-strategy: increase
+    commit-message:
+      prefix: chore(deps)
+      include: scope
+    ignore:
+      # Tracked in #11: eslint-plugin-react@7.x has no v10 peer-range yet, and
+      # eslint-config-next@16 pulls it in transitively. Remove this entry when
+      # the upstream support lands and we bump in lockstep.
+      - dependency-name: eslint
+        update-types: ['version-update:semver-major']
+    groups:
+      next-runtime:
+        patterns:
+          - next
+          - '@next/*'
+          - react
+          - react-dom
+          - '@types/react'
+          - '@types/react-dom'
+      tailwind:
+        patterns:
+          - tailwindcss
+          - '@tailwindcss/*'
+          - prettier-plugin-tailwindcss
+      mdx:
+        patterns:
+          - '@mdx-js/*'
+          - remark-*
+          - rehype-*
+          - '@shikijs/*'
+          - shiki
+          - gray-matter
+          - reading-time
+      drizzle:
+        patterns:
+          - drizzle-orm
+          - drizzle-kit
+          - better-sqlite3
+          - '@types/better-sqlite3'
+      auth:
+        patterns:
+          - iron-session
+          - resend
+      testing:
+        patterns:
+          - vitest
+          - '@vitejs/plugin-react'
+          - '@testing-library/*'
+          - jsdom
+          - '@playwright/test'
+      lint-format:
+        patterns:
+          - eslint
+          - eslint-config-*
+          - prettier
+          - husky
+          - lint-staged
+      types-and-utils:
+        patterns:
+          - typescript
+          - tsx
+          - '@types/*'
+          - zod
+          - clsx
+          - tailwind-merge
+  - package-ecosystem: github-actions
+    directory: '/'
+    schedule:
+      interval: weekly
+      day: monday
+      time: '07:00'
+      timezone: Etc/UTC
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: chore(actions)
+    groups:
+      actions:
+        patterns:
+          - '*'
