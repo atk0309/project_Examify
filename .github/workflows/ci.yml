@@ -114,7 +114,7 @@ jobs:
         # The artifact may not exist (e2e can fail before producing files);
         # the comment step degrades gracefully.
         continue-on-error: true
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: e2e-diagnostics
           path: diagnostics
