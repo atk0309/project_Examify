@@ -654,13 +654,7 @@ function ResultsScreen({
 
 /* ------------------------------------ App ----------------------------------- */
 type Screen =
-  | 'dashboard'
-  | 'difficulty'
-  | 'exam'
-  | 'marking'
-  | 'results'
-  | 'examError'
-  | 'progress';
+  'dashboard' | 'difficulty' | 'exam' | 'marking' | 'results' | 'examError' | 'progress';
 
 /**
  * A saved in-progress exam, reconstructed server-side (in `page.tsx`) into the

@@ -12,8 +12,7 @@ const inputSchema = z.object({
 export type DiscardExamSessionInput = z.infer<typeof inputSchema>;
 
 export type DiscardExamSessionResult =
-  | { ok: true }
-  | { ok: false; reason: 'forbidden' | 'invalid' };
+  { ok: true } | { ok: false; reason: 'forbidden' | 'invalid' };
 
 /**
  * Abandon an in-progress mini exam so it stops being resumable — used when the
