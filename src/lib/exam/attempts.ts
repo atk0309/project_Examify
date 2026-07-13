@@ -57,8 +57,7 @@ export function isFreePass(score: number, maxScore: number): boolean {
  * narrowed `.item` rather than casting on the raw discriminant.
  */
 export type NormalizedAttemptItem =
-  | { kind: 'mcq'; item: McqAttemptItem }
-  | { kind: 'free'; item: FreeAttemptItem };
+  { kind: 'mcq'; item: McqAttemptItem } | { kind: 'free'; item: FreeAttemptItem };
 
 export function normalizeAttemptItem(item: AttemptItem): NormalizedAttemptItem {
   if (item.type === 'free') return { kind: 'free', item };
