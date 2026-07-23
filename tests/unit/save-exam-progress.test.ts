@@ -6,6 +6,7 @@ import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionData } from '@/lib/auth';
 import type { SaveExamProgressInput } from '@/actions/saveExamProgress';
+import { QUESTIONS } from '@/lib/exam/data';
 
 const TMP = path.join(process.cwd(), 'tests', '.tmp');
 const DB_PATH = path.join(TMP, `save-exam-progress-${process.pid}.db`);
@@ -46,13 +47,16 @@ async function seedUser(email: string): Promise<number> {
   return row!.id;
 }
 
-const goodInput = (): SaveExamProgressInput => ({
-  subject: 'maths',
-  difficulty: 'easy',
-  questionIds: ['maths-easy-1', 'maths-easy-2'],
-  answers: [0, null],
-  currentIndex: 0,
-});
+const goodInput = (): SaveExamProgressInput => {
+  const questions = QUESTIONS.maths!.easy!;
+  return {
+    subject: 'maths',
+    difficulty: 'easy',
+    questionIds: questions.map((q) => q.id),
+    answers: questions.map(() => null),
+    currentIndex: 0,
+  };
+};
 
 describe('beginExamSession action (create on start)', () => {
   it('creates a draft for a signed-in student', async () => {
@@ -116,14 +120,38 @@ describe('beginExamSession action (create on start)', () => {
     const userId = await seedUser('alex@example.com');
     sessionHolder.current = { userId, role: 'student', email: 'alex@example.com' };
 
-    const res = await beginExamSession({
-      subject: 'maths',
-      difficulty: 'easy',
-      questionIds: ['maths-easy-1'],
-      answers: ['x'.repeat(4001)],
-      currentIndex: 0,
-    });
+    const input = goodInput();
+    const freeIndex = QUESTIONS.maths!.easy!.findIndex((q) => q.type === 'free');
+    input.answers[freeIndex] = 'x'.repeat(4001);
+    const res = await beginExamSession(input);
     expect(res).toEqual({ ok: false, reason: 'invalid' });
+  });
+
+  it('rejects incomplete, duplicate, cross-difficulty, and out-of-range snapshots', async () => {
+    const { beginExamSession } = await import('@/actions/saveExamProgress');
+    const userId = await seedUser('alex@example.com');
+    sessionHolder.current = { userId, role: 'student', email: 'alex@example.com' };
+
+    const incomplete = goodInput();
+    incomplete.questionIds.pop();
+    incomplete.answers.pop();
+    expect(await beginExamSession(incomplete)).toEqual({ ok: false, reason: 'invalid' });
+
+    const duplicate = goodInput();
+    duplicate.questionIds[1] = duplicate.questionIds[0]!;
+    expect(await beginExamSession(duplicate)).toEqual({ ok: false, reason: 'invalid' });
+
+    const crossDifficulty = goodInput();
+    crossDifficulty.questionIds[1] = QUESTIONS.maths!.hard![0]!.id;
+    expect(await beginExamSession(crossDifficulty)).toEqual({ ok: false, reason: 'invalid' });
+
+    const invalidAnswer = goodInput();
+    invalidAnswer.answers[0] = 99;
+    expect(await beginExamSession(invalidAnswer)).toEqual({ ok: false, reason: 'invalid' });
+
+    const invalidIndex = goodInput();
+    invalidIndex.currentIndex = invalidIndex.questionIds.length;
+    expect(await beginExamSession(invalidIndex)).toEqual({ ok: false, reason: 'invalid' });
   });
 });
 
@@ -135,12 +163,15 @@ describe('saveExamProgress action (update-only autosave)', () => {
     sessionHolder.current = { userId, role: 'student', email: 'alex@example.com' };
 
     await beginExamSession(goodInput());
-    const res = await saveExamProgress({ ...goodInput(), answers: [1, 2], currentIndex: 1 });
+    const checkpoint = goodInput();
+    checkpoint.answers = QUESTIONS.maths!.easy!.map((q) => (q.type === 'mcq' ? 1 : 'working'));
+    checkpoint.currentIndex = 1;
+    const res = await saveExamProgress(checkpoint);
     expect(res).toEqual({ ok: true });
     const sessions = getExamSessions(userId);
     expect(sessions).toHaveLength(1);
     expect(sessions[0]!.currentIndex).toBe(1);
-    expect(sessions[0]!.answers).toEqual([1, 2]);
+    expect(sessions[0]!.answers).toEqual(checkpoint.answers);
   });
 
   it('does NOT recreate a cleared draft (a late autosave after finish/discard is a no-op)', async () => {

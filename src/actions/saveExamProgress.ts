@@ -3,6 +3,7 @@
 import { z } from 'zod';
 import { getSession } from '@/lib/auth';
 import { saveExamSession, updateExamSession } from '@/lib/exam-session';
+import { resolveExamPaper } from '@/lib/exam/data';
 
 // The client autosaves the public paper (ordered question ids) + its own answers
 // + where it is. No answer keys are involved — this is just the user's own draft.
@@ -29,6 +30,23 @@ const authorize = async () => {
   return session.userId && canWrite ? session.userId : null;
 };
 
+function isValidSnapshot(input: SaveExamProgressInput): boolean {
+  const questions = resolveExamPaper(input.subject, input.difficulty, input.questionIds);
+  if (questions === null || input.currentIndex >= questions.length) return false;
+
+  return questions.every((question, index) => {
+    const answer = input.answers[index]!;
+    if (answer === null) return true;
+    if (question.type === 'free') return typeof answer === 'string';
+    return (
+      typeof answer === 'number' &&
+      Number.isInteger(answer) &&
+      answer >= 0 &&
+      answer < question.choices.length
+    );
+  });
+}
+
 /**
  * Create the resumable draft when an exam STARTS. Same write gate as `recordAttempt`:
  * a `student`, or a `parent` in student mode — always the caller's own `session.userId`,
@@ -41,7 +59,9 @@ export async function beginExamSession(
   if (!userId) return { ok: false, reason: 'forbidden' };
 
   const parsed = inputSchema.safeParse(input);
-  if (!parsed.success) return { ok: false, reason: 'invalid' };
+  if (!parsed.success || !isValidSnapshot(parsed.data)) {
+    return { ok: false, reason: 'invalid' };
+  }
 
   saveExamSession(userId, parsed.data);
   return { ok: true };
@@ -60,7 +80,9 @@ export async function saveExamProgress(
   if (!userId) return { ok: false, reason: 'forbidden' };
 
   const parsed = inputSchema.safeParse(input);
-  if (!parsed.success) return { ok: false, reason: 'invalid' };
+  if (!parsed.success || !isValidSnapshot(parsed.data)) {
+    return { ok: false, reason: 'invalid' };
+  }
 
   updateExamSession(userId, parsed.data);
   return { ok: true };

@@ -33,11 +33,15 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   combo on finish. Same write gate + own-id rule as `recordAttempt`; the row stores only
   public question ids + the user's own answers (**no answer keys**). Helpers:
   `src/lib/exam-session.ts` (server-only). Sessions never expire. Resume rebuilds the
-  exact paper via `questionsByIds` (no re-shuffle).
+  exact paper via `resolveExamPaper` (no re-shuffle).
 - **Answer keys + rubrics are server-only.** The public bank (`src/lib/exam/data.ts`)
   carries no answers/rubrics; they live in `src/lib/exam/answer-keys.server.ts`,
   keyed by question `id`, and every key carries a mandatory `provenance { pdf, locator }`.
   Keep `attempts.ts` client-safe (it's in the client graph).
+- **Completed and resumable papers are validated server-side.** Their public question
+  ids must be unique, belong to the selected subject + difficulty, and contain exactly
+  the number of questions `buildExam()` returns. Draft answers must match each public
+  question's type/range. This validation never reads or exposes answer keys.
 - **Content is hand-edited.** The shipped bank is a hand-authored 3-subject sample
   meant to be replaced with the family's own content (optionally generated from their
   source PDFs, kept local-only in the gitignored `content/source-pdfs/`); add content

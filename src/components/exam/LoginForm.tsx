@@ -137,9 +137,10 @@ export function LoginForm({ siteKey }: { siteKey: string }) {
         />
       </div>
 
-      {/* Role travels with the form; Turnstile widget injects its own response
-          input, and this hidden fallback is what Playwright fills when the
-          widget can't load (see SignInForm note retained in docs). */}
+      {/* Role travels with the form. Turnstile injects its own
+          `cf-turnstile-response` input. Do not render a second fallback with
+          the same name: FormData.get() can read the empty duplicate instead
+          of the widget's valid response. */}
       <input type="hidden" name="role" value={role} />
       <div
         className="cf-turnstile"
@@ -147,7 +148,6 @@ export function LoginForm({ siteKey }: { siteKey: string }) {
         data-theme="auto"
         data-testid="turnstile"
       />
-      <input type="hidden" name="cf-turnstile-response" data-testid="turnstile-response" />
 
       <button
         className="btn btn-primary"

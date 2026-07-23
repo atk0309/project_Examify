@@ -659,7 +659,8 @@ type Screen =
 /**
  * A saved in-progress exam, reconstructed server-side (in `page.tsx`) into the
  * exact paper + the user's answers so the dashboard can offer to resume it. The
- * questions are rebuilt from the persisted ids via `questionsByIds`.
+ * questions are rebuilt and validated from the persisted ids via
+ * `resolveExamPaper`.
  */
 export type Resumable = {
   subject: string;

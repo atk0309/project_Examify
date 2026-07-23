@@ -4,8 +4,8 @@ import {
   buildExam,
   countQuestions,
   EXAM_CONFIG,
-  questionsByIds,
   QUESTIONS,
+  resolveExamPaper,
   SUBJECTS,
   shuffle,
 } from '@/lib/exam/data';
@@ -41,30 +41,22 @@ describe('buildExam', () => {
   });
 });
 
-describe('questionsByIds', () => {
-  it('reconstructs questions in the exact id order given', () => {
-    const bank = QUESTIONS.maths!.easy!;
-    const ids = [bank[2]!.id, bank[0]!.id, bank[1]!.id];
-    const out = questionsByIds('maths', ids);
-    expect(out.map((q) => q.id)).toEqual(ids);
+describe('resolveExamPaper', () => {
+  const bank = QUESTIONS.maths!.easy!;
+  const ids = bank.map((q) => q.id);
+
+  it('resolves one complete, ordered paper from the selected bank', () => {
+    const ordered = ids.slice().reverse();
+    expect(resolveExamPaper('maths', 'easy', ordered)?.map((q) => q.id)).toEqual(ordered);
   });
 
-  it('resolves ids spanning multiple difficulties of the same subject', () => {
-    const easy = QUESTIONS.maths!.easy![0]!;
-    const hard = QUESTIONS.maths!.hard![0]!;
-    const out = questionsByIds('maths', [easy.id, hard.id]);
-    expect(out.map((q) => q.id)).toEqual([easy.id, hard.id]);
-  });
-
-  it('drops unknown ids (e.g. the bank changed since the draft was saved)', () => {
-    const real = QUESTIONS.maths!.easy![0]!;
-    const out = questionsByIds('maths', [real.id, 'no-such-question', 'gone']);
-    expect(out.map((q) => q.id)).toEqual([real.id]);
-  });
-
-  it('returns an empty list for empty input or an unknown subject', () => {
-    expect(questionsByIds('maths', [])).toEqual([]);
-    expect(questionsByIds('nope', ['x'])).toEqual([]);
+  it('rejects incomplete, duplicate, unknown, and cross-difficulty papers', () => {
+    expect(resolveExamPaper('maths', 'easy', ids.slice(0, -1))).toBeNull();
+    expect(resolveExamPaper('maths', 'easy', [...ids.slice(0, -1), ids[0]!])).toBeNull();
+    expect(resolveExamPaper('maths', 'easy', [...ids.slice(0, -1), 'missing'])).toBeNull();
+    expect(
+      resolveExamPaper('maths', 'easy', [...ids.slice(0, -1), QUESTIONS.maths!.hard![0]!.id]),
+    ).toBeNull();
   });
 });
 
