@@ -37,8 +37,8 @@
     "drizzle-orm": "0.45.2",
     "iron-session": "8.0.4",
     "next": "16.2.11",
-    "react": "19.2.7",
-    "react-dom": "19.2.7",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
     "resend": "6.14.0",
     "tailwind-merge": "3.6.0",
     "zod": "4.4.3"
