@@ -1,0 +1,86 @@
+name: Bug report
+description: Report reproducible behavior that appears incorrect
+title: '[Bug]: '
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve Examify. Do not include real family data, secrets,
+        magic links, or security vulnerabilities in a public issue. Report security
+        problems through the private link shown on the issue chooser.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues for this problem.
+          required: true
+        - label: This report contains no secrets, personal family data, or active magic links.
+          required: true
+        - label: This is not a security vulnerability.
+          required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: Provide the release, commit SHA, or deployment date where you saw the problem.
+      placeholder: e.g. 5133056
+    validations:
+      required: true
+
+  - type: dropdown
+    id: role
+    attributes:
+      label: Affected role
+      options:
+        - Student
+        - Parent
+        - Self-hoster or administrator
+        - Not role-specific
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include browser, operating system, Node version, and hosting details that matter.
+      placeholder: Chromium 126, Ubuntu 24.04, Node 22...
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: Give the smallest sequence that consistently reproduces the problem.
+      placeholder: |
+        1. Sign in as...
+        2. Open...
+        3. Select...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized logs or screenshots
+      description: Remove secrets, email addresses, tokens, and family data before attaching anything.

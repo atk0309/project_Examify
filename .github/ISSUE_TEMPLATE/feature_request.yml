@@ -1,0 +1,58 @@
+name: Feature request
+description: Propose an improvement and explain the problem it solves
+title: '[Feature]: '
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Examify is intentionally small and privacy-focused. Please explain the user
+        problem first and consider whether the proposal preserves that scope.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and pull requests for this proposal.
+          required: true
+        - label: This proposal does not require committing private family or study data.
+          required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user need or limitation should be addressed?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the smallest useful solution and the affected workflow.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Include workarounds or smaller approaches you considered.
+
+  - type: textarea
+    id: privacy
+    attributes:
+      label: Privacy and security impact
+      description: Explain any new data, permissions, external services, or trust boundaries.
+      placeholder: None, or describe the impact...
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Add sanitized mockups, examples, or links if they help explain the request.

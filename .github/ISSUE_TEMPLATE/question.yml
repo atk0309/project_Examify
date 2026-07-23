@@ -1,0 +1,51 @@
+name: Question or support request
+description: Ask about setup, self-hosting, content authoring, or usage
+title: '[Question]: '
+labels:
+  - question
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please read README.md and SUPPORT.md first. Never include secrets, real family
+        data, active magic links, or vulnerability details in a public issue.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I checked the README, support guide, and existing issues.
+          required: true
+        - label: This request contains no secrets or personal family data.
+          required: true
+        - label: This is not a security vulnerability or conduct report.
+          required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Local setup
+        - Self-hosting
+        - Environment configuration
+        - Content authoring
+        - Exam usage
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: Explain what you are trying to accomplish and where you are stuck.
+    validations:
+      required: true
+
+  - type: textarea
+    id: tried
+    attributes:
+      label: What have you tried?
+      description: Include relevant commands or sanitized output.
