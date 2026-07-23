@@ -19,14 +19,7 @@ import 'server-only';
 import type { AttemptItem, FreeAttemptItem } from '@/lib/db/schema';
 import { gradeFreeText } from '@/lib/grading';
 import { keyById } from './answer-keys.server';
-import {
-  DIFFICULTIES,
-  EXAM_CONFIG,
-  QUESTIONS,
-  questionById,
-  SUBJECTS,
-  type DifficultyId,
-} from './data';
+import { DIFFICULTIES, resolveExamPaper, SUBJECTS, type DifficultyId } from './data';
 import { isFreePass, type AttemptInput, type ValidateResult } from './attempts';
 
 const SUBJECT_IDS = new Set<string>(SUBJECTS.map((s) => s.id));
@@ -44,12 +37,14 @@ export async function scoreAttempt(input: AttemptInput): Promise<ValidateResult>
   if (!DIFFICULTY_IDS.has(input.difficulty)) return { ok: false, reason: 'invalid_difficulty' };
   const difficulty = input.difficulty as DifficultyId;
 
-  const bank = QUESTIONS[input.subject]?.[difficulty] ?? [];
   const items = input.items;
   if (!Array.isArray(items) || items.length === 0) return { ok: false, reason: 'invalid_items' };
-  // An exam can never be longer than the configured length or the bank itself.
-  const maxLen = Math.min(EXAM_CONFIG.length, bank.length);
-  if (items.length > maxLen) return { ok: false, reason: 'invalid_items' };
+  const paper = resolveExamPaper(
+    input.subject,
+    difficulty,
+    items.map((item) => item.id),
+  );
+  if (paper === null) return { ok: false, reason: 'invalid_items' };
 
   const slots: (Slot | null)[] = new Array(items.length).fill(null);
   const freeTasks: {
@@ -63,8 +58,7 @@ export async function scoreAttempt(input: AttemptInput): Promise<ValidateResult>
 
   for (let i = 0; i < items.length; i++) {
     const it = items[i]!;
-    const q = questionById(input.subject, difficulty, it.id);
-    if (!q) return { ok: false, reason: 'invalid_items' };
+    const q = paper[i]!;
     const key = keyById(it.id);
     if (!key) return { ok: false, reason: 'invalid_items' };
 

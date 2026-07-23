@@ -99,7 +99,7 @@ Guidelines:
   banks just produce shorter exams). It runs on the client, which is exactly why the
   public bank must stay answer-free.
 - Mid-exam autosave stores only the ordered question **ids** + the user's answers.
-  Resume rebuilds the exact paper with `questionsByIds` — never a fresh `buildExam` —
+  Resume rebuilds and validates the exact paper with `resolveExamPaper` — never a fresh `buildExam` —
   so the student returns to the same questions in the same order. If you delete a
   question that a saved draft references, the draft is discarded gracefully.
 - Scoring is server-truth: the client submits `{ type, id, chosen | response }` and

@@ -4,7 +4,7 @@ import { ParentDashboard } from '@/components/exam/ParentDashboard';
 import { getSession } from '@/lib/auth';
 import { getExamSessions } from '@/lib/exam-session';
 import { getProgressForUser, getScoreHistory, resolveChildren } from '@/lib/progress';
-import { questionsByIds } from '@/lib/exam/data';
+import { resolveExamPaper } from '@/lib/exam/data';
 import type { ProgressData } from '@/lib/exam/attempts';
 
 const EMPTY_PROGRESS: ProgressData = { attempts: [], subjects: [] };
@@ -18,8 +18,8 @@ const EMPTY_PROGRESS: ProgressData = { attempts: [], subjects: [] };
  */
 function resumableFor(userId: number): Resumable[] {
   return getExamSessions(userId).flatMap((s) => {
-    const questions = questionsByIds(s.subject, s.questionIds);
-    if (questions.length !== s.questionIds.length) return [];
+    const questions = resolveExamPaper(s.subject, s.difficulty, s.questionIds);
+    if (questions === null || s.answers.length !== questions.length) return [];
     return [
       {
         subject: s.subject,

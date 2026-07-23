@@ -497,20 +497,24 @@ export function buildExam(subjectId: string, difficulty: DifficultyId): Question
 }
 
 /**
- * Reconstruct an ordered `Question[]` from a persisted list of ids — used to
- * resume a saved in-progress exam back into the EXACT paper (and order) the user
- * was sitting, without re-shuffling via `buildExam`. Ids are looked up across the
- * whole subject bank (every difficulty), preserving the given order. Unknown ids
- * (the bank was edited since the session was saved) are DROPPED; the caller
- * compares the survivor count to the stored id count to decide whether the
- * session is still resumable or should be discarded. Pure + client-safe (no
- * answer keys) — only the public `QUESTIONS` bank is referenced.
+ * Resolve and validate one complete mini-exam paper.
+ *
+ * The ids must be unique, belong to the selected subject + difficulty bank,
+ * and contain exactly the number of questions `buildExam()` returns. The
+ * caller-provided order is preserved. This is public-bank validation only:
+ * answer keys remain server-only.
  */
-export function questionsByIds(subjectId: string, ids: string[]): Question[] {
-  const banks = QUESTIONS[subjectId] ?? {};
-  const byId = new Map<string, Question>();
-  for (const list of Object.values(banks)) {
-    for (const q of list ?? []) byId.set(q.id, q);
-  }
-  return ids.map((id) => byId.get(id)).filter((q): q is Question => q !== undefined);
+export function resolveExamPaper(
+  subjectId: string,
+  difficulty: DifficultyId,
+  ids: readonly string[],
+): Question[] | null {
+  const bank = QUESTIONS[subjectId]?.[difficulty] ?? [];
+  const expectedLength = Math.min(EXAM_CONFIG.length, bank.length);
+  if (expectedLength === 0 || ids.length !== expectedLength) return null;
+  if (new Set(ids).size !== ids.length) return null;
+
+  const byId = new Map(bank.map((q) => [q.id, q]));
+  const questions = ids.map((id) => byId.get(id));
+  return questions.every((q): q is Question => q !== undefined) ? questions : null;
 }

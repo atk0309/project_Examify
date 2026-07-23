@@ -31,6 +31,7 @@ export type GradeArgs = {
 
 const MODEL = 'claude-sonnet-4-6';
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
+const GRADING_TIMEOUT_MS = 15_000;
 
 /** Round and clamp a raw model score into `[0, max]`. */
 export function clampScore(raw: number, max: number): number {
@@ -135,6 +136,7 @@ export async function gradeFreeText(args: GradeArgs): Promise<GradeResult> {
         system: systemPrompt(),
         messages: [{ role: 'user', content: userPrompt(args) }],
       }),
+      signal: AbortSignal.timeout(GRADING_TIMEOUT_MS),
     });
     if (!res.ok) return { status: 'needs_review' };
 

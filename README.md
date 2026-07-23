@@ -157,9 +157,10 @@ Free-text answers are graded server-side by the Anthropic Messages API
 - Configure `ANTHROPIC_API_KEY`. The `test` sentinel (the dev default) swaps in a
   deterministic full-score stub with no network calls — the same pattern as the Resend
   email outbox.
-- Grading is **fail-safe**: any network error, non-2xx, or malformed model output
-  resolves to `needs_review` instead of throwing, so a finished exam is never lost. A
-  `needs_review` item renders as "Saved for review" and counts as incorrect.
+- Grading is **fail-safe**: requests have a 15-second deadline, and any timeout, network
+  error, non-2xx, or malformed model output resolves to `needs_review` instead of throwing,
+  so a finished exam is never lost. A `needs_review` item renders as "Saved for review" and
+  counts as incorrect.
 - A free-text item counts as "correct" when the score reaches **60%** of `maxScore`
   (`PASS_THRESHOLD` in `src/lib/exam/attempts.ts`).
 - The UI renders only the bounded verdict (score, one-line feedback, got-right /
@@ -218,8 +219,9 @@ mounted at `/data` and set `DATABASE_URL=file:/data/app.db`.
 
 `pnpm test` runs the Vitest unit suite (content guards, scoring, grading, auth, actions)
 against an isolated SQLite file. `pnpm test:e2e` runs Playwright smokes for the public
-routes (run `pnpm test:e2e:install` once first). Two Turnstile-protected sign-in e2e
-specs are intentionally `test.skip()`-ed — see the note in `CLAUDE.md`.
+routes plus the magic-link happy path, uniform sign-in rate limit, and empty-token
+failure path (run `pnpm test:e2e:install` once first). The sign-in tests use Cloudflare's
+documented always-pass dummy keys; server-side Turnstile verification still runs.
 
 ## Contributing, security, license
 

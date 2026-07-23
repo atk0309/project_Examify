@@ -229,8 +229,8 @@ chosen, answer }`, free-text `{ type:'free', id, q, response, maxScore, score, s
 - **`exam_sessions`** (`src/lib/db/schema.ts`): the **in-progress** counterpart — one
   autosaved row per `(user_id, subject, difficulty)` (unique index) so a reload, a closed
   browser, or a discarded mobile tab can **resume** mid-exam instead of restarting. It stores
-  only the public `question_ids` (the exact ordered paper — resume rebuilds the questions via
-  `questionsByIds`, never a re-shuffled `buildExam`) plus the user's own `answers` and
+  only the public `question_ids` (the exact ordered paper — resume rebuilds and validates the
+  questions via `resolveExamPaper`, never a re-shuffled `buildExam`) plus the user's own `answers` and
   `current_index`. **No answer keys** ever land here (same I2 rule as `data.ts`). Owned by the
   caller's own `user_id` (student, or parent in student mode), like `exam_attempts`. Helpers
   live in `src/lib/exam-session.ts` (`server-only`): `saveExamSession` upserts (used to **create**
@@ -249,8 +249,11 @@ chosen, answer }`, free-text `{ type:'free', id, q, response, maxScore, score, s
   items. The client submits only `{ type, id, chosen|response }`; the scorer resolves each item by
   `id` against the public bank (`./data`) for its snapshot and the server-only keys
   (`./answer-keys.server`) for the correct index / rubric (item must exist; `chosen` in range;
-  length within the configured cap). `saveAttempt` (`src/lib/progress.ts`, now async) persists
-  only what that returns and returns the inserted `AttemptRecord`.
+  ids must be unique; and the payload must contain exactly the number of questions
+  `buildExam()` returns for that bank). The same public-paper validation guards resumable
+  drafts, including answer type/range and current-index checks. `saveAttempt`
+  (`src/lib/progress.ts`, now async) persists only what the scorer returns and returns the
+  inserted `AttemptRecord`.
 - **Write path: own id only.** The `recordAttempt` action (`src/actions/recordAttempt.ts`)
   accepts a `student`, **or** a `parent` with `session.studentMode === true`, and writes for
   `session.userId` only — never a client-supplied id, never the child's. This is the one
@@ -304,9 +307,10 @@ These are non-negotiable. Don't "fix" them out.
   and the grader. The validate+score+grade pass lives in `score.server.ts`, not here.
 - **Free-text is graded server-side, fail-safe.** `gradeFreeText` (`src/lib/grading/index.ts`,
   server-only) returns `{ status:'graded', verdict } | { status:'needs_review' }` and **never
-  throws** — any fetch error, non-2xx, or malformed/unparseable model JSON falls to
-  `needs_review` so an attempt is never lost. `ANTHROPIC_API_KEY === 'test'` (dev/test default)
-  uses a deterministic full-score stub, no network — same pattern as the Resend outbox stub.
+  throws** — the request has a 15-second deadline, and any timeout/fetch error, non-2xx, or
+  malformed/unparseable model JSON falls to `needs_review` so an attempt is never lost.
+  `ANTHROPIC_API_KEY === 'test'` (dev/test default) uses a deterministic full-score stub, no
+  network — same pattern as the Resend outbox stub.
 - **A free-text item is "correct" at `PASS_THRESHOLD` (0.6).** `isFreePass(score, maxScore)`
   (`attempts.ts`, the shared constant — not an inline literal) decides the ring/tally. A
   `needs_review` item persists `score: null, verdict: null` and counts as incorrect.
@@ -349,10 +353,12 @@ sentinel routes the grader to a deterministic stub; a missing key fails closed i
 - The Playwright config uses an isolated SQLite at `tests/.tmp/e2e.db`;
   `tests/e2e/setup-db.ts` wipes and re-migrates it via `pnpm test:e2e:prepare`, which
   `pnpm test:e2e` runs _before_ `playwright test`.
-- The two Turnstile-protected happy/rate-limit signin e2e tests are `test.skip()`-ed:
-  React 19 + Next 16 drop the `cf-turnstile-response` value set from `page.evaluate` on
-  the form's pending-state reconciliation, so the action sees an empty token. The "rejects
-  empty Turnstile token" test still covers the validation-failure path.
+- Sign-in e2e uses the documented always-pass Turnstile dummy key. The widget owns the
+  single `cf-turnstile-response` field in production; never add a second fallback field
+  with that name, because `FormData.get()` can select the empty duplicate instead of the
+  valid widget response. When the widget CDN is unavailable, the Playwright helper injects
+  that same field and submits it in one browser task. Happy-path, uniform rate-limit, and
+  empty-token failure coverage all run without bypassing `verifyTurnstile`.
 
 ## Dependency policy
 

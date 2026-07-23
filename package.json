@@ -36,7 +36,7 @@
     "clsx": "2.1.1",
     "drizzle-orm": "0.45.2",
     "iron-session": "8.0.4",
-    "next": "16.2.9",
+    "next": "16.2.11",
     "react": "19.2.7",
     "react-dom": "19.2.7",
     "resend": "6.14.0",
@@ -55,7 +55,7 @@
     "@vitejs/plugin-react": "6.0.3",
     "drizzle-kit": "0.31.10",
     "eslint": "9.39.5",
-    "eslint-config-next": "16.2.10",
+    "eslint-config-next": "16.2.11",
     "husky": "9.1.7",
     "jsdom": "29.1.1",
     "lint-staged": "17.0.8",
@@ -78,7 +78,8 @@
       "esbuild@<0.28.1": ">=0.28.1",
       "vite@<8.0.16": ">=8.0.16",
       "js-yaml@<4.2.0": ">=4.2.0",
-      "postcss@<8.5.10": ">=8.5.10"
+      "postcss@<8.5.10": ">=8.5.10",
+      "sharp@<0.35.0": "0.35.3"
     }
   },
   "lint-staged": {

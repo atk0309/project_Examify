@@ -55,17 +55,22 @@ async function seedUser(email: string): Promise<number> {
 }
 
 function mathsEasyInput(correctCount: number): AttemptInput {
-  const bank = QUESTIONS.maths!.easy!.filter((q) => q.type === 'mcq');
+  const bank = QUESTIONS.maths!.easy!;
+  let mcqIndex = 0;
   return {
     subject: 'maths',
     difficulty: 'easy',
-    items: bank.map((q, idx) => {
+    items: bank.map((q) => {
+      if (q.type === 'free') {
+        return { type: 'free' as const, id: q.id, response: 'A complete worked explanation.' };
+      }
       const answer = (ANSWER_KEYS[q.id] as { answer: number }).answer;
-      const len = q.type === 'mcq' ? q.choices.length : 0;
+      const chosen = mcqIndex < correctCount ? answer : (answer + 1) % q.choices.length;
+      mcqIndex += 1;
       return {
         type: 'mcq' as const,
         id: q.id,
-        chosen: idx < correctCount ? answer : (answer + 1) % len,
+        chosen,
       };
     }),
   };
@@ -73,18 +78,22 @@ function mathsEasyInput(correctCount: number): AttemptInput {
 
 /** A geography/medium input that includes a free-text item (graded via the stub). */
 function geographyMediumWithFree(): AttemptInput {
-  const mcqAnswer = (ANSWER_KEYS['geography-medium-1'] as { answer: number }).answer;
   return {
     subject: 'geography',
     difficulty: 'medium',
-    items: [
-      { type: 'mcq', id: 'geography-medium-1', chosen: mcqAnswer },
-      {
-        type: 'free',
-        id: 'geography-medium-free-1',
-        response: 'Weather is the day-to-day conditions; climate is the long-term pattern.',
-      },
-    ],
+    items: QUESTIONS.geography!.medium!.map((q) =>
+      q.type === 'free'
+        ? {
+            type: 'free' as const,
+            id: q.id,
+            response: 'Weather is day-to-day; climate is the long-term pattern.',
+          }
+        : {
+            type: 'mcq' as const,
+            id: q.id,
+            chosen: (ANSWER_KEYS[q.id] as { answer: number }).answer,
+          },
+    ),
   };
 }
 
@@ -98,9 +107,9 @@ describe('recordAttempt action', () => {
     expect(res.ok).toBe(true);
     if (!res.ok) return;
     expect(res.scorePct).toBeGreaterThan(0);
-    expect(res.attempt.correct).toBe(3);
+    expect(res.attempt.correct).toBe(4);
     expect(res.progress.attempts).toHaveLength(1);
-    expect(res.progress.attempts[0]!.correct).toBe(3);
+    expect(res.progress.attempts[0]!.correct).toBe(4);
   });
 
   it('grades a free-text item server-side and persists the verdict', async () => {
@@ -111,8 +120,7 @@ describe('recordAttempt action', () => {
     const res = await recordAttempt(geographyMediumWithFree());
     expect(res.ok).toBe(true);
     if (!res.ok) return;
-    // mcq correct + free graded full marks (test sentinel) → both count.
-    expect(res.attempt.correct).toBe(2);
+    expect(res.attempt.correct).toBe(QUESTIONS.geography!.medium!.length);
     const free = res.attempt.items.find((i) => i.type === 'free');
     expect(free).toBeDefined();
     if (!free || free.type !== 'free') return;

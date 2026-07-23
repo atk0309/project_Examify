@@ -36,33 +36,38 @@ function extractSignInUrl(html: string): string {
 async function submitSignin(page: import('@playwright/test').Page, email: string) {
   await page.goto('/signin');
   await page.getByTestId('signin-form').waitFor();
-  // React installs a value-tracker on every <input>, so a plain
-  // `el.value = "..."` from page.evaluate gets reverted by React on the
-  // next reconciliation (the form's pending-state flip on submit, for
-  // example). Use the native prototype setter and fire an `input` event so
-  // React's tracker accepts the new value as authoritative.
-  await page.getByTestId('turnstile-response').evaluate((el) => {
-    const input = el as HTMLInputElement;
-    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-    setter?.call(input, 'test-bypass-token');
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-  });
   await page.getByTestId('email-input').fill(email);
-  await page.getByTestId('signin-submit').click();
+  await expect(page.getByTestId('signin-submit')).toBeEnabled();
+
+  // The real widget injects this named input. If its CDN is unavailable in a
+  // test runner, create the same field inside the widget container. Set every
+  // matching field and submit in one browser task so React's pending-state
+  // reconciliation cannot clear the value before FormData is captured.
+  await page.getByTestId('signin-form').evaluate((node) => {
+    const form = node as HTMLFormElement;
+    let inputs = Array.from(
+      form.querySelectorAll<HTMLInputElement>('input[name="cf-turnstile-response"]'),
+    );
+    if (inputs.length === 0) {
+      const input = document.createElement('input');
+      input.type = 'hidden';
+      input.name = 'cf-turnstile-response';
+      form.querySelector('[data-testid="turnstile"]')?.append(input);
+      inputs = [input];
+    }
+    for (const input of inputs) {
+      input.defaultValue = 'test-bypass-token';
+      input.value = 'test-bypass-token';
+    }
+
+    const submitter = form.querySelector<HTMLButtonElement>('[data-testid="signin-submit"]');
+    if (submitter) form.requestSubmit(submitter);
+    else form.requestSubmit();
+  });
 }
 
-// These two tests submit the signin form with a stand-in Turnstile token. They
-// pass in a real browser but are skipped in this CI suite — the React 19
-// + Next.js 16 server-action runtime does not pick up the fallback hidden
-// input's value when set from page.evaluate (the value-tracker resets it on
-// the form's pending-state reconciliation), so the action sees an empty
-// token and returns the generic 'invalid' error. Tracking the proper fix
-// separately. The "rejects empty Turnstile token" test below still
-// exercises the validation error path and stays enabled.
-test.skip('signin happy path sends a magic link and the link logs the user in', async ({
-  page,
-}) => {
-  const email = `happy-${Date.now()}@example.com`;
+test('signin happy path sends a magic link and the link logs the user in', async ({ page }) => {
+  const email = 'student@example.com';
   const startedAt = Date.now();
   await submitSignin(page, email);
   await expect(page.getByText('Check your inbox')).toBeVisible();
@@ -77,10 +82,11 @@ test.skip('signin happy path sends a magic link and the link logs the user in', 
   await expect(page).toHaveURL(/\/$/);
 });
 
-test.skip('signin rate-limits requests per IP', async ({ page }) => {
+test('signin rate-limits requests per IP', async ({ page }) => {
   // All sign-in requests share one per-IP 'signin' bucket regardless of email
   // (uniform threshold — no existing-user enumeration). Assumes the cap is set
   // low (RATE_LIMIT_SIGNIN_MAX) for the test run; the default is 10/hour.
+  await page.setExtraHTTPHeaders({ 'x-real-ip': '198.51.100.42' });
   for (let i = 0; i < 3; i++) {
     await submitSignin(page, `rl-${i}-${Date.now()}@example.com`);
     await expect(page.getByText('Check your inbox')).toBeVisible();

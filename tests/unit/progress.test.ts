@@ -58,16 +58,21 @@ async function seedUser(email: string): Promise<number> {
   return row!.id;
 }
 
-/** MCQ submit items from the maths/easy bank, choosing `correctCount` right. */
+/** Complete maths/easy paper, choosing `correctCount` MCQs right. */
 function mathsEasyItems(correctCount: number): AttemptInput['items'] {
-  const bank = QUESTIONS.maths!.easy!.filter((q) => q.type === 'mcq');
-  return bank.map((q, idx) => {
+  const bank = QUESTIONS.maths!.easy!;
+  let mcqIndex = 0;
+  return bank.map((q) => {
+    if (q.type === 'free') {
+      return { type: 'free' as const, id: q.id, response: 'A complete worked explanation.' };
+    }
     const answer = (ANSWER_KEYS[q.id] as { answer: number }).answer;
-    const len = q.type === 'mcq' ? q.choices.length : 0;
+    const chosen = mcqIndex < correctCount ? answer : (answer + 1) % q.choices.length;
+    mcqIndex += 1;
     return {
       type: 'mcq' as const,
       id: q.id,
-      chosen: idx < correctCount ? answer : (answer + 1) % len,
+      chosen,
     };
   });
 }
@@ -84,15 +89,15 @@ describe('saveAttempt + getProgressForUser', () => {
     });
     expect(result.ok).toBe(true);
     if (result.ok) {
-      // saveAttempt returns the freshly-inserted record directly.
-      expect(result.attempt.correct).toBe(2);
+      // Two MCQs + the deterministic full-score free-text stub.
+      expect(result.attempt.correct).toBe(3);
     }
 
     const progress = getProgressForUser(userId);
     expect(progress.attempts).toHaveLength(1);
     const attempt = progress.attempts[0]!;
     expect(attempt.subject).toBe('maths');
-    expect(attempt.correct).toBe(2);
+    expect(attempt.correct).toBe(3);
     expect(attempt.items.length).toBeGreaterThan(0);
     expect(progress.subjects.find((s) => s.subjectId === 'maths')?.best).toBe(attempt.scorePct);
   });
