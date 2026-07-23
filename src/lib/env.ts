@@ -8,7 +8,7 @@ import { parseFamilies } from './families';
  *
  * The strict-mode flag explicitly excludes `next build`, because the build
  * doesn't need real secrets (they aren't bundled — env.ts is evaluated at
- * server-start time on Railway, and again at build time when Next.js does
+ * production server-start time, and again at build time when Next.js does
  * page-data collection). `NEXT_PHASE=phase-production-build` covers that
  * case. The actual runtime server runs under
  * `NEXT_PHASE=phase-production-server`, where the strict check applies.
@@ -31,11 +31,11 @@ const DEFAULT_FAMILIES_JSON = '[{"child":"student@example.com","parents":["paren
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
 
-  // Domain-shaped URL fed from Railway at runtime. Drives the absolute URLs
-  // in magic-link sign-in emails.
+  // Public app URL supplied at runtime. Drives absolute URLs in magic-link
+  // sign-in emails.
   SITE_URL: z.preprocess((v) => v ?? dev('http://localhost:3000'), z.string().url()),
 
-  // SQLite file path. `file:/data/app.db` on Railway, where /data is a Volume.
+  // SQLite file path. In production, point this at runtime-mounted persistent storage.
   DATABASE_URL: z.preprocess((v) => v ?? dev('file:./data/app.db'), z.string().min(1)),
 
   // Signs the session cookie. If this falls back to a known value in
@@ -58,7 +58,7 @@ const envSchema = z.object({
   //
   // Parsed to a typed `Family[]` at boot: empty/unset ⇒ `[]` (fail closed —
   // nobody can sign in); malformed JSON or an invalid email fails boot with a
-  // readable error (a Railway healthcheck failure). The dev default below pairs
+  // readable error (and fails the platform healthcheck). The dev default below pairs
   // one student with one parent so `pnpm dev` and the e2e dev-defaults work.
   FAMILIES: z.preprocess(
     (v) => v ?? dev(DEFAULT_FAMILIES_JSON),
