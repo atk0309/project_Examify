@@ -17,12 +17,15 @@
 
 ## End-of-session checklist
 
+- [ ] `pnpm format:check` clean
+- [ ] `pnpm lint` clean
 - [ ] `pnpm typecheck` clean
 - [ ] `pnpm test` green
 - [ ] `pnpm test:e2e` green (or note why deferred)
 - [ ] `pnpm build` clean
 - [ ] Docs pass — `CLAUDE.md` / `README.md` / `.env.example` updated if anything that affects setup, env, or routes changed
 - [ ] Test expansion pass — new pages, helpers, or server actions have coverage
+- [ ] Security and privacy impact considered; no secrets or personal data included
 
 ## Notes for the reviewer
 

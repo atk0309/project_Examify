@@ -224,8 +224,10 @@ documented always-pass dummy keys; server-side Turnstile verification still runs
 
 ## Contributing, security, license
 
-- Contributions welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md). Architecture and
-  invariants live in [`CLAUDE.md`](CLAUDE.md) (also the working agreement for AI coding
-  agents, paired with [`AGENTS.md`](AGENTS.md)).
+- Contributions welcome — start with [`CONTRIBUTING.md`](CONTRIBUTING.md) and
+  [`SUPPORT.md`](SUPPORT.md), and follow the
+  [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md). Architecture and invariants live in
+  [`CLAUDE.md`](CLAUDE.md) (also the working agreement for AI coding agents, paired with
+  [`AGENTS.md`](AGENTS.md)).
 - Found a vulnerability? Please report it privately — see [`SECURITY.md`](SECURITY.md).
 - [MIT](LICENSE).

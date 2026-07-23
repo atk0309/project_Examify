@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/atk0309/project_Examify/security/advisories/new
+    about: Report vulnerabilities privately. Do not open a public issue.
+  - name: Report abusive or harassing conduct
+    url: https://github.com/contact/report-abuse
+    about: Use GitHub's private abuse-reporting flow for sensitive conduct reports.

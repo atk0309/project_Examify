@@ -5,6 +5,19 @@ spirit. Architecture, invariants, and the rationale behind them live in
 [`CLAUDE.md`](CLAUDE.md) (paired with [`AGENTS.md`](AGENTS.md) for AI coding agents);
 read the relevant section before changing auth, scoring, or content code.
 
+By participating, you agree to follow the
+[`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
+
+## Before opening an issue
+
+Search the existing issues, then use the bug, feature, or question form from the issue
+chooser. General support guidance lives in [`SUPPORT.md`](SUPPORT.md).
+
+Never put secrets, real family data, active magic links, or vulnerability details in a
+public issue. Security problems must use the private process in
+[`SECURITY.md`](SECURITY.md); conduct concerns follow
+[`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
+
 ## Prerequisites
 
 - Node 22 LTS (`.nvmrc`)
@@ -56,6 +69,7 @@ pnpm test:e2e   # where your environment permits
 
 - Work on a feature branch; never push to `main`.
 - Fill in the PR template (routes touched, tests added, command output summary).
+- Run formatting, lint, types, tests, and the production build before requesting review.
 - Keep docs in sync in the same PR: `README.md`, `CLAUDE.md`/`AGENTS.md`, and
   `.env.example` for anything that changes setup, env vars, routes, or invariants.
 - Don't merge with a red CI.
