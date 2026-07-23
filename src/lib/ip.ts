@@ -14,8 +14,8 @@ function isValidIp(value: string): boolean {
  *
  *   1. `cf-connecting-ip` — Cloudflare-injected, opaque to the client. Use it
  *      when Cloudflare fronts the app.
- *   2. `x-real-ip` — typically set by Nginx-style proxies (Railway included)
- *      and not appendable by the client.
+ *   2. `x-real-ip` — typically set by Nginx-style reverse proxies and not
+ *      appendable by the client.
  *   3. The **last** entry of `x-forwarded-for` — the value the immediate
  *      trusted proxy appended. The *first* entry of XFF is the original
  *      client's claim and can be spoofed by setting the header from the

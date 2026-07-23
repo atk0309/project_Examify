@@ -211,9 +211,8 @@ pnpm db:migrate && pnpm start    # run migrations at startup, then serve
 Point `DATABASE_URL` at a file on **persistent storage** so the database survives
 deploys, set the required env vars above, and healthcheck `GET /api/health`.
 
-A ready-made **Railway** config is included: `railway.toml` builds with Nixpacks, runs
-`pnpm run db:migrate && pnpm start`, and healthchecks `/api/health`. Attach a Volume
-mounted at `/data` and set `DATABASE_URL=file:/data/app.db`.
+On hosts with ephemeral filesystems, mount persistent storage (for example at `/data`)
+and set `DATABASE_URL=file:/data/app.db`.
 
 ## Testing
 

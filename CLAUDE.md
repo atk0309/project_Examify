@@ -15,8 +15,7 @@ making any change — it encodes invariants that are easy to miss from the diff 
 their kid(s). It turns content (optionally sourced from the family's own study PDFs,
 added by hand to a static data file) into short practice exams. It is intentionally
 small: a static question bank, a four-screen client flow, magic-link sign-in gated by
-an email allowlist, and SQLite on a single file (a Railway Volume in the reference
-deploy, which hosts with auto-deploy via `railway.toml`).
+an email allowlist, and SQLite in a single file on runtime-mounted persistent storage.
 
 Surface:
 
@@ -34,7 +33,7 @@ Surface:
   illegal during a Server Component render (Next.js 16). Failures redirect to its sibling page.
 - **`/signin/verify/error`** — a read-only page that renders the human-readable failure copy
   for an invalid/expired/used/missing token, keyed off a `?reason=` query param.
-- **`/api/health`** — lightweight healthcheck for Railway.
+- **`/api/health`** — lightweight platform healthcheck.
 - **`/robots.txt`** — disallow-all (this is a private, allowlisted app).
 
 There is **no blog, no MDX, no admin panel, no public marketing page** — the first screen
@@ -45,17 +44,17 @@ is the usable login, and the screen after it is the usable dashboard.
 Latest stable of each, exact-pinned in `package.json` (no `^`/`~`). Bumps land via the
 grouped weekly Dependabot PRs in `.github/dependabot.yml`.
 
-| Layer       | Choice                                                                      |
-| ----------- | --------------------------------------------------------------------------- |
-| Runtime     | Node 22 LTS (`engines`, `.nvmrc`), pnpm 10                                  |
-| Framework   | Next.js 16 (App Router, Turbopack), React 19.2, TypeScript 6 strict         |
-| Styling     | Tailwind v4 with a CSS-first `@theme` token block, three `data-theme` moods |
-| DB          | SQLite on a Railway Volume, accessed through Drizzle ORM + better-sqlite3   |
-| Auth        | Homegrown magic-link (Resend) + iron-session cookies, role-gated by env     |
-| Captcha     | Cloudflare Turnstile, server-verified on the login submit                   |
-| Email       | Resend SDK, with a `tests/.tmp/outbox/*.json` short-circuit when key=test   |
-| Tests       | Vitest (unit), Playwright (e2e), Cloudflare dummy test keys                 |
-| Lint/Format | ESLint 9.39 (Next 16 plugin set) + Prettier + Tailwind plugin               |
+| Layer       | Choice                                                                       |
+| ----------- | ---------------------------------------------------------------------------- |
+| Runtime     | Node 22 LTS (`engines`, `.nvmrc`), pnpm 10                                   |
+| Framework   | Next.js 16 (App Router, Turbopack), React 19.2, TypeScript 6 strict          |
+| Styling     | Tailwind v4 with a CSS-first `@theme` token block, three `data-theme` moods  |
+| DB          | SQLite on runtime-mounted storage, accessed through Drizzle + better-sqlite3 |
+| Auth        | Homegrown magic-link (Resend) + iron-session cookies, role-gated by env      |
+| Captcha     | Cloudflare Turnstile, server-verified on the login submit                    |
+| Email       | Resend SDK, with a `tests/.tmp/outbox/*.json` short-circuit when key=test    |
+| Tests       | Vitest (unit), Playwright (e2e), Cloudflare dummy test keys                  |
+| Lint/Format | ESLint 9.39 (Next 16 plugin set) + Prettier + Tailwind plugin                |
 
 **Why ESLint 9, not 10?** `eslint-plugin-react@7.x` doesn't support ESLint 10 yet, and
 `eslint-config-next@16` pulls it in transitively. Move both together later.
@@ -100,7 +99,7 @@ grouped weekly Dependabot PRs in `.github/dependabot.yml`.
 ```
 src/
   app/                  # routes (App Router)
-    api/health/         # Railway healthcheck
+    api/health/         # platform healthcheck
     signin/             # magic-link login (page); verify (route.ts) + verify/error (page)
     page.tsx            # auth gate -> ExamApp
     layout.tsx          # fonts (Newsreader + Hanken Grotesk via <link>), data-theme
@@ -326,10 +325,10 @@ These are non-negotiable. Don't "fix" them out.
 
 Defined and validated by zod in `src/lib/env.ts`. **Fails closed in production:** dev
 defaults attach only when `NODE_ENV !== 'production'` (and during `next build`, which Next
-distinguishes via `NEXT_PHASE=phase-production-build`). On Railway the server boots under
+distinguishes via `NEXT_PHASE=phase-production-build`). The production server boots under
 `NEXT_PHASE=phase-production-server` and `NODE_ENV=production`, so a missing `AUTH_SECRET`,
-`TURNSTILE_SECRET_KEY`, etc. crashes boot with a readable zod error (a Railway healthcheck
-failure). Don't add dev defaults to security-critical vars without weighing that. `FAMILIES`
+`TURNSTILE_SECRET_KEY`, etc. crashes boot with a readable zod error (and fails the platform
+healthcheck). Don't add dev defaults to security-critical vars without weighing that. `FAMILIES`
 is parsed to a typed `Family[]` by a zod transform (`parseFamilies`): empty/unset defaults to `[]`
 in production (fail closed: nobody can sign in until set), but malformed JSON or an invalid email
 **crashes boot** with a readable zod error.
