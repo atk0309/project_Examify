@@ -44,20 +44,20 @@
     "zod": "4.4.3"
   },
   "devDependencies": {
-    "@playwright/test": "1.61.1",
+    "@playwright/test": "1.62.1",
     "@tailwindcss/postcss": "4.3.3",
-    "@testing-library/jest-dom": "6.9.1",
-    "@testing-library/react": "16.3.2",
+    "@testing-library/jest-dom": "7.0.1",
+    "@testing-library/react": "16.3.3",
     "@types/better-sqlite3": "7.6.13",
     "@types/node": "26.1.1",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.5",
-    "@vitejs/plugin-react": "6.0.3",
+    "@vitejs/plugin-react": "6.1.1",
     "drizzle-kit": "0.31.10",
     "eslint": "9.39.5",
     "eslint-config-next": "16.3.3",
     "husky": "9.1.7",
-    "jsdom": "29.1.1",
+    "jsdom": "30.0.1",
     "lint-staged": "17.4.1",
     "postcss": "8.5.23",
     "prettier": "3.9.6",
@@ -65,7 +65,7 @@
     "tailwindcss": "4.3.3",
     "tsx": "4.23.1",
     "typescript": "6.0.3",
-    "vitest": "4.1.10"
+    "vitest": "4.1.11"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
