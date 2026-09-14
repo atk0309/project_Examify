@@ -126,6 +126,7 @@ describe('invites + consumeMagicToken', () => {
 
   it('forbids a student from creating invites', async () => {
     const { bootstrapHousehold, createHouseholdInvite, attachMembershipFromInvite } = await lib();
+    type Attach = Awaited<ReturnType<typeof attachMembershipFromInvite>>;
     const { db, schema } = await import('@/lib/db');
     const host = bootstrapHousehold({ email: 'pat@example.com', householdName: 'Ours' });
     if (!host.ok) return;
@@ -136,9 +137,11 @@ describe('invites + consumeMagicToken', () => {
       .get()!;
     const created = createHouseholdInvite({ actorUserId: host.userId, role: 'student' });
     if (!created.ok) return;
+    let attached: Attach | undefined;
     db.transaction((tx) => {
-      attachMembershipFromInvite(tx, created.invite.id, kid.id, 'kid@example.com');
+      attached = attachMembershipFromInvite(tx, created.invite.id, kid.id, 'kid@example.com');
     });
+    expect(attached).toEqual({ ok: true });
     expect(createHouseholdInvite({ actorUserId: kid.id, role: 'parent' })).toEqual({
       ok: false,
       reason: 'forbidden',

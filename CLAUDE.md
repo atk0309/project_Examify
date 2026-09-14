@@ -191,18 +191,21 @@ These are non-negotiable. Don't "fix" them out.
 - **No enumeration.** `requestMagicLink` always returns the generic `sent` state once
   Turnstile (when enabled) + rate-limit pass; it only issues + emails a link when the
   email is a household member for that role. Don't add a branch that reveals whether
-  an email has been invited. Email-locked invites use the same generic `sent` copy
-  when the address does not match.
+  an email has been invited — including delivery failure (log server-side, still
+  return `sent`). Email-locked invites use the same generic `sent` copy when the
+  address does not match.
 - **The "sent" screen resets via client state, not navigation.** `LoginForm` lives on
   `/signin`, so "Use a different email" can't be a `<Link href="/signin">` — that's a
   same-route soft nav that never remounts the component, leaving `useActionState` at
   `status: 'sent'` (the button looked dead). It toggles a local `dismissed` flag back to
   the form; the `submit` wrapper clears `dismissed` so a fresh send re-shows the screen.
-- Turnstile is **never** bypassed server-side **when keys are set**. Both
+- Turnstile is **never** bypassed server-side **when either key is set**. Both
   `NEXT_PUBLIC_TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY` must be present to
-  enable captcha; when unset, the widget is omitted and `verifyTurnstile` returns
-  ok. When set, the login / setup / invite-accept actions still call
-  `verifyTurnstile()` with the client's token before issuing anything.
+  enable captcha; when both are unset, the widget is omitted and `verifyTurnstile`
+  returns ok. Exactly one key in production crashes boot. When either key is set,
+  `verifyTurnstile()` never short-circuits to ok (partial config fails closed).
+  The login / setup / invite-accept actions still call `verifyTurnstile()` with
+  the client's token before issuing anything.
 - IP extraction always goes through `src/lib/ip.ts`, which prefers `cf-connecting-ip` →
   `x-real-ip` → the **last** entry of `x-forwarded-for`. The first XFF entry is
   client-controllable; don't read `x-forwarded-for` directly in handlers.
@@ -336,17 +339,20 @@ Defined and validated by zod in `src/lib/env.ts`. **Fails closed in production:*
 defaults attach only when `NODE_ENV !== 'production'` (and during `next build`, which Next
 distinguishes via `NEXT_PHASE=phase-production-build`). The production server boots under
 `NEXT_PHASE=phase-production-server` and `NODE_ENV=production`, so a missing `AUTH_SECRET`,
-`TURNSTILE_SECRET_KEY`, etc. crashes boot with a readable zod error (and fails the platform
+`DATABASE_URL`, etc. crashes boot with a readable zod error (and fails the platform
 healthcheck). Don't add dev defaults to security-critical vars without weighing that.
 Access is DB-backed: empty households fail closed (nobody can sign in until `/setup`
 or a leftover `FAMILIES` import). Malformed leftover `FAMILIES` JSON is skipped with
-a warning — it no longer crashes boot.
+a warning — it no longer crashes boot. `/setup` itself is gated by
+`SETUP_BOOTSTRAP_SECRET` (required in production, min 16); captcha is not identity.
 
-Required in production: `SITE_URL`, `AUTH_SECRET`, `DATABASE_URL`, `ANTHROPIC_API_KEY`.
-`RESEND_API_KEY` / `RESEND_FROM` are optional (unset or `test` → local outbox).
-Turnstile keys are optional (both unset → captcha off). `ANTHROPIC_API_KEY` still
-fails closed in prod when missing; the `test` sentinel routes the grader to a
-deterministic stub. See `.env.example` for the canonical list.
+Required in production: `SITE_URL`, `AUTH_SECRET`, `DATABASE_URL`, `ANTHROPIC_API_KEY`,
+`SETUP_BOOTSTRAP_SECRET`. `RESEND_API_KEY` / `RESEND_FROM` are optional in outbox
+mode (unset or `test` → local outbox). A real Resend key requires `RESEND_FROM` —
+there is no `onboarding@resend.dev` fallback. Turnstile keys are optional (both
+unset → captcha off; exactly one key in production crashes boot).
+`ANTHROPIC_API_KEY` still fails closed in prod when missing; the `test` sentinel
+routes the grader to a deterministic stub. See `.env.example` for the canonical list.
 
 ## Testing rules
 

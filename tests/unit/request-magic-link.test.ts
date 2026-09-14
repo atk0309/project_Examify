@@ -7,7 +7,8 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 
 const TMP = path.join(process.cwd(), 'tests', '.tmp');
 const DB_PATH = path.join(TMP, `magic-link-${process.pid}.db`);
-const OUTBOX = path.join(TMP, 'outbox');
+const OUTBOX = process.env.MAIL_OUTBOX_DIR ?? path.join(TMP, `outbox-magic-link-${process.pid}`);
+Reflect.set(process.env, 'MAIL_OUTBOX_DIR', OUTBOX);
 Reflect.set(process.env, 'DATABASE_URL', `file:${DB_PATH}`);
 delete process.env.FAMILIES;
 
@@ -136,6 +137,25 @@ describe('requestMagicLink', () => {
     );
     expect(state).toEqual({ status: 'sent', email: 'student@example.com' });
     expect(await outboxCount()).toBe(1);
+  });
+
+  it('returns generic sent (and logs) when delivery fails for a member', async () => {
+    await seedStudent();
+    const { env } = await import('@/lib/env');
+    const email = await import('@/lib/email');
+    const { requestMagicLink } = await import('@/actions/requestMagicLink');
+    (env as { TURNSTILE_SECRET_KEY?: string }).TURNSTILE_SECRET_KEY =
+      '1x0000000000000000000000000000000AA';
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(email, 'sendEmail').mockResolvedValueOnce({ ok: false, error: 'boom' });
+
+    const state = await requestMagicLink(
+      { status: 'idle' },
+      form('student@example.com', 'student', 'ok'),
+    );
+    expect(state).toEqual({ status: 'sent', email: 'student@example.com' });
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
   });
 
   it('rejects a missing token when Turnstile is enabled', async () => {

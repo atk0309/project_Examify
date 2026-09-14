@@ -213,7 +213,7 @@ describe('resolveChildren (per-household isolation)', () => {
     expect(children[0]!.id).toBe(alex);
   });
 
-  it('returns nothing for a parent in another household (no cross-household visibility)', async () => {
+  it('resolves only the parent’s own household student (no cross-household visibility)', async () => {
     const { resolveChildren } = await import('@/lib/progress');
     await seedHouseholds();
     const children = resolveChildren('stranger@example.com');

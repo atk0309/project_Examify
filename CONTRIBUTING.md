@@ -31,7 +31,8 @@ cp .env.example .env   # dev defaults work out of the box — no real keys neede
 pnpm dev               # http://localhost:3000
 ```
 
-In development, magic-link emails are written to `tests/.tmp/outbox/*.json`
+In development, magic-link emails are written to a local outbox
+(`MAIL_OUTBOX_DIR` if set, otherwise `tests/.tmp/outbox/*.json`)
 (`RESEND_API_KEY=test`) and free-text grading uses a local stub
 (`ANTHROPIC_API_KEY=test`), so the whole flow works offline.
 

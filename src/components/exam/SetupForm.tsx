@@ -11,6 +11,7 @@ const errorCopy: Record<Exclude<BootstrapState, { status: 'idle' }>['reason'], s
   already_setup: 'This instance is already set up. Sign in instead.',
   captcha: 'Verification failed. Please try again.',
   rate_limited: 'Too many attempts from your network. Try again later.',
+  forbidden: 'That setup code is not valid.',
 };
 
 export function SetupForm({ siteKey }: { siteKey?: string }) {
@@ -20,7 +21,9 @@ export function SetupForm({ siteKey }: { siteKey?: string }) {
   );
   const [email, setEmail] = useState('');
   const [name, setName] = useState('Our family');
-  const valid = EMAIL_RE.test(email.trim()) && name.trim().length > 0;
+  const [setupSecret, setSetupSecret] = useState('');
+  const valid =
+    EMAIL_RE.test(email.trim()) && name.trim().length > 0 && setupSecret.trim().length > 0;
 
   return (
     <form className="screen login" action={formAction} data-testid="setup-form">
@@ -36,8 +39,8 @@ export function SetupForm({ siteKey }: { siteKey?: string }) {
         <span className="brand-mark">E</span>
         <h1 className="brand-word">Set up Examify</h1>
         <p className="login-sub">
-          First person here becomes the household admin. Invite students and other parents from the
-          dashboard — no env JSON to edit.
+          First person here becomes the household admin. Enter the setup code configured on this
+          instance, then invite students and other parents from the dashboard — no env JSON to edit.
         </p>
       </div>
 
@@ -55,6 +58,23 @@ export function SetupForm({ siteKey }: { siteKey?: string }) {
           value={name}
           onChange={(e) => setName(e.target.value)}
           data-testid="household-name-input"
+        />
+      </div>
+
+      <div className="field">
+        <label className="field-label" htmlFor="setup-secret">
+          Setup code
+        </label>
+        <input
+          id="setup-secret"
+          name="setupSecret"
+          className="text-input"
+          type="password"
+          autoComplete="off"
+          required
+          value={setupSecret}
+          onChange={(e) => setSetupSecret(e.target.value)}
+          data-testid="setup-secret-input"
         />
       </div>
 

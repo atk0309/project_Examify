@@ -67,7 +67,9 @@ export async function requestMagicLink(
       html: rendered.html,
       text: rendered.text,
     });
-    if (!result.ok) return { status: 'error', reason: 'send_failed' };
+    if (!result.ok) {
+      console.error('[auth] magic-link delivery failed', { email, error: result.error });
+    }
   }
 
   return { status: 'sent', email };

@@ -2,7 +2,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
 
-const OUTBOX = path.join(process.cwd(), 'tests', '.tmp', 'outbox');
+const OUTBOX =
+  process.env.MAIL_OUTBOX_DIR ?? path.join(process.cwd(), 'tests', '.tmp', 'e2e-outbox');
 
 async function readLatestOutboxFor(email: string, since: number): Promise<string | null> {
   const entries = await fs.readdir(OUTBOX).catch(() => []);

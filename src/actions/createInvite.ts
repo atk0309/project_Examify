@@ -14,7 +14,14 @@ const inputSchema = z.object({
 });
 
 export type CreateInviteResult =
-  | { ok: true; url: string; role: 'student' | 'parent'; email: string | null; expiresAt: number }
+  | {
+      ok: true;
+      id: number;
+      url: string;
+      role: 'student' | 'parent';
+      email: string | null;
+      expiresAt: number;
+    }
   | { ok: false; reason: 'forbidden' | 'invalid' };
 
 export async function createInvite(formData: FormData): Promise<CreateInviteResult> {
@@ -40,6 +47,7 @@ export async function createInvite(formData: FormData): Promise<CreateInviteResu
   const url = `${env.SITE_URL}/invite/${encodeURIComponent(created.token)}`;
   return {
     ok: true,
+    id: created.invite.id,
     url,
     role: created.invite.role,
     email: created.invite.email,

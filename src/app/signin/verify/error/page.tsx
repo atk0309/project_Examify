@@ -39,7 +39,9 @@ function pickReason(search: Search): string | undefined {
 
 export default async function VerifyErrorPage({ searchParams }: { searchParams: Promise<Search> }) {
   const search = await searchParams;
-  const { title, detail } = copyFor(pickReason(search));
+  const reason = pickReason(search);
+  const { title, detail } = copyFor(reason);
+  const showRequestLink = reason !== 'invite-invalid';
 
   return (
     <div className="stage">
@@ -48,11 +50,13 @@ export default async function VerifyErrorPage({ searchParams }: { searchParams: 
           <div className="sent-state">
             <h1 className="sent-title">{title}</h1>
             <p className="sent-note">{detail}</p>
-            <div className="mt-6 flex flex-col gap-[var(--sp-2)]">
-              <Link className="btn btn-primary" href="/signin">
-                Request a new link
-              </Link>
-            </div>
+            {showRequestLink ? (
+              <div className="mt-6 flex flex-col gap-[var(--sp-2)]">
+                <Link className="btn btn-primary" href="/signin">
+                  Request a new link
+                </Link>
+              </div>
+            ) : null}
           </div>
         </div>
       </div>

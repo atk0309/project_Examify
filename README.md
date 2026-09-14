@@ -100,17 +100,21 @@ cp .env.example .env        # dev defaults work out of the box
 pnpm dev                    # http://localhost:3000  -> redirects to /signin
 ```
 
-With `RESEND_API_KEY=test`, sign-in emails are written to `tests/.tmp/outbox/*.json`
-instead of being sent — open the link inside to "click" the magic link locally. On a
-fresh database, visit `/setup` and create the first household (you become the admin
-parent). Invite the student from the dashboard. With `ANTHROPIC_API_KEY=test`, free-text
-grading uses a deterministic local stub — no network, no API key needed for development.
+With `RESEND_API_KEY=test`, sign-in emails are written to a local outbox
+(`MAIL_OUTBOX_DIR` if set, otherwise `tests/.tmp/outbox/*.json`) instead of being
+sent — open the link inside to "click" the magic link locally. On a fresh
+database, visit `/setup`, enter the setup code (`SETUP_BOOTSTRAP_SECRET`; the
+dev default works locally), and create the first household (you become the admin
+parent). Invite the student from the dashboard. With `ANTHROPIC_API_KEY=test`,
+free-text grading uses a deterministic local stub — no network, no API key needed
+for development.
 
 ## Access: invite-only households
 
 Who may sign in is stored in SQLite, not env:
 
-1. **First run** — `/setup` creates the household and the admin (a parent). No email
+1. **First run** — `/setup` creates the household and the admin (a parent). You must
+   enter the deployment `SETUP_BOOTSTRAP_SECRET` (required in production). No email
    round-trip; you are at the keyboard.
 2. **Invite** — from the parent dashboard, create a student or parent invite link
    (optionally locked to one email). Share `/invite/<token>`.
@@ -121,7 +125,9 @@ Who may sign in is stored in SQLite, not env:
    household cannot see another.
 
 The sign-in screen always shows "Check your inbox" whether or not the email is a member
-(anti-enumeration) — a silent non-delivery usually means they have not been invited yet.
+(anti-enumeration), and the same generic `sent` response is used if delivery fails
+(logged server-side). A silent non-delivery usually means they have not been invited
+yet, or mail could not be sent.
 
 ### Migrating from `FAMILIES` env JSON
 
@@ -133,7 +139,8 @@ leave it unset and use `/setup`.
 
 Turnstile is optional: leave `NEXT_PUBLIC_TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY`
 unset to skip the captcha. When both are set, sign-in / setup / invite accept verify the
-token on the server (same as before).
+token on the server. Setting exactly one key in production crashes boot so verify cannot
+be silently disabled.
 
 ## Authoring content
 
@@ -196,12 +203,14 @@ applied at runtime via `accentCSS()`.
 
 Defined and validated by zod in `src/lib/env.ts`; the canonical reference is
 `.env.example`. Required in production: `SITE_URL`, `AUTH_SECRET`, `DATABASE_URL`,
-`ANTHROPIC_API_KEY`. `RESEND_API_KEY` / `RESEND_FROM` and the Turnstile keys are
-**optional** — unset Resend writes magic links to a local outbox; unset Turnstile skips
-captcha. Env validation **fails closed** in production for the required vars (a missing
-one crashes boot so your platform's healthcheck catches it). Access is empty-fail-closed:
-until someone completes `/setup` (or a leftover `FAMILIES` import runs), nobody can sign
-in.
+`ANTHROPIC_API_KEY`, `SETUP_BOOTSTRAP_SECRET`. `RESEND_API_KEY` / `RESEND_FROM` are
+optional in outbox mode (unset or `test` → local outbox). A real Resend key
+**requires** `RESEND_FROM`. Turnstile keys are optional when **both** are unset;
+exactly one key in production crashes boot. Env validation **fails closed** in
+production for the required vars (a missing one crashes boot so your platform's
+healthcheck catches it). Access is empty-fail-closed: until someone completes
+`/setup` with the bootstrap secret (or a leftover `FAMILIES` import runs), nobody
+can sign in.
 
 ## Deploy
 

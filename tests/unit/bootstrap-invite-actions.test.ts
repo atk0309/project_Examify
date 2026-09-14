@@ -64,13 +64,18 @@ beforeEach(async () => {
   (env as { NEXT_PUBLIC_TURNSTILE_SITE_KEY?: string }).NEXT_PUBLIC_TURNSTILE_SITE_KEY = undefined;
 });
 
+function setupForm(overrides: Record<string, string> = {}): FormData {
+  const data = new FormData();
+  data.set('email', overrides.email ?? 'host@example.com');
+  data.set('householdName', overrides.householdName ?? 'Our family');
+  data.set('setupSecret', overrides.setupSecret ?? 'dev-setup-bootstrap-secret');
+  return data;
+}
+
 describe('bootstrapHouseholdAction', () => {
   it('creates the first admin and establishes a parent session', async () => {
     const { bootstrapHouseholdAction } = await import('@/actions/bootstrapHousehold');
-    const data = new FormData();
-    data.set('email', 'host@example.com');
-    data.set('householdName', 'Our family');
-    await expect(bootstrapHouseholdAction({ status: 'idle' }, data)).rejects.toMatchObject({
+    await expect(bootstrapHouseholdAction({ status: 'idle' }, setupForm())).rejects.toMatchObject({
       url: '/',
     });
     expect(sessionHolder.current.userId).toBeTypeOf('number');
@@ -79,14 +84,32 @@ describe('bootstrapHouseholdAction', () => {
     expect(sessionHolder.current.save).toHaveBeenCalledOnce();
   });
 
+  it('rejects a missing or wrong setup secret before creating a household', async () => {
+    const { bootstrapHouseholdAction } = await import('@/actions/bootstrapHousehold');
+    const { hasAnyHousehold } = await import('@/lib/households');
+    const missing = await bootstrapHouseholdAction(
+      { status: 'idle' },
+      setupForm({ setupSecret: '' }),
+    );
+    expect(missing).toEqual({ status: 'error', reason: 'forbidden' });
+    expect(hasAnyHousehold()).toBe(false);
+
+    const wrong = await bootstrapHouseholdAction(
+      { status: 'idle' },
+      setupForm({ setupSecret: 'definitely-not-the-setup-secret' }),
+    );
+    expect(wrong).toEqual({ status: 'error', reason: 'forbidden' });
+    expect(hasAnyHousehold()).toBe(false);
+  });
+
   it('rejects a second setup', async () => {
     const { bootstrapHousehold } = await import('@/lib/households');
     bootstrapHousehold({ email: 'a@example.com', householdName: 'One' });
     const { bootstrapHouseholdAction } = await import('@/actions/bootstrapHousehold');
-    const data = new FormData();
-    data.set('email', 'b@example.com');
-    data.set('householdName', 'Two');
-    const state = await bootstrapHouseholdAction({ status: 'idle' }, data);
+    const state = await bootstrapHouseholdAction(
+      { status: 'idle' },
+      setupForm({ email: 'b@example.com', householdName: 'Two' }),
+    );
     expect(state).toEqual({ status: 'error', reason: 'already_setup' });
   });
 });
@@ -106,6 +129,7 @@ describe('createInvite + requestInviteLink', () => {
     const created = await createInvite(createdForm);
     expect(created.ok).toBe(true);
     if (!created.ok) return;
+    expect(created.id).toBeTypeOf('number');
     expect(created.url).toContain('/invite/');
 
     const token = created.url.split('/invite/')[1]!;

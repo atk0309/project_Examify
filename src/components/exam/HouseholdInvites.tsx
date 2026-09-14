@@ -12,6 +12,7 @@ export function HouseholdInvites({ pending }: { pending: PendingInvite[] }) {
   const [role, setRole] = useState<'student' | 'parent'>('student');
   const [email, setEmail] = useState('');
   const [createdUrl, setCreatedUrl] = useState<string | null>(null);
+  const [createdId, setCreatedId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
@@ -29,16 +30,31 @@ export function HouseholdInvites({ pending }: { pending: PendingInvite[] }) {
         return;
       }
       setCreatedUrl(result.url);
+      setCreatedId(result.id);
       setEmail('');
       router.refresh();
     });
   };
 
   const onRevoke = (inviteId: number) => {
+    setError(null);
     startTransition(async () => {
       const data = new FormData();
       data.set('inviteId', String(inviteId));
-      await revokeInvite(data);
+      const result = await revokeInvite(data);
+      if (!result.ok) {
+        setError(
+          result.reason === 'forbidden'
+            ? 'You cannot revoke that invite.'
+            : 'Could not revoke that invite.',
+        );
+        return;
+      }
+      if (createdId === inviteId) {
+        setCreatedUrl(null);
+        setCreatedId(null);
+        setCopied(false);
+      }
       router.refresh();
     });
   };

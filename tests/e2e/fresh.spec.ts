@@ -2,7 +2,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
 
-const OUTBOX = path.join(process.cwd(), 'tests', '.tmp', 'outbox');
+const OUTBOX =
+  process.env.MAIL_OUTBOX_DIR ?? path.join(process.cwd(), 'tests', '.tmp', 'e2e-fresh-outbox');
 
 test.describe.configure({ mode: 'serial' });
 
@@ -14,6 +15,7 @@ test('first-run bootstrap creates the admin without Turnstile', async ({ page })
 
   await page.getByTestId('household-name-input').fill('Fresh family');
   await page.getByTestId('setup-email-input').fill('host@example.com');
+  await page.getByTestId('setup-secret-input').fill('e2e-setup-bootstrap-secret');
   await page.getByTestId('setup-submit').click();
   await expect(page).toHaveURL(/\/$/);
   await expect(page.getByTestId('household-invites')).toBeVisible();

@@ -10,6 +10,9 @@ const PORT = Number(process.env.E2E_PORT ?? 3100);
 const baseURL = `http://127.0.0.1:${PORT}`;
 
 const E2E_DB = path.join(process.cwd(), 'tests', '.tmp', 'e2e.db');
+const E2E_OUTBOX =
+  process.env.MAIL_OUTBOX_DIR ?? path.join(process.cwd(), 'tests', '.tmp', 'e2e-outbox');
+process.env.MAIL_OUTBOX_DIR = E2E_OUTBOX;
 
 export default defineConfig({
   testDir: './tests/e2e',
@@ -51,7 +54,9 @@ export default defineConfig({
       AUTH_SECRET: 'e2e-secret-must-be-at-least-32-chars-long-yes',
       RESEND_API_KEY: 'test',
       RESEND_FROM: 'WhatATime <test@example.com>',
+      MAIL_OUTBOX_DIR: E2E_OUTBOX,
       ANTHROPIC_API_KEY: 'test',
+      SETUP_BOOTSTRAP_SECRET: 'e2e-setup-bootstrap-secret',
       NEXT_PUBLIC_TURNSTILE_SITE_KEY: '1x00000000000000000000AA',
       TURNSTILE_SECRET_KEY: '1x0000000000000000000000000000000AA',
       RATE_LIMIT_SIGNIN_MAX: '3',

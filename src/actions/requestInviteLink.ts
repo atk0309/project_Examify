@@ -45,9 +45,6 @@ export async function requestInviteLink(
   });
   if (!parsed.success) return { status: 'error', reason: 'invalid' };
 
-  const invite = lookupInvite(parsed.data.inviteToken);
-  if (!invite) return { status: 'error', reason: 'invite_invalid' };
-
   const ip = extractClientIp(await headers());
   if (isTurnstileEnabled() && !token) return { status: 'error', reason: 'invalid' };
   const captcha = await verifyTurnstile(token, ip);
@@ -55,6 +52,11 @@ export async function requestInviteLink(
 
   const limit = checkRateLimit(ip, 'signin');
   if (!limit.ok) return { status: 'error', reason: 'rate_limited' };
+
+  // Look up after Turnstile + the signin bucket so probing tokens still
+  // consume rate-limit (and captcha) like every other sign-in request.
+  const invite = lookupInvite(parsed.data.inviteToken);
+  if (!invite) return { status: 'error', reason: 'invite_invalid' };
 
   const { email } = parsed.data;
   if (emailMayAcceptInvite(invite, email)) {
@@ -67,7 +69,9 @@ export async function requestInviteLink(
       html: rendered.html,
       text: rendered.text,
     });
-    if (!result.ok) return { status: 'error', reason: 'send_failed' };
+    if (!result.ok) {
+      console.error('[auth] invite magic-link delivery failed', { email, error: result.error });
+    }
   }
 
   return { status: 'sent', email };

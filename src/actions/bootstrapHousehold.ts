@@ -3,9 +3,9 @@
 import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { z } from 'zod';
-import { getSession } from '@/lib/auth';
+import { constantTimeEqual, getSession } from '@/lib/auth';
 import { verifyTurnstile } from '@/lib/captcha';
-import { isTurnstileEnabled } from '@/lib/env';
+import { env, isTurnstileEnabled } from '@/lib/env';
 import { bootstrapHousehold, HOUSEHOLD_NAME_MAX } from '@/lib/households';
 import { extractClientIp } from '@/lib/ip';
 import { checkRateLimit } from '@/lib/rate-limit';
@@ -13,12 +13,16 @@ import { checkRateLimit } from '@/lib/rate-limit';
 const inputSchema = z.object({
   email: z.string().trim().toLowerCase().email(),
   householdName: z.string().trim().min(1).max(HOUSEHOLD_NAME_MAX),
+  setupSecret: z.string().optional(),
   token: z.string().optional(),
 });
 
 export type BootstrapState =
   | { status: 'idle' }
-  | { status: 'error'; reason: 'invalid' | 'already_setup' | 'captcha' | 'rate_limited' };
+  | {
+      status: 'error';
+      reason: 'invalid' | 'already_setup' | 'captcha' | 'rate_limited' | 'forbidden';
+    };
 
 /**
  * First-run: create the initial household + admin when none exists.
@@ -32,9 +36,11 @@ export async function bootstrapHouseholdAction(
   const rawToken = formData.get('cf-turnstile-response');
   const token = typeof rawToken === 'string' ? rawToken : '';
 
+  const rawSecret = formData.get('setupSecret');
   const parsed = inputSchema.safeParse({
     email: formData.get('email'),
     householdName: formData.get('householdName'),
+    setupSecret: typeof rawSecret === 'string' ? rawSecret : undefined,
     token: token || undefined,
   });
   if (!parsed.success) return { status: 'error', reason: 'invalid' };
@@ -46,6 +52,14 @@ export async function bootstrapHouseholdAction(
 
   const limit = checkRateLimit(ip, 'signin');
   if (!limit.ok) return { status: 'error', reason: 'rate_limited' };
+
+  // CAPTCHA is not identity. A deployment-provided secret must match before
+  // anyone can claim /setup on a fresh instance.
+  const expected = env.SETUP_BOOTSTRAP_SECRET;
+  const submitted = parsed.data.setupSecret ?? '';
+  if (!expected || !constantTimeEqual(submitted, expected)) {
+    return { status: 'error', reason: 'forbidden' };
+  }
 
   const result = bootstrapHousehold({
     email: parsed.data.email,

@@ -24,7 +24,12 @@ for (const sidecar of [dbPath, `${dbPath}-journal`, `${dbPath}-shm`, `${dbPath}-
   if (fs.existsSync(sidecar)) fs.unlinkSync(sidecar);
 }
 
-const outbox = path.join(tmp, 'outbox');
+const configuredOutbox = process.env.MAIL_OUTBOX_DIR;
+const outbox = configuredOutbox
+  ? path.isAbsolute(configuredOutbox)
+    ? configuredOutbox
+    : path.join(cwd, configuredOutbox)
+  : path.join(tmp, 'outbox');
 if (fs.existsSync(outbox)) fs.rmSync(outbox, { recursive: true, force: true });
 
 const migrationsFolder = path.join(cwd, 'src', 'lib', 'db', 'migrations');

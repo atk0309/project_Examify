@@ -9,6 +9,10 @@ export type SendResult = { ok: true; id: string } | { ok: false; error: string }
 const resend = isResendConfigured() ? new Resend(env.RESEND_API_KEY!) : null;
 
 function resolveOutboxDir(): string {
+  const configured = env.MAIL_OUTBOX_DIR;
+  if (configured) {
+    return path.isAbsolute(configured) ? configured : path.join(process.cwd(), configured);
+  }
   // `RESEND_API_KEY=test` (dev + Playwright) keeps the existing outbox so
   // e2e can poll it. A real production deploy with no key writes to the
   // data volume instead.
@@ -48,8 +52,11 @@ export async function sendEmail(options: {
     });
     return { ok: true, id };
   }
+  if (!env.RESEND_FROM) {
+    return { ok: false, error: 'RESEND_FROM is required when Resend is configured' };
+  }
   const { data, error } = await resend.emails.send({
-    from: env.RESEND_FROM ?? 'Examify <onboarding@resend.dev>',
+    from: env.RESEND_FROM,
     to: options.to,
     subject: options.subject,
     html: options.html,

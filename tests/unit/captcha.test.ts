@@ -46,6 +46,17 @@ describe('verifyTurnstile dummy-secret shortcuts', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it('rejects when exactly one Turnstile key is set', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    (env as { TURNSTILE_SECRET_KEY?: string }).TURNSTILE_SECRET_KEY =
+      '1x0000000000000000000000000000000AA';
+    (env as { NEXT_PUBLIC_TURNSTILE_SITE_KEY?: string }).NEXT_PUBLIC_TURNSTILE_SITE_KEY = undefined;
+    const result = await verifyTurnstile('any-token', '1.2.3.4');
+    expect(result.ok).toBe(false);
+    expect(result.errorCodes).toContain('partial-turnstile-config');
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it('is skipped entirely when both Turnstile keys are unset', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     const { isTurnstileEnabled } = await import('@/lib/env');
