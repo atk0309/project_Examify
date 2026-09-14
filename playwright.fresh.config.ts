@@ -1,5 +1,8 @@
 import path from 'node:path';
 import { defineConfig, devices } from '@playwright/test';
+import { requireProductionBuild } from './tests/e2e/require-production-build';
+
+requireProductionBuild();
 
 const PORT = Number(process.env.E2E_FRESH_PORT ?? 3101);
 const baseURL = `http://127.0.0.1:${PORT}`;

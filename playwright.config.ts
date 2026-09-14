@@ -1,5 +1,8 @@
 import path from 'node:path';
 import { defineConfig, devices } from '@playwright/test';
+import { requireProductionBuild } from './tests/e2e/require-production-build';
+
+requireProductionBuild();
 
 const PORT = Number(process.env.E2E_PORT ?? 3100);
 // Use `127.0.0.1` rather than `localhost` so the Playwright healthcheck and

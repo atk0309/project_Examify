@@ -77,7 +77,7 @@ grouped weekly Dependabot PRs in `.github/dependabot.yml`.
 | `pnpm format:check` | Prettier dry-run (CI guard)                        |
 | `pnpm typecheck`    | `tsc --noEmit`                                     |
 | `pnpm test`         | Vitest unit suite                                  |
-| `pnpm test:e2e`     | Playwright e2e (requires `pnpm test:e2e:install`)  |
+| `pnpm test:e2e`     | Playwright e2e (`pnpm build` then both suites)     |
 | `pnpm db:generate`  | Generate a new Drizzle migration from schema diffs |
 | `pnpm db:migrate`   | Apply pending migrations to `DATABASE_URL`         |
 | `pnpm db:studio`    | Drizzle Studio against the local DB                |
@@ -382,7 +382,9 @@ routes the grader to a deterministic stub. See `.env.example` for the canonical 
   without a token.
 - The Playwright config uses an isolated SQLite at `tests/.tmp/e2e.db`;
   `tests/e2e/setup-db.ts` wipes and re-migrates it via `pnpm test:e2e:prepare`, which
-  `pnpm test:e2e` runs _before_ `playwright test`.
+  `pnpm test:e2e` runs _before_ `pnpm build` and `playwright test`. Both Playwright
+  configs require an existing `.next` (they start with `next start`; they do not
+  create the production build).
 - Default sign-in e2e uses the documented always-pass Turnstile dummy key. The widget
   owns the single `cf-turnstile-response` field when captcha is on; never add a second
   fallback field with that name. When the widget CDN is unavailable, the Playwright

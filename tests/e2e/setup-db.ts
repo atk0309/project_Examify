@@ -7,7 +7,7 @@
  * which doesn't exist until migrations run. globalSetup-driven migration
  * therefore deadlocks the webServer healthcheck.
  *
- * Wired in via `pnpm test:e2e` -> `pnpm test:e2e:prepare && playwright test`.
+ * Wired in via `pnpm test:e2e` -> `pnpm test:e2e:prepare && pnpm build && playwright test`.
  */
 import fs from 'node:fs';
 import path from 'node:path';

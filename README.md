@@ -239,11 +239,13 @@ and set `DATABASE_URL=file:/data/app.db`.
 ## Testing
 
 `pnpm test` runs the Vitest unit suite (content guards, scoring, grading, auth, actions)
-against an isolated SQLite file. `pnpm test:e2e` runs Playwright smokes for the public
-routes plus the magic-link happy path, invite accept, first-run bootstrap (Turnstile
-off), uniform sign-in rate limit, and empty-token failure path when captcha is on (run
-`pnpm test:e2e:install` once first). The default e2e server uses Cloudflare's
-always-pass dummy keys; a second fresh-DB run covers Turnstile unset.
+against an isolated SQLite file. `pnpm test:e2e` builds the app (`pnpm build`) then runs Playwright smokes for the
+public routes plus the magic-link happy path, invite accept, first-run bootstrap
+(Turnstile off), uniform sign-in rate limit, and empty-token failure path when
+captcha is on (run `pnpm test:e2e:install` once first). Both suites require that
+production `.next` — they start with `next start` and do not create it. The
+default e2e server uses Cloudflare's always-pass dummy keys; a second fresh-DB
+run covers Turnstile unset.
 
 ## Contributing, security, license
 
