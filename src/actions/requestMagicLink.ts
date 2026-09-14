@@ -6,7 +6,7 @@ import { isAllowedEmail } from '@/lib/allowlist';
 import { issueMagicLink } from '@/lib/auth';
 import { verifyTurnstile } from '@/lib/captcha';
 import { renderMagicLinkEmail, sendEmail } from '@/lib/email';
-import { env } from '@/lib/env';
+import { env, isTurnstileEnabled } from '@/lib/env';
 import { extractClientIp } from '@/lib/ip';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { siteConfig } from '@/lib/site';
@@ -14,7 +14,7 @@ import { siteConfig } from '@/lib/site';
 const inputSchema = z.object({
   email: z.string().trim().toLowerCase().email(),
   role: z.enum(['student', 'parent']),
-  token: z.string().min(1),
+  token: z.string().optional(),
 });
 
 export type RequestMagicLinkState =
@@ -26,17 +26,23 @@ export async function requestMagicLink(
   _prev: RequestMagicLinkState,
   formData: FormData,
 ): Promise<RequestMagicLinkState> {
+  const rawToken = formData.get('cf-turnstile-response');
+  const token = typeof rawToken === 'string' ? rawToken : '';
+
   const parsed = inputSchema.safeParse({
     email: formData.get('email'),
     role: formData.get('role'),
-    token: formData.get('cf-turnstile-response'),
+    token: token || undefined,
   });
   if (!parsed.success) return { status: 'error', reason: 'invalid' };
 
   const { email, role } = parsed.data;
   const ip = extractClientIp(await headers());
 
-  const captcha = await verifyTurnstile(parsed.data.token, ip);
+  // When Turnstile is on, a missing token is a form error (same as today)
+  // so the empty-token e2e stays `invalid`. When off, skip verification.
+  if (isTurnstileEnabled() && !token) return { status: 'error', reason: 'invalid' };
+  const captcha = await verifyTurnstile(token, ip);
   if (!captcha.ok) return { status: 'error', reason: 'captcha' };
 
   // One uniform per-IP bucket for every sign-in request. We deliberately do
@@ -61,7 +67,9 @@ export async function requestMagicLink(
       html: rendered.html,
       text: rendered.text,
     });
-    if (!result.ok) return { status: 'error', reason: 'send_failed' };
+    if (!result.ok) {
+      console.error('[auth] magic-link delivery failed', { email, error: result.error });
+    }
   }
 
   return { status: 'sent', email };

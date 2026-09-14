@@ -3,9 +3,9 @@
 /* ============================================================================
    EXAMIFY — LOGIN  (magic-link, role-gated)
    UI for the passwordless flow. On submit it calls the `requestMagicLink`
-   server action, which verifies Turnstile, checks the role's env allowlist,
-   and (only for approved emails) emails a one-time sign-in link. The response
-   is intentionally generic so the allowlist can't be enumerated.
+   server action, which optionally verifies Turnstile, checks household
+   membership, and (only for members) emails a one-time sign-in link. The
+   response is intentionally generic so membership can't be enumerated.
    ========================================================================== */
 import Script from 'next/script';
 import { useActionState, useState } from 'react';
@@ -31,7 +31,7 @@ const errorCopy: Record<
   send_failed: 'We could not send the email. Please try again in a moment.',
 };
 
-export function LoginForm({ siteKey }: { siteKey: string }) {
+export function LoginForm({ siteKey }: { siteKey?: string }) {
   const [state, formAction, pending] = useActionState<RequestMagicLinkState, FormData>(
     requestMagicLink,
     { status: 'idle' },
@@ -83,12 +83,14 @@ export function LoginForm({ siteKey }: { siteKey: string }) {
 
   return (
     <form className="screen login" action={submit} data-testid="signin-form">
-      <Script
-        src="https://challenges.cloudflare.com/turnstile/v0/api.js"
-        async
-        defer
-        strategy="afterInteractive"
-      />
+      {siteKey ? (
+        <Script
+          src="https://challenges.cloudflare.com/turnstile/v0/api.js"
+          async
+          defer
+          strategy="afterInteractive"
+        />
+      ) : null}
       <div className="login-head">
         <span className="brand-mark">E</span>
         <h1 className="brand-word">Examify</h1>
@@ -142,12 +144,14 @@ export function LoginForm({ siteKey }: { siteKey: string }) {
           the same name: FormData.get() can read the empty duplicate instead
           of the widget's valid response. */}
       <input type="hidden" name="role" value={role} />
-      <div
-        className="cf-turnstile"
-        data-sitekey={siteKey}
-        data-theme="auto"
-        data-testid="turnstile"
-      />
+      {siteKey ? (
+        <div
+          className="cf-turnstile"
+          data-sitekey={siteKey}
+          data-theme="auto"
+          data-testid="turnstile"
+        />
+      ) : null}
 
       <button
         className="btn btn-primary"
@@ -165,7 +169,7 @@ export function LoginForm({ siteKey }: { siteKey: string }) {
       ) : (
         <p className="login-fine">
           {MailIcon.lock}
-          Secure, passwordless sign-in. Only approved {role} emails can log in.
+          Secure, passwordless sign-in. Only household members can log in.
         </p>
       )}
     </form>

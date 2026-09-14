@@ -44,7 +44,18 @@ test('the verify error page renders the reason copy and a recovery link', async 
   await expect(page.getByRole('link', { name: 'Request a new link' })).toBeVisible();
 });
 
+test('an invalid invite does not send the invitee to /signin', async ({ page }) => {
+  await page.goto('/signin/verify/error?reason=invite-invalid');
+  await expect(page.getByText('Ask a parent for a new link.')).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Request a new link' })).toHaveCount(0);
+});
+
 test('the home route redirects unauthenticated visitors to /signin', async ({ page }) => {
   await page.goto('/');
+  await expect(page).toHaveURL(/\/signin$/);
+});
+
+test('GET /signin/invalidate lands on sign-in', async ({ page }) => {
+  await page.goto('/signin/invalidate');
   await expect(page).toHaveURL(/\/signin$/);
 });

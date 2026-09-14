@@ -63,12 +63,19 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   and only ever writes the caller's own `session.userId`. A parent's attempts
   accumulate under the parent's account; the student's record is never touched.
   `session.studentMode` is reset to `false` on every verified sign-in.
-- Parent→child linking is per-family via the `FAMILIES` config: `resolveChildren(parentEmail)`
-  in `src/lib/progress.ts` returns only the `child` of the family the parent is listed in — a
-  parent never sees another family's child, and a standalone child (`parents: []`) appears in no
-  dashboard. It's the privacy boundary; keep it isolated. The dashboard shows one child
-  (`page.tsx` passes `session.email`). The comparison's "score by attempt number" axis uses
-  `getScoreHistory()` (uncapped, oldest-first) rather than the 50-capped `getProgressForUser`.
+- Parent→child linking is per-household in SQLite: `resolveChildren(parentEmail)`
+  in `src/lib/progress.ts` returns only students who share that parent's household — a
+  parent never sees another household's child. It's the privacy boundary; keep it isolated.
+  The dashboard lists every household student and compares against a selected child.
+  The comparison's "score by attempt number" axis uses `getScoreHistory()` (uncapped,
+  oldest-first) rather than the 50-capped `getProgressForUser`.
+- Access is invite-only. First-run `/setup` (`bootstrapHousehold`) creates the admin
+  when no household exists, and only after `SETUP_BOOTSTRAP_SECRET` matches (required
+  in production; captcha is not identity). Parents/admins mint invite links
+  (`createInvite`); accept goes through `/invite/[token]` + magic-link verify
+  (membership attaches in the same transaction). Do not bring back a required
+  `FAMILIES` env allowlist. A leftover `FAMILIES` JSON is imported once if the DB
+  has no households. Production boot fails if `FAMILIES` is set and invalid.
 
 ## Workflow expectations
 
@@ -103,10 +110,20 @@ Before merge, ensure these pass in CI:
 
 ## Security invariants (do not weaken)
 
-- Never bypass server-side Turnstile verification on mutating actions.
+- Never bypass server-side Turnstile verification when either Turnstile key is set.
+  When both site and secret keys are unset, skip the widget and verification so
+  sign-in still works. Exactly one key in production crashes boot.
 - Keep canonical IP extraction centralized in `src/lib/ip.ts`.
 - Preserve rate-limit boundaries and per-kind separation.
-- Keep sign-in role-gated by the `FAMILIES` config (student = a `child`, parent = in some `parents[]`), derived via `isAllowedEmail`; never leak whether an email is configured (no enumeration).
+- Keep sign-in role-gated by household membership (student = student member,
+  parent = parent or admin member), derived via `isAllowedEmail`; never leak
+  whether an email is a member (no enumeration), including when mail delivery
+  fails (same public `sent` response; log server-side).
+- Re-check household membership on every `getSession()` load; a removed member
+  is redirected to `/signin/invalidate` so the sealed cookie is actually
+  cleared (RSC cannot persist `session.destroy()`). Invite revoke sets
+  `revoked_at` (never DELETE while `magic_tokens.invite_id` still references
+  the row; `consumed_at` means accepted).
 - Keep magic-link tokens hashed at rest and single-use; the token carries the role. Token
   verification lives in a **Route Handler** (`src/app/signin/verify/route.ts`), never a
   Server Component page — clicking the email link is a GET that writes the session cookie,

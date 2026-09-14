@@ -7,7 +7,7 @@
  * which doesn't exist until migrations run. globalSetup-driven migration
  * therefore deadlocks the webServer healthcheck.
  *
- * Wired in via `pnpm test:e2e` -> `pnpm test:e2e:prepare && playwright test`.
+ * Wired in via `pnpm test:e2e` -> `pnpm test:e2e:prepare && pnpm build && playwright test`.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -19,12 +19,17 @@ const cwd = process.cwd();
 const tmp = path.join(cwd, 'tests', '.tmp');
 fs.mkdirSync(tmp, { recursive: true });
 
-const dbPath = path.join(tmp, 'e2e.db');
+const dbPath = process.env.E2E_DB_PATH ?? path.join(tmp, 'e2e.db');
 for (const sidecar of [dbPath, `${dbPath}-journal`, `${dbPath}-shm`, `${dbPath}-wal`]) {
   if (fs.existsSync(sidecar)) fs.unlinkSync(sidecar);
 }
 
-const outbox = path.join(tmp, 'outbox');
+const configuredOutbox = process.env.MAIL_OUTBOX_DIR;
+const outbox = configuredOutbox
+  ? path.isAbsolute(configuredOutbox)
+    ? configuredOutbox
+    : path.join(cwd, configuredOutbox)
+  : path.join(tmp, 'outbox');
 if (fs.existsSync(outbox)) fs.rmSync(outbox, { recursive: true, force: true });
 
 const migrationsFolder = path.join(cwd, 'src', 'lib', 'db', 'migrations');
@@ -42,12 +47,39 @@ sqlite.pragma('foreign_keys = ON');
 
 migrate(drizzle(sqlite), { migrationsFolder });
 
+const empty = process.argv.includes('--empty');
+if (!empty) {
+  const now = Date.now();
+  const insertUser = sqlite.prepare(
+    'INSERT INTO users (email, email_verified_at, created_at) VALUES (?, ?, ?)',
+  );
+  const student = insertUser.run('student@example.com', now, now);
+  const parent = insertUser.run('parent@example.com', now, now);
+  const household = sqlite
+    .prepare('INSERT INTO households (name, created_at) VALUES (?, ?)')
+    .run('Example family', now);
+  const insertMember = sqlite.prepare(
+    'INSERT INTO household_members (household_id, user_id, role, created_at) VALUES (?, ?, ?, ?)',
+  );
+  insertMember.run(household.lastInsertRowid, parent.lastInsertRowid, 'admin', now);
+  insertMember.run(household.lastInsertRowid, student.lastInsertRowid, 'student', now);
+}
+
 const tables = sqlite
   .prepare(
     "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '__drizzle%' ORDER BY name",
   )
   .all() as Array<{ name: string }>;
-const expected = ['exam_attempts', 'exam_sessions', 'magic_tokens', 'rate_limit_events', 'users'];
+const expected = [
+  'exam_attempts',
+  'exam_sessions',
+  'household_invites',
+  'household_members',
+  'households',
+  'magic_tokens',
+  'rate_limit_events',
+  'users',
+];
 const missing = expected.filter((t) => !tables.some((row) => row.name === t));
 if (missing.length > 0) {
   console.error(`[e2e:prepare] expected tables missing: ${missing.join(', ')}`);
@@ -57,5 +89,5 @@ if (missing.length > 0) {
 sqlite.close();
 const size = fs.statSync(dbPath).size;
 console.log(
-  `[e2e:prepare] migrated ${expected.length} tables into ${dbPath} (${size} bytes), journal=DELETE`,
+  `[e2e:prepare] migrated ${expected.length} tables into ${dbPath} (${size} bytes), seed=${empty ? 'empty' : 'example-family'}, journal=DELETE`,
 );

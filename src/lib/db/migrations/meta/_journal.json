@@ -29,6 +29,20 @@
       "when": 1780382608723,
       "tag": "0003_serious_moondragon",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1789421038419,
+      "tag": "0004_daffy_randall",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1789425091558,
+      "tag": "0005_clean_bloodstorm",
+      "breakpoints": true
     }
   ]
 }

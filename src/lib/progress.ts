@@ -1,8 +1,7 @@
 import 'server-only';
 import { asc, desc, eq, inArray } from 'drizzle-orm';
 import { db, schema } from './db';
-import { env } from './env';
-import { childEmailsForParent } from './families';
+import { labelFromEmail, studentEmailsForParent } from './households';
 import {
   summariseAttempts,
   type AttemptInput,
@@ -93,29 +92,17 @@ export function getScoreHistory(userId: number): number[] {
 
 export type Child = { id: number; email: string; label: string };
 
-/** Friendly first-name-ish label from an email local part ("alex@…" → "Alex"). */
-function labelFromEmail(email: string): string {
-  const local = email.split('@')[0] ?? email;
-  const first = local.split(/[._+-]/)[0] ?? local;
-  return first.charAt(0).toUpperCase() + first.slice(1);
-}
-
 /**
- * Resolve which children a parent may view — their own family's child(ren) only.
+ * Resolve which children a parent may view — their own household's
+ * student(s) only. This is the privacy boundary: a parent/admin never
+ * sees another household's child. A student with no parent/admin in
+ * their household appears in no dashboard.
  *
- * The mapping comes from the `FAMILIES` config (`src/lib/families.ts`): a parent
- * sees the `child` of every family whose `parents[]` contains their email, and
- * nothing else. This is the privacy boundary — a standalone child (no parents)
- * belongs to no family here, so it never surfaces in any parent dashboard, and
- * one family can never see another's child.
- *
- * Only children who have actually signed in (and so have a `users` row) resolve;
- * the configured order is preserved. Ownership stays structural via `users.id`:
- * existing progress survives this allowlist→FAMILIES switch as long as the
- * configured `child` email matches the child's existing `users.email`.
+ * Only students who have a `users` row resolve. Ownership stays
+ * structural via `users.id`.
  */
 export function resolveChildren(parentEmail: string): Child[] {
-  const childEmails = childEmailsForParent(env.FAMILIES, parentEmail);
+  const childEmails = studentEmailsForParent(parentEmail);
   if (childEmails.length === 0) return [];
   const rows = db
     .select({ id: schema.users.id, email: schema.users.email })

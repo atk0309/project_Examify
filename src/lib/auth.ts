@@ -1,10 +1,17 @@
 import 'server-only';
 import crypto from 'node:crypto';
 import { cookies } from 'next/headers';
+import { redirect } from 'next/navigation';
 import { getIronSession, type SessionOptions } from 'iron-session';
 import { and, eq, gte, isNull } from 'drizzle-orm';
 import { db, schema } from './db';
 import { env, isProd } from './env';
+import {
+  attachMembershipFromInvite,
+  getMembershipForUser,
+  isParentLike,
+  type Membership,
+} from './households';
 
 export type SessionRole = 'student' | 'parent';
 
@@ -33,12 +40,47 @@ const sessionOptions: SessionOptions = {
   },
 };
 
-export async function getSession() {
+/**
+ * A signed-in session must still have household membership whose role
+ * matches the cookie. Removal (or a stale role) forces re-auth — the
+ * 30-day cookie is not a standing grant.
+ */
+export function sessionMembershipOk(
+  session: Pick<SessionData, 'userId' | 'role'>,
+  membership: Membership | null,
+): boolean {
+  if (!session.userId || !session.role) return true;
+  if (!membership || membership.userId !== session.userId) return false;
+  if (session.role === 'student') return membership.role === 'student';
+  return isParentLike(membership.role);
+}
+
+/**
+ * Raw iron-session (no membership re-check). Use when this request is about
+ * to *write* a new session (verify, bootstrap) so a stale cookie cannot
+ * redirect away before save.
+ */
+export async function getRawSession() {
   return getIronSession<SessionData>(await cookies(), sessionOptions);
 }
 
+export async function getSession() {
+  const session = await getRawSession();
+  if (session.userId && session.role) {
+    const membership = getMembershipForUser(session.userId);
+    if (!sessionMembershipOk(session, membership)) {
+      // Cookie mutation is illegal during a Server Component render
+      // (same reason /signin/verify is a Route Handler). Redirect to a
+      // GET handler that can persist the clear so the browser drops the
+      // sealed session instead of keeping a dead cookie.
+      redirect('/signin/invalidate');
+    }
+  }
+  return session;
+}
+
 export async function destroySession(): Promise<void> {
-  const session = await getSession();
+  const session = await getRawSession();
   session.destroy();
 }
 
@@ -58,15 +100,24 @@ export function generateMagicToken(): { token: string; tokenHash: string; expire
 export async function issueMagicLink(
   email: string,
   role: SessionRole,
+  opts?: { inviteId?: number },
 ): Promise<{ token: string; expiresAt: Date }> {
   const { token, tokenHash, expiresAt } = generateMagicToken();
-  db.insert(schema.magicTokens).values({ email, role, tokenHash, expiresAt }).run();
+  db.insert(schema.magicTokens)
+    .values({ email, role, tokenHash, expiresAt, inviteId: opts?.inviteId })
+    .run();
   return { token, expiresAt };
 }
 
 export type ConsumeResult =
   | { ok: true; userId: number; role: SessionRole; email: string; isNew: boolean }
-  | { ok: false; reason: 'not-found' | 'expired' | 'used' };
+  | { ok: false; reason: 'not-found' | 'expired' | 'used' | 'invite-invalid' };
+
+class ConsumeRollback extends Error {
+  constructor(readonly result: ConsumeResult) {
+    super('consume-rollback');
+  }
+}
 
 /**
  * Consume a magic-link token: validate, mark consumed, get-or-create the user.
@@ -78,56 +129,76 @@ export function consumeMagicToken(token: string): ConsumeResult {
   const tokenHash = sha256(token);
   const now = Date.now();
 
-  return db.transaction((tx) => {
-    const row = tx
-      .select()
-      .from(schema.magicTokens)
-      .where(
-        and(
-          eq(schema.magicTokens.tokenHash, tokenHash),
-          isNull(schema.magicTokens.consumedAt),
-          gte(schema.magicTokens.expiresAt, new Date(now)),
-        ),
-      )
-      .get();
-
-    if (!row) {
-      const anyRow = tx
+  try {
+    return db.transaction((tx) => {
+      const row = tx
         .select()
         .from(schema.magicTokens)
-        .where(eq(schema.magicTokens.tokenHash, tokenHash))
+        .where(
+          and(
+            eq(schema.magicTokens.tokenHash, tokenHash),
+            isNull(schema.magicTokens.consumedAt),
+            gte(schema.magicTokens.expiresAt, new Date(now)),
+          ),
+        )
         .get();
-      if (!anyRow) return { ok: false, reason: 'not-found' as const };
-      if (anyRow.consumedAt) return { ok: false, reason: 'used' as const };
-      return { ok: false, reason: 'expired' as const };
-    }
 
-    tx.update(schema.magicTokens)
-      .set({ consumedAt: new Date(now) })
-      .where(eq(schema.magicTokens.id, row.id))
-      .run();
-
-    const existing = tx.select().from(schema.users).where(eq(schema.users.email, row.email)).get();
-
-    if (existing) {
-      if (!existing.emailVerifiedAt) {
-        tx.update(schema.users)
-          .set({ emailVerifiedAt: new Date(now) })
-          .where(eq(schema.users.id, existing.id))
-          .run();
+      if (!row) {
+        const anyRow = tx
+          .select()
+          .from(schema.magicTokens)
+          .where(eq(schema.magicTokens.tokenHash, tokenHash))
+          .get();
+        if (!anyRow) return { ok: false, reason: 'not-found' as const };
+        if (anyRow.consumedAt) return { ok: false, reason: 'used' as const };
+        return { ok: false, reason: 'expired' as const };
       }
-      return { ok: true, userId: existing.id, role: row.role, email: row.email, isNew: false };
-    }
 
-    const inserted = tx
-      .insert(schema.users)
-      .values({ email: row.email, emailVerifiedAt: new Date(now) })
-      .returning({ id: schema.users.id })
-      .get();
+      tx.update(schema.magicTokens)
+        .set({ consumedAt: new Date(now) })
+        .where(eq(schema.magicTokens.id, row.id))
+        .run();
 
-    if (!inserted) throw new Error('failed to create user');
-    return { ok: true, userId: inserted.id, role: row.role, email: row.email, isNew: true };
-  });
+      const existing = tx
+        .select()
+        .from(schema.users)
+        .where(eq(schema.users.email, row.email))
+        .get();
+
+      let userId: number;
+      let isNew = false;
+      if (existing) {
+        if (!existing.emailVerifiedAt) {
+          tx.update(schema.users)
+            .set({ emailVerifiedAt: new Date(now) })
+            .where(eq(schema.users.id, existing.id))
+            .run();
+        }
+        userId = existing.id;
+      } else {
+        const inserted = tx
+          .insert(schema.users)
+          .values({ email: row.email, emailVerifiedAt: new Date(now) })
+          .returning({ id: schema.users.id })
+          .get();
+        if (!inserted) throw new Error('failed to create user');
+        userId = inserted.id;
+        isNew = true;
+      }
+
+      if (row.inviteId != null) {
+        const attached = attachMembershipFromInvite(tx, row.inviteId, userId, row.email, now);
+        if (!attached.ok) {
+          throw new ConsumeRollback({ ok: false, reason: 'invite-invalid' });
+        }
+      }
+
+      return { ok: true, userId, role: row.role, email: row.email, isNew };
+    });
+  } catch (error) {
+    if (error instanceof ConsumeRollback) return error.result;
+    throw error;
+  }
 }
 
 /**

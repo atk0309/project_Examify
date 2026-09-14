@@ -30,13 +30,21 @@ export type TurnstileResult = {
 };
 
 export async function verifyTurnstile(token: string, ip: string): Promise<TurnstileResult> {
-  if (!token) return { ok: false, errorCodes: ['missing-input-response'] };
+  const site = env.NEXT_PUBLIC_TURNSTILE_SITE_KEY?.trim();
+  const secret = env.TURNSTILE_SECRET_KEY?.trim();
+  // Both unset: captcha is off. Exactly one set must never skip verify —
+  // production boot already rejects that pairing; this is the runtime belt.
+  if (!site && !secret) return { ok: true };
+  if (!site || !secret) {
+    return { ok: false, errorCodes: ['partial-turnstile-config'] };
+  }
 
-  const dummy = (DUMMY_SECRETS as Record<string, TurnstileResult>)[env.TURNSTILE_SECRET_KEY];
+  if (!token) return { ok: false, errorCodes: ['missing-input-response'] };
+  const dummy = (DUMMY_SECRETS as Record<string, TurnstileResult>)[secret];
   if (dummy) return dummy;
 
   const body = new URLSearchParams();
-  body.set('secret', env.TURNSTILE_SECRET_KEY);
+  body.set('secret', secret);
   body.set('response', token);
   if (ip) body.set('remoteip', ip);
 
