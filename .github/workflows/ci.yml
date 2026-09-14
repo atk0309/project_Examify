@@ -16,7 +16,7 @@ concurrency:
 
 env:
   PNPM_VERSION: 10.33.0
-  NODE_VERSION: 22
+  NODE_VERSION: 22.22.2
 
 jobs:
   lint-type-unit:
