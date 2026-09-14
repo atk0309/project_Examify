@@ -86,6 +86,18 @@ describe('parseEnv production fail-closed', () => {
       }),
     ).not.toThrow();
   });
+
+  it('accepts leftover FAMILIES that includes a standalone child (import skips it)', () => {
+    expect(() =>
+      parseEnv({
+        ...prodBase,
+        FAMILIES: JSON.stringify([
+          { child: 'alex@example.com', parents: ['pat@example.com'] },
+          { child: 'jess@example.com', parents: [] },
+        ]),
+      }),
+    ).not.toThrow();
+  });
 });
 
 describe('parseEnv dev/test defaults', () => {

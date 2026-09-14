@@ -190,7 +190,9 @@ These are non-negotiable. Don't "fix" them out.
   `student | parent`; household `admin` is a membership flag on the first-run host
   (they sign in as a parent). There is no password. A leftover `FAMILIES` env JSON
   is imported **once** when the DB has no households (`importLegacyFamiliesIfNeeded`);
-  it is not required and is not validated at boot.
+  it is not required. Set-but-invalid JSON **crashes production boot**. Entries
+  with `parents: []` parse (legacy standalone child) but are **skipped** on import
+  so we never create an unadministrable household.
 - **No enumeration.** `requestMagicLink` always returns the generic `sent` state once
   Turnstile (when enabled) + rate-limit pass; it only issues + emails a link when the
   email is a household member for that role. Don't add a branch that reveals whether

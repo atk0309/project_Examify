@@ -39,6 +39,9 @@ export default defineConfig({
       SITE_URL: baseURL,
       DATABASE_URL: `file:${E2E_DB}`,
       AUTH_SECRET: 'e2e-secret-must-be-at-least-32-chars-long-yes',
+      // Fresh suite expects /setup. A leftover host FAMILIES would import a
+      // household on first request and skip the bootstrap screen.
+      FAMILIES: '',
       RESEND_API_KEY: 'test',
       RESEND_FROM: 'WhatATime <test@example.com>',
       MAIL_OUTBOX_DIR: E2E_OUTBOX,

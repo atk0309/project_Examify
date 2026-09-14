@@ -52,6 +52,9 @@ export default defineConfig({
       SITE_URL: baseURL,
       DATABASE_URL: `file:${E2E_DB}`,
       AUTH_SECRET: 'e2e-secret-must-be-at-least-32-chars-long-yes',
+      // Pin empty so a leftover host FAMILIES cannot auto-import into the
+      // prepared DB (seeded suite already has a household; still isolate).
+      FAMILIES: '',
       RESEND_API_KEY: 'test',
       RESEND_FROM: 'WhatATime <test@example.com>',
       MAIL_OUTBOX_DIR: E2E_OUTBOX,
