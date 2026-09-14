@@ -100,11 +100,12 @@ function buildEnvSchema(isProd: boolean) {
       // unless this is explicitly enabled. Dev/test/`RESEND_API_KEY=test` do
       // not need it.
       ALLOW_LOCAL_OUTBOX: z.preprocess((v) => {
-        if (typeof v !== 'string') return undefined;
+        if (v === undefined) return undefined;
+        if (typeof v !== 'string') return v;
         const t = v.trim().toLowerCase();
         if (t === '1' || t === 'true') return true;
         if (t === '' || t === '0' || t === 'false') return undefined;
-        return undefined;
+        return v;
       }, z.boolean().optional()),
 
       // Anthropic key for free-text grading. The `test` sentinel (dev/test default)

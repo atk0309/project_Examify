@@ -42,6 +42,13 @@ async function lib() {
   return import('@/lib/households');
 }
 
+function mustOk<T extends { ok: boolean }>(
+  result: T,
+  label: string,
+): asserts result is T & { ok: true } {
+  if (!result.ok) throw new Error(label);
+}
+
 describe('bootstrapHousehold', () => {
   it('creates the first admin household', async () => {
     const { bootstrapHousehold, hasAnyHousehold, getMembershipForEmail } = await lib();
@@ -49,8 +56,7 @@ describe('bootstrapHousehold', () => {
       email: '  HOST@Example.com ',
       householdName: 'The Stoyanovs',
     });
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    mustOk(result, 'bootstrap failed');
     expect(result.email).toBe('host@example.com');
     expect(hasAnyHousehold()).toBe(true);
     const membership = getMembershipForEmail('host@example.com');
@@ -86,12 +92,10 @@ describe('invites + consumeMagicToken', () => {
       getMembershipForEmail,
     } = await lib();
     const host = bootstrapHousehold({ email: 'pat@example.com', householdName: 'Ours' });
-    expect(host.ok).toBe(true);
-    if (!host.ok) return;
+    mustOk(host, 'bootstrap failed');
 
     const created = createHouseholdInvite({ actorUserId: host.userId, role: 'student' });
-    expect(created.ok).toBe(true);
-    if (!created.ok) return;
+    mustOk(created, 'invite creation failed');
 
     const invite = lookupInvite(created.token);
     expect(invite?.role).toBe('student');
@@ -113,13 +117,13 @@ describe('invites + consumeMagicToken', () => {
     const { bootstrapHousehold, createHouseholdInvite, lookupInvite, emailMayAcceptInvite } =
       await lib();
     const host = bootstrapHousehold({ email: 'pat@example.com', householdName: 'Ours' });
-    if (!host.ok) return;
+    mustOk(host, 'bootstrap failed');
     const created = createHouseholdInvite({
       actorUserId: host.userId,
       role: 'student',
       email: 'alex@example.com',
     });
-    if (!created.ok) return;
+    mustOk(created, 'invite creation failed');
     const invite = lookupInvite(created.token)!;
     expect(emailMayAcceptInvite(invite, 'stranger@example.com')).toBe(false);
     expect(emailMayAcceptInvite(invite, 'alex@example.com')).toBe(true);
@@ -130,14 +134,14 @@ describe('invites + consumeMagicToken', () => {
     type Attach = Awaited<ReturnType<typeof attachMembershipFromInvite>>;
     const { db, schema } = await import('@/lib/db');
     const host = bootstrapHousehold({ email: 'pat@example.com', householdName: 'Ours' });
-    if (!host.ok) return;
+    mustOk(host, 'bootstrap failed');
     const kid = db
       .insert(schema.users)
       .values({ email: 'kid@example.com', emailVerifiedAt: new Date() })
       .returning()
       .get()!;
     const created = createHouseholdInvite({ actorUserId: host.userId, role: 'student' });
-    if (!created.ok) return;
+    mustOk(created, 'invite creation failed');
     let attached: Attach | undefined;
     db.transaction((tx) => {
       attached = attachMembershipFromInvite(tx, created.invite.id, kid.id, 'kid@example.com');
@@ -152,9 +156,9 @@ describe('invites + consumeMagicToken', () => {
   it('rolls back verify when the invite is already consumed', async () => {
     const { bootstrapHousehold, createHouseholdInvite } = await lib();
     const host = bootstrapHousehold({ email: 'pat@example.com', householdName: 'Ours' });
-    if (!host.ok) return;
+    mustOk(host, 'bootstrap failed');
     const created = createHouseholdInvite({ actorUserId: host.userId, role: 'student' });
-    if (!created.ok) return;
+    mustOk(created, 'invite creation failed');
 
     const { consumeMagicToken, issueMagicLink } = await import('@/lib/auth');
     const first = await issueMagicLink('a@example.com', 'student', { inviteId: created.invite.id });
@@ -177,9 +181,9 @@ describe('invites + consumeMagicToken', () => {
     const { bootstrapHousehold, createHouseholdInvite, lookupInvite, revokeHouseholdInvite } =
       await lib();
     const host = bootstrapHousehold({ email: 'pat@example.com', householdName: 'Ours' });
-    if (!host.ok) return;
+    mustOk(host, 'bootstrap failed');
     const created = createHouseholdInvite({ actorUserId: host.userId, role: 'student' });
-    if (!created.ok) return;
+    mustOk(created, 'invite creation failed');
 
     const { consumeMagicToken, issueMagicLink } = await import('@/lib/auth');
     const { token } = await issueMagicLink('alex@example.com', 'student', {
@@ -204,7 +208,7 @@ describe('invites + consumeMagicToken', () => {
     const { bootstrapHousehold, createHouseholdInvite, emailMayAcceptInvite, lookupInvite } =
       await lib();
     const host = bootstrapHousehold({ email: 'pat@example.com', householdName: 'Ours' });
-    if (!host.ok) return;
+    mustOk(host, 'bootstrap failed');
     expect(createHouseholdInvite({ actorUserId: host.userId, role: 'parent' })).toEqual({
       ok: false,
       reason: 'invalid',
@@ -214,8 +218,7 @@ describe('invites + consumeMagicToken', () => {
       role: 'parent',
       email: 'other@example.com',
     });
-    expect(created.ok).toBe(true);
-    if (!created.ok) return;
+    mustOk(created, 'invite creation failed');
     const invite = lookupInvite(created.token)!;
     expect(emailMayAcceptInvite(invite, 'stranger@example.com')).toBe(false);
     expect(emailMayAcceptInvite(invite, 'other@example.com')).toBe(true);
@@ -234,14 +237,14 @@ describe('removeHouseholdMember', () => {
     } = await lib();
     const { db, schema } = await import('@/lib/db');
     const host = bootstrapHousehold({ email: 'pat@example.com', householdName: 'Ours' });
-    if (!host.ok) return;
+    mustOk(host, 'bootstrap failed');
     const kid = db
       .insert(schema.users)
       .values({ email: 'kid@example.com', emailVerifiedAt: new Date() })
       .returning()
       .get()!;
     const created = createHouseholdInvite({ actorUserId: host.userId, role: 'student' });
-    if (!created.ok) return;
+    mustOk(created, 'invite creation failed');
     db.transaction((tx) => {
       attachMembershipFromInvite(tx, created.invite.id, kid.id, 'kid@example.com');
     });

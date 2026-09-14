@@ -87,6 +87,19 @@ describe('parseEnv production fail-closed', () => {
     ).not.toThrow();
   });
 
+  it('fails closed on an unrecognized ALLOW_LOCAL_OUTBOX value', () => {
+    expect(() => parseEnv({ ...prodBase, ALLOW_LOCAL_OUTBOX: 'treu' })).toThrow(
+      /Invalid environment variables/,
+    );
+  });
+
+  it('accepts explicit ALLOW_LOCAL_OUTBOX booleans', () => {
+    expect(parseEnv({ ...prodBase, ALLOW_LOCAL_OUTBOX: '1' }).ALLOW_LOCAL_OUTBOX).toBe(true);
+    expect(
+      parseEnv({ ...prodBase, ALLOW_LOCAL_OUTBOX: 'false' }).ALLOW_LOCAL_OUTBOX,
+    ).toBeUndefined();
+  });
+
   it('accepts leftover FAMILIES that includes a standalone child (import skips it)', () => {
     expect(() =>
       parseEnv({

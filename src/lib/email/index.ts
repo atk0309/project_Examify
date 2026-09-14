@@ -30,12 +30,14 @@ async function writeTestOutbox(payload: {
   html: string;
 }): Promise<string> {
   const dest = resolveOutboxDir();
-  await fs.mkdir(dest, { recursive: true });
+  await fs.mkdir(dest, { recursive: true, mode: 0o700 });
+  await fs.chmod(dest, 0o700);
   const id = `test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const file = path.join(dest, `${id}.json`);
   await fs.writeFile(
     file,
     JSON.stringify({ ...payload, sentAt: new Date().toISOString() }, null, 2),
+    { mode: 0o600 },
   );
   return id;
 }
@@ -53,12 +55,20 @@ export async function sendEmail(options: {
       );
       return { ok: false, error: 'email-not-configured' };
     }
-    const id = await writeTestOutbox({
-      to: options.to,
-      subject: options.subject,
-      html: options.html,
-    });
-    return { ok: true, id };
+    try {
+      const id = await writeTestOutbox({
+        to: options.to,
+        subject: options.subject,
+        html: options.html,
+      });
+      return { ok: true, id };
+    } catch (error) {
+      console.error('[email] local outbox write failed', error);
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : 'outbox write failed',
+      };
+    }
   }
   if (!env.RESEND_FROM) {
     return { ok: false, error: 'RESEND_FROM is required when Resend is configured' };
