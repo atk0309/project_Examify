@@ -2,24 +2,43 @@ import 'server-only';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { Resend } from 'resend';
-import { env, isTest } from '@/lib/env';
+import { allowLocalMailOutbox, env, isResendConfigured } from '@/lib/env';
 
 export type SendResult = { ok: true; id: string } | { ok: false; error: string };
 
-const resend = env.RESEND_API_KEY === 'test' ? null : new Resend(env.RESEND_API_KEY);
+const resend = isResendConfigured() ? new Resend(env.RESEND_API_KEY!) : null;
+
+function resolveOutboxDir(): string {
+  const configured = env.MAIL_OUTBOX_DIR;
+  if (configured) {
+    return path.isAbsolute(configured)
+      ? configured
+      : path.join(/*turbopackIgnore: true*/ process.cwd(), configured);
+  }
+  // `RESEND_API_KEY=test` in dev/test keeps the existing outbox so e2e can
+  // poll it (Playwright also sets ALLOW_LOCAL_OUTBOX=1 under NODE_ENV=production).
+  // A real production deploy with no key writes to the data volume instead,
+  // and only if ALLOW_LOCAL_OUTBOX is set.
+  if (env.RESEND_API_KEY === 'test' || env.NODE_ENV === 'test') {
+    return path.join(process.cwd(), 'tests', '.tmp', 'outbox');
+  }
+  return path.join(process.cwd(), 'data', 'outbox');
+}
 
 async function writeTestOutbox(payload: {
   to: string;
   subject: string;
   html: string;
 }): Promise<string> {
-  const outboxDir = path.join(process.cwd(), 'tests', '.tmp', 'outbox');
-  await fs.mkdir(outboxDir, { recursive: true });
+  const dest = resolveOutboxDir();
+  await fs.mkdir(dest, { recursive: true, mode: 0o700 });
+  await fs.chmod(dest, 0o700);
   const id = `test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const file = path.join(outboxDir, `${id}.json`);
+  const file = path.join(dest, `${id}.json`);
   await fs.writeFile(
     file,
     JSON.stringify({ ...payload, sentAt: new Date().toISOString() }, null, 2),
+    { mode: 0o600 },
   );
   return id;
 }
@@ -30,13 +49,30 @@ export async function sendEmail(options: {
   html: string;
   text?: string;
 }): Promise<SendResult> {
-  if (resend === null || isTest) {
-    const id = await writeTestOutbox({
-      to: options.to,
-      subject: options.subject,
-      html: options.html,
-    });
-    return { ok: true, id };
+  if (resend === null || env.NODE_ENV === 'test') {
+    if (!allowLocalMailOutbox()) {
+      console.error(
+        '[email] Resend is not configured; refusing to write magic-link tokens to a local outbox',
+      );
+      return { ok: false, error: 'email-not-configured' };
+    }
+    try {
+      const id = await writeTestOutbox({
+        to: options.to,
+        subject: options.subject,
+        html: options.html,
+      });
+      return { ok: true, id };
+    } catch (error) {
+      console.error('[email] local outbox write failed', error);
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : 'outbox write failed',
+      };
+    }
+  }
+  if (!env.RESEND_FROM) {
+    return { ok: false, error: 'RESEND_FROM is required when Resend is configured' };
   }
   const { data, error } = await resend.emails.send({
     from: env.RESEND_FROM,

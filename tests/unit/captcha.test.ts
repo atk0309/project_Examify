@@ -10,8 +10,11 @@ afterEach(() => {
 
 describe('verifyTurnstile dummy-secret shortcuts', () => {
   const original = env.TURNSTILE_SECRET_KEY;
+  const originalSite = env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
   afterEach(() => {
-    (env as { TURNSTILE_SECRET_KEY: string }).TURNSTILE_SECRET_KEY = original;
+    (env as { TURNSTILE_SECRET_KEY?: string }).TURNSTILE_SECRET_KEY = original;
+    (env as { NEXT_PUBLIC_TURNSTILE_SITE_KEY?: string }).NEXT_PUBLIC_TURNSTILE_SITE_KEY =
+      originalSite;
   });
 
   it('always-pass dummy secret returns ok=true without a network call', async () => {
@@ -40,6 +43,28 @@ describe('verifyTurnstile dummy-secret shortcuts', () => {
     const result = await verifyTurnstile('any-token', '1.2.3.4');
     expect(result.ok).toBe(false);
     expect(result.errorCodes).toContain('timeout-or-duplicate-dummy-secret');
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('rejects when exactly one Turnstile key is set', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    (env as { TURNSTILE_SECRET_KEY?: string }).TURNSTILE_SECRET_KEY =
+      '1x0000000000000000000000000000000AA';
+    (env as { NEXT_PUBLIC_TURNSTILE_SITE_KEY?: string }).NEXT_PUBLIC_TURNSTILE_SITE_KEY = undefined;
+    const result = await verifyTurnstile('any-token', '1.2.3.4');
+    expect(result.ok).toBe(false);
+    expect(result.errorCodes).toContain('partial-turnstile-config');
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('is skipped entirely when both Turnstile keys are unset', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const { isTurnstileEnabled } = await import('@/lib/env');
+    (env as { TURNSTILE_SECRET_KEY?: string }).TURNSTILE_SECRET_KEY = undefined;
+    (env as { NEXT_PUBLIC_TURNSTILE_SITE_KEY?: string }).NEXT_PUBLIC_TURNSTILE_SITE_KEY = undefined;
+    expect(isTurnstileEnabled()).toBe(false);
+    const result = await verifyTurnstile('', '1.2.3.4');
+    expect(result.ok).toBe(true);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 

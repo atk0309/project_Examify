@@ -1,5 +1,8 @@
 import path from 'node:path';
 import { defineConfig, devices } from '@playwright/test';
+import { requireProductionBuild } from './tests/e2e/require-production-build';
+
+requireProductionBuild();
 
 const PORT = Number(process.env.E2E_PORT ?? 3100);
 // Use `127.0.0.1` rather than `localhost` so the Playwright healthcheck and
@@ -10,9 +13,13 @@ const PORT = Number(process.env.E2E_PORT ?? 3100);
 const baseURL = `http://127.0.0.1:${PORT}`;
 
 const E2E_DB = path.join(process.cwd(), 'tests', '.tmp', 'e2e.db');
+const E2E_OUTBOX =
+  process.env.MAIL_OUTBOX_DIR ?? path.join(process.cwd(), 'tests', '.tmp', 'e2e-outbox');
+process.env.MAIL_OUTBOX_DIR = E2E_OUTBOX;
 
 export default defineConfig({
   testDir: './tests/e2e',
+  testIgnore: /fresh\.(spec|test)\.ts/,
   fullyParallel: false,
   workers: 1,
   forbidOnly: !!process.env.CI,
@@ -48,10 +55,15 @@ export default defineConfig({
       SITE_URL: baseURL,
       DATABASE_URL: `file:${E2E_DB}`,
       AUTH_SECRET: 'e2e-secret-must-be-at-least-32-chars-long-yes',
-      FAMILIES: '[{"child":"student@example.com","parents":["parent@example.com"]}]',
+      // Pin empty so a leftover host FAMILIES cannot auto-import into the
+      // prepared DB (seeded suite already has a household; still isolate).
+      FAMILIES: '',
       RESEND_API_KEY: 'test',
+      ALLOW_LOCAL_OUTBOX: '1',
       RESEND_FROM: 'WhatATime <test@example.com>',
+      MAIL_OUTBOX_DIR: E2E_OUTBOX,
       ANTHROPIC_API_KEY: 'test',
+      SETUP_BOOTSTRAP_SECRET: 'e2e-setup-bootstrap-secret',
       NEXT_PUBLIC_TURNSTILE_SITE_KEY: '1x00000000000000000000AA',
       TURNSTILE_SECRET_KEY: '1x0000000000000000000000000000000AA',
       RATE_LIMIT_SIGNIN_MAX: '3',

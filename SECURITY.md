@@ -18,9 +18,19 @@ get an initial response within a week.
 
 ## Scope notes for self-hosters
 
-- The `FAMILIES` env var is the entire credential store and privacy boundary — treat it
-  (and `AUTH_SECRET`) like a secret, and never commit a real `.env`.
+- Household membership in SQLite is the credential store and privacy boundary — treat
+  `AUTH_SECRET` (and any leftover `FAMILIES` JSON you have not yet imported) like a
+  secret, and never commit a real `.env`.
 - Env validation fails closed in production: missing security-critical vars crash boot
-  rather than falling back to dev defaults.
-- Magic-link tokens are stored hashed, are single-use, and expire after 15 minutes;
-  sign-in is rate-limited per IP and protected by Cloudflare Turnstile.
+  rather than falling back to dev defaults. Resend and Turnstile are optional.
+- Magic-link tokens and invite tokens are stored hashed, are single-use, and expire
+  (15 minutes for magic links, 7 days for invites); sign-in is rate-limited per IP.
+  Cloudflare Turnstile is verified on the server when keys are set.
+- **Do not write magic-link bearer tokens to disk in production.** Unset Resend
+  or `RESEND_API_KEY=test` uses a local outbox only in dev/test. Production with
+  no real Resend key returns the generic “sent” response and logs server-side —
+  it does **not** write `data/outbox`, even if `RESEND_API_KEY=test`.
+  `ALLOW_LOCAL_OUTBOX=1` is a dangerous opt-in that stores raw sign-in URLs on
+  the host filesystem; treat that directory as secret material and never enable
+  it on a shared or exposed disk.
+  The writer creates the directory as `0700` and each message as `0600`.

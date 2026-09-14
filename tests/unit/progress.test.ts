@@ -10,20 +10,8 @@ import { QUESTIONS } from '@/lib/exam/data';
 
 const TMP = path.join(process.cwd(), 'tests', '.tmp');
 const DB_PATH = path.join(TMP, `progress-${process.pid}.db`);
-
-// resolveChildren() derives a parent's child from the FAMILIES config. Set it
-// before any import of '@/lib/env' so the parsed value picks it up. Pat
-// is Alex's parent; an unrelated parent and a standalone child round out the
-// isolation cases below.
-Reflect.set(
-  process.env,
-  'FAMILIES',
-  JSON.stringify([
-    { child: 'alex@example.com', parents: ['pat@example.com', 'morgan@example.com'] },
-    { child: 'jess@example.com', parents: [] },
-    { child: 'sam@example.com', parents: ['stranger@example.com'] },
-  ]),
-);
+Reflect.set(process.env, 'DATABASE_URL', `file:${DB_PATH}`);
+delete process.env.FAMILIES;
 
 beforeAll(() => {
   fs.mkdirSync(TMP, { recursive: true });
@@ -44,6 +32,8 @@ afterAll(() => {
 beforeEach(async () => {
   const { db, schema } = await import('@/lib/db');
   db.delete(schema.examAttempts).run();
+  db.delete(schema.householdMembers).run();
+  db.delete(schema.households).run();
   db.delete(schema.users).run();
 });
 
@@ -56,6 +46,31 @@ async function seedUser(email: string): Promise<number> {
     .returning({ id: schema.users.id })
     .get();
   return row!.id;
+}
+
+/** Two isolated households matching the old FAMILIES fixture. */
+async function seedHouseholds(): Promise<void> {
+  const { db, schema } = await import('@/lib/db');
+  const ours = db.insert(schema.households).values({ name: 'Alex family' }).returning().get()!;
+  const theirs = db.insert(schema.households).values({ name: 'Sam family' }).returning().get()!;
+  const standalone = db.insert(schema.households).values({ name: 'Jess alone' }).returning().get()!;
+
+  const member = async (
+    email: string,
+    householdId: number,
+    role: 'admin' | 'parent' | 'student',
+  ) => {
+    const userId = await seedUser(email);
+    db.insert(schema.householdMembers).values({ householdId, userId, role }).run();
+    return userId;
+  };
+
+  await member('alex@example.com', ours.id, 'student');
+  await member('pat@example.com', ours.id, 'admin');
+  await member('morgan@example.com', ours.id, 'parent');
+  await member('jess@example.com', standalone.id, 'student');
+  await member('sam@example.com', theirs.id, 'student');
+  await member('stranger@example.com', theirs.id, 'parent');
 }
 
 /** Complete maths/easy paper, choosing `correctCount` MCQs right. */
@@ -165,11 +180,22 @@ describe('getScoreHistory', () => {
   });
 });
 
-describe('resolveChildren (per-family isolation via FAMILIES)', () => {
+async function userId(email: string): Promise<number> {
+  const { db, schema } = await import('@/lib/db');
+  const row = db
+    .select()
+    .from(schema.users)
+    .all()
+    .find((u) => u.email === email);
+  if (!row) throw new Error(`missing user ${email}`);
+  return row.id;
+}
+
+describe('resolveChildren (per-household isolation)', () => {
   it('resolves the parent’s own child who has signed in', async () => {
     const { resolveChildren } = await import('@/lib/progress');
-    const alex = await seedUser('alex@example.com');
-    await seedUser('pat@example.com'); // the parent — must not resolve as a child
+    await seedHouseholds();
+    const alex = await userId('alex@example.com');
 
     const children = resolveChildren('pat@example.com');
     expect(children).toHaveLength(1);
@@ -177,48 +203,44 @@ describe('resolveChildren (per-family isolation via FAMILIES)', () => {
     expect(children[0]!.label).toBe('Alex');
   });
 
-  it('resolves the same child for the second parent in the family (parent pair)', async () => {
+  it('resolves the same child for the second parent in the household (parent pair)', async () => {
     const { resolveChildren } = await import('@/lib/progress');
-    const alex = await seedUser('alex@example.com');
+    await seedHouseholds();
+    const alex = await userId('alex@example.com');
 
     const children = resolveChildren('morgan@example.com');
     expect(children).toHaveLength(1);
     expect(children[0]!.id).toBe(alex);
   });
 
-  it('returns nothing for a parent in another family (no cross-family visibility)', async () => {
+  it('resolves only the parent’s own household student (no cross-household visibility)', async () => {
     const { resolveChildren } = await import('@/lib/progress');
-    await seedUser('alex@example.com');
-    await seedUser('sam@example.com');
-    // stranger@example.com is sam's parent — must never see Alex.
+    await seedHouseholds();
     const children = resolveChildren('stranger@example.com');
     expect(children).toHaveLength(1);
     expect(children[0]!.email).toBe('sam@example.com');
   });
 
-  it('never surfaces a standalone child to anyone', async () => {
+  it('never surfaces a standalone child to another household', async () => {
     const { resolveChildren } = await import('@/lib/progress');
-    await seedUser('jess@example.com'); // standalone (parents: [])
-    // No configured parent maps to jess, so no resolveChildren call returns her.
+    await seedHouseholds();
     expect(resolveChildren('pat@example.com').some((c) => c.email === 'jess@example.com')).toBe(
       false,
     );
     expect(resolveChildren('jess@example.com')).toEqual([]);
   });
 
-  it('returns nothing when the parent’s child has no user row yet', async () => {
+  it('returns nothing when the parent’s household has no student yet', async () => {
     const { resolveChildren } = await import('@/lib/progress');
-    await seedUser('pat@example.com');
+    const { bootstrapHousehold } = await import('@/lib/households');
+    bootstrapHousehold({ email: 'pat@example.com', householdName: 'Ours' });
     expect(resolveChildren('pat@example.com')).toEqual([]);
   });
 
-  it('preserves existing child progress across the allowlist→FAMILIES switch', async () => {
-    // Ownership is structural (users.id). As long as FAMILIES.child matches the
-    // child's existing users.email, the same row resolves and prior attempts
-    // remain visible — no data migration needed.
+  it('preserves existing child progress across household membership', async () => {
     const { saveAttempt, getProgressForUser, resolveChildren } = await import('@/lib/progress');
-    const alex = await seedUser('alex@example.com');
-    await seedUser('pat@example.com');
+    await seedHouseholds();
+    const alex = await userId('alex@example.com');
 
     await saveAttempt(alex, { subject: 'maths', difficulty: 'easy', items: mathsEasyItems(2) });
 

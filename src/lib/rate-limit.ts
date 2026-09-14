@@ -3,7 +3,7 @@ import { and, eq, gte, lt, sql } from 'drizzle-orm';
 import { db, schema } from './db';
 import { env } from './env';
 
-export type RateLimitKind = 'signin';
+export type RateLimitKind = 'signin' | 'invite';
 
 type LimitConfig = { max: number; windowMs: number };
 
