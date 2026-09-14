@@ -59,6 +59,7 @@ export default defineConfig({
       // prepared DB (seeded suite already has a household; still isolate).
       FAMILIES: '',
       RESEND_API_KEY: 'test',
+      ALLOW_LOCAL_OUTBOX: '1',
       RESEND_FROM: 'WhatATime <test@example.com>',
       MAIL_OUTBOX_DIR: E2E_OUTBOX,
       ANTHROPIC_API_KEY: 'test',

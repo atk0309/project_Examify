@@ -97,8 +97,8 @@ function buildEnvSchema(isProd: boolean) {
       MAIL_OUTBOX_DIR: z.preprocess(emptyToUndef, z.string().min(1).optional()),
 
       // Production: writing magic-link bearer tokens to a local outbox is off
-      // unless this is explicitly enabled. Dev/test/`RESEND_API_KEY=test` do
-      // not need it.
+      // unless this is explicitly enabled. Dev/test do not need it. The
+      // RESEND_API_KEY=test sentinel does not bypass this in production.
       ALLOW_LOCAL_OUTBOX: z.preprocess((v) => {
         if (v === undefined) return undefined;
         if (typeof v !== 'string') return v;
@@ -224,13 +224,12 @@ export function isTurnstileEnabled(): boolean {
 
 /**
  * Whether magic-link emails may be written to a local outbox.
- * Always on in test, when RESEND_API_KEY=test, or outside production.
- * Production with no real Resend key stays fail-closed unless
- * ALLOW_LOCAL_OUTBOX is explicitly enabled.
+ * Always on in test and outside production (including RESEND_API_KEY=test).
+ * Production writes only when ALLOW_LOCAL_OUTBOX is explicitly enabled —
+ * the test-key sentinel is not an opt-in.
  */
 export function allowLocalMailOutbox(): boolean {
   if (env.NODE_ENV === 'test') return true;
-  if (env.RESEND_API_KEY === 'test') return true;
   if (env.NODE_ENV !== 'production') return true;
   return env.ALLOW_LOCAL_OUTBOX === true;
 }

@@ -141,8 +141,17 @@ describe('allowLocalMailOutbox', () => {
     expect(allowLocalMailOutbox()).toBe(true);
   });
 
-  it('stays on when RESEND_API_KEY=test', () => {
+  it('does not treat RESEND_API_KEY=test as a production outbox opt-in', () => {
     (env as { NODE_ENV: typeof env.NODE_ENV }).NODE_ENV = 'production';
+    (env as { RESEND_API_KEY?: string }).RESEND_API_KEY = 'test';
+    (env as { ALLOW_LOCAL_OUTBOX?: boolean }).ALLOW_LOCAL_OUTBOX = undefined;
+    expect(allowLocalMailOutbox()).toBe(false);
+    (env as { ALLOW_LOCAL_OUTBOX?: boolean }).ALLOW_LOCAL_OUTBOX = true;
+    expect(allowLocalMailOutbox()).toBe(true);
+  });
+
+  it('keeps the test-key outbox on outside production', () => {
+    (env as { NODE_ENV: typeof env.NODE_ENV }).NODE_ENV = 'development';
     (env as { RESEND_API_KEY?: string }).RESEND_API_KEY = 'test';
     (env as { ALLOW_LOCAL_OUTBOX?: boolean }).ALLOW_LOCAL_OUTBOX = undefined;
     expect(allowLocalMailOutbox()).toBe(true);

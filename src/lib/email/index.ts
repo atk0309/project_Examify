@@ -15,9 +15,10 @@ function resolveOutboxDir(): string {
       ? configured
       : path.join(/*turbopackIgnore: true*/ process.cwd(), configured);
   }
-  // `RESEND_API_KEY=test` (dev + Playwright) keeps the existing outbox so
-  // e2e can poll it. A real production deploy with no key writes to the
-  // data volume instead.
+  // `RESEND_API_KEY=test` in dev/test keeps the existing outbox so e2e can
+  // poll it (Playwright also sets ALLOW_LOCAL_OUTBOX=1 under NODE_ENV=production).
+  // A real production deploy with no key writes to the data volume instead,
+  // and only if ALLOW_LOCAL_OUTBOX is set.
   if (env.RESEND_API_KEY === 'test' || env.NODE_ENV === 'test') {
     return path.join(process.cwd(), 'tests', '.tmp', 'outbox');
   }

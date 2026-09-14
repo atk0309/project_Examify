@@ -29,7 +29,8 @@ get an initial response within a week.
 - **Do not write magic-link bearer tokens to disk in production.** Unset Resend
   or `RESEND_API_KEY=test` uses a local outbox only in dev/test. Production with
   no real Resend key returns the generic “sent” response and logs server-side —
-  it does **not** write `data/outbox`. `ALLOW_LOCAL_OUTBOX=1` is a dangerous
-  opt-in that stores raw sign-in URLs on the host filesystem; treat that
-  directory as secret material and never enable it on a shared or exposed disk.
+  it does **not** write `data/outbox`, even if `RESEND_API_KEY=test`.
+  `ALLOW_LOCAL_OUTBOX=1` is a dangerous opt-in that stores raw sign-in URLs on
+  the host filesystem; treat that directory as secret material and never enable
+  it on a shared or exposed disk.
   The writer creates the directory as `0700` and each message as `0600`.
