@@ -23,7 +23,14 @@ fi
 # the session cookie never sticks and magic-link login bounces back to /signin.
 # Drop the prefix for local dev only; production keeps the __Host- default over
 # HTTPS (see src/lib/auth.ts, which sets secure: isProd).
-if ! grep -qE '^SESSION_COOKIE_NAME=' .env; then
+#
+# Three cases: an active __Host- value is rewritten (covers an existing .env
+# that copied the example default); a missing key is appended; any other
+# explicit value is left untouched.
+if grep -qE '^SESSION_COOKIE_NAME=__Host-' .env; then
+  sed -i -E 's/^SESSION_COOKIE_NAME=__Host-.*/SESSION_COOKIE_NAME=examify_session/' .env
+  echo "Rewrote __Host- SESSION_COOKIE_NAME to examify_session for local dev"
+elif ! grep -qE '^SESSION_COOKIE_NAME=' .env; then
   printf '\n# Local dev only: plain HTTP cannot set a Secure __Host- cookie.\nSESSION_COOKIE_NAME=examify_session\n' >> .env
   echo "Set SESSION_COOKIE_NAME=examify_session for local dev"
 fi
