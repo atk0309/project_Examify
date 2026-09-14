@@ -78,7 +78,7 @@ appears in no dashboard at all).
 
 | Layer       | Choice                                                                    |
 | ----------- | ------------------------------------------------------------------------- |
-| Runtime     | Node 22 LTS, pnpm 10                                                      |
+| Runtime     | Node 22.22.2+ LTS, pnpm 10                                                |
 | Framework   | Next.js 16 (App Router, Turbopack), React 19.2, TypeScript 6 strict       |
 | Styling     | Tailwind v4 with a CSS-first `@theme` token system; 3 themes              |
 | DB          | SQLite (a single file), via Drizzle ORM + better-sqlite3                  |
@@ -200,7 +200,7 @@ while malformed `FAMILIES` JSON crashes boot.
 
 ## Deploy
 
-Examify is a standard Next.js server + one SQLite file — anywhere Node 22 runs works:
+Examify is a standard Next.js server + one SQLite file — anywhere Node 22.22.2+ runs works:
 
 ```bash
 pnpm install --frozen-lockfile

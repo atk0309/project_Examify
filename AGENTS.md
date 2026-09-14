@@ -15,7 +15,7 @@ This file applies to the entire repository.
 
 ## Mission
 
-Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developable with GitHub PRs and CI while remaining portable across Node 22 hosts, preserving the security and operational invariants documented in `CLAUDE.md`.
+Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developable with GitHub PRs and CI while remaining portable across Node 22.22.2+ hosts, preserving the security and operational invariants documented in `CLAUDE.md`.
 
 ## Progress + roles (current behaviour)
 
