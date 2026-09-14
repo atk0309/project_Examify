@@ -11,7 +11,9 @@ const resend = isResendConfigured() ? new Resend(env.RESEND_API_KEY!) : null;
 function resolveOutboxDir(): string {
   const configured = env.MAIL_OUTBOX_DIR;
   if (configured) {
-    return path.isAbsolute(configured) ? configured : path.join(process.cwd(), configured);
+    return path.isAbsolute(configured)
+      ? configured
+      : path.join(/*turbopackIgnore: true*/ process.cwd(), configured);
   }
   // `RESEND_API_KEY=test` (dev + Playwright) keeps the existing outbox so
   // e2e can poll it. A real production deploy with no key writes to the
