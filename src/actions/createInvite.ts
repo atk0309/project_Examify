@@ -1,9 +1,12 @@
 'use server';
 
+import { headers } from 'next/headers';
 import { z } from 'zod';
 import { getSession } from '@/lib/auth';
 import { env } from '@/lib/env';
 import { createHouseholdInvite } from '@/lib/households';
+import { extractClientIp } from '@/lib/ip';
+import { checkRateLimit } from '@/lib/rate-limit';
 
 const inputSchema = z.object({
   role: z.enum(['student', 'parent']),
@@ -22,13 +25,17 @@ export type CreateInviteResult =
       email: string | null;
       expiresAt: number;
     }
-  | { ok: false; reason: 'forbidden' | 'invalid' };
+  | { ok: false; reason: 'forbidden' | 'invalid' | 'rate_limited' };
 
 export async function createInvite(formData: FormData): Promise<CreateInviteResult> {
   const session = await getSession();
   if (!session.userId || session.role !== 'parent') {
     return { ok: false, reason: 'forbidden' };
   }
+
+  const ip = extractClientIp(await headers());
+  const limit = checkRateLimit(ip, 'invite');
+  if (!limit.ok) return { ok: false, reason: 'rate_limited' };
 
   const rawEmail = formData.get('email');
   const parsed = inputSchema.safeParse({

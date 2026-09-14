@@ -1,5 +1,4 @@
 import type { Metadata } from 'next';
-import Link from 'next/link';
 import { InviteAcceptForm } from '@/components/exam/InviteAcceptForm';
 import { env, isTurnstileEnabled } from '@/lib/env';
 import { lookupInvite } from '@/lib/households';
@@ -23,12 +22,9 @@ export default async function InvitePage({ params }: { params: Promise<{ token: 
           <div className="login">
             <div className="sent-state">
               <h1 className="sent-title">Invite invalid</h1>
-              <p className="sent-note">This invite is invalid or has expired.</p>
-              <div className="mt-6 flex flex-col gap-[var(--sp-2)]">
-                <Link className="btn btn-primary" href="/signin">
-                  Sign in
-                </Link>
-              </div>
+              <p className="sent-note">
+                This invite is invalid or has expired. Ask a parent for a new link.
+              </p>
             </div>
           </div>
         </div>

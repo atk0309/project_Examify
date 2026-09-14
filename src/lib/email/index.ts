@@ -2,7 +2,7 @@ import 'server-only';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { Resend } from 'resend';
-import { env, isResendConfigured, isTest } from '@/lib/env';
+import { allowLocalMailOutbox, env, isResendConfigured } from '@/lib/env';
 
 export type SendResult = { ok: true; id: string } | { ok: false; error: string };
 
@@ -18,7 +18,7 @@ function resolveOutboxDir(): string {
   // `RESEND_API_KEY=test` (dev + Playwright) keeps the existing outbox so
   // e2e can poll it. A real production deploy with no key writes to the
   // data volume instead.
-  if (env.RESEND_API_KEY === 'test' || isTest) {
+  if (env.RESEND_API_KEY === 'test' || env.NODE_ENV === 'test') {
     return path.join(process.cwd(), 'tests', '.tmp', 'outbox');
   }
   return path.join(process.cwd(), 'data', 'outbox');
@@ -46,7 +46,13 @@ export async function sendEmail(options: {
   html: string;
   text?: string;
 }): Promise<SendResult> {
-  if (resend === null || isTest) {
+  if (resend === null || env.NODE_ENV === 'test') {
+    if (!allowLocalMailOutbox()) {
+      console.error(
+        '[email] Resend is not configured; refusing to write magic-link tokens to a local outbox',
+      );
+      return { ok: false, error: 'email-not-configured' };
+    }
     const id = await writeTestOutbox({
       to: options.to,
       subject: options.subject,

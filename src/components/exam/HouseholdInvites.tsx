@@ -3,10 +3,19 @@
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { createInvite } from '@/actions/createInvite';
+import { removeMember } from '@/actions/removeMember';
 import { revokeInvite } from '@/actions/revokeInvite';
-import type { PendingInvite } from '@/lib/household-types';
+import type { HouseholdMemberView, PendingInvite } from '@/lib/household-types';
 
-export function HouseholdInvites({ pending }: { pending: PendingInvite[] }) {
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+export function HouseholdInvites({
+  pending,
+  members = [],
+}: {
+  pending: PendingInvite[];
+  members?: HouseholdMemberView[];
+}) {
   const router = useRouter();
   const [busy, startTransition] = useTransition();
   const [role, setRole] = useState<'student' | 'parent'>('student');
@@ -25,7 +34,9 @@ export function HouseholdInvites({ pending }: { pending: PendingInvite[] }) {
         setError(
           result.reason === 'forbidden'
             ? 'You cannot create invites.'
-            : 'Could not create that invite.',
+            : result.reason === 'rate_limited'
+              ? 'Too many invites from your network. Try again later.'
+              : 'Could not create that invite. Parent invites need an email.',
         );
         return;
       }
@@ -59,6 +70,24 @@ export function HouseholdInvites({ pending }: { pending: PendingInvite[] }) {
     });
   };
 
+  const onRemove = (userId: number) => {
+    setError(null);
+    startTransition(async () => {
+      const data = new FormData();
+      data.set('userId', String(userId));
+      const result = await removeMember(data);
+      if (!result.ok) {
+        setError(
+          result.reason === 'forbidden'
+            ? 'You cannot remove that person.'
+            : 'Could not remove that person.',
+        );
+        return;
+      }
+      router.refresh();
+    });
+  };
+
   const copyUrl = async () => {
     if (!createdUrl) return;
     try {
@@ -76,8 +105,8 @@ export function HouseholdInvites({ pending }: { pending: PendingInvite[] }) {
         Invite family
       </h2>
       <p className="subtitle">
-        Share a link to add a student or another parent to this household. They sign in with a magic
-        link — nothing to put in env.
+        Share a link to add a student or another parent. Student links may be open; parent invites
+        must be locked to one email.
       </p>
 
       <form action={onCreate} className="invite-create" data-testid="create-invite-form">
@@ -97,7 +126,7 @@ export function HouseholdInvites({ pending }: { pending: PendingInvite[] }) {
         </div>
         <input type="hidden" name="role" value={role} />
         <label className="field-label" htmlFor="invite-lock-email">
-          Lock to email (optional)
+          {role === 'parent' ? 'Lock to email (required)' : 'Lock to email (optional)'}
         </label>
         <input
           id="invite-lock-email"
@@ -105,7 +134,8 @@ export function HouseholdInvites({ pending }: { pending: PendingInvite[] }) {
           className="text-input"
           type="email"
           inputMode="email"
-          placeholder="leave blank for an open link"
+          required={role === 'parent'}
+          placeholder={role === 'parent' ? 'parent@example.com' : 'leave blank for an open link'}
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           data-testid="invite-lock-email"
@@ -113,7 +143,7 @@ export function HouseholdInvites({ pending }: { pending: PendingInvite[] }) {
         <button
           className="btn btn-primary"
           type="submit"
-          disabled={busy}
+          disabled={busy || (role === 'parent' && !EMAIL_RE.test(email.trim()))}
           data-testid="create-invite"
         >
           {busy ? 'Creating…' : 'Create invite link'}
@@ -174,6 +204,32 @@ export function HouseholdInvites({ pending }: { pending: PendingInvite[] }) {
       ) : (
         <p className="login-fine">No pending invites.</p>
       )}
+
+      {members.length > 0 ? (
+        <ul className="invite-list" data-testid="household-members">
+          {members.map((member) => (
+            <li key={member.userId} className="invite-row" data-testid="household-member">
+              <div>
+                <strong>{member.label}</strong>
+                <span className="invite-meta">
+                  {member.role} · {member.email}
+                </span>
+              </div>
+              {member.canRemove ? (
+                <button
+                  type="button"
+                  className="btn btn-quiet invite-revoke"
+                  disabled={busy}
+                  onClick={() => onRemove(member.userId)}
+                  data-testid="remove-member"
+                >
+                  Remove
+                </button>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      ) : null}
     </section>
   );
 }

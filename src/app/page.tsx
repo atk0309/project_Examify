@@ -3,12 +3,17 @@ import { ExamApp, type Resumable } from '@/components/exam/ExamApp';
 import { ParentDashboard } from '@/components/exam/ParentDashboard';
 import { getSession } from '@/lib/auth';
 import { getExamSessions } from '@/lib/exam-session';
-import { canInvite, getMembershipForUser, listPendingInvites } from '@/lib/households';
+import {
+  canInvite,
+  canRemoveMember,
+  getMembershipForUser,
+  labelFromEmail,
+  listHouseholdMembers,
+  listPendingInvites,
+} from '@/lib/households';
 import { getProgressForUser, getScoreHistory, resolveChildren } from '@/lib/progress';
 import { resolveExamPaper } from '@/lib/exam/data';
-import type { ProgressData } from '@/lib/exam/attempts';
-
-const EMPTY_PROGRESS: ProgressData = { attempts: [], subjects: [] };
+import type { HouseholdMemberView } from '@/lib/household-types';
 
 /**
  * Reconstruct the user's resumable in-progress exams from their saved sessions.
@@ -56,25 +61,39 @@ export default async function HomePage() {
       );
     }
 
-    // Otherwise the parent dashboard: the child's progress, the parent's own
-    // progress, and a comparison — plus the entry into student mode. The child
-    // is resolved from the parent's own household (never another household's),
-    // keyed by the signed-in parent's email.
-    const child = session.email ? resolveChildren(session.email)[0] : undefined;
-    const childProgress = child ? getProgressForUser(child.id) : EMPTY_PROGRESS;
+    // Otherwise the parent dashboard: every household student's progress, the
+    // parent's own progress, and a comparison against a selected student.
+    // Children are resolved from the parent's own household only.
+    const kids = session.email ? resolveChildren(session.email) : [];
     const ownHistory = getScoreHistory(session.userId);
-    const childHistory = child ? getScoreHistory(child.id) : [];
     const membership = getMembershipForUser(session.userId);
     const pendingInvites =
       membership && canInvite(session.userId) ? listPendingInvites(membership.householdId) : [];
+    const members: HouseholdMemberView[] =
+      membership && canInvite(session.userId)
+        ? listHouseholdMembers(membership.householdId).map((row) => {
+            const target = getMembershipForUser(row.userId);
+            return {
+              userId: row.userId,
+              email: row.email,
+              role: row.role,
+              label: labelFromEmail(row.email),
+              canRemove: Boolean(target && canRemoveMember(membership, target)),
+            };
+          })
+        : [];
     return (
       <ParentDashboard
-        childLabel={child?.label ?? 'Your child'}
-        childProgress={childProgress}
+        students={kids.map((child) => ({
+          id: child.id,
+          label: child.label,
+          progress: getProgressForUser(child.id),
+          history: getScoreHistory(child.id),
+        }))}
         ownProgress={ownProgress}
-        childHistory={childHistory}
         ownHistory={ownHistory}
         pendingInvites={pendingInvites}
+        members={members}
         canInvite={canInvite(session.userId)}
       />
     );

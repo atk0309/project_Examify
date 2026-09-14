@@ -9,3 +9,11 @@ export type PendingInvite = {
   email: string | null;
   expiresAt: number;
 };
+
+export type HouseholdMemberView = {
+  userId: number;
+  email: string;
+  role: 'admin' | 'parent' | 'student';
+  label: string;
+  canRemove: boolean;
+};

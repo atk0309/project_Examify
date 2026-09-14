@@ -9,5 +9,6 @@ test('GET /invite/bogus renders an invalid-invite page', async ({ page }) => {
   const response = await page.goto('/invite/bogus');
   expect(response?.status()).toBe(200);
   await expect(page.getByText('Invite invalid')).toBeVisible();
-  await expect(page.getByRole('link', { name: 'Sign in' })).toBeVisible();
+  await expect(page.getByText('Ask a parent for a new link.')).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Sign in' })).toHaveCount(0);
 });

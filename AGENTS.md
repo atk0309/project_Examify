@@ -66,8 +66,8 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
 - Parent→child linking is per-household in SQLite: `resolveChildren(parentEmail)`
   in `src/lib/progress.ts` returns only students who share that parent's household — a
   parent never sees another household's child. It's the privacy boundary; keep it isolated.
-  The dashboard shows one child (`page.tsx` still uses `resolveChildren(...)[0]`). The
-  comparison's "score by attempt number" axis uses `getScoreHistory()` (uncapped,
+  The dashboard lists every household student and compares against a selected child.
+  The comparison's "score by attempt number" axis uses `getScoreHistory()` (uncapped,
   oldest-first) rather than the 50-capped `getProgressForUser`.
 - Access is invite-only. First-run `/setup` (`bootstrapHousehold`) creates the admin
   when no household exists, and only after `SETUP_BOOTSTRAP_SECRET` matches (required
@@ -75,7 +75,7 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   (`createInvite`); accept goes through `/invite/[token]` + magic-link verify
   (membership attaches in the same transaction). Do not bring back a required
   `FAMILIES` env allowlist. A leftover `FAMILIES` JSON is imported once if the DB
-  has no households.
+  has no households. Production boot fails if `FAMILIES` is set and invalid.
 
 ## Workflow expectations
 
@@ -119,6 +119,9 @@ Before merge, ensure these pass in CI:
   parent = parent or admin member), derived via `isAllowedEmail`; never leak
   whether an email is a member (no enumeration), including when mail delivery
   fails (same public `sent` response; log server-side).
+- Re-check household membership on every `getSession()` load; a removed member
+  must not keep a 30-day cookie. Invite revoke is a soft-consume (never DELETE
+  while `magic_tokens.invite_id` still references the row).
 - Keep magic-link tokens hashed at rest and single-use; the token carries the role. Token
   verification lives in a **Route Handler** (`src/app/signin/verify/route.ts`), never a
   Server Component page — clicking the email link is a GET that writes the session cookie,

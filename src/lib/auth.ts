@@ -5,7 +5,12 @@ import { getIronSession, type SessionOptions } from 'iron-session';
 import { and, eq, gte, isNull } from 'drizzle-orm';
 import { db, schema } from './db';
 import { env, isProd } from './env';
-import { attachMembershipFromInvite } from './households';
+import {
+  attachMembershipFromInvite,
+  getMembershipForUser,
+  isParentLike,
+  type Membership,
+} from './households';
 
 export type SessionRole = 'student' | 'parent';
 
@@ -34,8 +39,34 @@ const sessionOptions: SessionOptions = {
   },
 };
 
+/**
+ * A signed-in session must still have household membership whose role
+ * matches the cookie. Removal (or a stale role) forces re-auth — the
+ * 30-day cookie is not a standing grant.
+ */
+export function sessionMembershipOk(
+  session: Pick<SessionData, 'userId' | 'role'>,
+  membership: Membership | null,
+): boolean {
+  if (!session.userId || !session.role) return true;
+  if (!membership || membership.userId !== session.userId) return false;
+  if (session.role === 'student') return membership.role === 'student';
+  return isParentLike(membership.role);
+}
+
 export async function getSession() {
-  return getIronSession<SessionData>(await cookies(), sessionOptions);
+  const session = await getIronSession<SessionData>(await cookies(), sessionOptions);
+  if (session.userId && session.role) {
+    const membership = getMembershipForUser(session.userId);
+    if (!sessionMembershipOk(session, membership)) {
+      session.destroy();
+      delete session.userId;
+      delete session.role;
+      delete session.email;
+      delete session.studentMode;
+    }
+  }
+  return session;
 }
 
 export async function destroySession(): Promise<void> {

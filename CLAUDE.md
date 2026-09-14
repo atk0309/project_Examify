@@ -223,6 +223,9 @@ These are non-negotiable. Don't "fix" them out.
   (`src/actions/toggleStudentMode.ts`, parent-only) and **reset to `false` on every verified
   sign-in** (`/signin/verify`), so a returning parent always lands on the dashboard. `signOut`
   (`src/actions/signOut.ts`) destroys the session and returns to `/signin`.
+  `getSession` re-checks household membership + role on every load; a removed
+  member (or role mismatch) clears the cookie. Parents/admins can remove members
+  via `removeMember` (cannot remove self or the household admin).
 
 ## Progress tracking + roles
 
@@ -284,8 +287,8 @@ chosen, answer }`, free-text `{ type:'free', id, q, response, maxScore, score, s
   **nothing else**. A parent sees only their own household's child; a student with no
   parent/admin in that household never surfaces in any parent dashboard; one household
   can never see another's. This is the one read path that crosses user ids, so keep it
-  isolated. `page.tsx` still renders a single child (`resolveChildren(...)[0]`) —
-  multi-child UI stays out of scope.
+  isolated. `page.tsx` passes every student from `resolveChildren()`; the parent
+  dashboard lists each child's progress and compares against a selected student.
 - **Comparison.** `ComparisonView` (`src/components/exam/ComparisonView.tsx`) shows parent
   vs child: totals + per-subject averages + a "score by attempt number" progression. Totals
   and the progression use `getScoreHistory()` (`src/lib/progress.ts`, **uncapped**,
@@ -342,15 +345,19 @@ distinguishes via `NEXT_PHASE=phase-production-build`). The production server bo
 `DATABASE_URL`, etc. crashes boot with a readable zod error (and fails the platform
 healthcheck). Don't add dev defaults to security-critical vars without weighing that.
 Access is DB-backed: empty households fail closed (nobody can sign in until `/setup`
-or a leftover `FAMILIES` import). Malformed leftover `FAMILIES` JSON is skipped with
-a warning — it no longer crashes boot. `/setup` itself is gated by
-`SETUP_BOOTSTRAP_SECRET` (required in production, min 16); captcha is not identity.
+or a leftover `FAMILIES` import). A leftover `FAMILIES` value that is set but
+unparsable **crashes production boot**. `/setup` itself is gated by
+`SETUP_BOOTSTRAP_SECRET` (required in production, min 16, not a documented
+placeholder); captcha is not identity. Documented placeholder `AUTH_SECRET` /
+`SETUP_BOOTSTRAP_SECRET` values also fail production boot.
 
 Required in production: `SITE_URL`, `AUTH_SECRET`, `DATABASE_URL`, `ANTHROPIC_API_KEY`,
 `SETUP_BOOTSTRAP_SECRET`. `RESEND_API_KEY` / `RESEND_FROM` are optional in outbox
-mode (unset or `test` → local outbox). A real Resend key requires `RESEND_FROM` —
-there is no `onboarding@resend.dev` fallback. Turnstile keys are optional (both
-unset → captcha off; exactly one key in production crashes boot).
+mode (unset or `test` → local outbox in **dev/test only**). Production with no
+real Resend key does not write bearer tokens to `data/outbox` unless
+`ALLOW_LOCAL_OUTBOX=1`. A real Resend key requires `RESEND_FROM` — there is no
+`onboarding@resend.dev` fallback. Turnstile keys are optional (both unset →
+captcha off; exactly one key in production crashes boot).
 `ANTHROPIC_API_KEY` still fails closed in prod when missing; the `test` sentinel
 routes the grader to a deterministic stub. See `.env.example` for the canonical list.
 
@@ -389,7 +396,8 @@ routes the grader to a deterministic stub. See `.env.example` for the canonical 
 
 - Streaks, leaderboards, or rich profiles. (Per-student attempt history **is** shipped —
   see "Progress tracking + roles" — but gamification beyond that is not.)
-- Multi-child parent UI (the single-family linking seam is in place; the UI is not).
+- Extra per-child settings / profiles. The parent dashboard already lists every
+  household student and compares against a selected child.
 - Comments, social features, payments.
 - An admin UI / content CMS (questions are edited in `src/lib/exam/data.ts`).
 - OAuth providers (magic-link only, by design).

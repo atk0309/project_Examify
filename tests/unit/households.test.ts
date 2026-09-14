@@ -171,6 +171,79 @@ describe('invites + consumeMagicToken', () => {
     expect(emails).toContain('a@example.com');
     expect(emails).not.toContain('b@example.com');
   });
+
+  it('soft-revokes an invite that already has an outstanding magic link', async () => {
+    const { bootstrapHousehold, createHouseholdInvite, lookupInvite, revokeHouseholdInvite } =
+      await lib();
+    const host = bootstrapHousehold({ email: 'pat@example.com', householdName: 'Ours' });
+    if (!host.ok) return;
+    const created = createHouseholdInvite({ actorUserId: host.userId, role: 'student' });
+    if (!created.ok) return;
+
+    const { consumeMagicToken, issueMagicLink } = await import('@/lib/auth');
+    const { token } = await issueMagicLink('alex@example.com', 'student', {
+      inviteId: created.invite.id,
+    });
+
+    expect(revokeHouseholdInvite(host.userId, created.invite.id)).toEqual({ ok: true });
+    expect(lookupInvite(created.token)).toBeNull();
+    expect(consumeMagicToken(token)).toEqual({ ok: false, reason: 'invite-invalid' });
+  });
+
+  it('requires an email lock for parent invites', async () => {
+    const { bootstrapHousehold, createHouseholdInvite, emailMayAcceptInvite, lookupInvite } =
+      await lib();
+    const host = bootstrapHousehold({ email: 'pat@example.com', householdName: 'Ours' });
+    if (!host.ok) return;
+    expect(createHouseholdInvite({ actorUserId: host.userId, role: 'parent' })).toEqual({
+      ok: false,
+      reason: 'invalid',
+    });
+    const created = createHouseholdInvite({
+      actorUserId: host.userId,
+      role: 'parent',
+      email: 'other@example.com',
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const invite = lookupInvite(created.token)!;
+    expect(emailMayAcceptInvite(invite, 'stranger@example.com')).toBe(false);
+    expect(emailMayAcceptInvite(invite, 'other@example.com')).toBe(true);
+  });
+});
+
+describe('removeHouseholdMember', () => {
+  it('lets an admin remove a student and blocks self/admin removal', async () => {
+    const {
+      bootstrapHousehold,
+      createHouseholdInvite,
+      attachMembershipFromInvite,
+      removeHouseholdMember,
+      getMembershipForEmail,
+      listHouseholdMembers,
+    } = await lib();
+    const { db, schema } = await import('@/lib/db');
+    const host = bootstrapHousehold({ email: 'pat@example.com', householdName: 'Ours' });
+    if (!host.ok) return;
+    const kid = db
+      .insert(schema.users)
+      .values({ email: 'kid@example.com', emailVerifiedAt: new Date() })
+      .returning()
+      .get()!;
+    const created = createHouseholdInvite({ actorUserId: host.userId, role: 'student' });
+    if (!created.ok) return;
+    db.transaction((tx) => {
+      attachMembershipFromInvite(tx, created.invite.id, kid.id, 'kid@example.com');
+    });
+
+    expect(removeHouseholdMember(host.userId, host.userId)).toEqual({
+      ok: false,
+      reason: 'forbidden',
+    });
+    expect(removeHouseholdMember(host.userId, kid.id)).toEqual({ ok: true });
+    expect(getMembershipForEmail('kid@example.com')).toBeNull();
+    expect(listHouseholdMembers(host.householdId).some((m) => m.userId === kid.id)).toBe(false);
+  });
 });
 
 describe('importLegacyFamiliesIfNeeded', () => {
@@ -197,7 +270,7 @@ describe('importLegacyFamiliesIfNeeded', () => {
     expect(again.imported).toBe(0);
   });
 
-  it('skips a malformed FAMILIES value without crashing', async () => {
+  it('skips a malformed FAMILIES value without crashing in non-prod', async () => {
     Reflect.set(process.env, 'FAMILIES', '{not json');
     const { importLegacyFamiliesIfNeeded, hasAnyHousehold } = await lib();
     const result = importLegacyFamiliesIfNeeded();

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { parseFamilies } from './families';
 
 /**
  * In production, security-critical env vars have no defaults — boot fails
@@ -25,6 +26,25 @@ function emptyToUndef(v: unknown): unknown {
 function isConfiguredSecret(key: string | undefined): boolean {
   const trimmed = key?.trim();
   return Boolean(trimmed && trimmed !== 'test');
+}
+
+/** Documented / generated placeholders that must never ship in production. */
+const PLACEHOLDER_SETUP_SECRETS = new Set([
+  'dev-setup-bootstrap-secret',
+  'build-placeholder-setup',
+  'replace-me-with-a-16+-char-random-string',
+]);
+
+const PLACEHOLDER_AUTH_SECRETS = new Set([
+  'dev_only-not-secret-set-auth_secret-in-production-please',
+  'build-placeholder-auth-secret-32ch',
+  'replace-me-with-a-32+-char-random-string',
+]);
+
+function looksLikePlaceholderSecret(value: string, extra: Set<string>): boolean {
+  const normalised = value.trim().toLowerCase();
+  if (extra.has(normalised)) return true;
+  return normalised.includes('replace-me') || normalised.includes('changeme');
 }
 
 function isProductionRuntime(raw: NodeJS.ProcessEnv): boolean {
@@ -59,10 +79,8 @@ function buildEnvSchema(isProd: boolean) {
       SESSION_COOKIE_NAME: z.string().min(1).default('__Host-examify_session'),
 
       // Access is invite-only households in SQLite — there is no FAMILIES env
-      // allowlist. A leftover FAMILIES value is read once by
-      // `importLegacyFamiliesIfNeeded()` when the DB has no households yet
-      // (existing Railway deploys); it is not validated at boot and is not
-      // required for new installs.
+      // allowlist. A leftover FAMILIES value is imported once when the DB has
+      // no households. Production boot fails if FAMILIES is set and invalid.
 
       // Resend: optional. Unset or the `test` sentinel writes magic-link emails
       // to a local outbox instead of sending (dev/test, and a self-hosted box
@@ -77,6 +95,17 @@ function buildEnvSchema(isProd: boolean) {
       // Optional override for the local mail outbox directory (writer + test
       // readers share this). Unset keeps the existing defaults.
       MAIL_OUTBOX_DIR: z.preprocess(emptyToUndef, z.string().min(1).optional()),
+
+      // Production: writing magic-link bearer tokens to a local outbox is off
+      // unless this is explicitly enabled. Dev/test/`RESEND_API_KEY=test` do
+      // not need it.
+      ALLOW_LOCAL_OUTBOX: z.preprocess((v) => {
+        if (typeof v !== 'string') return undefined;
+        const t = v.trim().toLowerCase();
+        if (t === '1' || t === 'true') return true;
+        if (t === '' || t === '0' || t === 'false') return undefined;
+        return undefined;
+      }, z.boolean().optional()),
 
       // Anthropic key for free-text grading. The `test` sentinel (dev/test default)
       // routes the grader to a deterministic full-score stub — no network — exactly
@@ -128,13 +157,33 @@ function buildEnvSchema(isProd: boolean) {
           path: ['RESEND_FROM'],
         });
       }
+      if (
+        isProd &&
+        looksLikePlaceholderSecret(data.SETUP_BOOTSTRAP_SECRET, PLACEHOLDER_SETUP_SECRETS)
+      ) {
+        ctx.addIssue({
+          code: 'custom',
+          message:
+            'SETUP_BOOTSTRAP_SECRET is a documented placeholder. Set a unique random value in production (openssl rand -base64 24).',
+          path: ['SETUP_BOOTSTRAP_SECRET'],
+        });
+      }
+      if (isProd && looksLikePlaceholderSecret(data.AUTH_SECRET, PLACEHOLDER_AUTH_SECRETS)) {
+        ctx.addIssue({
+          code: 'custom',
+          message:
+            'AUTH_SECRET is a documented placeholder. Set a unique random value in production (openssl rand -base64 32).',
+          path: ['AUTH_SECRET'],
+        });
+      }
     });
 }
 
 export type Env = z.infer<ReturnType<typeof buildEnvSchema>>;
 
 export function parseEnv(raw: NodeJS.ProcessEnv = process.env): Env {
-  const parsed = buildEnvSchema(isProductionRuntime(raw)).safeParse(raw);
+  const isProd = isProductionRuntime(raw);
+  const parsed = buildEnvSchema(isProd).safeParse(raw);
   if (!parsed.success) {
     const issues = parsed.error.issues
       .map((i) => `  - ${i.path.join('.')}: ${i.message}`)
@@ -144,6 +193,16 @@ export function parseEnv(raw: NodeJS.ProcessEnv = process.env): Env {
     );
     throw new Error('Invalid environment variables');
   }
+
+  const familiesRaw = raw.FAMILIES;
+  if (isProd && familiesRaw && familiesRaw.trim() !== '' && familiesRaw.trim() !== '[]') {
+    const families = parseFamilies(familiesRaw);
+    if (!families.ok) {
+      console.error(`Invalid FAMILIES env JSON: ${families.error}`);
+      throw new Error('Invalid environment variables');
+    }
+  }
+
   return parsed.data;
 }
 
@@ -160,4 +219,17 @@ export function isResendConfigured(): boolean {
 /** Both Turnstile keys present — captcha UI + server verify are on. */
 export function isTurnstileEnabled(): boolean {
   return Boolean(env.NEXT_PUBLIC_TURNSTILE_SITE_KEY?.trim() && env.TURNSTILE_SECRET_KEY?.trim());
+}
+
+/**
+ * Whether magic-link emails may be written to a local outbox.
+ * Always on in test, when RESEND_API_KEY=test, or outside production.
+ * Production with no real Resend key stays fail-closed unless
+ * ALLOW_LOCAL_OUTBOX is explicitly enabled.
+ */
+export function allowLocalMailOutbox(): boolean {
+  if (env.NODE_ENV === 'test') return true;
+  if (env.RESEND_API_KEY === 'test') return true;
+  if (env.NODE_ENV !== 'production') return true;
+  return env.ALLOW_LOCAL_OUTBOX === true;
 }

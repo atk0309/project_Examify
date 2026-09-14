@@ -72,6 +72,8 @@ export function importLegacyFamiliesIfNeeded(): { imported: number; error?: stri
 
   const parsed = parseFamilies(raw);
   if (!parsed.ok) {
+    // Production boot already rejects a set-but-invalid FAMILIES. Non-prod
+    // skips so a leftover typo cannot brick `pnpm dev` / unit tests.
     console.warn(`[households] FAMILIES import skipped: ${parsed.error}`);
     return { imported: 0, error: parsed.error };
   }
@@ -239,6 +241,10 @@ export function createHouseholdInvite(input: {
   }
   const email = input.email ? normaliseEmail(input.email) : null;
   if (input.email && !email) return { ok: false, reason: 'invalid' };
+  // Parent invites must be email-locked — an open parent URL is a privacy
+  // footgun (anyone who finds it joins as a parent). Student invites may
+  // stay open or locked.
+  if (input.role === 'parent' && !email) return { ok: false, reason: 'invalid' };
 
   const now = input.now ?? Date.now();
   const { token, tokenHash } = generateInviteToken();
@@ -311,7 +317,17 @@ export function revokeHouseholdInvite(
     )
     .get();
   if (!row) return { ok: false, reason: 'not_found' };
-  db.delete(schema.householdInvites).where(eq(schema.householdInvites.id, inviteId)).run();
+
+  // Soft-revoke. A hard DELETE fails when magic_tokens.invite_id still
+  // points here (FK ON DELETE NO ACTION, foreign_keys=ON). Marking the
+  // invite consumed makes lookup/attach fail, and outstanding magic
+  // tokens stay attached so consume can return invite-invalid.
+  if (!row.consumedAt) {
+    db.update(schema.householdInvites)
+      .set({ consumedAt: new Date() })
+      .where(eq(schema.householdInvites.id, inviteId))
+      .run();
+  }
   return { ok: true };
 }
 
@@ -347,6 +363,7 @@ export function emailMayAcceptInvite(invite: PublicInvite, email: string): boole
   const normalised = normaliseEmail(email);
   if (!normalised) return false;
   if (getMembershipForEmail(normalised)) return false;
+  if (invite.role === 'parent' && !invite.email) return false;
   if (invite.email && invite.email !== normalised) return false;
   return true;
 }
@@ -414,4 +431,62 @@ export function studentEmailsForParent(parentEmail: string): string[] {
     )
     .all();
   return rows.map((row) => row.email);
+}
+
+export type HouseholdMemberRow = {
+  userId: number;
+  email: string;
+  role: HouseholdRole;
+};
+
+export function listHouseholdMembers(householdId: number): HouseholdMemberRow[] {
+  return db
+    .select({
+      userId: schema.householdMembers.userId,
+      email: schema.users.email,
+      role: schema.householdMembers.role,
+    })
+    .from(schema.householdMembers)
+    .innerJoin(schema.users, eq(schema.users.id, schema.householdMembers.userId))
+    .where(eq(schema.householdMembers.householdId, householdId))
+    .all();
+}
+
+/** Whether `actor` may remove `target` from the shared household. */
+export function canRemoveMember(actor: Membership, target: Membership): boolean {
+  if (actor.householdId !== target.householdId) return false;
+  if (actor.userId === target.userId) return false;
+  if (!isParentLike(actor.role)) return false;
+  if (target.role === 'admin') return false;
+  if (actor.role === 'admin') return true;
+  return target.role === 'student';
+}
+
+export type RemoveMemberResult = { ok: true } | { ok: false; reason: 'forbidden' | 'not_found' };
+
+/**
+ * Drop a household member. Does not delete the users row or their attempts.
+ * Outstanding magic tokens for that email are marked consumed so a leftover
+ * link cannot mint a new session; getSession also re-checks membership.
+ */
+export function removeHouseholdMember(
+  actorUserId: number,
+  targetUserId: number,
+  now = Date.now(),
+): RemoveMemberResult {
+  const actor = getMembershipForUser(actorUserId);
+  const target = getMembershipForUser(targetUserId);
+  if (!target) return { ok: false, reason: 'not_found' };
+  if (!actor || !canRemoveMember(actor, target)) return { ok: false, reason: 'forbidden' };
+
+  db.transaction((tx) => {
+    tx.delete(schema.householdMembers)
+      .where(eq(schema.householdMembers.userId, targetUserId))
+      .run();
+    tx.update(schema.magicTokens)
+      .set({ consumedAt: new Date(now) })
+      .where(and(eq(schema.magicTokens.email, target.email), isNull(schema.magicTokens.consumedAt)))
+      .run();
+  });
+  return { ok: true };
 }

@@ -141,6 +141,66 @@ describe('createInvite + requestInviteLink', () => {
     expect(state).toEqual({ status: 'sent', email: 'alex@example.com' });
   });
 
+  it('returns generic sent when the email does not match the invite lock', async () => {
+    const { bootstrapHousehold, createHouseholdInvite } = await import('@/lib/households');
+    const host = bootstrapHousehold({ email: 'pat@example.com', householdName: 'Ours' });
+    if (!host.ok) throw new Error('bootstrap failed');
+    const created = createHouseholdInvite({
+      actorUserId: host.userId,
+      role: 'student',
+      email: 'alex@example.com',
+    });
+    if (!created.ok) throw new Error('invite failed');
+
+    const { requestInviteLink } = await import('@/actions/requestInviteLink');
+    const accept = new FormData();
+    accept.set('email', 'stranger@example.com');
+    accept.set('inviteToken', created.token);
+    const state = await requestInviteLink({ status: 'idle' }, accept);
+    expect(state).toEqual({ status: 'sent', email: 'stranger@example.com' });
+  });
+
+  it('rejects an open parent invite', async () => {
+    const { bootstrapHousehold } = await import('@/lib/households');
+    const host = bootstrapHousehold({ email: 'pat@example.com', householdName: 'Ours' });
+    if (!host.ok) throw new Error('bootstrap failed');
+    sessionHolder.current.userId = host.userId;
+    sessionHolder.current.role = 'parent';
+    const { createInvite } = await import('@/actions/createInvite');
+    const form = new FormData();
+    form.set('role', 'parent');
+    expect(await createInvite(form)).toEqual({ ok: false, reason: 'invalid' });
+  });
+
+  it('lets an admin remove a student via removeMember', async () => {
+    const { bootstrapHousehold, createHouseholdInvite, attachMembershipFromInvite } =
+      await import('@/lib/households');
+    const { db, schema } = await import('@/lib/db');
+    const host = bootstrapHousehold({ email: 'pat@example.com', householdName: 'Ours' });
+    if (!host.ok) throw new Error('bootstrap failed');
+    const kid = db
+      .insert(schema.users)
+      .values({ email: 'kid@example.com', emailVerifiedAt: new Date() })
+      .returning()
+      .get()!;
+    const created = createHouseholdInvite({ actorUserId: host.userId, role: 'student' });
+    if (!created.ok) throw new Error('invite failed');
+    db.transaction((tx) => {
+      attachMembershipFromInvite(tx, created.invite.id, kid.id, 'kid@example.com');
+    });
+    sessionHolder.current.userId = host.userId;
+    sessionHolder.current.role = 'parent';
+
+    const { removeMember } = await import('@/actions/removeMember');
+    const data = new FormData();
+    data.set('userId', String(kid.id));
+    expect(await removeMember(data)).toEqual({ ok: true });
+
+    sessionHolder.current.userId = kid.id;
+    sessionHolder.current.role = 'student';
+    expect(await removeMember(data)).toEqual({ ok: false, reason: 'forbidden' });
+  });
+
   it('reports an invalid invite token', async () => {
     const { requestInviteLink } = await import('@/actions/requestInviteLink');
     const accept = new FormData();

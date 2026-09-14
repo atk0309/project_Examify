@@ -116,8 +116,9 @@ Who may sign in is stored in SQLite, not env:
 1. **First run** — `/setup` creates the household and the admin (a parent). You must
    enter the deployment `SETUP_BOOTSTRAP_SECRET` (required in production). No email
    round-trip; you are at the keyboard.
-2. **Invite** — from the parent dashboard, create a student or parent invite link
-   (optionally locked to one email). Share `/invite/<token>`.
+2. **Invite** — from the parent dashboard, create a student invite (open or
+   email-locked) or a parent invite (**email-locked**). Share `/invite/<token>`.
+   Revoke unused links; remove a member if they should no longer have access.
 3. **Accept** — the invitee enters their email, receives a magic link, and joining the
    household happens when they verify. After that they sign in at `/signin` like anyone
    else.
@@ -134,8 +135,9 @@ yet, or mail could not be sent.
 Older deploys used a `FAMILIES='[{ "child", "parents" }]'` env var. That is **no longer
 required**. If the variable is still set and the database has no households yet, the
 first request imports it once (one household per family entry; the first parent becomes
-admin). After a successful import, remove `FAMILIES` from the host. New installs should
-leave it unset and use `/setup`.
+admin). After a successful import, remove `FAMILIES` from the host. If `FAMILIES` is
+set but unparsable, production boot fails — fix the JSON or unset it. New installs
+should leave it unset and use `/setup`.
 
 Turnstile is optional: leave `NEXT_PUBLIC_TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY`
 unset to skip the captcha. When both are set, sign-in / setup / invite accept verify the
@@ -203,8 +205,12 @@ applied at runtime via `accentCSS()`.
 
 Defined and validated by zod in `src/lib/env.ts`; the canonical reference is
 `.env.example`. Required in production: `SITE_URL`, `AUTH_SECRET`, `DATABASE_URL`,
-`ANTHROPIC_API_KEY`, `SETUP_BOOTSTRAP_SECRET`. `RESEND_API_KEY` / `RESEND_FROM` are
-optional in outbox mode (unset or `test` → local outbox). A real Resend key
+`ANTHROPIC_API_KEY`, `SETUP_BOOTSTRAP_SECRET`. Documented placeholder
+`AUTH_SECRET` / `SETUP_BOOTSTRAP_SECRET` values fail production boot. A leftover
+`FAMILIES` value that is set but invalid also crashes production boot.
+`RESEND_API_KEY` / `RESEND_FROM` are optional in outbox mode for **dev/test**
+(unset or `test` → local outbox). Production with no real Resend key does not
+write magic-link tokens to disk unless `ALLOW_LOCAL_OUTBOX=1`. A real Resend key
 **requires** `RESEND_FROM`. Turnstile keys are optional when **both** are unset;
 exactly one key in production crashes boot. Env validation **fails closed** in
 production for the required vars (a missing one crashes boot so your platform's
