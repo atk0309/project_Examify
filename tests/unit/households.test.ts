@@ -1,0 +1,205 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import Database from 'better-sqlite3';
+import { drizzle } from 'drizzle-orm/better-sqlite3';
+import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+
+const TMP = path.join(process.cwd(), 'tests', '.tmp');
+const DB_PATH = path.join(TMP, `households-${process.pid}.db`);
+Reflect.set(process.env, 'DATABASE_URL', `file:${DB_PATH}`);
+delete process.env.FAMILIES;
+
+beforeAll(() => {
+  fs.mkdirSync(TMP, { recursive: true });
+  if (fs.existsSync(DB_PATH)) fs.unlinkSync(DB_PATH);
+  const sqlite = new Database(DB_PATH);
+  sqlite.pragma('journal_mode = WAL');
+  migrate(drizzle(sqlite), {
+    migrationsFolder: path.join(process.cwd(), 'src', 'lib', 'db', 'migrations'),
+  });
+  sqlite.close();
+});
+
+afterAll(() => {
+  if (fs.existsSync(DB_PATH)) fs.unlinkSync(DB_PATH);
+});
+
+beforeEach(async () => {
+  const { db, schema } = await import('@/lib/db');
+  const { resetLegacyImportLatch } = await import('@/lib/households');
+  db.delete(schema.magicTokens).run();
+  db.delete(schema.householdInvites).run();
+  db.delete(schema.householdMembers).run();
+  db.delete(schema.households).run();
+  db.delete(schema.users).run();
+  resetLegacyImportLatch();
+  delete process.env.FAMILIES;
+});
+
+async function lib() {
+  return import('@/lib/households');
+}
+
+describe('bootstrapHousehold', () => {
+  it('creates the first admin household', async () => {
+    const { bootstrapHousehold, hasAnyHousehold, getMembershipForEmail } = await lib();
+    const result = bootstrapHousehold({
+      email: '  HOST@Example.com ',
+      householdName: 'The Stoyanovs',
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.email).toBe('host@example.com');
+    expect(hasAnyHousehold()).toBe(true);
+    const membership = getMembershipForEmail('host@example.com');
+    expect(membership?.role).toBe('admin');
+  });
+
+  it('rejects a second bootstrap', async () => {
+    const { bootstrapHousehold } = await lib();
+    expect(bootstrapHousehold({ email: 'a@example.com', householdName: 'One' }).ok).toBe(true);
+    expect(bootstrapHousehold({ email: 'b@example.com', householdName: 'Two' })).toEqual({
+      ok: false,
+      reason: 'already_setup',
+    });
+  });
+
+  it('rejects an empty name', async () => {
+    const { bootstrapHousehold, hasAnyHousehold } = await lib();
+    expect(bootstrapHousehold({ email: 'a@example.com', householdName: '   ' })).toEqual({
+      ok: false,
+      reason: 'invalid',
+    });
+    expect(hasAnyHousehold()).toBe(false);
+  });
+});
+
+describe('invites + consumeMagicToken', () => {
+  it('lets a parent invite a student who then joins on verify', async () => {
+    const {
+      bootstrapHousehold,
+      createHouseholdInvite,
+      lookupInvite,
+      emailMayAcceptInvite,
+      getMembershipForEmail,
+    } = await lib();
+    const host = bootstrapHousehold({ email: 'pat@example.com', householdName: 'Ours' });
+    expect(host.ok).toBe(true);
+    if (!host.ok) return;
+
+    const created = createHouseholdInvite({ actorUserId: host.userId, role: 'student' });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+
+    const invite = lookupInvite(created.token);
+    expect(invite?.role).toBe('student');
+    expect(emailMayAcceptInvite(invite!, 'alex@example.com')).toBe(true);
+
+    const { consumeMagicToken, issueMagicLink } = await import('@/lib/auth');
+    const { token } = await issueMagicLink('alex@example.com', 'student', {
+      inviteId: created.invite.id,
+    });
+    const consumed = consumeMagicToken(token);
+    expect(consumed.ok).toBe(true);
+    const membership = getMembershipForEmail('alex@example.com');
+    expect(membership?.role).toBe('student');
+    expect(membership?.householdId).toBe(host.householdId);
+    expect(lookupInvite(created.token)).toBeNull();
+  });
+
+  it('does not let an email-locked invite leak the locked address', async () => {
+    const { bootstrapHousehold, createHouseholdInvite, lookupInvite, emailMayAcceptInvite } =
+      await lib();
+    const host = bootstrapHousehold({ email: 'pat@example.com', householdName: 'Ours' });
+    if (!host.ok) return;
+    const created = createHouseholdInvite({
+      actorUserId: host.userId,
+      role: 'student',
+      email: 'alex@example.com',
+    });
+    if (!created.ok) return;
+    const invite = lookupInvite(created.token)!;
+    expect(emailMayAcceptInvite(invite, 'stranger@example.com')).toBe(false);
+    expect(emailMayAcceptInvite(invite, 'alex@example.com')).toBe(true);
+  });
+
+  it('forbids a student from creating invites', async () => {
+    const { bootstrapHousehold, createHouseholdInvite, attachMembershipFromInvite } = await lib();
+    const { db, schema } = await import('@/lib/db');
+    const host = bootstrapHousehold({ email: 'pat@example.com', householdName: 'Ours' });
+    if (!host.ok) return;
+    const kid = db
+      .insert(schema.users)
+      .values({ email: 'kid@example.com', emailVerifiedAt: new Date() })
+      .returning()
+      .get()!;
+    const created = createHouseholdInvite({ actorUserId: host.userId, role: 'student' });
+    if (!created.ok) return;
+    db.transaction((tx) => {
+      attachMembershipFromInvite(tx, created.invite.id, kid.id, 'kid@example.com');
+    });
+    expect(createHouseholdInvite({ actorUserId: kid.id, role: 'parent' })).toEqual({
+      ok: false,
+      reason: 'forbidden',
+    });
+  });
+
+  it('rolls back verify when the invite is already consumed', async () => {
+    const { bootstrapHousehold, createHouseholdInvite } = await lib();
+    const host = bootstrapHousehold({ email: 'pat@example.com', householdName: 'Ours' });
+    if (!host.ok) return;
+    const created = createHouseholdInvite({ actorUserId: host.userId, role: 'student' });
+    if (!created.ok) return;
+
+    const { consumeMagicToken, issueMagicLink } = await import('@/lib/auth');
+    const first = await issueMagicLink('a@example.com', 'student', { inviteId: created.invite.id });
+    expect(consumeMagicToken(first.token).ok).toBe(true);
+
+    const second = await issueMagicLink('b@example.com', 'student', {
+      inviteId: created.invite.id,
+    });
+    const result = consumeMagicToken(second.token);
+    expect(result).toEqual({ ok: false, reason: 'invite-invalid' });
+
+    const { db, schema } = await import('@/lib/db');
+    const leftover = db.select().from(schema.users).all();
+    const emails = leftover.map((u) => u.email);
+    expect(emails).toContain('a@example.com');
+    expect(emails).not.toContain('b@example.com');
+  });
+});
+
+describe('importLegacyFamiliesIfNeeded', () => {
+  it('imports FAMILIES once when the DB is empty', async () => {
+    Reflect.set(
+      process.env,
+      'FAMILIES',
+      JSON.stringify([
+        { child: 'alex@example.com', parents: ['pat@example.com'] },
+        { child: 'sam@example.com', parents: ['other@example.com'] },
+      ]),
+    );
+    const { importLegacyFamiliesIfNeeded, studentEmailsForParent, getMembershipForEmail } =
+      await lib();
+    const result = importLegacyFamiliesIfNeeded();
+    expect(result.imported).toBe(2);
+    expect(getMembershipForEmail('alex@example.com')?.role).toBe('student');
+    expect(getMembershipForEmail('pat@example.com')?.role).toBe('admin');
+    expect(studentEmailsForParent('pat@example.com')).toEqual(['alex@example.com']);
+    expect(studentEmailsForParent('other@example.com')).toEqual(['sam@example.com']);
+    expect(studentEmailsForParent('pat@example.com')).not.toContain('sam@example.com');
+
+    const again = importLegacyFamiliesIfNeeded();
+    expect(again.imported).toBe(0);
+  });
+
+  it('skips a malformed FAMILIES value without crashing', async () => {
+    Reflect.set(process.env, 'FAMILIES', '{not json');
+    const { importLegacyFamiliesIfNeeded, hasAnyHousehold } = await lib();
+    const result = importLegacyFamiliesIfNeeded();
+    expect(result.imported).toBe(0);
+    expect(result.error).toMatch(/json/i);
+    expect(hasAnyHousehold()).toBe(false);
+  });
+});

@@ -13,6 +13,7 @@ const E2E_DB = path.join(process.cwd(), 'tests', '.tmp', 'e2e.db');
 
 export default defineConfig({
   testDir: './tests/e2e',
+  testIgnore: /fresh\.(spec|test)\.ts/,
   fullyParallel: false,
   workers: 1,
   forbidOnly: !!process.env.CI,
@@ -48,7 +49,6 @@ export default defineConfig({
       SITE_URL: baseURL,
       DATABASE_URL: `file:${E2E_DB}`,
       AUTH_SECRET: 'e2e-secret-must-be-at-least-32-chars-long-yes',
-      FAMILIES: '[{"child":"student@example.com","parents":["parent@example.com"]}]',
       RESEND_API_KEY: 'test',
       RESEND_FROM: 'WhatATime <test@example.com>',
       ANTHROPIC_API_KEY: 'test',

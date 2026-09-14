@@ -3,6 +3,7 @@ import { ExamApp, type Resumable } from '@/components/exam/ExamApp';
 import { ParentDashboard } from '@/components/exam/ParentDashboard';
 import { getSession } from '@/lib/auth';
 import { getExamSessions } from '@/lib/exam-session';
+import { canInvite, getMembershipForUser, listPendingInvites } from '@/lib/households';
 import { getProgressForUser, getScoreHistory, resolveChildren } from '@/lib/progress';
 import { resolveExamPaper } from '@/lib/exam/data';
 import type { ProgressData } from '@/lib/exam/attempts';
@@ -57,12 +58,15 @@ export default async function HomePage() {
 
     // Otherwise the parent dashboard: the child's progress, the parent's own
     // progress, and a comparison — plus the entry into student mode. The child
-    // is resolved from the parent's own family in FAMILIES (never another
-    // family's), keyed by the signed-in parent's email.
+    // is resolved from the parent's own household (never another household's),
+    // keyed by the signed-in parent's email.
     const child = session.email ? resolveChildren(session.email)[0] : undefined;
     const childProgress = child ? getProgressForUser(child.id) : EMPTY_PROGRESS;
     const ownHistory = getScoreHistory(session.userId);
     const childHistory = child ? getScoreHistory(child.id) : [];
+    const membership = getMembershipForUser(session.userId);
+    const pendingInvites =
+      membership && canInvite(session.userId) ? listPendingInvites(membership.householdId) : [];
     return (
       <ParentDashboard
         childLabel={child?.label ?? 'Your child'}
@@ -70,6 +74,8 @@ export default async function HomePage() {
         ownProgress={ownProgress}
         childHistory={childHistory}
         ownHistory={ownHistory}
+        pendingInvites={pendingInvites}
+        canInvite={canInvite(session.userId)}
       />
     );
   }

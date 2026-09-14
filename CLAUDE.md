@@ -15,7 +15,7 @@ making any change — it encodes invariants that are easy to miss from the diff 
 their kid(s). It turns content (optionally sourced from the family's own study PDFs,
 added by hand to a static data file) into short practice exams. It is intentionally
 small: a static question bank, a four-screen client flow, magic-link sign-in gated by
-an email allowlist, and SQLite in a single file on runtime-mounted persistent storage.
+invite-only households in SQLite, and a single file on runtime-mounted persistent storage.
 
 Surface:
 
@@ -26,7 +26,10 @@ Surface:
   enter **student mode** ("Are you smarter than your kid?") to get the full
   `ExamApp` themselves; their attempts persist under the parent's own account, never the
   child's.
-- **`/signin`** — magic-link login with a Student/Parent role control.
+- **`/setup`** — first-run household bootstrap (only when no household exists).
+- **`/invite/[token]`** — accept a household invite, then magic-link verify.
+- **`/signin`** — magic-link login with a Student/Parent role control. Redirects to
+  `/setup` when the instance has no household yet.
 - **`/signin/verify`** — a **Route Handler** (`route.ts`, not a page): consumes the one-time
   token, establishes the session, redirects to `/`. It must be a route handler because
   clicking the email link is a GET that **writes** the session cookie, and cookie mutation is
@@ -44,17 +47,17 @@ is the usable login, and the screen after it is the usable dashboard.
 Latest stable of each, exact-pinned in `package.json` (no `^`/`~`). Bumps land via the
 grouped weekly Dependabot PRs in `.github/dependabot.yml`.
 
-| Layer       | Choice                                                                       |
-| ----------- | ---------------------------------------------------------------------------- |
-| Runtime     | Node 22.22.2+ LTS (`engines`, `.nvmrc`), pnpm 10                             |
-| Framework   | Next.js 16 (App Router, Turbopack), React 19.2, TypeScript 6 strict          |
-| Styling     | Tailwind v4 with a CSS-first `@theme` token block, three `data-theme` moods  |
-| DB          | SQLite on runtime-mounted storage, accessed through Drizzle + better-sqlite3 |
-| Auth        | Homegrown magic-link (Resend) + iron-session cookies, role-gated by env      |
-| Captcha     | Cloudflare Turnstile, server-verified on the login submit                    |
-| Email       | Resend SDK, with a `tests/.tmp/outbox/*.json` short-circuit when key=test    |
-| Tests       | Vitest (unit), Playwright (e2e), Cloudflare dummy test keys                  |
-| Lint/Format | ESLint 9.39 (Next 16 plugin set) + Prettier + Tailwind plugin                |
+| Layer       | Choice                                                                                |
+| ----------- | ------------------------------------------------------------------------------------- |
+| Runtime     | Node 22.22.2+ LTS (`engines`, `.nvmrc`), pnpm 10                                      |
+| Framework   | Next.js 16 (App Router, Turbopack), React 19.2, TypeScript 6 strict                   |
+| Styling     | Tailwind v4 with a CSS-first `@theme` token block, three `data-theme` moods           |
+| DB          | SQLite on runtime-mounted storage, accessed through Drizzle + better-sqlite3          |
+| Auth        | Homegrown magic-link (Resend optional) + iron-session cookies, invite-only households |
+| Captcha     | Optional Cloudflare Turnstile (off when keys unset; server-verified when set)         |
+| Email       | Resend SDK, with a `tests/.tmp/outbox/*.json` short-circuit when key=test             |
+| Tests       | Vitest (unit), Playwright (e2e), Cloudflare dummy test keys                           |
+| Lint/Format | ESLint 9.39 (Next 16 plugin set) + Prettier + Tailwind plugin                         |
 
 **Why ESLint 9, not 10?** `eslint-plugin-react@7.x` doesn't support ESLint 10 yet, and
 `eslint-config-next@16` pulls it in transitively. Move both together later.
@@ -105,8 +108,9 @@ src/
     layout.tsx          # fonts (Newsreader + Hanken Grotesk via <link>), data-theme
     globals.css         # Tailwind @theme tokens + component layer
     robots.ts           # disallow-all
-  actions/              # 'use server' actions (requestMagicLink, signOut, recordAttempt,
-                        #   saveExamProgress + discardExamSession = resume an in-progress exam)
+  actions/              # 'use server' actions (requestMagicLink, bootstrapHousehold,
+                        #   createInvite / revokeInvite / requestInviteLink, signOut,
+                        #   recordAttempt, saveExamProgress + discardExamSession)
   components/
     exam/               # ExamApp (flow), ProgressView, ParentDashboard, LoginForm, icons
     analytics/          # Plausible (opt-in)
@@ -115,8 +119,11 @@ src/
     exam/attempts.ts    # validate + re-score a submitted attempt; aggregate helpers (pure)
     progress.ts         # persist/read attempts; resolveChildren(parentEmail) per-family (server-only)
     exam-session.ts     # save/list/clear an in-progress exam for resume (server-only)
-    families.ts         # FAMILIES config: student/parent allowlists + parent->child visibility (pure)
-    allowlist.ts        # isAllowedEmail(role,email), derived from FAMILIES
+    households.ts       # bootstrap, invites, membership, optional FAMILIES import (server-only)
+    household-types.ts  # client-safe PendingInvite type
+    families.ts         # leftover FAMILIES JSON parser (optional one-shot import only)
+    allowlist.ts        # isAllowedEmail(role,email), derived from household membership
+    auth-mode.ts        # magic-link-only extension point (TODO: passkey/password/SMTP)
     auth.ts, db/, email/, captcha.ts, ip.ts, rate-limit.ts, env.ts, site.ts
 tests/
   unit/                 # vitest specs
@@ -173,26 +180,29 @@ local-only in the gitignored `content/source-pdfs/`.
 
 These are non-negotiable. Don't "fix" them out.
 
-- **Roles come from the `FAMILIES` config.** The single JSON env var `FAMILIES`
-  (`src/lib/families.ts`) is the credential store — same runtime-config pattern as `SITE_URL`.
-  Each entry is `{ child, parents[] }`; the student allowlist is every `child`, the parent
-  allowlist is every `parents[]` entry. An email may request a link for a role only if `FAMILIES`
-  lists it in that role (`isAllowedEmail`, `src/lib/allowlist.ts`). There is no password and no
-  DB-backed admin. `FAMILIES` is parsed **strictly** at boot (`parseFamilies`) — a duplicate child,
-  an email used as both child and parent, or a parent shared across families is rejected, because
-  it's the privacy boundary (see "Linking is per-family" below), not just a list.
+- **Roles come from household membership.** SQLite tables `households`,
+  `household_members`, and `household_invites` are the credential store. An email
+  may request a magic link for a role only if they belong to a household in that
+  role (`isAllowedEmail` → `isHouseholdEmailAllowed`). Session roles stay
+  `student | parent`; household `admin` is a membership flag on the first-run host
+  (they sign in as a parent). There is no password. A leftover `FAMILIES` env JSON
+  is imported **once** when the DB has no households (`importLegacyFamiliesIfNeeded`);
+  it is not required and is not validated at boot.
 - **No enumeration.** `requestMagicLink` always returns the generic `sent` state once
-  Turnstile + rate-limit pass; it only issues + emails a link when the email is allowed.
-  Don't add a branch that reveals whether an email is configured. (Practical
-  consequence: a student login only delivers a link if the address is a `child` in
-  `FAMILIES` — a missing email looks identical to a non-configured one.)
+  Turnstile (when enabled) + rate-limit pass; it only issues + emails a link when the
+  email is a household member for that role. Don't add a branch that reveals whether
+  an email has been invited. Email-locked invites use the same generic `sent` copy
+  when the address does not match.
 - **The "sent" screen resets via client state, not navigation.** `LoginForm` lives on
   `/signin`, so "Use a different email" can't be a `<Link href="/signin">` — that's a
   same-route soft nav that never remounts the component, leaving `useActionState` at
   `status: 'sent'` (the button looked dead). It toggles a local `dismissed` flag back to
   the form; the `submit` wrapper clears `dismissed` so a fresh send re-shows the screen.
-- Turnstile is **never** bypassed server-side. The login action calls `verifyTurnstile()`
-  with the client's token before issuing anything.
+- Turnstile is **never** bypassed server-side **when keys are set**. Both
+  `NEXT_PUBLIC_TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY` must be present to
+  enable captcha; when unset, the widget is omitted and `verifyTurnstile` returns
+  ok. When set, the login / setup / invite-accept actions still call
+  `verifyTurnstile()` with the client's token before issuing anything.
 - IP extraction always goes through `src/lib/ip.ts`, which prefers `cf-connecting-ip` →
   `x-real-ip` → the **last** entry of `x-forwarded-for`. The first XFF entry is
   client-controllable; don't read `x-forwarded-for` directly in handlers.
@@ -260,20 +270,19 @@ chosen, answer }`, free-text `{ type:'free', id, q, response, maxScore, score, s
   writer **of their own** attempts. A parent **without** student mode is still read-only. Keep
   the strict `=== true` check in both the action and the `/` gate so a malformed session can't
   route a parent into the exam UI behind a write the action would reject.
-- **The child stays bound to their family.** A parent's child is resolved from `FAMILIES` via
-  `resolveChildren(parentEmail)`, independent of who is signed in. A parent playing in student mode
-  never reassigns the child's attempts — ownership is structural (`user_id`), so the child's record
-  is sacrosanct. Existing progress survives a `FAMILIES` config change as long as the `child` email
-  matches the child's existing `users.email` — it's a config change, **not** a DB migration (never
-  rewrite `exam_attempts` / `exam_sessions`).
-- **Linking is per-family (the privacy boundary).** `resolveChildren(parentEmail)`
-  (`src/lib/progress.ts`) returns the `child` of every family in `FAMILIES` whose `parents[]`
-  contains that parent's email — and **nothing else**. A parent sees only their own child; a
-  standalone child (`parents: []`) belongs to no family here and never surfaces in any parent
-  dashboard; one family can never see another's. This is the one read path that crosses user ids, so
-  keep it isolated. `page.tsx` passes `session.email` and still renders a single child
-  (`resolveChildren(...)[0]`) — multi-child UI stays out of scope, which is why `parseFamilies`
-  rejects a parent shared across families rather than half-supporting it.
+- **The child stays bound to their household.** A parent's child is resolved from
+  household membership via `resolveChildren(parentEmail)`, independent of who is
+  signed in. A parent playing in student mode never reassigns the child's attempts —
+  ownership is structural (`user_id`), so the child's record is sacrosanct. Existing
+  progress survives a leftover `FAMILIES` import as long as the child's email matches
+  an existing `users.email` — never rewrite `exam_attempts` / `exam_sessions`.
+- **Linking is per-household (the privacy boundary).** `resolveChildren(parentEmail)`
+  (`src/lib/progress.ts`) returns student members of the same household — and
+  **nothing else**. A parent sees only their own household's child; a student with no
+  parent/admin in that household never surfaces in any parent dashboard; one household
+  can never see another's. This is the one read path that crosses user ids, so keep it
+  isolated. `page.tsx` still renders a single child (`resolveChildren(...)[0]`) —
+  multi-child UI stays out of scope.
 - **Comparison.** `ComparisonView` (`src/components/exam/ComparisonView.tsx`) shows parent
   vs child: totals + per-subject averages + a "score by attempt number" progression. Totals
   and the progression use `getScoreHistory()` (`src/lib/progress.ts`, **uncapped**,
@@ -328,16 +337,16 @@ defaults attach only when `NODE_ENV !== 'production'` (and during `next build`, 
 distinguishes via `NEXT_PHASE=phase-production-build`). The production server boots under
 `NEXT_PHASE=phase-production-server` and `NODE_ENV=production`, so a missing `AUTH_SECRET`,
 `TURNSTILE_SECRET_KEY`, etc. crashes boot with a readable zod error (and fails the platform
-healthcheck). Don't add dev defaults to security-critical vars without weighing that. `FAMILIES`
-is parsed to a typed `Family[]` by a zod transform (`parseFamilies`): empty/unset defaults to `[]`
-in production (fail closed: nobody can sign in until set), but malformed JSON or an invalid email
-**crashes boot** with a readable zod error.
+healthcheck). Don't add dev defaults to security-critical vars without weighing that.
+Access is DB-backed: empty households fail closed (nobody can sign in until `/setup`
+or a leftover `FAMILIES` import). Malformed leftover `FAMILIES` JSON is skipped with
+a warning — it no longer crashes boot.
 
-Required in production: `SITE_URL`, `AUTH_SECRET`, `DATABASE_URL`, `RESEND_API_KEY`,
-`RESEND_FROM`, `ANTHROPIC_API_KEY`, `NEXT_PUBLIC_TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY`.
-`ANTHROPIC_API_KEY` (free-text grading) follows the `RESEND_API_KEY` pattern: a `test`
-sentinel routes the grader to a deterministic stub; a missing key fails closed in prod.
-`FAMILIES` is optional-but-empty-fails-closed. See `.env.example` for the canonical list.
+Required in production: `SITE_URL`, `AUTH_SECRET`, `DATABASE_URL`, `ANTHROPIC_API_KEY`.
+`RESEND_API_KEY` / `RESEND_FROM` are optional (unset or `test` → local outbox).
+Turnstile keys are optional (both unset → captcha off). `ANTHROPIC_API_KEY` still
+fails closed in prod when missing; the `test` sentinel routes the grader to a
+deterministic stub. See `.env.example` for the canonical list.
 
 ## Testing rules
 
@@ -346,18 +355,22 @@ sentinel routes the grader to a deterministic stub; a missing key fails closed i
 - Every server action / route handler that mutates state has at least one happy + one
   failure path test.
 - Lib helpers (`src/lib/*`) get Vitest unit tests against fixtures, not the app server.
-- Cloudflare Turnstile dummy keys: `1x00000000000000000000AA` / `1x00…AA` always pass;
-  `2x00000000000000000000AB` / `2x00…AA` always fail. Tests inject
-  `cf-turnstile-response="test-bypass-token"` when the widget can't load.
+- Cloudflare Turnstile is optional. Dummy keys: `1x00000000000000000000AA` / `1x00…AA`
+  always pass; `2x00000000000000000000AB` / `2x00…AA` always fail. Tests inject
+  `cf-turnstile-response="test-bypass-token"` when the widget is rendered but its
+  CDN can't load. When keys are unset, the widget is omitted and submit works
+  without a token.
 - The Playwright config uses an isolated SQLite at `tests/.tmp/e2e.db`;
   `tests/e2e/setup-db.ts` wipes and re-migrates it via `pnpm test:e2e:prepare`, which
   `pnpm test:e2e` runs _before_ `playwright test`.
-- Sign-in e2e uses the documented always-pass Turnstile dummy key. The widget owns the
-  single `cf-turnstile-response` field in production; never add a second fallback field
-  with that name, because `FormData.get()` can select the empty duplicate instead of the
-  valid widget response. When the widget CDN is unavailable, the Playwright helper injects
-  that same field and submits it in one browser task. Happy-path, uniform rate-limit, and
-  empty-token failure coverage all run without bypassing `verifyTurnstile`.
+- Default sign-in e2e uses the documented always-pass Turnstile dummy key. The widget
+  owns the single `cf-turnstile-response` field when captcha is on; never add a second
+  fallback field with that name. When the widget CDN is unavailable, the Playwright
+  helper injects that same field and submits it in one browser task. A second
+  Playwright config (`playwright.fresh.config.ts`) covers first-run bootstrap and
+  Turnstile-off sign-in. Happy-path, invite accept, uniform rate-limit, and
+  empty-token (captcha on) coverage all run without bypassing `verifyTurnstile`
+  when it is enabled.
 
 ## Dependency policy
 

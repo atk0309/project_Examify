@@ -13,7 +13,9 @@ import { useRouter } from 'next/navigation';
 import { setStudentMode } from '@/actions/toggleStudentMode';
 import { signOut } from '@/actions/signOut';
 import type { ProgressData } from '@/lib/exam/attempts';
+import type { PendingInvite } from '@/lib/household-types';
 import { ComparisonView } from './ComparisonView';
+import { HouseholdInvites } from './HouseholdInvites';
 import { ProgressView } from './ProgressView';
 import { UIcon } from './icons';
 
@@ -25,12 +27,16 @@ export function ParentDashboard({
   ownProgress,
   childHistory,
   ownHistory,
+  pendingInvites = [],
+  canInvite = false,
 }: {
   childLabel: string;
   childProgress: ProgressData;
   ownProgress: ProgressData;
   childHistory: number[];
   ownHistory: number[];
+  pendingInvites?: PendingInvite[];
+  canInvite?: boolean;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -71,6 +77,8 @@ export function ParentDashboard({
               Are you smarter than your kid? {UIcon.arrow}
             </button>
           </div>
+
+          {canInvite ? <HouseholdInvites pending={pendingInvites} /> : null}
 
           <ComparisonView
             youLabel={YOU_LABEL}

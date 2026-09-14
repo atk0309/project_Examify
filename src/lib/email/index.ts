@@ -2,21 +2,31 @@ import 'server-only';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { Resend } from 'resend';
-import { env, isTest } from '@/lib/env';
+import { env, isResendConfigured, isTest } from '@/lib/env';
 
 export type SendResult = { ok: true; id: string } | { ok: false; error: string };
 
-const resend = env.RESEND_API_KEY === 'test' ? null : new Resend(env.RESEND_API_KEY);
+const resend = isResendConfigured() ? new Resend(env.RESEND_API_KEY!) : null;
+
+function resolveOutboxDir(): string {
+  // `RESEND_API_KEY=test` (dev + Playwright) keeps the existing outbox so
+  // e2e can poll it. A real production deploy with no key writes to the
+  // data volume instead.
+  if (env.RESEND_API_KEY === 'test' || isTest) {
+    return path.join(process.cwd(), 'tests', '.tmp', 'outbox');
+  }
+  return path.join(process.cwd(), 'data', 'outbox');
+}
 
 async function writeTestOutbox(payload: {
   to: string;
   subject: string;
   html: string;
 }): Promise<string> {
-  const outboxDir = path.join(process.cwd(), 'tests', '.tmp', 'outbox');
-  await fs.mkdir(outboxDir, { recursive: true });
+  const dest = resolveOutboxDir();
+  await fs.mkdir(dest, { recursive: true });
   const id = `test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const file = path.join(outboxDir, `${id}.json`);
+  const file = path.join(dest, `${id}.json`);
   await fs.writeFile(
     file,
     JSON.stringify({ ...payload, sentAt: new Date().toISOString() }, null, 2),
@@ -39,7 +49,7 @@ export async function sendEmail(options: {
     return { ok: true, id };
   }
   const { data, error } = await resend.emails.send({
-    from: env.RESEND_FROM,
+    from: env.RESEND_FROM ?? 'Examify <onboarding@resend.dev>',
     to: options.to,
     subject: options.subject,
     html: options.html,

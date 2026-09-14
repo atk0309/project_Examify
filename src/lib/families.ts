@@ -1,20 +1,18 @@
 import { z } from 'zod';
 
 /**
- * The {@link Family} config — Examify's single source of truth for who may sign
- * in and who may see whom. It replaces the old flat `ALLOWED_STUDENT_EMAILS` /
- * `ALLOWED_PARENT_EMAILS` lists. One JSON env var, `FAMILIES`, defines every
- * family; from it we derive (1) the student sign-in allowlist, (2) the parent
- * sign-in allowlist, and (3) parent->child dashboard visibility.
+ * Optional one-shot importer for leftover `FAMILIES` env JSON.
  *
- * `FAMILIES` is not just an allowlist — it is the *privacy boundary*. It is
- * parsed strictly: anything ambiguous (a duplicated child, an email that is both
- * a child and a parent, a parent shared across families) is rejected so a
- * mis-grouping can never silently leak one family's child into another family's
- * dashboard.
+ * Access is now invite-only households in SQLite. This parser stays so an
+ * existing Railway / env-JSON deploy can be imported once when the DB has
+ * no households (`importLegacyFamiliesIfNeeded` in `src/lib/households.ts`).
+ * New installs should leave `FAMILIES` unset and use first-run bootstrap.
  *
- * This module is pure: it does NOT import `@/lib/env` (env.ts imports it for the
- * boot-time transform, so the dependency must point one way only).
+ * Still parsed strictly: a duplicated child, an email used as both child and
+ * parent, or a parent shared across families is rejected so a mis-grouping
+ * cannot leak one household's child into another.
+ *
+ * This module is pure: it does NOT import `@/lib/env` or the database.
  */
 export type Family = {
   /** The student's email. Required, unique across all families. */

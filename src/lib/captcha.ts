@@ -1,5 +1,5 @@
 import 'server-only';
-import { env } from './env';
+import { env, isTurnstileEnabled } from './env';
 
 const VERIFY_URL = 'https://challenges.cloudflare.com/turnstile/v0/siteverify';
 
@@ -30,13 +30,17 @@ export type TurnstileResult = {
 };
 
 export async function verifyTurnstile(token: string, ip: string): Promise<TurnstileResult> {
+  // Optional captcha: when keys are unset, sign-in must still work.
+  if (!isTurnstileEnabled()) return { ok: true };
+
   if (!token) return { ok: false, errorCodes: ['missing-input-response'] };
 
-  const dummy = (DUMMY_SECRETS as Record<string, TurnstileResult>)[env.TURNSTILE_SECRET_KEY];
+  const secret = env.TURNSTILE_SECRET_KEY!;
+  const dummy = (DUMMY_SECRETS as Record<string, TurnstileResult>)[secret];
   if (dummy) return dummy;
 
   const body = new URLSearchParams();
-  body.set('secret', env.TURNSTILE_SECRET_KEY);
+  body.set('secret', secret);
   body.set('response', token);
   if (ip) body.set('remoteip', ip);
 

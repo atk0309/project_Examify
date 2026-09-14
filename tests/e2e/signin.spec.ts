@@ -43,27 +43,33 @@ async function submitSignin(page: import('@playwright/test').Page, email: string
   // test runner, create the same field inside the widget container. Set every
   // matching field and submit in one browser task so React's pending-state
   // reconciliation cannot clear the value before FormData is captured.
-  await page.getByTestId('signin-form').evaluate((node) => {
-    const form = node as HTMLFormElement;
-    let inputs = Array.from(
-      form.querySelectorAll<HTMLInputElement>('input[name="cf-turnstile-response"]'),
-    );
-    if (inputs.length === 0) {
-      const input = document.createElement('input');
-      input.type = 'hidden';
-      input.name = 'cf-turnstile-response';
-      form.querySelector('[data-testid="turnstile"]')?.append(input);
-      inputs = [input];
-    }
-    for (const input of inputs) {
-      input.defaultValue = 'test-bypass-token';
-      input.value = 'test-bypass-token';
-    }
+  const hasTurnstile = (await page.getByTestId('turnstile').count()) > 0;
+  if (hasTurnstile) {
+    await page.getByTestId('signin-form').evaluate((node) => {
+      const form = node as HTMLFormElement;
+      let inputs = Array.from(
+        form.querySelectorAll<HTMLInputElement>('input[name="cf-turnstile-response"]'),
+      );
+      if (inputs.length === 0) {
+        const input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = 'cf-turnstile-response';
+        form.querySelector('[data-testid="turnstile"]')?.append(input);
+        inputs = [input];
+      }
+      for (const input of inputs) {
+        input.defaultValue = 'test-bypass-token';
+        input.value = 'test-bypass-token';
+      }
 
-    const submitter = form.querySelector<HTMLButtonElement>('[data-testid="signin-submit"]');
-    if (submitter) form.requestSubmit(submitter);
-    else form.requestSubmit();
-  });
+      const submitter = form.querySelector<HTMLButtonElement>('[data-testid="signin-submit"]');
+      if (submitter) form.requestSubmit(submitter);
+      else form.requestSubmit();
+    });
+    return;
+  }
+
+  await page.getByTestId('signin-submit').click();
 }
 
 test('signin happy path sends a magic link and the link logs the user in', async ({ page }) => {

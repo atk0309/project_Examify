@@ -21,6 +21,11 @@ function copyFor(reason: string | undefined): Copy {
       };
     case 'used':
       return { title: 'Sign-in link invalid', detail: 'That link has already been used.' };
+    case 'invite-invalid':
+      return {
+        title: 'Invite invalid',
+        detail: 'That invite is no longer valid. Ask a parent for a new link.',
+      };
     default:
       return { title: 'Sign-in link invalid', detail: 'We don’t recognise that link.' };
   }

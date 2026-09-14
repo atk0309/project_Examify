@@ -6,14 +6,16 @@ feedback at the end — mature, not babyish. Built by a parent for their kid(s);
 your own instance, and your family's data stays on your own box.
 
 It is intentionally small: a static question bank you edit in code, a four-screen client
-flow, passwordless magic-link sign-in gated by a per-family allowlist, and a single
-SQLite file. No SaaS, no tracking, no accounts beyond the family you configure.
+flow, passwordless magic-link sign-in gated by **invite-only households** in SQLite, and a
+single SQLite file. No SaaS, no tracking, no env-JSON allowlist to hand-edit.
 
 ## Features
 
-- **Magic-link sign-in** (no passwords), role-aware (Student / Parent), protected by
-  Cloudflare Turnstile and rate limiting, with no email enumeration.
-- **Per-family privacy boundary** — a parent sees only their own child's progress, ever.
+- **Magic-link sign-in** (no passwords), role-aware (Student / Parent), rate-limited,
+  with no email enumeration. Cloudflare Turnstile is **optional**.
+- **Invite-only households** — first-run bootstrap creates the admin; parents invite
+  students and other parents with a link. A parent sees only their own household's
+  child(ren).
 - **MCQ + free-text questions** — free-text answers are marked server-side by an LLM
   against a rubric you write, with a bounded, encouraging verdict.
 - **Autosave + resume** — reload, close the browser, or lose the tab mid-exam and the
@@ -26,9 +28,10 @@ SQLite file. No SaaS, no tracking, no accounts beyond the family you configure.
 
 ## The flow
 
-1. **`/signin`** — passwordless magic-link login. Pick a role (Student / Parent), enter
-   your email, solve the Turnstile, and the app emails a one-time sign-in link **if the
-   email is configured for that role** in `FAMILIES`.
+1. **`/setup`** (first run) or **`/signin`** — on a fresh install, the first visitor
+   creates the household and becomes admin. After that, pick a role (Student / Parent),
+   enter your email, and the app emails a one-time sign-in link **if you are already a
+   household member**. New people join via an invite link (`/invite/…`), not env JSON.
 2. **Dashboard** — a grid of subjects, each with a soft duotone icon and question count.
    The repo ships with a small hand-authored sample bank (Maths, Computer Science,
    Geography) that you're meant to replace with your own content — see
@@ -62,9 +65,9 @@ gets a dashboard with their child's progress, their own progress, and a side-by-
 comparison. A parent can tap **"Are you smarter than your kid?"** to enter
 **student mode** and take the exams themselves — their attempts are tracked under the
 parent's own account, so the child's record stays bound to the student no matter who is
-signed in. Parent→child linking is per-family — each parent sees **only** the child in
-their own family, derived from the `FAMILIES` config (a standalone child with no parents
-appears in no dashboard at all).
+signed in. Parent→child linking is per-household — each parent sees **only** the
+student(s) in their own household. A student with no parent/admin in that household
+appears in no dashboard.
 
 > **Student mode runs the exact same exam code as the student** (same subjects,
 > difficulties, and question bank). It is **not a frozen, identical paper**, though:
@@ -76,18 +79,18 @@ appears in no dashboard at all).
 
 ## Stack
 
-| Layer       | Choice                                                                    |
-| ----------- | ------------------------------------------------------------------------- |
-| Runtime     | Node 22.22.2+ LTS, pnpm 10                                                |
-| Framework   | Next.js 16 (App Router, Turbopack), React 19.2, TypeScript 6 strict       |
-| Styling     | Tailwind v4 with a CSS-first `@theme` token system; 3 themes              |
-| DB          | SQLite (a single file), via Drizzle ORM + better-sqlite3                  |
-| Auth        | Magic-link (Resend) + iron-session cookies, **role-gated by env**         |
-| Captcha     | Cloudflare Turnstile, server-verified on the login submit                 |
-| Email       | Resend SDK, with a `tests/.tmp/outbox/*.json` short-circuit when key=test |
-| Grading     | Anthropic Messages API (free-text), with a `test`-sentinel stub           |
-| Tests       | Vitest (unit), Playwright (e2e)                                           |
-| Lint/Format | ESLint 9 + Prettier + Tailwind plugin                                     |
+| Layer       | Choice                                                                          |
+| ----------- | ------------------------------------------------------------------------------- |
+| Runtime     | Node 22.22.2+ LTS, pnpm 10                                                      |
+| Framework   | Next.js 16 (App Router, Turbopack), React 19.2, TypeScript 6 strict             |
+| Styling     | Tailwind v4 with a CSS-first `@theme` token system; 3 themes                    |
+| DB          | SQLite (a single file), via Drizzle ORM + better-sqlite3                        |
+| Auth        | Magic-link (Resend optional) + iron-session cookies, **invite-only households** |
+| Captcha     | Optional Cloudflare Turnstile (off when keys are unset)                         |
+| Email       | Resend SDK, with a `tests/.tmp/outbox/*.json` short-circuit when key=test       |
+| Grading     | Anthropic Messages API (free-text), with a `test`-sentinel stub                 |
+| Tests       | Vitest (unit), Playwright (e2e)                                                 |
+| Lint/Format | ESLint 9 + Prettier + Tailwind plugin                                           |
 
 ## Quick start
 
@@ -98,38 +101,39 @@ pnpm dev                    # http://localhost:3000  -> redirects to /signin
 ```
 
 With `RESEND_API_KEY=test`, sign-in emails are written to `tests/.tmp/outbox/*.json`
-instead of being sent — open the link inside to "click" the magic link locally. Only
-emails configured in `FAMILIES` receive a link (the default dev value pairs the child
-`student@example.com` with the parent `parent@example.com`). With
-`ANTHROPIC_API_KEY=test`, free-text grading uses a deterministic local stub — no
-network, no API key needed for development.
+instead of being sent — open the link inside to "click" the magic link locally. On a
+fresh database, visit `/setup` and create the first household (you become the admin
+parent). Invite the student from the dashboard. With `ANTHROPIC_API_KEY=test`, free-text
+grading uses a deterministic local stub — no network, no API key needed for development.
 
-## Configuring your family (`FAMILIES`)
+## Access: invite-only households
 
-One JSON env var is the entire credential store **and** the privacy boundary — there is
-no admin UI and no password. Each entry pairs one child with the parents allowed to see
-their progress:
+Who may sign in is stored in SQLite, not env:
 
-```json
-[
-  { "child": "alex@example.com", "parents": ["pat@example.com", "morgan@example.com"] },
-  { "child": "sam@example.com", "parents": ["sam.parent@example.com"] },
-  { "child": "jess@example.com", "parents": [] }
-]
-```
+1. **First run** — `/setup` creates the household and the admin (a parent). No email
+   round-trip; you are at the keyboard.
+2. **Invite** — from the parent dashboard, create a student or parent invite link
+   (optionally locked to one email). Share `/invite/<token>`.
+3. **Accept** — the invitee enters their email, receives a magic link, and joining the
+   household happens when they verify. After that they sign in at `/signin` like anyone
+   else.
+4. **Privacy** — a parent/admin only sees students who share their household. One
+   household cannot see another.
 
-- Every `child` may sign in as a **student**; every email in any `parents[]` may sign in
-  as a **parent**. Nobody else can sign in at all.
-- A parent sees **only** the child of their own family. A standalone child
-  (`"parents": []`) can practise but appears in no parent dashboard.
-- Parsed **strictly at boot**: a duplicated child, an email used as both child and
-  parent, or a parent shared across families is rejected with a readable error —
-  ambiguity could leak one family's child into another's dashboard, so it fails instead.
-- Fail-closed: empty/unset `FAMILIES` in production boots, but nobody can sign in.
-- The sign-in screen always shows "Check your inbox" whether or not the email is
-  configured (anti-enumeration) — a silent non-delivery usually means it isn't.
+The sign-in screen always shows "Check your inbox" whether or not the email is a member
+(anti-enumeration) — a silent non-delivery usually means they have not been invited yet.
 
-Set it as a single-line JSON string (see `.env.example` for the full commentary).
+### Migrating from `FAMILIES` env JSON
+
+Older deploys used a `FAMILIES='[{ "child", "parents" }]'` env var. That is **no longer
+required**. If the variable is still set and the database has no households yet, the
+first request imports it once (one household per family entry; the first parent becomes
+admin). After a successful import, remove `FAMILIES` from the host. New installs should
+leave it unset and use `/setup`.
+
+Turnstile is optional: leave `NEXT_PUBLIC_TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY`
+unset to skip the captcha. When both are set, sign-in / setup / invite accept verify the
+token on the server (same as before).
 
 ## Authoring content
 
@@ -192,11 +196,12 @@ applied at runtime via `accentCSS()`.
 
 Defined and validated by zod in `src/lib/env.ts`; the canonical reference is
 `.env.example`. Required in production: `SITE_URL`, `AUTH_SECRET`, `DATABASE_URL`,
-`FAMILIES` (the single JSON sign-in + visibility config), `RESEND_API_KEY`, `RESEND_FROM`,
-`ANTHROPIC_API_KEY`, `NEXT_PUBLIC_TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY`. Env
-validation **fails closed** in production — a missing required var crashes boot (so your
-platform's healthcheck catches it); an empty `FAMILIES` boots but lets nobody sign in,
-while malformed `FAMILIES` JSON crashes boot.
+`ANTHROPIC_API_KEY`. `RESEND_API_KEY` / `RESEND_FROM` and the Turnstile keys are
+**optional** — unset Resend writes magic links to a local outbox; unset Turnstile skips
+captcha. Env validation **fails closed** in production for the required vars (a missing
+one crashes boot so your platform's healthcheck catches it). Access is empty-fail-closed:
+until someone completes `/setup` (or a leftover `FAMILIES` import runs), nobody can sign
+in.
 
 ## Deploy
 
@@ -218,9 +223,10 @@ and set `DATABASE_URL=file:/data/app.db`.
 
 `pnpm test` runs the Vitest unit suite (content guards, scoring, grading, auth, actions)
 against an isolated SQLite file. `pnpm test:e2e` runs Playwright smokes for the public
-routes plus the magic-link happy path, uniform sign-in rate limit, and empty-token
-failure path (run `pnpm test:e2e:install` once first). The sign-in tests use Cloudflare's
-documented always-pass dummy keys; server-side Turnstile verification still runs.
+routes plus the magic-link happy path, invite accept, first-run bootstrap (Turnstile
+off), uniform sign-in rate limit, and empty-token failure path when captcha is on (run
+`pnpm test:e2e:install` once first). The default e2e server uses Cloudflare's
+always-pass dummy keys; a second fresh-DB run covers Turnstile unset.
 
 ## Contributing, security, license
 

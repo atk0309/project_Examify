@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { parseFamilies } from './families';
 
 /**
  * In production, security-critical env vars have no defaults — boot fails
@@ -23,16 +22,17 @@ const IS_PROD = process.env.NODE_ENV === 'production' && !IS_BUILD;
 // production these vars must be set explicitly; boot fails closed otherwise.
 const dev = <T extends string>(value: T): T | undefined => (IS_PROD ? undefined : value);
 
-// Dev/test default for FAMILIES: one student paired with one parent, mirroring
-// the old `student@example.com` / `parent@example.com` defaults so local dev and
-// the e2e dev-defaults keep working out of the box.
-const DEFAULT_FAMILIES_JSON = '[{"child":"student@example.com","parents":["parent@example.com"]}]';
+/** Treat empty / whitespace-only strings as unset. */
+function emptyToUndef(v: unknown): unknown {
+  if (typeof v === 'string' && v.trim() === '') return undefined;
+  return v;
+}
 
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
 
   // Public app URL supplied at runtime. Drives absolute URLs in magic-link
-  // sign-in emails.
+  // sign-in emails and invite links.
   SITE_URL: z.preprocess((v) => v ?? dev('http://localhost:3000'), z.string().url()),
 
   // SQLite file path. In production, point this at runtime-mounted persistent storage.
@@ -48,38 +48,20 @@ const envSchema = z.object({
   // Cookie name is not security-critical; default is fine everywhere.
   SESSION_COOKIE_NAME: z.string().min(1).default('__Host-examify_session'),
 
-  // Families — the credential store for Examify, same runtime-config pattern as
-  // SITE_URL. A single JSON array; each entry is `{ child, parents }`. It is the
-  // single source of truth for (1) the student sign-in allowlist (every `child`),
-  // (2) the parent sign-in allowlist (every `parents[]` entry), and (3) which
-  // child a parent may see on their dashboard (the `child` of their own family).
-  // There is no DB row, no admin — the env IS the allowlist + the privacy
-  // boundary. See `src/lib/families.ts`.
-  //
-  // Parsed to a typed `Family[]` at boot: empty/unset ⇒ `[]` (fail closed —
-  // nobody can sign in); malformed JSON or an invalid email fails boot with a
-  // readable error (and fails the platform healthcheck). The dev default below pairs
-  // one student with one parent so `pnpm dev` and the e2e dev-defaults work.
-  FAMILIES: z.preprocess(
-    (v) => v ?? dev(DEFAULT_FAMILIES_JSON),
-    z
-      .string()
-      .default('[]')
-      .transform((raw, ctx) => {
-        const result = parseFamilies(raw);
-        if (!result.ok) {
-          ctx.addIssue({ code: z.ZodIssueCode.custom, message: result.error });
-          return z.NEVER;
-        }
-        return result.families;
-      }),
-  ),
+  // Access is invite-only households in SQLite — there is no FAMILIES env
+  // allowlist. A leftover FAMILIES value is read once by
+  // `importLegacyFamiliesIfNeeded()` when the DB has no households yet
+  // (existing Railway deploys); it is not validated at boot and is not
+  // required for new installs.
 
-  // Resend keys: a missing key in production silently routes emails to a
-  // tests/.tmp/outbox file, which means subscribers never receive their
-  // magic links. Fail closed instead.
-  RESEND_API_KEY: z.preprocess((v) => v ?? dev('test'), z.string().min(1)),
-  RESEND_FROM: z.preprocess((v) => v ?? dev('Examify <onboarding@resend.dev>'), z.string().min(1)),
+  // Resend: optional. Unset or the `test` sentinel writes magic-link emails
+  // to a local outbox instead of sending (dev/test, and a self-hosted box
+  // that has not configured email yet). A missing key no longer fails boot —
+  // the install wizard will later let hosts pick an auth/email mode.
+  // TODO(multi-auth): passkeys / password / SMTP picker plug in alongside
+  // this magic-link path; do not hard-require Resend when adding them.
+  RESEND_API_KEY: z.preprocess(emptyToUndef, z.string().min(1).optional()),
+  RESEND_FROM: z.preprocess(emptyToUndef, z.string().min(1).optional()),
 
   // Anthropic key for free-text grading. The `test` sentinel (dev/test default)
   // routes the grader to a deterministic full-score stub — no network — exactly
@@ -87,17 +69,12 @@ const envSchema = z.object({
   // so an exam never silently scores every free-text answer as full marks.
   ANTHROPIC_API_KEY: z.preprocess((v) => v ?? dev('test'), z.string().min(1)),
 
-  // Turnstile: the always-pass dummy keys are convenient for dev/tests, but
-  // a production deploy that lands on the dummy secret effectively disables
-  // captcha checking on every form.
-  NEXT_PUBLIC_TURNSTILE_SITE_KEY: z.preprocess(
-    (v) => v ?? dev('1x00000000000000000000AA'),
-    z.string().min(1),
-  ),
-  TURNSTILE_SECRET_KEY: z.preprocess(
-    (v) => v ?? dev('1x0000000000000000000000000000000AA'),
-    z.string().min(1),
-  ),
+  // Turnstile is optional. Both site + secret must be set to enable captcha;
+  // unset/empty skips the widget and server verification so sign-in still
+  // works. Dummy keys (1x…AA / 2x…AA) remain valid when you want captcha on
+  // in dev/e2e. There is no production default — omit both to leave it off.
+  NEXT_PUBLIC_TURNSTILE_SITE_KEY: z.preprocess(emptyToUndef, z.string().min(1).optional()),
+  TURNSTILE_SECRET_KEY: z.preprocess(emptyToUndef, z.string().min(1).optional()),
 
   // Analytics is opt-in; absent value means no script renders.
   PLAUSIBLE_DOMAIN: z.string().optional(),
@@ -126,3 +103,14 @@ export const env: Env = parsed.data;
 
 export const isProd = env.NODE_ENV === 'production';
 export const isTest = env.NODE_ENV === 'test';
+
+/** Local outbox / stub path — no real Resend key configured. */
+export function isResendConfigured(): boolean {
+  const key = env.RESEND_API_KEY?.trim();
+  return Boolean(key && key !== 'test');
+}
+
+/** Both Turnstile keys present — captcha UI + server verify are on. */
+export function isTurnstileEnabled(): boolean {
+  return Boolean(env.NEXT_PUBLIC_TURNSTILE_SITE_KEY?.trim() && env.TURNSTILE_SECRET_KEY?.trim());
+}

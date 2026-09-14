@@ -16,7 +16,10 @@ export async function GET(request: NextRequest): Promise<void> {
   if (!token) redirect('/signin/verify/error?reason=missing');
 
   const result = consumeMagicToken(token);
-  if (!result.ok) redirect(`/signin/verify/error?reason=${result.reason}`);
+  if (!result.ok) {
+    const reason = result.reason === 'invite-invalid' ? 'invite-invalid' : result.reason;
+    redirect(`/signin/verify/error?reason=${reason}`);
+  }
 
   const session = await getSession();
   session.userId = result.userId;

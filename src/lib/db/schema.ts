@@ -2,12 +2,14 @@ import { sql } from 'drizzle-orm';
 import { integer, sqliteTable, text, index, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 /**
- * Signed-in people (magic-link auth). There is no admin row and no password —
- * who may sign in (and as which role) is decided by the `FAMILIES` env config
- * (`src/lib/families.ts`): a student is some family's `child`, a parent is in some
- * family's `parents[]`. A `users` row is created on first verified sign-in, keyed
- * by email; ownership of attempts is structural via `users.id`, so the FAMILIES
- * config can change without touching stored progress.
+ * Signed-in people (magic-link auth). Who may sign in — and which household
+ * they belong to — is decided in SQLite (`households` / `household_members` /
+ * `household_invites`), not env JSON. A `users` row is created on first
+ * verified sign-in or first-run bootstrap, keyed by email. Ownership of
+ * attempts is structural via `users.id`.
+ *
+ * Session roles stay `student | parent`. Household `admin` is a membership
+ * flag on top of parent (the first-run host); they sign in as a parent.
  */
 export const users = sqliteTable(
   'users',
@@ -38,6 +40,9 @@ export const magicTokens = sqliteTable(
     tokenHash: text('token_hash').notNull(),
     expiresAt: integer('expires_at', { mode: 'timestamp_ms' }).notNull(),
     consumedAt: integer('consumed_at', { mode: 'timestamp_ms' }),
+    // Set when the link was issued from an invite accept. Consuming the
+    // magic token then attaches household membership in the same transaction.
+    inviteId: integer('invite_id').references(() => householdInvites.id),
     createdAt: integer('created_at', { mode: 'timestamp_ms' })
       .notNull()
       .default(sql`(unixepoch() * 1000)`),
@@ -45,6 +50,7 @@ export const magicTokens = sqliteTable(
   (t) => [
     uniqueIndex('magic_tokens_hash_unique').on(t.tokenHash),
     index('magic_tokens_email_idx').on(t.email),
+    index('magic_tokens_invite_idx').on(t.inviteId),
   ],
 );
 
@@ -64,6 +70,87 @@ export const rateLimitEvents = sqliteTable(
 );
 
 export type RateLimitEvent = typeof rateLimitEvents.$inferSelect;
+
+/**
+ * One family unit — the privacy boundary. A parent/admin only ever sees
+ * students who share their household. Created by first-run bootstrap or by
+ * the optional one-shot `FAMILIES` env import for existing deploys.
+ */
+export const households = sqliteTable('households', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  name: text('name').notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp_ms' })
+    .notNull()
+    .default(sql`(unixepoch() * 1000)`),
+});
+
+export type Household = typeof households.$inferSelect;
+
+export type HouseholdRole = 'admin' | 'parent' | 'student';
+
+/**
+ * A person belongs to exactly one household (unique on `user_id`). `admin` is
+ * the first-run host (parent + invite permission); `parent` can also invite;
+ * `student` is a child. Session role for admin/parent is still `parent`.
+ */
+export const householdMembers = sqliteTable(
+  'household_members',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    householdId: integer('household_id')
+      .notNull()
+      .references(() => households.id),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id),
+    role: text('role', { enum: ['admin', 'parent', 'student'] }).notNull(),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+  },
+  (t) => [
+    uniqueIndex('household_members_user_unique').on(t.userId),
+    uniqueIndex('household_members_household_user_unique').on(t.householdId, t.userId),
+    index('household_members_household_idx').on(t.householdId),
+  ],
+);
+
+export type HouseholdMember = typeof householdMembers.$inferSelect;
+
+export type InviteRole = 'parent' | 'student';
+
+/**
+ * Invite-only onboarding. Token is stored hashed (same pattern as magic
+ * links). An optional `email` locks the invite to one address; open invites
+ * let the recipient pick their email at accept time. Consumed when the
+ * invitee's magic-link verify succeeds.
+ */
+export const householdInvites = sqliteTable(
+  'household_invites',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    householdId: integer('household_id')
+      .notNull()
+      .references(() => households.id),
+    createdByUserId: integer('created_by_user_id')
+      .notNull()
+      .references(() => users.id),
+    role: text('role', { enum: ['parent', 'student'] }).notNull(),
+    tokenHash: text('token_hash').notNull(),
+    email: text('email'),
+    expiresAt: integer('expires_at', { mode: 'timestamp_ms' }).notNull(),
+    consumedAt: integer('consumed_at', { mode: 'timestamp_ms' }),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+  },
+  (t) => [
+    uniqueIndex('household_invites_hash_unique').on(t.tokenHash),
+    index('household_invites_household_idx').on(t.householdId),
+  ],
+);
+
+export type HouseholdInvite = typeof householdInvites.$inferSelect;
 
 /**
  * One row per completed mini exam, owned (via `userId`) by whoever sat it — the
