@@ -23,14 +23,18 @@ get an initial response within a week.
   secret, and never commit a real `.env`.
 - Env validation fails closed in production: missing security-critical vars crash boot
   rather than falling back to dev defaults. Resend and Turnstile are optional.
-- Magic-link tokens and invite tokens are stored hashed, are single-use, and expire
-  (15 minutes for magic links, 7 days for invites); sign-in is rate-limited per IP.
-  Cloudflare Turnstile is verified on the server when keys are set.
-- **Do not write magic-link bearer tokens to disk in production.** Unset Resend
-  or `RESEND_API_KEY=test` uses a local outbox only in dev/test. Production with
-  no real Resend key returns the generic “sent” response and logs server-side —
-  it does **not** write `data/outbox`, even if `RESEND_API_KEY=test`.
-  `ALLOW_LOCAL_OUTBOX=1` is a dangerous opt-in that stores raw sign-in URLs on
-  the host filesystem; treat that directory as secret material and never enable
-  it on a shared or exposed disk.
-  The writer creates the directory as `0700` and each message as `0600`.
+- Magic-link tokens, local OTPs, and invite tokens are stored hashed, are single-use,
+  and expire (15 minutes for links/OTPs, 7 days for invites); sign-in is rate-limited
+  per IP. Passwords are stored as scrypt hashes (`users.password_hash`). Cloudflare
+  Turnstile is verified on the server when keys are set.
+- **Do not write magic-link bearer tokens or OTP codes to disk in production
+  unless you opt in.** Unset Resend / `RESEND_API_KEY=test` uses a local outbox
+  only in dev/test. Production with no real mail transport returns the generic
+  “sent” response and logs server-side — it does **not** write `data/outbox`,
+  even if `RESEND_API_KEY=test`. `ALLOW_LOCAL_OUTBOX=1` is a dangerous opt-in
+  that stores raw sign-in URLs or OTP codes on the host filesystem; treat that
+  directory as secret material and never enable it on a shared or exposed disk.
+  `AUTH_MODE=local-otp` and `MAIL_TRANSPORT=outbox` require this opt-in in
+  production. The writer creates the directory as `0700` and each message as `0600`.
+- Prefer `AUTH_MODE=password` on a tiny self-host if you do not want to run
+  email. `AUTH_SECRET` and `SETUP_BOOTSTRAP_SECRET` remain the host secrets.

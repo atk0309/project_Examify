@@ -1,4 +1,10 @@
 import { z } from 'zod';
+import {
+  AUTH_MODES,
+  MAIL_TRANSPORTS,
+  type AuthMode,
+  type ResolvedMailTransport,
+} from './auth-mode';
 import { parseFamilies } from './families';
 
 /**
@@ -82,15 +88,36 @@ function buildEnvSchema(isProd: boolean) {
       // allowlist. A leftover FAMILIES value is imported once when the DB has
       // no households. Production boot fails if FAMILIES is set and invalid.
 
-      // Resend: optional. Unset or the `test` sentinel writes magic-link emails
-      // to a local outbox instead of sending (dev/test, and a self-hosted box
-      // that has not configured email yet). A missing key no longer fails boot —
-      // the install wizard will later let hosts pick an auth/email mode.
-      // TODO(multi-auth): passkeys / password / SMTP picker plug in alongside
-      // this magic-link path; do not hard-require Resend when adding them.
-      // A real (non-test) key requires RESEND_FROM — no onboarding@resend.dev fallback.
+      // How people sign in. Default magic-link keeps existing #56 hosts working.
+      // `password` needs no mail. `local-otp` writes a 6-digit code to the
+      // outbox (prod requires ALLOW_LOCAL_OUTBOX).
+      AUTH_MODE: z.preprocess((v) => emptyToUndef(v) ?? 'magic-link', z.enum(AUTH_MODES)),
+
+      // How magic-link / OTP messages are delivered. `auto` picks SMTP when
+      // SMTP_HOST is set, else Resend when a real key is set, else outbox.
+      MAIL_TRANSPORT: z.preprocess((v) => emptyToUndef(v) ?? 'auto', z.enum(MAIL_TRANSPORTS)),
+
+      // Resend: optional. Unset or the `test` sentinel writes emails to a
+      // local outbox instead of sending (dev/test, and a self-hosted box that
+      // has not configured email yet). A real (non-test) key requires RESEND_FROM.
       RESEND_API_KEY: z.preprocess(emptyToUndef, z.string().min(1).optional()),
       RESEND_FROM: z.preprocess(emptyToUndef, z.string().min(1).optional()),
+
+      // User-configured SMTP (magic-link / OTP). Used when MAIL_TRANSPORT is
+      // `smtp`, or `auto` and SMTP_HOST is set. SMTP_FROM is required then.
+      SMTP_HOST: z.preprocess(emptyToUndef, z.string().min(1).optional()),
+      SMTP_PORT: z.preprocess(emptyToUndef, z.coerce.number().int().min(1).max(65535).optional()),
+      SMTP_SECURE: z.preprocess((v) => {
+        if (v === undefined) return undefined;
+        if (typeof v !== 'string') return v;
+        const t = v.trim().toLowerCase();
+        if (t === '1' || t === 'true') return true;
+        if (t === '' || t === '0' || t === 'false') return false;
+        return v;
+      }, z.boolean().optional()),
+      SMTP_USER: z.preprocess(emptyToUndef, z.string().min(1).optional()),
+      SMTP_PASS: z.preprocess(emptyToUndef, z.string().min(1).optional()),
+      SMTP_FROM: z.preprocess(emptyToUndef, z.string().min(1).optional()),
 
       // Optional override for the local mail outbox directory (writer + test
       // readers share this). Unset keeps the existing defaults.
@@ -156,6 +183,43 @@ function buildEnvSchema(isProd: boolean) {
           code: 'custom',
           message: 'RESEND_FROM is required when RESEND_API_KEY is a real (non-test) key.',
           path: ['RESEND_FROM'],
+        });
+      }
+      if (data.MAIL_TRANSPORT === 'resend' && !isConfiguredSecret(data.RESEND_API_KEY)) {
+        ctx.addIssue({
+          code: 'custom',
+          message: 'MAIL_TRANSPORT=resend requires a real (non-test) RESEND_API_KEY.',
+          path: ['RESEND_API_KEY'],
+        });
+      }
+      if (data.MAIL_TRANSPORT === 'smtp' && !data.SMTP_HOST) {
+        ctx.addIssue({
+          code: 'custom',
+          message: 'MAIL_TRANSPORT=smtp requires SMTP_HOST.',
+          path: ['SMTP_HOST'],
+        });
+      }
+      const smtpActive = data.MAIL_TRANSPORT === 'smtp' || Boolean(data.SMTP_HOST);
+      if (smtpActive && !data.SMTP_FROM) {
+        ctx.addIssue({
+          code: 'custom',
+          message: 'SMTP_FROM is required when SMTP is configured.',
+          path: ['SMTP_FROM'],
+        });
+      }
+      if (isProd && data.AUTH_MODE === 'local-otp' && data.ALLOW_LOCAL_OUTBOX !== true) {
+        ctx.addIssue({
+          code: 'custom',
+          message:
+            'AUTH_MODE=local-otp in production requires ALLOW_LOCAL_OUTBOX=1 (codes are written to disk).',
+          path: ['ALLOW_LOCAL_OUTBOX'],
+        });
+      }
+      if (isProd && data.MAIL_TRANSPORT === 'outbox' && data.ALLOW_LOCAL_OUTBOX !== true) {
+        ctx.addIssue({
+          code: 'custom',
+          message: 'MAIL_TRANSPORT=outbox in production requires ALLOW_LOCAL_OUTBOX=1.',
+          path: ['ALLOW_LOCAL_OUTBOX'],
         });
       }
       if (
@@ -232,4 +296,22 @@ export function allowLocalMailOutbox(): boolean {
   if (env.NODE_ENV === 'test') return true;
   if (env.NODE_ENV !== 'production') return true;
   return env.ALLOW_LOCAL_OUTBOX === true;
+}
+
+export function getAuthMode(): AuthMode {
+  return env.AUTH_MODE;
+}
+
+/** Resolve how magic-link / OTP messages are sent. */
+export function resolveMailTransport(): ResolvedMailTransport {
+  if (
+    env.MAIL_TRANSPORT === 'resend' ||
+    env.MAIL_TRANSPORT === 'smtp' ||
+    env.MAIL_TRANSPORT === 'outbox'
+  ) {
+    return env.MAIL_TRANSPORT;
+  }
+  if (env.SMTP_HOST) return 'smtp';
+  if (isResendConfigured()) return 'resend';
+  return 'outbox';
 }

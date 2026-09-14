@@ -6,9 +6,11 @@ import { getIronSession, type SessionOptions } from 'iron-session';
 import { and, eq, gte, isNull } from 'drizzle-orm';
 import { db, schema } from './db';
 import { env, isProd } from './env';
+import { verifyPasswordOrDummy } from './password';
 import {
   attachMembershipFromInvite,
   getMembershipForUser,
+  isHouseholdEmailAllowed,
   isParentLike,
   type Membership,
 } from './households';
@@ -107,6 +109,75 @@ export async function issueMagicLink(
     .values({ email, role, tokenHash, expiresAt, inviteId: opts?.inviteId })
     .run();
   return { token, expiresAt };
+}
+
+const OTP_TTL_MS = TOKEN_TTL_MS;
+
+function otpBearer(email: string, role: SessionRole, code: string): string {
+  return `otp:${email}:${role}:${code}`;
+}
+
+/** Cryptographically random 6-digit code (000000–999999). */
+export function generateOtpCode(): string {
+  return crypto.randomInt(0, 1_000_000).toString().padStart(6, '0');
+}
+
+/**
+ * Issue a local OTP. Previous unused codes for this email+role are marked
+ * consumed so only the latest code works. The bearer stored hashed is
+ * `otp:{email}:{role}:{code}` so codes do not collide across users.
+ */
+export function issueLocalOtp(
+  email: string,
+  role: SessionRole,
+  opts?: { inviteId?: number },
+): { code: string; expiresAt: Date } {
+  const now = Date.now();
+  db.update(schema.magicTokens)
+    .set({ consumedAt: new Date(now) })
+    .where(
+      and(
+        eq(schema.magicTokens.email, email),
+        eq(schema.magicTokens.role, role),
+        isNull(schema.magicTokens.consumedAt),
+      ),
+    )
+    .run();
+
+  const code = generateOtpCode();
+  const tokenHash = sha256(otpBearer(email, role, code));
+  const expiresAt = new Date(now + OTP_TTL_MS);
+  db.insert(schema.magicTokens)
+    .values({ email, role, tokenHash, expiresAt, inviteId: opts?.inviteId })
+    .run();
+  return { code, expiresAt };
+}
+
+export function consumeLocalOtp(email: string, role: SessionRole, code: string): ConsumeResult {
+  const trimmed = code.trim();
+  if (!/^\d{6}$/.test(trimmed)) {
+    consumeMagicToken(`otp:${email}:${role}:invalid`);
+    return { ok: false, reason: 'not-found' };
+  }
+  return consumeMagicToken(otpBearer(email, role, trimmed));
+}
+
+/**
+ * Email + password + role. Always spends a password-hash compare (dummy
+ * when the user or hash is missing) so unknown emails and wrong passwords
+ * look the same. Wrong role also fails closed after the compare.
+ */
+export function authenticatePassword(
+  email: string,
+  password: string,
+  role: SessionRole,
+): { ok: true; userId: number; role: SessionRole; email: string } | { ok: false } {
+  const normalised = email.trim().toLowerCase();
+  const user = db.select().from(schema.users).where(eq(schema.users.email, normalised)).get();
+  const passwordOk = verifyPasswordOrDummy(password, user?.passwordHash);
+  if (!user || !passwordOk) return { ok: false };
+  if (!isHouseholdEmailAllowed(role, normalised)) return { ok: false };
+  return { ok: true, userId: user.id, role, email: user.email };
 }
 
 export type ConsumeResult =

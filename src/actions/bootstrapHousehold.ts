@@ -5,15 +5,17 @@ import { redirect } from 'next/navigation';
 import { z } from 'zod';
 import { constantTimeEqual, getRawSession } from '@/lib/auth';
 import { verifyTurnstile } from '@/lib/captcha';
-import { env, isTurnstileEnabled } from '@/lib/env';
+import { env, getAuthMode, isTurnstileEnabled } from '@/lib/env';
 import { bootstrapHousehold, HOUSEHOLD_NAME_MAX } from '@/lib/households';
 import { extractClientIp } from '@/lib/ip';
+import { hashPassword, passwordMeetsPolicy } from '@/lib/password';
 import { checkRateLimit } from '@/lib/rate-limit';
 
 const inputSchema = z.object({
   email: z.string().trim().toLowerCase().email(),
   householdName: z.string().trim().min(1).max(HOUSEHOLD_NAME_MAX),
   setupSecret: z.string().optional(),
+  password: z.string().optional(),
   token: z.string().optional(),
 });
 
@@ -37,13 +39,23 @@ export async function bootstrapHouseholdAction(
   const token = typeof rawToken === 'string' ? rawToken : '';
 
   const rawSecret = formData.get('setupSecret');
+  const rawPassword = formData.get('password');
   const parsed = inputSchema.safeParse({
     email: formData.get('email'),
     householdName: formData.get('householdName'),
     setupSecret: typeof rawSecret === 'string' ? rawSecret : undefined,
+    password: typeof rawPassword === 'string' ? rawPassword : undefined,
     token: token || undefined,
   });
   if (!parsed.success) return { status: 'error', reason: 'invalid' };
+
+  const mode = getAuthMode();
+  let passwordHash: string | undefined;
+  if (mode === 'password') {
+    const password = parsed.data.password ?? '';
+    if (!passwordMeetsPolicy(password)) return { status: 'error', reason: 'invalid' };
+    passwordHash = hashPassword(password);
+  }
 
   const ip = extractClientIp(await headers());
   if (isTurnstileEnabled() && !token) return { status: 'error', reason: 'invalid' };
@@ -64,6 +76,7 @@ export async function bootstrapHouseholdAction(
   const result = bootstrapHousehold({
     email: parsed.data.email,
     householdName: parsed.data.householdName,
+    passwordHash,
   });
   if (!result.ok) return { status: 'error', reason: result.reason };
 

@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
 import { SetupForm } from '@/components/exam/SetupForm';
 import { getSession } from '@/lib/auth';
-import { isTurnstileEnabled, env } from '@/lib/env';
+import { getAuthMode, isTurnstileEnabled, env } from '@/lib/env';
 import { hasAnyHousehold } from '@/lib/households';
 
 export const dynamic = 'force-dynamic';
@@ -24,6 +24,7 @@ export default async function SetupPage() {
     <div className="stage">
       <div className="app-frame">
         <SetupForm
+          authMode={getAuthMode()}
           siteKey={isTurnstileEnabled() ? env.NEXT_PUBLIC_TURNSTILE_SITE_KEY : undefined}
         />
       </div>

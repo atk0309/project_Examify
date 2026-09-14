@@ -209,6 +209,7 @@ export type BootstrapResult =
 export function bootstrapHousehold(input: {
   email: string;
   householdName: string;
+  passwordHash?: string;
 }): BootstrapResult {
   importLegacyFamiliesIfNeeded();
   const email = normaliseEmail(input.email);
@@ -223,7 +224,10 @@ export function bootstrapHousehold(input: {
 
     const user = getOrCreateUser(tx, email);
     tx.update(schema.users)
-      .set({ emailVerifiedAt: new Date() })
+      .set({
+        emailVerifiedAt: new Date(),
+        ...(input.passwordHash ? { passwordHash: input.passwordHash } : {}),
+      })
       .where(eq(schema.users.id, user.id))
       .run();
 
@@ -433,6 +437,87 @@ export function attachMembershipFromInvite(
     .where(eq(schema.householdInvites.id, inviteId))
     .run();
   return { ok: true };
+}
+
+export type AcceptInvitePasswordResult =
+  | { ok: true; userId: number; role: InviteRole; email: string }
+  | { ok: false; reason: 'invite-invalid' | 'not-eligible' };
+
+/**
+ * Password-mode invite accept: create/update the user with a password hash,
+ * attach membership, and consume the invite in one transaction.
+ */
+export function acceptInviteWithPassword(input: {
+  inviteToken: string;
+  email: string;
+  passwordHash: string;
+  now?: number;
+}): AcceptInvitePasswordResult {
+  const email = normaliseEmail(input.email);
+  if (!email || !input.passwordHash || !input.inviteToken) {
+    return { ok: false, reason: 'invite-invalid' };
+  }
+  const now = input.now ?? Date.now();
+  const tokenHash = hashToken(input.inviteToken);
+
+  try {
+    return db.transaction((tx) => {
+      const invite = tx
+        .select()
+        .from(schema.householdInvites)
+        .where(
+          and(
+            eq(schema.householdInvites.tokenHash, tokenHash),
+            inviteStillOpen(),
+            gte(schema.householdInvites.expiresAt, new Date(now)),
+          ),
+        )
+        .get();
+      if (!invite) throw new ConsumeInviteRollback({ ok: false, reason: 'invite-invalid' });
+      if (invite.email && invite.email !== email) {
+        throw new ConsumeInviteRollback({ ok: false, reason: 'not-eligible' });
+      }
+      if (invite.role === 'parent' && !invite.email) {
+        throw new ConsumeInviteRollback({ ok: false, reason: 'not-eligible' });
+      }
+
+      const existingMember = getMembershipForEmail(email);
+      if (existingMember) {
+        throw new ConsumeInviteRollback({ ok: false, reason: 'not-eligible' });
+      }
+
+      const user = getOrCreateUser(tx, email);
+      const already = tx
+        .select({ id: schema.householdMembers.id })
+        .from(schema.householdMembers)
+        .where(eq(schema.householdMembers.userId, user.id))
+        .get();
+      if (already) throw new ConsumeInviteRollback({ ok: false, reason: 'not-eligible' });
+
+      tx.update(schema.users)
+        .set({
+          emailVerifiedAt: new Date(now),
+          passwordHash: input.passwordHash,
+        })
+        .where(eq(schema.users.id, user.id))
+        .run();
+
+      const attached = attachMembershipFromInvite(tx, invite.id, user.id, email, now);
+      if (!attached.ok) {
+        throw new ConsumeInviteRollback({ ok: false, reason: 'invite-invalid' });
+      }
+      return { ok: true as const, userId: user.id, role: invite.role, email };
+    });
+  } catch (error) {
+    if (error instanceof ConsumeInviteRollback) return error.result;
+    throw error;
+  }
+}
+
+class ConsumeInviteRollback extends Error {
+  constructor(readonly result: AcceptInvitePasswordResult) {
+    super('accept-invite-rollback');
+  }
 }
 
 /** Students in the same household as this parent/admin — the privacy boundary. */

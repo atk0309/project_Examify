@@ -3,10 +3,10 @@
 import { headers } from 'next/headers';
 import { z } from 'zod';
 import { isAllowedEmail } from '@/lib/allowlist';
-import { issueMagicLink } from '@/lib/auth';
+import { issueLocalOtp, issueMagicLink } from '@/lib/auth';
 import { verifyTurnstile } from '@/lib/captcha';
-import { renderMagicLinkEmail, sendEmail } from '@/lib/email';
-import { env, isTurnstileEnabled } from '@/lib/env';
+import { renderMagicLinkEmail, renderOtpEmail, sendEmail } from '@/lib/email';
+import { env, getAuthMode, isTurnstileEnabled } from '@/lib/env';
 import { extractClientIp } from '@/lib/ip';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { siteConfig } from '@/lib/site';
@@ -37,6 +37,9 @@ export async function requestMagicLink(
   if (!parsed.success) return { status: 'error', reason: 'invalid' };
 
   const { email, role } = parsed.data;
+  const mode = getAuthMode();
+  if (mode === 'password') return { status: 'error', reason: 'invalid' };
+
   const ip = extractClientIp(await headers());
 
   // When Turnstile is on, a missing token is a form error (same as today)
@@ -53,22 +56,37 @@ export async function requestMagicLink(
   const limit = checkRateLimit(ip, 'signin');
   if (!limit.ok) return { status: 'error', reason: 'rate_limited' };
 
-  // Allowlist gate. We only issue + send a link when the email is approved
-  // for the chosen role, but we always return the generic `sent` state so an
-  // attacker can't enumerate which emails are on the allowlist.
+  // Allowlist gate. We only issue + send a challenge when the email is
+  // approved for the chosen role, but we always return the generic `sent`
+  // state so an attacker can't enumerate which emails are members.
   if (isAllowedEmail(role, email)) {
-    const { token } = await issueMagicLink(email, role);
-    const url = `${env.SITE_URL}/signin/verify?token=${encodeURIComponent(token)}`;
+    if (mode === 'local-otp') {
+      const { code } = issueLocalOtp(email, role);
+      const rendered = renderOtpEmail({ code, email, siteName: siteConfig.name });
+      const result = await sendEmail({
+        to: email,
+        subject: rendered.subject,
+        html: rendered.html,
+        text: rendered.text,
+        code,
+      });
+      if (!result.ok) {
+        console.error('[auth] local-otp delivery failed', { email, error: result.error });
+      }
+    } else {
+      const { token } = await issueMagicLink(email, role);
+      const url = `${env.SITE_URL}/signin/verify?token=${encodeURIComponent(token)}`;
 
-    const rendered = renderMagicLinkEmail({ url, email, siteName: siteConfig.name });
-    const result = await sendEmail({
-      to: email,
-      subject: rendered.subject,
-      html: rendered.html,
-      text: rendered.text,
-    });
-    if (!result.ok) {
-      console.error('[auth] magic-link delivery failed', { email, error: result.error });
+      const rendered = renderMagicLinkEmail({ url, email, siteName: siteConfig.name });
+      const result = await sendEmail({
+        to: email,
+        subject: rendered.subject,
+        html: rendered.html,
+        text: rendered.text,
+      });
+      if (!result.ok) {
+        console.error('[auth] magic-link delivery failed', { email, error: result.error });
+      }
     }
   }
 

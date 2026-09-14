@@ -14,8 +14,9 @@ making any change — it encodes invariants that are easy to miss from the diff 
 `project_Examify` is a calm, mobile-first **exam-prep app** a parent self-hosts for
 their kid(s). It turns content (optionally sourced from the family's own study PDFs,
 added by hand to a static data file) into short practice exams. It is intentionally
-small: a static question bank, a four-screen client flow, magic-link sign-in gated by
-invite-only households in SQLite, and a single file on runtime-mounted persistent storage.
+small: a static question bank, a four-screen client flow, host-picked sign-in
+(`password`, `magic-link`, or `local-otp`) gated by invite-only households in SQLite,
+and a single file on runtime-mounted persistent storage.
 
 Surface:
 
@@ -27,8 +28,9 @@ Surface:
   `ExamApp` themselves; their attempts persist under the parent's own account, never the
   child's.
 - **`/setup`** — first-run household bootstrap (only when no household exists).
-- **`/invite/[token]`** — accept a household invite, then magic-link verify.
-- **`/signin`** — magic-link login with a Student/Parent role control. Redirects to
+- **`/invite/[token]`** — accept a household invite (password, magic-link, or local OTP).
+- **`/signin`** — sign-in UI for the configured `AUTH_MODE` (password, magic-link, or
+  local OTP) with a Student/Parent role control. Redirects to
   `/setup` when the instance has no household yet.
 - **`/signin/verify`** — a **Route Handler** (`route.ts`, not a page): consumes the one-time
   token, establishes the session, redirects to `/`. It must be a route handler because
@@ -50,37 +52,38 @@ is the usable login, and the screen after it is the usable dashboard.
 Latest stable of each, exact-pinned in `package.json` (no `^`/`~`). Bumps land via the
 grouped weekly Dependabot PRs in `.github/dependabot.yml`.
 
-| Layer       | Choice                                                                                |
-| ----------- | ------------------------------------------------------------------------------------- |
-| Runtime     | Node 22.22.2+ LTS (`engines`, `.nvmrc`), pnpm 10                                      |
-| Framework   | Next.js 16 (App Router, Turbopack), React 19.2, TypeScript 6 strict                   |
-| Styling     | Tailwind v4 with a CSS-first `@theme` token block, three `data-theme` moods           |
-| DB          | SQLite on runtime-mounted storage, accessed through Drizzle + better-sqlite3          |
-| Auth        | Homegrown magic-link (Resend optional) + iron-session cookies, invite-only households |
-| Captcha     | Optional Cloudflare Turnstile (off when keys unset; server-verified when set)         |
-| Email       | Resend SDK, with a `tests/.tmp/outbox/*.json` short-circuit when key=test             |
-| Tests       | Vitest (unit), Playwright (e2e), Cloudflare dummy test keys                           |
-| Lint/Format | ESLint 9.39 (Next 16 plugin set) + Prettier + Tailwind plugin                         |
+| Layer       | Choice                                                                                            |
+| ----------- | ------------------------------------------------------------------------------------------------- |
+| Runtime     | Node 22.22.2+ LTS (`engines`, `.nvmrc`), pnpm 10                                                  |
+| Framework   | Next.js 16 (App Router, Turbopack), React 19.2, TypeScript 6 strict                               |
+| Styling     | Tailwind v4 with a CSS-first `@theme` token block, three `data-theme` moods                       |
+| DB          | SQLite on runtime-mounted storage, accessed through Drizzle + better-sqlite3                      |
+| Auth        | Host-picked mode (`password` / `magic-link` / `local-otp`) + iron-session, invite-only households |
+| Captcha     | Optional Cloudflare Turnstile (off when keys unset; server-verified when set)                     |
+| Email       | Resend, SMTP, or local outbox (`MAIL_TRANSPORT`); outbox gated in production                      |
+| Tests       | Vitest (unit), Playwright (e2e), Cloudflare dummy test keys                                       |
+| Lint/Format | ESLint 9.39 (Next 16 plugin set) + Prettier + Tailwind plugin                                     |
 
 **Why ESLint 9, not 10?** `eslint-plugin-react@7.x` doesn't support ESLint 10 yet, and
 `eslint-config-next@16` pulls it in transitively. Move both together later.
 
 ## Commands cheat-sheet
 
-| Command             | What it does                                       |
-| ------------------- | -------------------------------------------------- |
-| `pnpm dev`          | Next.js dev server with Turbopack                  |
-| `pnpm build`        | Production build                                   |
-| `pnpm start`        | Run the production build (`PORT` defaults to 3000) |
-| `pnpm lint`         | ESLint flat-config across the repo                 |
-| `pnpm format`       | Prettier write                                     |
-| `pnpm format:check` | Prettier dry-run (CI guard)                        |
-| `pnpm typecheck`    | `tsc --noEmit`                                     |
-| `pnpm test`         | Vitest unit suite                                  |
-| `pnpm test:e2e`     | Playwright e2e (`pnpm build` then both suites)     |
-| `pnpm db:generate`  | Generate a new Drizzle migration from schema diffs |
-| `pnpm db:migrate`   | Apply pending migrations to `DATABASE_URL`         |
-| `pnpm db:studio`    | Drizzle Studio against the local DB                |
+| Command             | What it does                                          |
+| ------------------- | ----------------------------------------------------- |
+| `pnpm dev`          | Next.js dev server with Turbopack                     |
+| `pnpm build`        | Production build                                      |
+| `pnpm start`        | Run the production build (`PORT` defaults to 3000)    |
+| `pnpm lint`         | ESLint flat-config across the repo                    |
+| `pnpm format`       | Prettier write                                        |
+| `pnpm format:check` | Prettier dry-run (CI guard)                           |
+| `pnpm typecheck`    | `tsc --noEmit`                                        |
+| `pnpm test`         | Vitest unit suite                                     |
+| `pnpm test:e2e`     | Playwright e2e (`pnpm build` then both suites)        |
+| `pnpm db:generate`  | Generate a new Drizzle migration from schema diffs    |
+| `pnpm db:migrate`   | Apply pending migrations to `DATABASE_URL`            |
+| `pnpm db:studio`    | Drizzle Studio against the local DB                   |
+| `./install.sh`      | Interactive self-host install (env + migrate + build) |
 
 ## Branch + PR rules
 
@@ -106,12 +109,13 @@ grouped weekly Dependabot PRs in `.github/dependabot.yml`.
 src/
   app/                  # routes (App Router)
     api/health/         # platform healthcheck
-    signin/             # magic-link login (page); verify (route.ts) + verify/error (page)
+    signin/             # login (page); magic-link verify (route.ts) + verify/error (page)
     page.tsx            # auth gate -> ExamApp
     layout.tsx          # fonts (Newsreader + Hanken Grotesk via <link>), data-theme
     globals.css         # Tailwind @theme tokens + component layer
     robots.ts           # disallow-all
-  actions/              # 'use server' actions (requestMagicLink, bootstrapHousehold,
+  actions/              # 'use server' actions (requestMagicLink, signInWithPassword,
+                        #   verifyLocalOtp, acceptInviteWithPassword, bootstrapHousehold,
                         #   createInvite / revokeInvite / requestInviteLink, signOut,
                         #   recordAttempt, saveExamProgress + discardExamSession)
   components/
@@ -126,7 +130,8 @@ src/
     household-types.ts  # client-safe PendingInvite type
     families.ts         # leftover FAMILIES JSON parser (optional one-shot import only)
     allowlist.ts        # isAllowedEmail(role,email), derived from household membership
-    auth-mode.ts        # magic-link-only extension point (TODO: passkey/password/SMTP)
+    auth-mode.ts        # AUTH_MODE types + helpers (password / magic-link / local-otp)
+    password.ts         # scrypt hash/verify (server); password-policy.ts is client-safe
     auth.ts, db/, email/, captcha.ts, ip.ts, rate-limit.ts, env.ts, site.ts
 tests/
   unit/                 # vitest specs
@@ -188,17 +193,20 @@ These are non-negotiable. Don't "fix" them out.
   may request a magic link for a role only if they belong to a household in that
   role (`isAllowedEmail` → `isHouseholdEmailAllowed`). Session roles stay
   `student | parent`; household `admin` is a membership flag on the first-run host
-  (they sign in as a parent). There is no password. A leftover `FAMILIES` env JSON
+  (they sign in as a parent). Auth _method_ is `AUTH_MODE` (`password`,
+  `magic-link`, or `local-otp`); membership is still the access boundary. A leftover `FAMILIES` env JSON
   is imported **once** when the DB has no households (`importLegacyFamiliesIfNeeded`);
   it is not required. Set-but-invalid JSON **crashes production boot**. Entries
   with `parents: []` parse (legacy standalone child) but are **skipped** on import
   so we never create an unadministrable household.
-- **No enumeration.** `requestMagicLink` always returns the generic `sent` state once
-  Turnstile (when enabled) + rate-limit pass; it only issues + emails a link when the
-  email is a household member for that role. Don't add a branch that reveals whether
-  an email has been invited — including delivery failure (log server-side, still
-  return `sent`). Email-locked invites use the same generic `sent` copy when the
-  address does not match.
+- **No enumeration.** Challenge modes (`magic-link`, `local-otp`): `requestMagicLink`
+  always returns the generic `sent` state once Turnstile (when enabled) + rate-limit
+  pass; it only issues a link/code when the email is a household member for that
+  role. Don't add a branch that reveals whether an email has been invited —
+  including delivery failure (log server-side, still return `sent`). Email-locked
+  invites use the same generic `sent` copy when the address does not match.
+  Password mode: `signInWithPassword` always returns generic `invalid` for unknown
+  email, wrong password, wrong role, or a user with no hash (after a dummy scrypt).
 - **The "sent" screen resets via client state, not navigation.** `LoginForm` lives on
   `/signin`, so "Use a different email" can't be a `<Link href="/signin">` — that's a
   same-route soft nav that never remounts the component, leaving `useActionState` at
@@ -359,11 +367,14 @@ placeholder); captcha is not identity. Documented placeholder `AUTH_SECRET` /
 `SETUP_BOOTSTRAP_SECRET` values also fail production boot.
 
 Required in production: `SITE_URL`, `AUTH_SECRET`, `DATABASE_URL`, `ANTHROPIC_API_KEY`,
-`SETUP_BOOTSTRAP_SECRET`. `RESEND_API_KEY` / `RESEND_FROM` are optional in outbox
-mode (unset or `test` → local outbox in **dev/test only**). Production with no
-real Resend key does not write bearer tokens to `data/outbox` unless
-`ALLOW_LOCAL_OUTBOX=1`. A real Resend key requires `RESEND_FROM` — there is no
-`onboarding@resend.dev` fallback. Turnstile keys are optional (both unset →
+`SETUP_BOOTSTRAP_SECRET`. `AUTH_MODE` defaults to `magic-link` (existing #56 hosts
+keep working). `password` needs no mail. `local-otp` in production requires
+`ALLOW_LOCAL_OUTBOX=1`. `MAIL_TRANSPORT` is `auto` (SMTP if `SMTP_HOST`, else
+Resend if a real key, else outbox). Explicit `MAIL_TRANSPORT=smtp` needs
+`SMTP_HOST` + `SMTP_FROM`; `resend` needs a real key + `RESEND_FROM`; `outbox`
+in production needs `ALLOW_LOCAL_OUTBOX=1`. Production with no real mail
+transport does not write bearer tokens to `data/outbox` unless
+`ALLOW_LOCAL_OUTBOX=1`. Turnstile keys are optional (both unset →
 captcha off; exactly one key in production crashes boot).
 `ANTHROPIC_API_KEY` still fails closed in prod when missing; the `test` sentinel
 routes the grader to a deterministic stub. See `.env.example` for the canonical list.
@@ -409,7 +420,7 @@ routes the grader to a deterministic stub. See `.env.example` for the canonical 
   household student and compares against a selected child.
 - Comments, social features, payments.
 - An admin UI / content CMS (questions are edited in `src/lib/exam/data.ts`).
-- OAuth providers (magic-link only, by design).
+- OAuth providers (password / magic-link / local-otp only, by design).
 - Image uploads / asset pipeline; PDF parsing (questions are added by hand).
 
 ## Known platform notes
