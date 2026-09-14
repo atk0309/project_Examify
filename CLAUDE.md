@@ -36,6 +36,9 @@ Surface:
   illegal during a Server Component render (Next.js 16). Failures redirect to its sibling page.
 - **`/signin/verify/error`** — a read-only page that renders the human-readable failure copy
   for an invalid/expired/used/missing token, keyed off a `?reason=` query param.
+- **`/signin/invalidate`** — a **Route Handler** that destroys a stale session cookie
+  and redirects to `/signin`. `getSession` sends the browser here when membership
+  no longer matches (cookie writes are illegal in a Server Component render).
 - **`/api/health`** — lightweight platform healthcheck.
 - **`/robots.txt`** — disallow-all (this is a private, allowlisted app).
 
@@ -224,7 +227,9 @@ These are non-negotiable. Don't "fix" them out.
   sign-in** (`/signin/verify`), so a returning parent always lands on the dashboard. `signOut`
   (`src/actions/signOut.ts`) destroys the session and returns to `/signin`.
   `getSession` re-checks household membership + role on every load; a removed
-  member (or role mismatch) clears the cookie. Parents/admins can remove members
+  member (or role mismatch) redirects to `/signin/invalidate` so the sealed
+  cookie is actually cleared. Verify/bootstrap write via `getRawSession` so a
+  stale cookie cannot intercept a new sign-in. Parents/admins can remove members
   via `removeMember` (cannot remove self or the household admin).
 
 ## Progress tracking + roles

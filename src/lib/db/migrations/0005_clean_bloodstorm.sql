@@ -1,0 +1,1 @@
+ALTER TABLE `household_invites` ADD `revoked_at` integer;

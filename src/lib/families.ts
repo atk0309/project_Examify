@@ -17,7 +17,9 @@ import { z } from 'zod';
 export type Family = {
   /** The student's email. Required, unique across all families. */
   child: string;
-  /** The parent email(s) who may view this child. `[]` ⇒ standalone child. */
+  /** The parent email(s) who may view this child. `[]` is parse-valid (legacy
+   * standalone child) but is **not** imported — it would create an orphan
+   * household with no admin. */
   parents: string[];
 };
 
@@ -30,7 +32,7 @@ const emailSchema = z.string().transform(normalise).pipe(z.string().email());
 
 const familySchema = z.object({
   child: emailSchema,
-  // Missing/`null` parents default to a standalone child.
+  // Missing/`null` parents default to [] (legacy standalone child).
   parents: z.array(emailSchema).default([]),
 });
 

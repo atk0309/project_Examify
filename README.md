@@ -134,8 +134,10 @@ yet, or mail could not be sent.
 
 Older deploys used a `FAMILIES='[{ "child", "parents" }]'` env var. That is **no longer
 required**. If the variable is still set and the database has no households yet, the
-first request imports it once (one household per family entry; the first parent becomes
-admin). After a successful import, remove `FAMILIES` from the host. If `FAMILIES` is
+first request imports it once (one household per family that lists at least one
+parent; the first parent becomes admin). Entries with `parents: []` are skipped —
+they would create a household nobody can administer; invite that student later.
+After a successful import, remove `FAMILIES` from the host. If `FAMILIES` is
 set but unparsable, production boot fails — fix the JSON or unset it. New installs
 should leave it unset and use `/setup`.
 

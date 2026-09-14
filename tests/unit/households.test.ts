@@ -3,6 +3,7 @@ import path from 'node:path';
 import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
+import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 const TMP = path.join(process.cwd(), 'tests', '.tmp');
@@ -188,6 +189,15 @@ describe('invites + consumeMagicToken', () => {
     expect(revokeHouseholdInvite(host.userId, created.invite.id)).toEqual({ ok: true });
     expect(lookupInvite(created.token)).toBeNull();
     expect(consumeMagicToken(token)).toEqual({ ok: false, reason: 'invite-invalid' });
+
+    const { db, schema } = await import('@/lib/db');
+    const row = db
+      .select()
+      .from(schema.householdInvites)
+      .where(eq(schema.householdInvites.id, created.invite.id))
+      .get();
+    expect(row?.revokedAt).toBeTruthy();
+    expect(row?.consumedAt).toBeNull();
   });
 
   it('requires an email lock for parent invites', async () => {
@@ -260,6 +270,7 @@ describe('importLegacyFamiliesIfNeeded', () => {
       await lib();
     const result = importLegacyFamiliesIfNeeded();
     expect(result.imported).toBe(2);
+    expect(result.skipped).toBe(0);
     expect(getMembershipForEmail('alex@example.com')?.role).toBe('student');
     expect(getMembershipForEmail('pat@example.com')?.role).toBe('admin');
     expect(studentEmailsForParent('pat@example.com')).toEqual(['alex@example.com']);
@@ -275,7 +286,40 @@ describe('importLegacyFamiliesIfNeeded', () => {
     const { importLegacyFamiliesIfNeeded, hasAnyHousehold } = await lib();
     const result = importLegacyFamiliesIfNeeded();
     expect(result.imported).toBe(0);
+    expect(result.skipped).toBe(0);
     expect(result.error).toMatch(/json/i);
+    expect(hasAnyHousehold()).toBe(false);
+  });
+
+  it('skips a standalone child (parents: []) so no orphan household is created', async () => {
+    Reflect.set(
+      process.env,
+      'FAMILIES',
+      JSON.stringify([
+        { child: 'alex@example.com', parents: ['pat@example.com'] },
+        { child: 'jess@example.com', parents: [] },
+      ]),
+    );
+    const { importLegacyFamiliesIfNeeded, getMembershipForEmail, hasAnyHousehold } = await lib();
+    const result = importLegacyFamiliesIfNeeded();
+    expect(result.imported).toBe(1);
+    expect(result.skipped).toBe(1);
+    expect(getMembershipForEmail('alex@example.com')?.role).toBe('student');
+    expect(getMembershipForEmail('pat@example.com')?.role).toBe('admin');
+    expect(getMembershipForEmail('jess@example.com')).toBeNull();
+    expect(hasAnyHousehold()).toBe(true);
+  });
+
+  it('imports nothing when every FAMILIES entry is an orphan child', async () => {
+    Reflect.set(
+      process.env,
+      'FAMILIES',
+      JSON.stringify([{ child: 'jess@example.com', parents: [] }]),
+    );
+    const { importLegacyFamiliesIfNeeded, hasAnyHousehold } = await lib();
+    const result = importLegacyFamiliesIfNeeded();
+    expect(result.imported).toBe(0);
+    expect(result.skipped).toBe(1);
     expect(hasAnyHousehold()).toBe(false);
   });
 });

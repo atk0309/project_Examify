@@ -23,6 +23,7 @@ vi.mock('next/navigation', () => ({
 
 vi.mock('@/lib/auth', () => ({
   consumeMagicToken: () => consume.current,
+  getRawSession: async () => sessionHolder.current,
   getSession: async () => sessionHolder.current,
 }));
 

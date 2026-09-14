@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation';
 import type { NextRequest } from 'next/server';
-import { consumeMagicToken, getSession } from '@/lib/auth';
+import { consumeMagicToken, getRawSession } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -21,7 +21,7 @@ export async function GET(request: NextRequest): Promise<void> {
     redirect(`/signin/verify/error?reason=${reason}`);
   }
 
-  const session = await getSession();
+  const session = await getRawSession();
   session.userId = result.userId;
   session.role = result.role;
   session.email = result.email;

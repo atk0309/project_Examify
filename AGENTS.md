@@ -120,8 +120,10 @@ Before merge, ensure these pass in CI:
   whether an email is a member (no enumeration), including when mail delivery
   fails (same public `sent` response; log server-side).
 - Re-check household membership on every `getSession()` load; a removed member
-  must not keep a 30-day cookie. Invite revoke is a soft-consume (never DELETE
-  while `magic_tokens.invite_id` still references the row).
+  is redirected to `/signin/invalidate` so the sealed cookie is actually
+  cleared (RSC cannot persist `session.destroy()`). Invite revoke sets
+  `revoked_at` (never DELETE while `magic_tokens.invite_id` still references
+  the row; `consumed_at` means accepted).
 - Keep magic-link tokens hashed at rest and single-use; the token carries the role. Token
   verification lives in a **Route Handler** (`src/app/signin/verify/route.ts`), never a
   Server Component page — clicking the email link is a GET that writes the session cookie,

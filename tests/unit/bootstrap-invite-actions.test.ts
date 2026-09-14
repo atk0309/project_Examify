@@ -19,6 +19,7 @@ vi.mock('@/lib/auth', async () => {
   const actual = await vi.importActual<typeof import('@/lib/auth')>('@/lib/auth');
   return {
     ...actual,
+    getRawSession: async () => sessionHolder.current,
     getSession: async () => sessionHolder.current,
   };
 });

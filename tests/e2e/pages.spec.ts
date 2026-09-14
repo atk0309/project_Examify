@@ -54,3 +54,8 @@ test('the home route redirects unauthenticated visitors to /signin', async ({ pa
   await page.goto('/');
   await expect(page).toHaveURL(/\/signin$/);
 });
+
+test('GET /signin/invalidate lands on sign-in', async ({ page }) => {
+  await page.goto('/signin/invalidate');
+  await expect(page).toHaveURL(/\/signin$/);
+});

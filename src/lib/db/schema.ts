@@ -123,7 +123,9 @@ export type InviteRole = 'parent' | 'student';
  * Invite-only onboarding. Token is stored hashed (same pattern as magic
  * links). An optional `email` locks the invite to one address; open invites
  * let the recipient pick their email at accept time. Consumed when the
- * invitee's magic-link verify succeeds.
+ * invitee's magic-link verify succeeds. Revoke sets `revokedAt` (soft —
+ * outstanding magic_tokens.invite_id rows keep the FK); accept sets
+ * `consumedAt`. Pending invites have both null.
  */
 export const householdInvites = sqliteTable(
   'household_invites',
@@ -140,6 +142,7 @@ export const householdInvites = sqliteTable(
     email: text('email'),
     expiresAt: integer('expires_at', { mode: 'timestamp_ms' }).notNull(),
     consumedAt: integer('consumed_at', { mode: 'timestamp_ms' }),
+    revokedAt: integer('revoked_at', { mode: 'timestamp_ms' }),
     createdAt: integer('created_at', { mode: 'timestamp_ms' })
       .notNull()
       .default(sql`(unixepoch() * 1000)`),

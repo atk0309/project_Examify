@@ -1,6 +1,7 @@
 import 'server-only';
 import crypto from 'node:crypto';
 import { cookies } from 'next/headers';
+import { redirect } from 'next/navigation';
 import { getIronSession, type SessionOptions } from 'iron-session';
 import { and, eq, gte, isNull } from 'drizzle-orm';
 import { db, schema } from './db';
@@ -54,23 +55,32 @@ export function sessionMembershipOk(
   return isParentLike(membership.role);
 }
 
+/**
+ * Raw iron-session (no membership re-check). Use when this request is about
+ * to *write* a new session (verify, bootstrap) so a stale cookie cannot
+ * redirect away before save.
+ */
+export async function getRawSession() {
+  return getIronSession<SessionData>(await cookies(), sessionOptions);
+}
+
 export async function getSession() {
-  const session = await getIronSession<SessionData>(await cookies(), sessionOptions);
+  const session = await getRawSession();
   if (session.userId && session.role) {
     const membership = getMembershipForUser(session.userId);
     if (!sessionMembershipOk(session, membership)) {
-      session.destroy();
-      delete session.userId;
-      delete session.role;
-      delete session.email;
-      delete session.studentMode;
+      // Cookie mutation is illegal during a Server Component render
+      // (same reason /signin/verify is a Route Handler). Redirect to a
+      // GET handler that can persist the clear so the browser drops the
+      // sealed session instead of keeping a dead cookie.
+      redirect('/signin/invalidate');
     }
   }
   return session;
 }
 
 export async function destroySession(): Promise<void> {
-  const session = await getSession();
+  const session = await getRawSession();
   session.destroy();
 }
 

@@ -3,7 +3,7 @@
 import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { z } from 'zod';
-import { constantTimeEqual, getSession } from '@/lib/auth';
+import { constantTimeEqual, getRawSession } from '@/lib/auth';
 import { verifyTurnstile } from '@/lib/captcha';
 import { env, isTurnstileEnabled } from '@/lib/env';
 import { bootstrapHousehold, HOUSEHOLD_NAME_MAX } from '@/lib/households';
@@ -67,7 +67,7 @@ export async function bootstrapHouseholdAction(
   });
   if (!result.ok) return { status: 'error', reason: result.reason };
 
-  const session = await getSession();
+  const session = await getRawSession();
   session.userId = result.userId;
   session.role = 'parent';
   session.email = result.email;

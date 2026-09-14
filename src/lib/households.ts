@@ -52,22 +52,26 @@ function countHouseholds(): number {
 
 /**
  * Optional one-shot import for existing Railway / env-JSON deploys. Reads
- * raw `process.env.FAMILIES` (not the env.ts schema — leftover JSON must
- * not crash boot). Runs at most once per process, and only when the DB
- * has no households yet. New installs leave FAMILIES unset and use
- * first-run bootstrap instead.
+ * raw `process.env.FAMILIES` (not the env.ts schema). Production boot
+ * already rejects set-but-invalid JSON. Entries with `parents: []` are
+ * skipped so we never create an unadministrable household. Runs at most
+ * once per process, and only when the DB has no households yet.
  */
 let legacyImportAttempted = false;
 
-export function importLegacyFamiliesIfNeeded(): { imported: number; error?: string } {
-  if (legacyImportAttempted) return { imported: 0 };
+export function importLegacyFamiliesIfNeeded(): {
+  imported: number;
+  skipped: number;
+  error?: string;
+} {
+  if (legacyImportAttempted) return { imported: 0, skipped: 0 };
   legacyImportAttempted = true;
 
-  if (countHouseholds() > 0) return { imported: 0 };
+  if (countHouseholds() > 0) return { imported: 0, skipped: 0 };
 
   const raw = process.env.FAMILIES;
   if (raw === undefined || raw.trim() === '' || raw.trim() === '[]') {
-    return { imported: 0 };
+    return { imported: 0, skipped: 0 };
   }
 
   const parsed = parseFamilies(raw);
@@ -75,16 +79,28 @@ export function importLegacyFamiliesIfNeeded(): { imported: number; error?: stri
     // Production boot already rejects a set-but-invalid FAMILIES. Non-prod
     // skips so a leftover typo cannot brick `pnpm dev` / unit tests.
     console.warn(`[households] FAMILIES import skipped: ${parsed.error}`);
-    return { imported: 0, error: parsed.error };
+    return { imported: 0, skipped: 0, error: parsed.error };
   }
-  if (parsed.families.length === 0) return { imported: 0 };
+  if (parsed.families.length === 0) return { imported: 0, skipped: 0 };
 
   return db.transaction((tx) => {
     const existing = tx.select({ id: schema.households.id }).from(schema.households).limit(1).get();
-    if (existing) return { imported: 0 };
+    if (existing) return { imported: 0, skipped: 0 };
 
     let imported = 0;
+    let skipped = 0;
     for (const family of parsed.families) {
+      // A child with no parents would be an unadministrable household —
+      // nobody could invite, remove, or see them. Skip; they can be invited
+      // later from a real household.
+      if (family.parents.length === 0) {
+        console.warn(
+          `[households] FAMILIES entry for ${family.child} has no parents — skipped (would create an orphan household)`,
+        );
+        skipped += 1;
+        continue;
+      }
+
       const name = `Family of ${labelFromEmail(family.child)}`;
       const household = tx.insert(schema.households).values({ name }).returning().get();
       if (!household) throw new Error('failed to create household');
@@ -106,7 +122,7 @@ export function importLegacyFamiliesIfNeeded(): { imported: number; error?: stri
       });
       imported += 1;
     }
-    return { imported };
+    return { imported, skipped };
   });
 }
 
@@ -277,6 +293,10 @@ export function createHouseholdInvite(input: {
   };
 }
 
+function inviteStillOpen() {
+  return and(isNull(schema.householdInvites.consumedAt), isNull(schema.householdInvites.revokedAt));
+}
+
 export function listPendingInvites(householdId: number, now = Date.now()): PendingInvite[] {
   const rows = db
     .select()
@@ -284,7 +304,7 @@ export function listPendingInvites(householdId: number, now = Date.now()): Pendi
     .where(
       and(
         eq(schema.householdInvites.householdId, householdId),
-        isNull(schema.householdInvites.consumedAt),
+        inviteStillOpen(),
         gte(schema.householdInvites.expiresAt, new Date(now)),
       ),
     )
@@ -318,13 +338,13 @@ export function revokeHouseholdInvite(
     .get();
   if (!row) return { ok: false, reason: 'not_found' };
 
-  // Soft-revoke. A hard DELETE fails when magic_tokens.invite_id still
-  // points here (FK ON DELETE NO ACTION, foreign_keys=ON). Marking the
-  // invite consumed makes lookup/attach fail, and outstanding magic
-  // tokens stay attached so consume can return invite-invalid.
-  if (!row.consumedAt) {
+  // Soft-revoke via revoked_at (not consumed_at — that means accepted).
+  // A hard DELETE fails when magic_tokens.invite_id still points here
+  // (FK ON DELETE NO ACTION). Outstanding tokens stay attached so consume
+  // returns invite-invalid.
+  if (!row.revokedAt && !row.consumedAt) {
     db.update(schema.householdInvites)
-      .set({ consumedAt: new Date() })
+      .set({ revokedAt: new Date() })
       .where(eq(schema.householdInvites.id, inviteId))
       .run();
   }
@@ -340,7 +360,7 @@ export function lookupInvite(token: string, now = Date.now()): PublicInvite | nu
     .where(
       and(
         eq(schema.householdInvites.tokenHash, tokenHash),
-        isNull(schema.householdInvites.consumedAt),
+        inviteStillOpen(),
         gte(schema.householdInvites.expiresAt, new Date(now)),
       ),
     )
@@ -388,7 +408,7 @@ export function attachMembershipFromInvite(
     .where(
       and(
         eq(schema.householdInvites.id, inviteId),
-        isNull(schema.householdInvites.consumedAt),
+        inviteStillOpen(),
         gte(schema.householdInvites.expiresAt, new Date(now)),
       ),
     )
