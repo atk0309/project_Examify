@@ -46,7 +46,7 @@ grouped weekly Dependabot PRs in `.github/dependabot.yml`.
 
 | Layer       | Choice                                                                       |
 | ----------- | ---------------------------------------------------------------------------- |
-| Runtime     | Node 22.22.2+ LTS (`engines`, `.nvmrc`), pnpm 10                            |
+| Runtime     | Node 22.22.2+ LTS (`engines`, `.nvmrc`), pnpm 10                             |
 | Framework   | Next.js 16 (App Router, Turbopack), React 19.2, TypeScript 6 strict          |
 | Styling     | Tailwind v4 with a CSS-first `@theme` token block, three `data-theme` moods  |
 | DB          | SQLite on runtime-mounted storage, accessed through Drizzle + better-sqlite3 |
