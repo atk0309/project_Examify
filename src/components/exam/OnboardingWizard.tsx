@@ -184,6 +184,7 @@ export function OnboardingWizard({
   >({ status: 'idle' });
   const [generateSeed, setGenerateSeed] = useState(ONBOARDING_GENERATE_SEED_DEFAULT);
   const [generateBusy, setGenerateBusy] = useState(false);
+  const [generateNote, setGenerateNote] = useState<string | null>(null);
   const [irReady, setIrReady] = useState(false);
   const [generateRuns, setGenerateRuns] = useState<Record<string, OnboardingGenerateResult>>({});
   const [activeGenerateId, setActiveGenerateId] = useState<string | null>(null);
@@ -216,6 +217,10 @@ export function OnboardingWizard({
     if (result.ok) {
       setSnapshot(result.snapshot);
       return true;
+    }
+    if (result.reason === 'cancelled') {
+      setGenerateNote('Generate cancelled');
+      return false;
     }
     setError(errorCopy(result));
     setIssues(result.issues ?? []);
@@ -411,11 +416,16 @@ export function OnboardingWizard({
                     const token = crypto.randomUUID();
                     generateCancelTokenRef.current = token;
                     generateCancelRef.current = false;
+                    setGenerateNote(null);
                     setGenerateBusy(true);
                     let wroteAny = false;
+                    let cancelled = false;
                     try {
                       for (const subjectId of subjectIds) {
-                        if (generateCancelRef.current) break;
+                        if (generateCancelRef.current) {
+                          cancelled = true;
+                          break;
+                        }
                         setActiveGenerateId(subjectId);
                         const data = new FormData();
                         data.set('subjectId', subjectId);
@@ -423,7 +433,10 @@ export function OnboardingWizard({
                         data.set('cancelToken', token);
                         const result = await generateOnboardingSubjectAction(data);
                         if (!result.ok) {
-                          if (result.reason === 'cancelled' || generateCancelRef.current) break;
+                          if (result.reason === 'cancelled' || generateCancelRef.current) {
+                            cancelled = true;
+                            break;
+                          }
                           applyResult(result);
                           return;
                         }
@@ -435,11 +448,17 @@ export function OnboardingWizard({
                         setDryRun(null);
                         setValidated(false);
                         wroteAny = wroteAny || result.result.wroteIr;
-                        if (generateCancelRef.current) break;
+                        if (generateCancelRef.current) {
+                          cancelled = true;
+                          break;
+                        }
                       }
                       // Keep IR-ready for subjects that already finished (including generate-all cancel).
                       if (wroteAny) setIrReady(true);
+                      if (cancelled) setGenerateNote('Generate cancelled');
                     } finally {
+                      generateCancelTokenRef.current = null;
+                      generateCancelRef.current = false;
                       setActiveGenerateId(null);
                       setGenerateBusy(false);
                     }
@@ -531,6 +550,11 @@ export function OnboardingWizard({
               />
             ) : null}
 
+            {generateNote ? (
+              <p className="wizard-callout" data-testid="wizard-generate-cancelled">
+                {generateNote}
+              </p>
+            ) : null}
             {error ? (
               <p className="login-error" role="alert" data-testid="wizard-error">
                 {error}

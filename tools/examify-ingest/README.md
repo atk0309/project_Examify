@@ -99,7 +99,11 @@ PDF page images, when rasterized with `pdftoppm`, are reused from
 `.examify-ingest/cache/pages/<pdf-sha256>/` and framed as untrusted data, same
 as source files. OpenAI-compatible generate (`openai` and local HTTP) cannot
 inline raw PDF bytes: if the only sources are PDFs and no page images were
-rasterized, the run fails closed. Provider HTTP/CMD calls use a 180s deadline.
+rasterized, the run fails closed. Provider HTTP/CMD calls use a 180s deadline and accept an optional
+`AbortSignal` so the onboarding wizard can cancel a live cloud/local HTTP
+call (local CMD is spawned and sent SIGTERM). The wizard IR commit calls
+`writeFileAtomic(..., { mkdir: false })` so a deleted subject directory is
+not recreated.
 Sources must stay under `content/subjects/<id>/` or `content/source-pdfs/<id>`.
 
 Source blobs are wrapped as `UNTRUSTED SOURCE MATERIAL` with static

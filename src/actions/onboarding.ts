@@ -11,6 +11,7 @@ import {
   generateOnboardingSubject,
   isOnboardingGenerateCancelToken,
   requestOnboardingGenerateCancel,
+  withOnboardingGenerateLock,
 } from '@/lib/onboarding-generate';
 import {
   addOnboardingSubject,
@@ -128,10 +129,12 @@ export async function renameOnboardingSubjectAction(
       icon: formData.get('icon'),
     });
   if (!parsed.success) return { ok: false, reason: 'invalid' };
-  const result = renameOnboardingSubject(parsed.data);
-  if (!result.ok) return { ok: false, reason: result.reason };
-  invalidateOnboardingEmit(gate.householdId);
-  return { ok: true, snapshot: snapshot(gate.householdId) };
+  return withOnboardingGenerateLock(async () => {
+    const result = renameOnboardingSubject(parsed.data);
+    if (!result.ok) return { ok: false, reason: result.reason };
+    invalidateOnboardingEmit(gate.householdId);
+    return { ok: true, snapshot: snapshot(gate.householdId) };
+  });
 }
 
 export async function deleteOnboardingSubjectAction(
@@ -140,10 +143,12 @@ export async function deleteOnboardingSubjectAction(
   const gate = await requireOnboardingAdmin();
   if (!gate.ok) return gate;
   const id = typeof formData.get('id') === 'string' ? formData.get('id') : '';
-  const result = deleteOnboardingSubject(String(id));
-  if (!result.ok) return { ok: false, reason: result.reason };
-  invalidateOnboardingEmit(gate.householdId);
-  return { ok: true, snapshot: snapshot(gate.householdId) };
+  return withOnboardingGenerateLock(async () => {
+    const result = deleteOnboardingSubject(String(id));
+    if (!result.ok) return { ok: false, reason: result.reason };
+    invalidateOnboardingEmit(gate.householdId);
+    return { ok: true, snapshot: snapshot(gate.householdId) };
+  });
 }
 
 export async function attachOnboardingPdfAction(

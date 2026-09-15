@@ -31,9 +31,27 @@ export function providerTimeoutSignal(): AbortSignal {
   return AbortSignal.timeout(PROVIDER_TIMEOUT_MS);
 }
 
+/** Timeout plus an optional caller signal (wizard cancel) so HTTP can abort promptly. */
+export function providerRequestSignal(user?: AbortSignal): AbortSignal {
+  const timeout = providerTimeoutSignal();
+  return user ? AbortSignal.any([timeout, user]) : timeout;
+}
+
+export function abortError(signal?: AbortSignal): Error {
+  if (signal?.reason instanceof Error) return signal.reason;
+  const error = new Error('The operation was aborted');
+  error.name = 'AbortError';
+  return error;
+}
+
+export function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw abortError(signal);
+}
+
 export type ProviderDeps = {
   env: ProviderEnv;
   fetch?: typeof fetch;
+  signal?: AbortSignal;
 };
 
 export type GenerateProvider = {

@@ -116,6 +116,15 @@ describe('onboarding generate graph', () => {
     expect(wizard).toMatch(/const go = \(next: StepId\) => \{\s*if \(generateBusy\) return;/);
     expect(wizard).toMatch(/const skip = \(\) => \{\s*if \(generateBusy\) return;/);
     expect(wizard).toMatch(/disabled=\{!clickable \|\| navLocked\}/);
+    expect(wizard).toMatch(/generateCancelRef\.current = true/);
+    expect(wizard).toMatch(/generateCancelTokenRef\.current = null/);
+    expect(wizard).toMatch(/generateCancelRef\.current = false/);
+    expect(wizard).toMatch(/data-testid="wizard-generate-cancelled"/);
+    expect(wizard).toMatch(/className="wizard-callout" data-testid="wizard-generate-cancelled"/);
+    expect(wizard).toMatch(
+      /if \(result\.reason === 'cancelled'\) \{\s*setGenerateNote\('Generate cancelled'\)/,
+    );
+    expect(wizard).toMatch(/if \(wroteAny\) setIrReady\(true\)/);
 
     const welcomeSkipAt = wizard.indexOf('Use sample bank for now');
     expect(welcomeSkipAt).toBeGreaterThan(-1);
@@ -191,7 +200,9 @@ describe('generateOnboardingSubject', () => {
       seed: 0,
       root,
     });
-    expect(generateSpy).toHaveBeenCalledWith(expect.objectContaining({ dryRunIr: true }));
+    expect(generateSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ dryRunIr: true, signal: expect.any(AbortSignal) }),
+    );
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected generate');
     expect(result.result.wroteIr).toBe(true);
@@ -389,6 +400,79 @@ describe('generateOnboardingSubject', () => {
     expect(result.reason).toBe('missing');
     expect(existsSync(irPath)).toBe(false);
     expect(existsSync(subjectDir)).toBe(false);
+  });
+
+  it('does not resurrect a subject deleted after provider return before write', async () => {
+    const ingest = await import('examify-ingest/generate');
+    const { generateOnboardingSubject } = await import('@/lib/onboarding-generate');
+    const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
+    const root = tempRoot();
+    seedSubject(root);
+    setOnboardingContentRootForTests(root);
+    const subjectDir = path.join(root, 'content/subjects/history');
+    const irPath = path.join(subjectDir, 'bank.ir.json');
+    const write = ingest.writeFileAtomic;
+    vi.spyOn(ingest, 'writeFileAtomic').mockImplementation((dest, body, options) => {
+      rmSync(subjectDir, { recursive: true, force: true });
+      return write(dest, body, options);
+    });
+
+    const result = await generateOnboardingSubject({
+      subjectId: 'history',
+      provider: 'test',
+      seed: 0,
+      root,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected missing after delete-before-write');
+    expect(result.reason).toBe('missing');
+    expect(existsSync(irPath)).toBe(false);
+    expect(existsSync(subjectDir)).toBe(false);
+  });
+
+  it('aborts in-flight provider work when cancel is requested', async () => {
+    const ingest = await import('examify-ingest/generate');
+    const { generateOnboardingSubject, requestOnboardingGenerateCancel } =
+      await import('@/lib/onboarding-generate');
+    const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
+    const root = tempRoot();
+    seedSubject(root);
+    setOnboardingContentRootForTests(root);
+    const irPath = path.join(root, 'content/subjects/history/bank.ir.json');
+    const prior = readFileSync(irPath, 'utf8');
+    let sawSignal: AbortSignal | undefined;
+    vi.spyOn(ingest, 'generateSubject').mockImplementation(async (request) => {
+      sawSignal = request.signal;
+      await new Promise<never>((_resolve, reject) => {
+        request.signal?.addEventListener(
+          'abort',
+          () => {
+            reject(Object.assign(new Error('The operation was aborted'), { name: 'AbortError' }));
+          },
+          { once: true },
+        );
+      });
+    });
+
+    const token = 'cancel-token-01';
+    const pending = generateOnboardingSubject({
+      subjectId: 'history',
+      provider: 'test',
+      seed: 0,
+      root,
+      cancelToken: token,
+    });
+    await vi.waitFor(() => {
+      expect(sawSignal).toBeDefined();
+    });
+    const started = Date.now();
+    requestOnboardingGenerateCancel(token);
+    const result = await pending;
+    expect(Date.now() - started).toBeLessThan(1000);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected cancelled');
+    expect(result.reason).toBe('cancelled');
+    expect(readFileSync(irPath, 'utf8')).toBe(prior);
   });
 
   it('fails closed for local without CMD or BASE_URL', async () => {

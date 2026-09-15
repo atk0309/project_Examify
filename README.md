@@ -39,8 +39,9 @@ no env-JSON allowlist to hand-edit.
    host-managed via the process exec environment), optionally generate BankIR from those
    files, and emit through `examify-ingest` (validate + Review / dry-run HITL, then apply;
    desktop uses a step rail, mobile a compact progress bar; one stage at a time;
-   generate never auto-applies; cancel discards an in-flight preview and does
-   not replace prior IR; generate is gated to wizard catalog subjects; an empty
+   generate never auto-applies; cancel aborts in-flight provider HTTP and
+   discards the preview without replacing prior IR; cancelled is a calm
+   status, not an error toast; generate is gated to wizard catalog subjects; an empty
    catalog is refused; a changed plan after dry-run is refused). Finish requires
    that confirmed apply; skip-without-emit keeps the sample bank.
    Bootstrap signs in the first household administrator and redirects to

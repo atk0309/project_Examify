@@ -2,10 +2,21 @@ import { mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 
+export type WriteFileAtomicOptions = {
+  /** Default true. Wizard IR commit sets false so a deleted subject dir is not recreated. */
+  mkdir?: boolean;
+};
+
 /** Write `body` via a sibling temp file, then rename over `absPath`. */
-export function writeFileAtomic(absPath: string, body: string): void {
+export function writeFileAtomic(
+  absPath: string,
+  body: string,
+  options?: WriteFileAtomicOptions,
+): void {
   const dir = path.dirname(absPath);
-  mkdirSync(dir, { recursive: true });
+  if (options?.mkdir !== false) {
+    mkdirSync(dir, { recursive: true });
+  }
   const tmp = path.join(
     dir,
     `.${path.basename(absPath)}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`,

@@ -39,10 +39,13 @@ Surface:
   (≥900px) uses a left step rail + stage + sticky footer; mobile uses compact
   “Step N of M · Label” progress and a sticky bottom bar. Generate writes BankIR
   only and never auto-applies.
-  Cancel discards an in-flight preview and does not replace prior IR; generate
-  is gated to wizard catalog subjects (`listOnboardingSubjects`). While generate
-  is in flight, Welcome “Use sample bank”, later skip, Back, and the desktop
-  rail stay locked so Cancel remains reachable.
+  Cancel aborts in-flight provider HTTP via AbortSignal (and local CMD via
+  SIGTERM), discards the preview, and does not replace prior IR; user-initiated
+  cancel is a calm status, not an error toast. Generate is gated to wizard
+  catalog subjects (`listOnboardingSubjects`). Delete/rename wait on the
+  generate lock so a late IR commit cannot recreate a deleted/renamed id.
+  While generate is in flight, Welcome “Use sample bank”, later skip, Back,
+  and the desktop rail stay locked so Cancel remains reachable.
   Finish (“Open dashboard”) requires
   a confirmed apply of that dry-run; a changed plan is refused (`stale_preview`).
   Skip-without-emit is Welcome “Use sample bank for now” / later “Skip to

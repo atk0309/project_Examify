@@ -514,6 +514,126 @@ describe('onboarding actions', () => {
     expect(await cancelOnboardingGenerateAction(cancel)).toEqual({ ok: true });
   });
 
+  it('returns cancelled promptly when cancel aborts an in-flight generate', async () => {
+    const root = tempRoot();
+    const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
+    setOnboardingContentRootForTests(root);
+    await signInHost();
+    const irPath = path.join(root, 'content/subjects/history/bank.ir.json');
+    fs.mkdirSync(path.join(root, 'content/subjects/history'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'content/source-pdfs/history'), { recursive: true });
+    const prior = `${JSON.stringify({
+      version: 1,
+      subject: { id: 'history', label: 'History', icon: 'geography', l: 0.6, c: 0.08, h: 40 },
+      difficulties: { easy: [], medium: [], hard: [] },
+    })}\n`;
+    writeFileSync(irPath, prior);
+    writeFileSync(path.join(root, 'content/source-pdfs/history/notes.txt'), 'A source note.\n');
+
+    const ingest = await import('examify-ingest/generate');
+    let sawSignal: AbortSignal | undefined;
+    vi.spyOn(ingest, 'generateSubject').mockImplementation(async (request) => {
+      sawSignal = request.signal;
+      await new Promise<never>((_resolve, reject) => {
+        request.signal?.addEventListener(
+          'abort',
+          () => {
+            reject(Object.assign(new Error('The operation was aborted'), { name: 'AbortError' }));
+          },
+          { once: true },
+        );
+      });
+    });
+
+    const {
+      cancelOnboardingGenerateAction,
+      generateOnboardingSubjectAction,
+      setOnboardingAiModeAction,
+    } = await import('@/actions/onboarding');
+    const mode = new FormData();
+    mode.set('aiMode', 'skip-stub');
+    expect((await setOnboardingAiModeAction(mode)).ok).toBe(true);
+
+    const token = 'cancel-token-01';
+    const generate = new FormData();
+    generate.set('subjectId', 'history');
+    generate.set('cancelToken', token);
+    const pending = generateOnboardingSubjectAction(generate);
+    await vi.waitFor(() => {
+      expect(sawSignal).toBeDefined();
+    });
+    const cancel = new FormData();
+    cancel.set('cancelToken', token);
+    const started = Date.now();
+    expect(await cancelOnboardingGenerateAction(cancel)).toEqual({ ok: true });
+    expect(await pending).toEqual({ ok: false, reason: 'cancelled' });
+    expect(Date.now() - started).toBeLessThan(1000);
+    expect(fs.readFileSync(irPath, 'utf8')).toBe(prior);
+  });
+
+  it('waits on the generate lock before deleting the active subject', async () => {
+    const root = tempRoot();
+    const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
+    setOnboardingContentRootForTests(root);
+    await signInHost();
+    const subjectDir = path.join(root, 'content/subjects/history');
+    fs.mkdirSync(subjectDir, { recursive: true });
+    fs.mkdirSync(path.join(root, 'content/source-pdfs/history'), { recursive: true });
+    writeFileSync(
+      path.join(subjectDir, 'bank.ir.json'),
+      JSON.stringify({
+        version: 1,
+        subject: { id: 'history', label: 'History', icon: 'geography', l: 0.6, c: 0.08, h: 40 },
+        difficulties: { easy: [], medium: [], hard: [] },
+      }),
+    );
+    writeFileSync(path.join(root, 'content/source-pdfs/history/notes.txt'), 'A source note.\n');
+
+    const ingest = await import('examify-ingest/generate');
+    const actual = ingest.generateSubject;
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    vi.spyOn(ingest, 'generateSubject').mockImplementation(async (request) => {
+      await blocked;
+      return actual(request);
+    });
+
+    const {
+      deleteOnboardingSubjectAction,
+      generateOnboardingSubjectAction,
+      setOnboardingAiModeAction,
+    } = await import('@/actions/onboarding');
+    const mode = new FormData();
+    mode.set('aiMode', 'skip-stub');
+    expect((await setOnboardingAiModeAction(mode)).ok).toBe(true);
+
+    const generate = new FormData();
+    generate.set('subjectId', 'history');
+    const pendingGenerate = generateOnboardingSubjectAction(generate);
+    await vi.waitFor(() => {
+      expect(ingest.generateSubject).toHaveBeenCalled();
+    });
+
+    let deleteSettled = false;
+    const remove = new FormData();
+    remove.set('id', 'history');
+    const pendingDelete = deleteOnboardingSubjectAction(remove).then((result) => {
+      deleteSettled = true;
+      return result;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(deleteSettled).toBe(false);
+    expect(fs.existsSync(subjectDir)).toBe(true);
+
+    release();
+    expect((await pendingGenerate).ok).toBe(true);
+    expect((await pendingDelete).ok).toBe(true);
+    expect(deleteSettled).toBe(true);
+    expect(fs.existsSync(subjectDir)).toBe(false);
+  });
+
   it('refuses cloud generate when the key is the test sentinel', async () => {
     const root = tempRoot();
     const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
