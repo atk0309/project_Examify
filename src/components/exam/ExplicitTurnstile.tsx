@@ -48,5 +48,5 @@ export function ExplicitTurnstile({ siteKey }: { siteKey: string }) {
     };
   }, [siteKey]);
 
-  return <div ref={ref} className="cf-turnstile" data-testid="turnstile" />;
+  return <div ref={ref} data-testid="turnstile" />;
 }
