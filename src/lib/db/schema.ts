@@ -65,7 +65,7 @@ export const rateLimitEvents = sqliteTable(
   {
     id: integer('id').primaryKey({ autoIncrement: true }),
     ip: text('ip').notNull(),
-    kind: text('kind', { enum: ['signin', 'invite'] }).notNull(),
+    kind: text('kind', { enum: ['signin', 'invite', 'env_write'] }).notNull(),
     createdAt: integer('created_at', { mode: 'timestamp_ms' })
       .notNull()
       .default(sql`(unixepoch() * 1000)`),

@@ -119,6 +119,25 @@ is_examify_repo() {
   [ -f package.json ] && grep -q '"name": "project-examify"' package.json
 }
 
+# Walk up from $PWD until package.json name is project-examify (same marker
+# as src/lib/repo-root.ts). Writes then land on the checkout `.env`, not a
+# subdirectory cwd. Prints the root on stdout; returns 1 if not found.
+find_examify_root() {
+  local dir="$PWD"
+  while :; do
+    if [ -f "$dir/package.json" ] && grep -q '"name": "project-examify"' "$dir/package.json"; then
+      printf '%s\n' "$dir"
+      return 0
+    fi
+    local parent
+    parent="$(dirname "$dir")"
+    if [ "$parent" = "$dir" ]; then
+      return 1
+    fi
+    dir="$parent"
+  done
+}
+
 ensure_node() {
   if ! command -v node >/dev/null 2>&1; then
     echo "Node.js ${MIN_NODE}+ is required. Install Node 22 LTS from https://nodejs.org/ and re-run." >&2
@@ -201,10 +220,15 @@ write_env() {
 }
 
 # --- resolve working directory ---
-if [ "$WRITE_ENV_ONLY" = "1" ]; then
+# Prefer the Examify checkout that contains this cwd (walk up), so `.env`
+# matches env-store + examify-ingest generate even when invoked from src/.
+if FOUND_ROOT="$(find_examify_root)"; then
+  cd "$FOUND_ROOT"
+  if [ "$WRITE_ENV_ONLY" != "1" ]; then
+    echo "Using Examify checkout: $(pwd)"
+  fi
+elif [ "$WRITE_ENV_ONLY" = "1" ]; then
   :
-elif is_examify_repo; then
-  echo "Using current Examify checkout: $(pwd)"
 else
   TARGET="${EXAMIFY_DIR:-examify}"
   if [ -d "$TARGET" ] && (cd "$TARGET" && is_examify_repo); then

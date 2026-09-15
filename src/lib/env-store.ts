@@ -11,6 +11,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import path from 'node:path';
+import { findRepoRoot } from '@/lib/repo-root';
 
 /** Keys the wizard / install twin may write. Never NEXT_PUBLIC_*. */
 export const ENV_STORE_KEYS = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY'] as const;
@@ -31,8 +32,8 @@ export function setEnvStoreRootForTests(root: string | null): void {
 }
 
 export function getEnvStoreRoot(): string {
-  // Repo cwd — same place install.sh writes `.env`. Tests override this.
-  return envStoreRootOverride ?? process.cwd();
+  // Same walker as content I/O and examify-ingest generate — never bare cwd.
+  return envStoreRootOverride ?? findRepoRoot(process.cwd());
 }
 
 function envStorePath(root: string, name: string): string {
@@ -146,7 +147,7 @@ function applyProcessEnv(key: EnvStoreKey, value: string | null): void {
 }
 
 function normalizeSecretInput(raw: string): string | null {
-  if (raw.includes('\n') || raw.includes('\r')) return null;
+  if (raw.includes('\n') || raw.includes('\r') || raw.includes('\0')) return null;
   const trimmed = raw.trim();
   if (!isUsableEnvSecret(trimmed) || trimmed.length > MAX_SECRET_CHARS) return null;
   return trimmed;

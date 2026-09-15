@@ -1,9 +1,12 @@
 'use server';
 
+import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { z } from 'zod';
 import { getSession } from '@/lib/auth';
 import { clearEnvStoreSecret, OPENAI_ENV_KEY, setEnvStoreSecret } from '@/lib/env-store';
+import { extractClientIp } from '@/lib/ip';
+import { checkRateLimit } from '@/lib/rate-limit';
 import {
   generateOnboardingSubject,
   isOnboardingGenerateCancelToken,
@@ -62,7 +65,8 @@ export type OnboardingActionError = {
     | 'missing_key'
     | 'missing_local'
     | 'empty_sources'
-    | 'cancelled';
+    | 'cancelled'
+    | 'rate_limited';
   message?: string;
   issues?: { file: string; message: string }[];
 };
@@ -236,6 +240,9 @@ export async function setOnboardingOpenAiKeyAction(
 ): Promise<{ ok: true; snapshot: OnboardingSnapshot } | OnboardingActionError> {
   const gate = await requireOnboardingAdmin();
   if (!gate.ok) return gate;
+  const ip = extractClientIp(await headers());
+  const limit = checkRateLimit(ip, 'env_write');
+  if (!limit.ok) return { ok: false, reason: 'rate_limited' };
   const intent = formData.get('intent');
   if (intent === 'clear') {
     const cleared = clearEnvStoreSecret(OPENAI_ENV_KEY);

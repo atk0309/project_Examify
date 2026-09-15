@@ -103,6 +103,8 @@ describe('onboarding generate graph', () => {
     expect(wizard).not.toMatch(/examify-ingest\/generate/);
     expect(wizard).not.toMatch(/generateSubject/);
     expect(wizard).toMatch(/case 'invalid':\n      return 'That input is not valid\.'/);
+    expect(wizard).toMatch(/case 'rate_limited':/);
+    expect(wizard).toMatch(/Clear the OpenAI API key from this host/);
   });
 
   it('locks Welcome skip, Back, and rail while generateBusy so Cancel stays reachable', () => {

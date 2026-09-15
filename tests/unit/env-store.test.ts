@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -87,7 +87,7 @@ describe('env-store', () => {
     }
   });
 
-  it('refuses the test sentinel, empty values, and newlines', async () => {
+  it('refuses the test sentinel, empty values, newlines, and null bytes', async () => {
     const { setEnvStoreSecret } = await import('@/lib/env-store');
     const root = tempRoot();
     expect(setEnvStoreSecret('OPENAI_API_KEY', 'test', root)).toEqual({
@@ -102,7 +102,53 @@ describe('env-store', () => {
       ok: false,
       reason: 'invalid',
     });
+    expect(setEnvStoreSecret('OPENAI_API_KEY', `sk-ok${'\0'}sk-bad`, root)).toEqual({
+      ok: false,
+      reason: 'invalid',
+    });
     expect(process.env.OPENAI_API_KEY).not.toBe('test');
+  });
+
+  it('resolves the same repo root as content and ingest from a subdirectory', async () => {
+    const { getEnvStoreRoot, setEnvStoreSecret } = await import('@/lib/env-store');
+    const { getOnboardingContentRoot } = await import('@/lib/content-root');
+    const { findRepoRoot } = await import('@/lib/repo-root');
+    const ingest = await import('examify-ingest');
+    const { mergeRepoEnvFiles } = await import('examify-ingest/generate');
+    const root = tempRoot();
+    const nested = path.join(root, 'src', 'lib');
+    mkdirSync(nested, { recursive: true });
+    const previousCwd = process.cwd();
+    const previousKey = process.env.OPENAI_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    try {
+      process.chdir(nested);
+      expect(getEnvStoreRoot()).toBe(root);
+      expect(getOnboardingContentRoot()).toBe(root);
+      expect(findRepoRoot(process.cwd())).toBe(root);
+      expect(ingest.findRepoRoot(process.cwd())).toBe(root);
+      expect(getEnvStoreRoot()).toBe(ingest.findRepoRoot(nested));
+
+      expect(setEnvStoreSecret('OPENAI_API_KEY', SECRET)).toEqual({ ok: true });
+      expect(readFileSync(path.join(root, '.env'), 'utf8')).toContain(`OPENAI_API_KEY=${SECRET}`);
+      expect(() => readFileSync(path.join(nested, '.env'), 'utf8')).toThrow();
+      const loaded = mergeRepoEnvFiles(ingest.findRepoRoot(process.cwd()), {});
+      expect(loaded.OPENAI_API_KEY).toBe(SECRET);
+      expect(JSON.stringify(loaded)).not.toMatch(/NEXT_PUBLIC_/);
+    } finally {
+      process.chdir(previousCwd);
+      if (previousKey === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = previousKey;
+    }
+  });
+
+  it('keeps env-store off the examify-ingest import graph', async () => {
+    const raw = readFileSync(path.join(process.cwd(), 'src/lib/env-store.ts'), 'utf8');
+    expect(raw).not.toMatch(/examify-ingest/);
+    expect(raw).toMatch(/from '@\/lib\/repo-root'/);
+    const content = readFileSync(path.join(process.cwd(), 'src/lib/content-root.ts'), 'utf8');
+    expect(content).not.toMatch(/examify-ingest/);
+    expect(content).toMatch(/from '@\/lib\/repo-root'/);
   });
 
   it('returns disk when the env file cannot be written', async () => {

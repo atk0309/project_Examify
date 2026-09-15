@@ -359,7 +359,7 @@ function aiFlags(): {
       ANTHROPIC_API_KEY: env.ANTHROPIC_API_KEY,
     }),
     // OPENAI_API_KEY is not in env.ts / never NEXT_PUBLIC_*. Wizard + install.sh
-    // write the same `.env` store and update process.env for the current process.
+    // write the same repo-root `.env` (findRepoRoot) and update process.env.
     openaiConfigured: envStoreSecretConfigured('OPENAI_API_KEY'),
     localAgentConfigured: Boolean(
       env.EXAMIFY_LLM_BASE_URL || process.env.EXAMIFY_INGEST_LOCAL_CMD?.trim(),

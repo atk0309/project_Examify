@@ -27,6 +27,10 @@ vi.mock('@/lib/auth', async () => {
   };
 });
 
+vi.mock('next/headers', () => ({
+  headers: async () => new Headers({ 'x-real-ip': '203.0.113.69' }),
+}));
+
 vi.mock('next/navigation', () => ({
   redirect: (url: string) => {
     throw Object.assign(new Error(`NEXT_REDIRECT:${url}`), { url });
@@ -59,6 +63,7 @@ afterAll(() => {
 beforeEach(async () => {
   const { db, schema } = await import('@/lib/db');
   const { resetLegacyImportLatch } = await import('@/lib/households');
+  db.delete(schema.rateLimitEvents).run();
   db.delete(schema.householdMembers).run();
   db.delete(schema.households).run();
   db.delete(schema.users).run();
@@ -715,5 +720,72 @@ describe('onboarding actions', () => {
       reason: 'forbidden',
     });
     expect(await setOnboardingOpenAiKeyAction(openai)).toEqual({ ok: false, reason: 'forbidden' });
+  });
+
+  it('refuses set / rotate / clear after onboarding is complete', async () => {
+    const { setEnvStoreRootForTests } = await import('@/lib/env-store');
+    const root = tempRoot();
+    setEnvStoreRootForTests(root);
+    writeFileSync(path.join(root, '.env'), 'ANTHROPIC_API_KEY=test\n');
+    const host = await signInHost();
+    const { completeOnboarding } = await import('@/lib/onboarding');
+    completeOnboarding(host.householdId);
+    const previous = process.env.OPENAI_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    try {
+      const { setOnboardingOpenAiKeyAction } = await import('@/actions/onboarding');
+      const set = new FormData();
+      set.set('intent', 'set');
+      set.set('openaiApiKey', 'sk-should-not-write-after-complete');
+      expect(await setOnboardingOpenAiKeyAction(set)).toEqual({
+        ok: false,
+        reason: 'already_complete',
+      });
+      const clear = new FormData();
+      clear.set('intent', 'clear');
+      expect(await setOnboardingOpenAiKeyAction(clear)).toEqual({
+        ok: false,
+        reason: 'already_complete',
+      });
+      expect(readFileSync(path.join(root, '.env'), 'utf8')).not.toMatch(/OPENAI_API_KEY=/);
+    } finally {
+      if (previous === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = previous;
+    }
+  });
+
+  it('rate-limits OpenAI key writes without echoing the secret', async () => {
+    const { setEnvStoreRootForTests } = await import('@/lib/env-store');
+    const { env } = await import('@/lib/env');
+    const root = tempRoot();
+    setEnvStoreRootForTests(root);
+    writeFileSync(path.join(root, '.env'), 'ANTHROPIC_API_KEY=test\n');
+    await signInHost();
+    const previous = process.env.OPENAI_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    try {
+      const { setOnboardingOpenAiKeyAction } = await import('@/actions/onboarding');
+      const max = env.RATE_LIMIT_SIGNIN_MAX;
+      for (let i = 0; i < max; i += 1) {
+        const data = new FormData();
+        data.set('intent', 'set');
+        data.set('openaiApiKey', `sk-rate-limit-write-${i}-never-echo`);
+        const result = await setOnboardingOpenAiKeyAction(data);
+        expect(result.ok).toBe(true);
+        expect(JSON.stringify(result)).not.toMatch(/sk-rate-limit-write/);
+      }
+      const blocked = new FormData();
+      blocked.set('intent', 'set');
+      blocked.set('openaiApiKey', 'sk-rate-limit-blocked-never-echo');
+      const result = await setOnboardingOpenAiKeyAction(blocked);
+      expect(result).toEqual({ ok: false, reason: 'rate_limited' });
+      expect(JSON.stringify(result)).not.toContain('sk-rate-limit-blocked-never-echo');
+      expect(readFileSync(path.join(root, '.env'), 'utf8')).not.toContain(
+        'sk-rate-limit-blocked-never-echo',
+      );
+    } finally {
+      if (previous === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = previous;
+    }
   });
 });

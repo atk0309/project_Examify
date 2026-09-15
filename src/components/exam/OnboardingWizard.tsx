@@ -134,6 +134,8 @@ function errorCopy(error: OnboardingActionError): string {
       return 'No source files for that subject (source-pdfs/<id>/, <id>.pdf, or files in the subject folder).';
     case 'cancelled':
       return 'Generate cancelled.';
+    case 'rate_limited':
+      return 'Too many key updates. Try again in a bit.';
     default:
       return 'Something went wrong.';
   }
@@ -1215,7 +1217,16 @@ function OpenAiKeyPanel({
             type="button"
             disabled={pending}
             data-testid="wizard-openai-key-clear"
-            onClick={onClear}
+            onClick={() => {
+              if (
+                !window.confirm(
+                  'Clear the OpenAI API key from this host’s .env store? Generate will fail closed until you set a new key.',
+                )
+              ) {
+                return;
+              }
+              onClear();
+            }}
           >
             Clear
           </button>

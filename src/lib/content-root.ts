@@ -1,4 +1,4 @@
-import { findRepoRoot } from 'examify-ingest';
+import { findRepoRoot } from '@/lib/repo-root';
 
 let contentRootOverride: string | null = null;
 

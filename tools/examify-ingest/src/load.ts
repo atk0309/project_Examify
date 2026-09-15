@@ -116,21 +116,4 @@ export function loadIrFiles(paths: readonly string[]): LoadedIrFile[] {
   });
 }
 
-export function findRepoRoot(startDir: string): string {
-  let dir = path.resolve(startDir);
-  for (;;) {
-    try {
-      const pkg = JSON.parse(readFileSync(path.join(dir, 'package.json'), 'utf8')) as {
-        name?: string;
-      };
-      if (pkg.name === 'project-examify') return dir;
-    } catch {
-      // keep walking
-    }
-    const parent = path.dirname(dir);
-    if (parent === dir) {
-      throw new Error('could not find the Examify repo root (package.json name project-examify)');
-    }
-    dir = parent;
-  }
-}
+export { findRepoRoot } from '../../../src/lib/repo-root';
