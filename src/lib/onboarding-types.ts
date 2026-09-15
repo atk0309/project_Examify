@@ -107,6 +107,12 @@ export type OnboardingSnapshot = {
   hasApplied: boolean;
   anthropicConfigured: boolean;
   openaiConfigured: boolean;
+  /**
+   * Host (Docker / systemd / parent exec environ) assigned the key —
+   * including empty / `test`. A matching `.env` value is not enough.
+   * Wizard write/clear refused.
+   */
+  openaiHostManaged: boolean;
   localAgentConfigured: boolean;
 };
 

@@ -45,7 +45,49 @@ describe('install.sh', () => {
       expect(envFile).not.toContain('RESEND_API_KEY=');
       expect(envFile).not.toContain('SMTP_HOST=');
       expect(envFile).not.toContain('ALLOW_LOCAL_OUTBOX=');
+      expect(envFile).not.toContain('OPENAI_API_KEY=');
       expect(fs.statSync(dest).mode & 0o777).toBe(0o600);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('writes .env at the examify repo root when invoked from a subdirectory', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-install-root-'));
+    const nested = path.join(root, 'src', 'lib');
+    try {
+      fs.writeFileSync(
+        path.join(root, 'package.json'),
+        JSON.stringify({ name: 'project-examify' }),
+      );
+      fs.mkdirSync(nested, { recursive: true });
+      const secret = 'sk-install-subdir-openai-key';
+      execFileSync('bash', [SCRIPT, '--write-env-only'], {
+        cwd: nested,
+        env: installEnv({ OPENAI_API_KEY: secret }),
+        stdio: 'pipe',
+      });
+      expect(fs.existsSync(path.join(root, '.env'))).toBe(true);
+      expect(fs.existsSync(path.join(nested, '.env'))).toBe(false);
+      expect(fs.readFileSync(path.join(root, '.env'), 'utf8')).toContain(
+        `OPENAI_API_KEY=${secret}`,
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('writes OPENAI_API_KEY when provided', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-install-'));
+    try {
+      const secret = 'sk-install-test-openai-key';
+      execFileSync('bash', [SCRIPT, '--write-env-only'], {
+        cwd: dir,
+        env: installEnv({ OPENAI_API_KEY: secret }),
+        stdio: 'pipe',
+      });
+      const envFile = fs.readFileSync(path.join(dir, '.env'), 'utf8');
+      expect(envFile).toContain(`OPENAI_API_KEY=${secret}`);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

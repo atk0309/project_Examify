@@ -103,6 +103,8 @@ describe('onboarding generate graph', () => {
     expect(wizard).not.toMatch(/examify-ingest\/generate/);
     expect(wizard).not.toMatch(/generateSubject/);
     expect(wizard).toMatch(/case 'invalid':\n      return 'That input is not valid\.'/);
+    expect(wizard).toMatch(/case 'rate_limited':/);
+    expect(wizard).toMatch(/Clear the OpenAI API key from this host/);
   });
 
   it('locks Welcome skip, Back, and rail while generateBusy so Cancel stays reachable', () => {
@@ -242,6 +244,29 @@ describe('generateOnboardingSubject', () => {
     expect(readFileSync(path.join(root, 'content/subjects/history/bank.ir.json'), 'utf8')).toBe(
       before,
     );
+  });
+
+  it('fails closed for openai without a real key (no stub)', async () => {
+    const { generateOnboardingSubject } = await import('@/lib/onboarding-generate');
+    const root = tempRoot();
+    seedSubject(root);
+    const previous = process.env.OPENAI_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    try {
+      const result = await generateOnboardingSubject({
+        subjectId: 'history',
+        provider: 'openai',
+        seed: 0,
+        root,
+      });
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error('expected missing key');
+      expect(result.reason).toBe('missing_key');
+      expect(result.message).toMatch(/OPENAI_API_KEY/i);
+    } finally {
+      if (previous === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = previous;
+    }
   });
 
   it('fails closed for anthropic without a real key (no stub)', async () => {

@@ -34,7 +34,9 @@ no env-JSON allowlist to hand-edit.
 1. **`/setup`** (first run) or **`/signin`** — on a fresh install, the first visitor
    creates the household and becomes admin (and sets a password when `AUTH_MODE=password`).
    After bootstrap, **`/onboarding`** lets the household admin add subjects, attach
-   local study PDFs, choose an AI mode, optionally generate BankIR from those
+   local study PDFs, choose an AI mode (OpenAI keys write the same repo-root `.env`
+   as `install.sh` / `examify-ingest generate`; host-injected keys stay
+   host-managed via the process exec environment), optionally generate BankIR from those
    files, and emit through `examify-ingest` (validate + Review / dry-run HITL, then apply;
    desktop uses a step rail, mobile a compact progress bar; one stage at a time;
    generate never auto-applies; cancel discards an in-flight preview and does
@@ -109,7 +111,7 @@ appears in no dashboard.
 ### Installer (recommended)
 
 `install.sh` asks a few questions (site URL, secrets, auth mode, optional
-Turnstile and email), writes `.env`, installs, migrates, and builds:
+Turnstile, email, and OpenAI key), writes `.env`, installs, migrates, and builds:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/atk0309/project_Examify/main/install.sh | bash

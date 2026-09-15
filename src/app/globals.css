@@ -1977,6 +1977,28 @@
     border-radius: var(--r-full);
     padding: 2px 8px;
   }
+  .wizard-secret {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-3);
+    padding: var(--sp-4);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    background: var(--surface);
+  }
+  .wizard-secret-form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-2);
+  }
+  .wizard-secret-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--sp-2);
+  }
+  .wizard-secret-actions .btn {
+    width: auto;
+  }
   .wizard-validate-btn {
     min-height: 58px;
   }

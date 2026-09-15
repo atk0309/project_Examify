@@ -17,5 +17,5 @@
     "resolveJsonModule": true,
     "types": ["node"]
   },
-  "include": ["src/**/*.ts", "bin/**/*.mjs"]
+  "include": ["src/**/*.ts", "bin/**/*.mjs", "../../src/lib/repo-root.ts"]
 }

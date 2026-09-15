@@ -12,6 +12,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_GENERATE_SEED,
+  findRepoRoot,
   parseArgs,
   runCli,
   runManifestSchema,
@@ -892,6 +893,16 @@ describe('examify-ingest generate helpers', () => {
     expect(mergeRepoEnvFiles(root, { ANTHROPIC_API_KEY: '' })).toMatchObject({
       ANTHROPIC_API_KEY: '',
       OTHER: 'keep',
+    });
+  });
+
+  it('resolves repo-root .env from a subdirectory cwd', () => {
+    const root = examifyRepo();
+    const nested = path.join(root, 'content', 'subjects');
+    writeFileSync(path.join(root, '.env'), 'OPENAI_API_KEY=sk-from-repo-root\n');
+    expect(findRepoRoot(nested)).toBe(root);
+    expect(mergeRepoEnvFiles(findRepoRoot(nested), {})).toMatchObject({
+      OPENAI_API_KEY: 'sk-from-repo-root',
     });
   });
 
