@@ -3,6 +3,7 @@
 import { redirect } from 'next/navigation';
 import { z } from 'zod';
 import { getSession } from '@/lib/auth';
+import { generateOnboardingSubject } from '@/lib/onboarding-generate';
 import {
   addOnboardingSubject,
   adminCanOpenOnboarding,
@@ -19,7 +20,9 @@ import {
   isOnboardingAiMode,
   markOnboardingApplied,
   MAX_SOURCE_PDF_BYTES,
+  ONBOARDING_GENERATE_SEED_DEFAULT,
   previewOnboardingEmit,
+  providerForOnboardingAiMode,
   publicDryRun,
   renameOnboardingSubject,
   saveOnboardingState,
@@ -30,6 +33,7 @@ import {
 import {
   SUBJECT_ICON_OPTIONS,
   type OnboardingDryRun,
+  type OnboardingGenerateResult,
   type OnboardingSnapshot,
 } from '@/lib/onboarding-types';
 
@@ -48,7 +52,11 @@ export type OnboardingActionError = {
     | 'dry_run_required'
     | 'stale_preview'
     | 'emit_required'
-    | 'already_complete';
+    | 'already_complete'
+    | 'missing_provider'
+    | 'missing_key'
+    | 'missing_local'
+    | 'empty_sources';
   message?: string;
   issues?: { file: string; message: string }[];
 };
@@ -157,6 +165,44 @@ export async function detachOnboardingPdfAction(
   const result = detachSourcePdf({ subjectId, filename });
   if (!result.ok) return { ok: false, reason: result.reason };
   return { ok: true, snapshot: snapshot(gate.householdId) };
+}
+
+const generateSeedSchema = z.coerce.number().int();
+
+export async function generateOnboardingSubjectAction(
+  formData: FormData,
+): Promise<
+  | { ok: true; snapshot: OnboardingSnapshot; result: OnboardingGenerateResult }
+  | OnboardingActionError
+> {
+  const gate = await requireOnboardingAdmin();
+  if (!gate.ok) return gate;
+  const subjectId = formData.get('subjectId');
+  if (typeof subjectId !== 'string' || !subjectId.trim()) {
+    return { ok: false, reason: 'invalid_id' };
+  }
+  const rawSeed = formData.get('seed');
+  const seedParsed =
+    rawSeed == null || rawSeed === ''
+      ? { success: true as const, data: ONBOARDING_GENERATE_SEED_DEFAULT }
+      : generateSeedSchema.safeParse(rawSeed);
+  if (!seedParsed.success) return { ok: false, reason: 'invalid' };
+
+  const state = getHouseholdOnboarding(gate.householdId).state;
+  if (!state.aiMode) return { ok: false, reason: 'missing_provider' };
+  const provider = providerForOnboardingAiMode(state.aiMode);
+
+  const generated = await generateOnboardingSubject({
+    subjectId,
+    provider,
+    seed: seedParsed.data,
+  });
+  if (!generated.ok) {
+    return { ok: false, reason: generated.reason, message: generated.message };
+  }
+  // IR changed — any prior HITL dry-run / apply is stale. Generate never emit/applies.
+  invalidateOnboardingEmit(gate.householdId);
+  return { ok: true, snapshot: snapshot(gate.householdId), result: generated.result };
 }
 
 export async function setOnboardingAiModeAction(

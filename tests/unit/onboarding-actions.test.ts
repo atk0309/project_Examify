@@ -86,14 +86,23 @@ async function signInHost() {
 
 describe('onboarding actions', () => {
   it('refuses mutations without an admin session', async () => {
-    const { addOnboardingSubjectAction, applyOnboardingEmitAction } =
-      await import('@/actions/onboarding');
+    const {
+      addOnboardingSubjectAction,
+      applyOnboardingEmitAction,
+      generateOnboardingSubjectAction,
+    } = await import('@/actions/onboarding');
     const data = new FormData();
     data.set('id', 'history');
     data.set('label', 'History');
     data.set('icon', 'geography');
     expect(await addOnboardingSubjectAction(data)).toEqual({ ok: false, reason: 'forbidden' });
     expect(await applyOnboardingEmitAction()).toEqual({ ok: false, reason: 'forbidden' });
+    const generate = new FormData();
+    generate.set('subjectId', 'history');
+    expect(await generateOnboardingSubjectAction(generate)).toEqual({
+      ok: false,
+      reason: 'forbidden',
+    });
   });
 
   it('refuses apply before a dry-run preview', async () => {
@@ -325,6 +334,123 @@ describe('onboarding actions', () => {
     expect(getHouseholdOnboarding(host.householdId).complete).toBe(true);
   });
 
+  it('generates BankIR without emit/apply and stays admin-only', async () => {
+    const root = tempRoot();
+    const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
+    setOnboardingContentRootForTests(root);
+    const host = await signInHost();
+    fs.mkdirSync(path.join(root, 'content/subjects/history'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'content/source-pdfs/history'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'content/generated/questions'), { recursive: true });
+    writeFileSync(
+      path.join(root, 'content/subjects/history/bank.ir.json'),
+      JSON.stringify({
+        version: 1,
+        subject: { id: 'history', label: 'History', icon: 'geography', l: 0.6, c: 0.08, h: 40 },
+        difficulties: { easy: [], medium: [], hard: [] },
+      }),
+    );
+    writeFileSync(path.join(root, 'content/source-pdfs/history/notes.txt'), 'A source note.\n');
+    writeFileSync(path.join(root, 'content/generated/subjects.json'), '[]\n');
+    writeFileSync(path.join(root, 'content/generated/questions/biology.json'), '{}\n');
+
+    const { generateOnboardingSubjectAction, setOnboardingAiModeAction, validateOnboardingAction } =
+      await import('@/actions/onboarding');
+    expect(await generateOnboardingSubjectAction(new FormData())).toEqual({
+      ok: false,
+      reason: 'invalid_id',
+    });
+    const missingMode = new FormData();
+    missingMode.set('subjectId', 'history');
+    expect(await generateOnboardingSubjectAction(missingMode)).toEqual({
+      ok: false,
+      reason: 'missing_provider',
+    });
+
+    const { saveOnboardingState } = await import('@/lib/onboarding');
+    saveOnboardingState(host.householdId, { dryRunHash: 'stale-before-generate' });
+
+    const mode = new FormData();
+    mode.set('aiMode', 'skip-stub');
+    expect((await setOnboardingAiModeAction(mode)).ok).toBe(true);
+    const generate = new FormData();
+    generate.set('subjectId', 'history');
+    generate.set('seed', '0');
+    const result = await generateOnboardingSubjectAction(generate);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected generate');
+    expect(result.result.provider).toBe('test');
+    expect(result.result.cacheHit).toBeTypeOf('boolean');
+    expect(JSON.stringify(result)).not.toMatch(/"answer"/);
+    expect(JSON.stringify(result)).not.toMatch(/"rubric"/);
+    expect(fs.existsSync(path.join(root, 'content/generated/questions/history.json'))).toBe(false);
+    expect(fs.readFileSync(path.join(root, 'content/generated/subjects.json'), 'utf8')).toBe(
+      '[]\n',
+    );
+    expect(result.snapshot.hasDryRun).toBe(false);
+    expect((await validateOnboardingAction()).ok).toBe(true);
+  });
+
+  it('refuses cloud generate when the key is the test sentinel', async () => {
+    const root = tempRoot();
+    const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
+    setOnboardingContentRootForTests(root);
+    await signInHost();
+    fs.mkdirSync(path.join(root, 'content/subjects/history'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'content/source-pdfs/history'), { recursive: true });
+    writeFileSync(
+      path.join(root, 'content/subjects/history/bank.ir.json'),
+      JSON.stringify({
+        version: 1,
+        subject: { id: 'history', label: 'History', icon: 'geography', l: 0.6, c: 0.08, h: 40 },
+        difficulties: { easy: [], medium: [], hard: [] },
+      }),
+    );
+    writeFileSync(path.join(root, 'content/source-pdfs/history/notes.txt'), 'A source note.\n');
+    const { generateOnboardingSubjectAction, setOnboardingAiModeAction } =
+      await import('@/actions/onboarding');
+    const mode = new FormData();
+    mode.set('aiMode', 'cloud');
+    expect((await setOnboardingAiModeAction(mode)).ok).toBe(true);
+    const generate = new FormData();
+    generate.set('subjectId', 'history');
+    const result = await generateOnboardingSubjectAction(generate);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected fail-closed');
+    expect(result.reason).toBe('missing_key');
+  });
+
+  it('validates hand-authored IR without calling generate', async () => {
+    const root = tempRoot();
+    const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
+    setOnboardingContentRootForTests(root);
+    await signInHost();
+    fs.mkdirSync(path.join(root, 'content/subjects/history'), { recursive: true });
+    writeFileSync(
+      path.join(root, 'content/subjects/history/bank.ir.json'),
+      JSON.stringify({
+        version: 1,
+        subject: { id: 'history', label: 'History', icon: 'geography', l: 0.6, c: 0.08, h: 40 },
+        difficulties: {
+          easy: [
+            {
+              id: 'history-easy-1',
+              type: 'mcq',
+              q: 'A hand-authored question?',
+              choices: ['A', 'B', 'C', 'D'],
+              answer: 1,
+              provenance: { pdf: 'hand-authored', locator: 'unit' },
+            },
+          ],
+          medium: [],
+          hard: [],
+        },
+      }),
+    );
+    const { validateOnboardingAction } = await import('@/actions/onboarding');
+    expect((await validateOnboardingAction()).ok).toBe(true);
+  });
+
   it('does not let an invited parent or student open the write path', async () => {
     const host = await signInHost();
     const { db, schema } = await import('@/lib/db');
@@ -339,8 +465,15 @@ describe('onboarding actions', () => {
     sessionHolder.current.userId = parent.id;
     sessionHolder.current.role = 'parent';
     sessionHolder.current.email = 'other@example.com';
-    const { previewOnboardingEmitAction } = await import('@/actions/onboarding');
+    const { generateOnboardingSubjectAction, previewOnboardingEmitAction } =
+      await import('@/actions/onboarding');
     expect(await previewOnboardingEmitAction()).toEqual({ ok: false, reason: 'forbidden' });
+    const generate = new FormData();
+    generate.set('subjectId', 'history');
+    expect(await generateOnboardingSubjectAction(generate)).toEqual({
+      ok: false,
+      reason: 'forbidden',
+    });
 
     const kid = db
       .insert(schema.users)
@@ -354,5 +487,9 @@ describe('onboarding actions', () => {
     sessionHolder.current.role = 'student';
     sessionHolder.current.email = 'kid@example.com';
     expect(await previewOnboardingEmitAction()).toEqual({ ok: false, reason: 'forbidden' });
+    expect(await generateOnboardingSubjectAction(generate)).toEqual({
+      ok: false,
+      reason: 'forbidden',
+    });
   });
 });

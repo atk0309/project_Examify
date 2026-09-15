@@ -23,7 +23,7 @@ export const dynamic = 'force-dynamic';
 
 export const metadata: Metadata = {
   title: 'Content setup',
-  description: 'Add subjects, attach study PDFs, and emit the question bank.',
+  description: 'Add subjects, attach study PDFs, generate BankIR, and emit the question bank.',
   robots: { index: false, follow: false },
 };
 

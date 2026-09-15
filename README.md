@@ -34,10 +34,11 @@ no env-JSON allowlist to hand-edit.
 1. **`/setup`** (first run) or **`/signin`** — on a fresh install, the first visitor
    creates the household and becomes admin (and sets a password when `AUTH_MODE=password`).
    After bootstrap, **`/onboarding`** lets the household admin add subjects, attach
-   local study PDFs, choose how a later generate step should talk to a model, and
-   emit BankIR through `examify-ingest` (validate + dry-run HITL, then apply; an
-   empty catalog is refused; a changed plan after dry-run is refused). Finish
-   requires that confirmed apply; skip-without-emit keeps the sample bank.
+   local study PDFs, choose an AI mode, optionally generate BankIR from those
+   files, and emit through `examify-ingest` (validate + dry-run HITL, then apply;
+   generate never auto-applies; an empty catalog is refused; a changed plan after
+   dry-run is refused). Finish requires that confirmed apply; skip-without-emit
+   keeps the sample bank.
    Bootstrap signs in the first household administrator and redirects to
    `/onboarding`. After onboarding, invited users join through `/invite/…` and
    authenticate in the configured mode. Later visits use `/signin`.

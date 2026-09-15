@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useTransition } from 'react';
+import { useRef, useState, useTransition } from 'react';
 import {
   addOnboardingSubjectAction,
   applyOnboardingEmitAction,
@@ -8,6 +8,7 @@ import {
   deleteOnboardingSubjectAction,
   detachOnboardingPdfAction,
   finishOnboardingAction,
+  generateOnboardingSubjectAction,
   previewOnboardingEmitAction,
   renameOnboardingSubjectAction,
   setOnboardingAiModeAction,
@@ -20,10 +21,14 @@ import type { AuthMode } from '@/lib/auth-mode';
 import type { HouseholdMemberView, PendingInvite } from '@/lib/household-types';
 import {
   EMPTY_AUTHORITATIVE_EMIT,
+  ONBOARDING_GENERATE_SEED_DEFAULT,
   ONBOARDING_INGEST_CLI,
   SUBJECT_ICON_OPTIONS,
+  onboardingGenerateAndEmitCli,
+  providerForOnboardingAiMode,
   type OnboardingAiMode,
   type OnboardingDryRun,
+  type OnboardingGenerateResult,
   type OnboardingSnapshot,
   type OnboardingSubject,
   type SubjectIconOption,
@@ -45,20 +50,24 @@ type StepId = (typeof STEPS)[number]['id'];
 
 const AI_COPY: Record<OnboardingAiMode, { title: string; body: string }> = {
   cloud: {
-    title: 'Cloud API',
-    body: 'Anthropic or OpenAI keys stay in the existing env store. Phase 0 emit does not call them. Generate adapters arrive later.',
+    title: 'Cloud (Anthropic)',
+    body: 'Uses ANTHROPIC_API_KEY from the existing env store. Generate writes BankIR only — validate and apply stay HITL.',
+  },
+  'cloud-openai': {
+    title: 'Cloud (OpenAI)',
+    body: 'Uses OPENAI_API_KEY from the env store (not Next env.ts). Never NEXT_PUBLIC_*. Generate writes BankIR only.',
   },
   'local-agent': {
     title: 'Local agent',
-    body: 'Point EXAMIFY_LLM_BASE_URL at a local endpoint when generate lands. Phase 0 validate / emit needs no URL.',
+    body: 'Uses EXAMIFY_LLM_BASE_URL (OpenAI-compatible). Generate writes BankIR only.',
   },
   'local-cli': {
     title: 'Local CLI / lib',
-    body: 'Coming. Author BankIR by hand or use pnpm examify-ingest from the host. No second secret store.',
+    body: 'Uses EXAMIFY_INGEST_LOCAL_CMD. Generate writes BankIR only. Same local provider as the agent mode.',
   },
   'skip-stub': {
     title: 'Skip / test stub',
-    body: 'Use the sample bank and the ANTHROPIC_API_KEY=test grader stub. No generate step in this release.',
+    body: 'Deterministic fixture provider. No cloud key. Hand-authored BankIR can still skip generate.',
   },
 };
 
@@ -67,7 +76,7 @@ function errorCopy(error: OnboardingActionError): string {
     case 'forbidden':
       return 'Only the household admin can continue content setup.';
     case 'invalid':
-      return 'That input is not valid.';
+      return error.message ?? 'That input is not valid.';
     case 'invalid_id':
       return 'Subject id must be kebab-case (a-z, digits, hyphens) and unique.';
     case 'invalid_type':
@@ -90,8 +99,25 @@ function errorCopy(error: OnboardingActionError): string {
       return 'Confirm apply before opening the dashboard, or skip to keep the sample bank.';
     case 'already_complete':
       return 'Content setup is already finished.';
+    case 'missing_provider':
+      return 'Choose an AI mode before generating BankIR.';
+    case 'missing_key':
+      return (
+        error.message ??
+        'This provider needs a real API key in the env store (fail closed — no stub).'
+      );
+    case 'missing_local':
+      return (
+        error.message ??
+        'Local generate needs EXAMIFY_INGEST_LOCAL_CMD and/or EXAMIFY_LLM_BASE_URL.'
+      );
+    case 'empty_sources':
+      return (
+        error.message ??
+        'No source files for that subject (source-pdfs/<id>/, <id>.pdf, or files in the subject folder).'
+      );
     default:
-      return 'Something went wrong.';
+      return error.message ?? 'Something went wrong.';
   }
 }
 
@@ -120,6 +146,12 @@ export function OnboardingWizard({
     | { status: 'success'; written: number; questionCount: number; subjectCount: number }
     | { status: 'error'; message: string }
   >({ status: 'idle' });
+  const [generateSeed, setGenerateSeed] = useState(ONBOARDING_GENERATE_SEED_DEFAULT);
+  const [generateBusy, setGenerateBusy] = useState(false);
+  const [irReady, setIrReady] = useState(false);
+  const [generateRuns, setGenerateRuns] = useState<Record<string, OnboardingGenerateResult>>({});
+  const [activeGenerateId, setActiveGenerateId] = useState<string | null>(null);
+  const generateCancelRef = useRef(false);
   const [pending, startTransition] = useTransition();
 
   const stepIndex = STEPS.findIndex((entry) => entry.id === step);
@@ -235,11 +267,53 @@ export function OnboardingWizard({
         <AiStep
           snapshot={snapshot}
           pending={pending}
+          generateBusy={generateBusy}
+          generateSeed={generateSeed}
+          generateRuns={generateRuns}
+          activeGenerateId={activeGenerateId}
+          irReady={irReady}
+          onSeed={setGenerateSeed}
           onSelect={(mode) =>
             run(async () => {
               const data = new FormData();
               data.set('aiMode', mode);
               applyResult(await setOnboardingAiModeAction(data));
+            })
+          }
+          onCancel={() => {
+            generateCancelRef.current = true;
+          }}
+          onGoValidate={() => go('validate')}
+          onGenerate={(subjectIds) =>
+            run(async () => {
+              generateCancelRef.current = false;
+              setGenerateBusy(true);
+              setIrReady(false);
+              let wroteAny = false;
+              try {
+                for (const subjectId of subjectIds) {
+                  if (generateCancelRef.current) break;
+                  setActiveGenerateId(subjectId);
+                  const data = new FormData();
+                  data.set('subjectId', subjectId);
+                  data.set('seed', String(generateSeed));
+                  const result = await generateOnboardingSubjectAction(data);
+                  if (!result.ok) {
+                    applyResult(result);
+                    return;
+                  }
+                  setSnapshot(result.snapshot);
+                  setGenerateRuns((current) => ({ ...current, [subjectId]: result.result }));
+                  setDryRun(null);
+                  setValidated(false);
+                  wroteAny = wroteAny || result.result.wroteIr;
+                  if (generateCancelRef.current) break;
+                }
+                if (wroteAny && !generateCancelRef.current) setIrReady(true);
+              } finally {
+                setActiveGenerateId(null);
+                setGenerateBusy(false);
+              }
             })
           }
         />
@@ -396,7 +470,7 @@ export function OnboardingWizard({
           <button
             type="button"
             className="btn btn-primary"
-            disabled={pending}
+            disabled={pending || generateBusy}
             data-testid="wizard-next"
             onClick={() => go(STEPS[stepIndex + 1]!.id)}
           >
@@ -462,7 +536,7 @@ export function OnboardingWizard({
           <button
             type="button"
             className="btn btn-quiet"
-            disabled={pending}
+            disabled={pending || generateBusy}
             data-testid="wizard-skip"
             onClick={() =>
               run(async () => {
@@ -485,8 +559,8 @@ function WelcomeStep() {
       <p className="eyebrow">First-run</p>
       <h1 className="display-title">Set up your content</h1>
       <p className="subtitle">
-        Add subjects, keep study PDFs local, then validate and emit BankIR through examify-ingest.
-        The sample bank stays usable if you skip.
+        Add subjects, keep study PDFs local, optionally generate BankIR, then validate and emit
+        through examify-ingest. The sample bank stays usable if you skip.
       </p>
     </div>
   );
@@ -856,20 +930,43 @@ function SubjectDropzone({
 function AiStep({
   snapshot,
   pending,
+  generateBusy,
+  generateSeed,
+  generateRuns,
+  activeGenerateId,
+  irReady,
+  onSeed,
   onSelect,
+  onGenerate,
+  onCancel,
+  onGoValidate,
 }: {
   snapshot: OnboardingSnapshot;
   pending: boolean;
+  generateBusy: boolean;
+  generateSeed: number;
+  generateRuns: Record<string, OnboardingGenerateResult>;
+  activeGenerateId: string | null;
+  irReady: boolean;
+  onSeed: (seed: number) => void;
   onSelect: (mode: OnboardingAiMode) => void;
+  onGenerate: (subjectIds: string[]) => void;
+  onCancel: () => void;
+  onGoValidate: () => void;
 }) {
+  const provider = snapshot.aiMode ? providerForOnboardingAiMode(snapshot.aiMode) : null;
+  const busy = pending || generateBusy;
+
   return (
     <div className="wizard-panel" data-testid="wizard-ai">
       <p className="subtitle">
-        Choose where a later generate step would talk to a model. Phase 0 validate / emit needs no
-        keys. Secrets stay in the existing env store — never NEXT_PUBLIC_*.
+        Choose a provider, then generate BankIR from local sources. Generate writes
+        content/subjects/&lt;id&gt;/bank.ir.json only — never emit or apply. Hand-authored IR can
+        skip this step. Secrets stay in the existing env store — never NEXT_PUBLIC_*.
       </p>
       <p className="login-fine" data-testid="wizard-ai-store">
-        Anthropic {snapshot.anthropicConfigured ? 'configured' : 'not configured'} · Local agent{' '}
+        Anthropic {snapshot.anthropicConfigured ? 'configured' : 'not configured'} · OpenAI{' '}
+        {snapshot.openaiConfigured ? 'configured' : 'not configured'} · Local{' '}
         {snapshot.localAgentConfigured ? 'configured' : 'not configured'}
       </p>
       <div className="wizard-modes" role="radiogroup" aria-label="AI setup mode">
@@ -882,7 +979,7 @@ function AiStep({
               role="radio"
               aria-checked={selected}
               className={'wizard-mode' + (selected ? ' selected' : '')}
-              disabled={pending}
+              disabled={busy}
               data-testid={`wizard-ai-${mode}`}
               onClick={() => onSelect(mode)}
             >
@@ -892,10 +989,144 @@ function AiStep({
           );
         })}
       </div>
-      <p className="wizard-callout" data-testid="wizard-generate-coming">
-        Question generation from files is coming. This step does not invent questions or write a
-        second secret store.
+
+      {provider ? (
+        <div className="wizard-generate" data-testid="wizard-generate">
+          <p className="subtitle">Same CLI as the host (HITL after generate):</p>
+          <pre className="wizard-cli" data-testid="wizard-cli-generate">
+            {onboardingGenerateAndEmitCli(provider, generateSeed).join('\n')}
+          </pre>
+          <label className="wizard-advanced">
+            <span>Advanced: seed</span>
+            <input
+              className="text-input"
+              type="number"
+              step={1}
+              value={generateSeed}
+              disabled={busy}
+              aria-label="Generate seed"
+              data-testid="wizard-generate-seed"
+              onChange={(event) => onSeed(Number.parseInt(event.target.value, 10) || 0)}
+            />
+          </label>
+          <div className="wizard-generate-actions">
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={busy || snapshot.subjects.length < 1}
+              data-testid="wizard-generate-all"
+              onClick={() => onGenerate(snapshot.subjects.map((subject) => subject.id))}
+            >
+              {generateBusy ? 'Generating…' : 'Generate all'}
+            </button>
+            {generateBusy ? (
+              <button
+                type="button"
+                className="btn btn-ghost"
+                data-testid="wizard-generate-cancel"
+                onClick={onCancel}
+              >
+                Cancel
+              </button>
+            ) : null}
+          </div>
+
+          {snapshot.subjects.length === 0 ? (
+            <p className="wizard-empty" data-testid="wizard-generate-empty">
+              Add a subject first. Generate reads local sources only.
+            </p>
+          ) : (
+            <ul className="wizard-list">
+              {snapshot.subjects.map((subject) => {
+                const run = generateRuns[subject.id];
+                const active = activeGenerateId === subject.id;
+                return (
+                  <li key={subject.id} className="wizard-generate-row">
+                    <div className="wizard-row">
+                      <span>
+                        <strong>{subject.label}</strong>
+                        <span className="invite-meta">{subject.id}</span>
+                      </span>
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        disabled={busy}
+                        data-testid={`wizard-generate-${subject.id}`}
+                        onClick={() => onGenerate([subject.id])}
+                      >
+                        {active ? 'Generating…' : 'Generate BankIR'}
+                      </button>
+                    </div>
+                    {subject.generateSources.length === 0 ? (
+                      <p className="login-fine">No sources found.</p>
+                    ) : (
+                      <ul
+                        className="wizard-issues"
+                        data-testid={`wizard-generate-sources-${subject.id}`}
+                      >
+                        {subject.generateSources.map((rel) => (
+                          <li key={rel}>{rel}</li>
+                        ))}
+                      </ul>
+                    )}
+                    {active ? (
+                      <p
+                        className="login-fine"
+                        data-testid={`wizard-generate-progress-${subject.id}`}
+                      >
+                        {subject.id} · {provider} · seed {generateSeed} ·{' '}
+                        {subject.generateSources.length} source
+                        {subject.generateSources.length === 1 ? '' : 's'} · calling provider…
+                      </p>
+                    ) : null}
+                    {run ? <GenerateRunSummary run={run} /> : null}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+
+          {irReady ? (
+            <p className="wizard-callout" data-testid="wizard-ir-ready">
+              IR ready — validate next.{' '}
+              <button
+                type="button"
+                className="btn btn-ghost"
+                data-testid="wizard-generate-to-validate"
+                onClick={onGoValidate}
+              >
+                Validate
+              </button>
+            </p>
+          ) : null}
+        </div>
+      ) : (
+        <p className="wizard-callout" data-testid="wizard-generate-choose-mode">
+          Choose a mode to generate BankIR, or continue if you already authored IR by hand.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function GenerateRunSummary({ run }: { run: OnboardingGenerateResult }) {
+  const hashes = Object.entries(run.sourceHashes);
+  return (
+    <div className="wizard-generate-run" data-testid={`wizard-generate-run-${run.subjectId}`}>
+      <p className="login-fine">
+        {run.subjectId} · {run.provider}/{run.model} · seed {run.seed} · {run.sourceCount} source
+        {run.sourceCount === 1 ? '' : 's'} · {run.cacheHit ? 'cache hit' : 'live call'}
+        {run.wroteIr ? ` · wrote ${run.irRel}` : ''}
       </p>
+      {hashes.length > 0 ? (
+        <ul className="wizard-issues">
+          {hashes.map(([rel, hash]) => (
+            <li key={rel}>
+              {rel} · {hash.slice(0, 12)}
+            </li>
+          ))}
+        </ul>
+      ) : null}
     </div>
   );
 }

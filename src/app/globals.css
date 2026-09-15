@@ -1786,6 +1786,30 @@
     font-size: var(--fs-small);
     color: var(--text-muted);
   }
+  .wizard-generate {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-4);
+    margin-top: var(--sp-4);
+  }
+  .wizard-generate-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--sp-3);
+  }
+  .wizard-generate-row {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-2);
+  }
+  .wizard-generate-run {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-1);
+  }
+  .wizard-advanced .text-input {
+    width: 6rem;
+  }
   .sr-only {
     position: absolute;
     width: 1px;
