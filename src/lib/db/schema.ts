@@ -2,11 +2,12 @@ import { sql } from 'drizzle-orm';
 import { integer, sqliteTable, text, index, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 /**
- * Signed-in people (magic-link auth). Who may sign in — and which household
- * they belong to — is decided in SQLite (`households` / `household_members` /
- * `household_invites`), not env JSON. A `users` row is created on first
- * verified sign-in or first-run bootstrap, keyed by email. Ownership of
- * attempts is structural via `users.id`.
+ * Signed-in people. Who may sign in — and which household they belong to —
+ * is decided in SQLite (`households` / `household_members` / `household_invites`),
+ * not env JSON. A `users` row is created on first verified sign-in, password
+ * invite accept, or first-run bootstrap, keyed by email. `password_hash` is
+ * set when AUTH_MODE=password (nullable so magic-link / OTP hosts stay valid).
+ * Ownership of attempts is structural via `users.id`.
  *
  * Session roles stay `student | parent`. Household `admin` is a membership
  * flag on top of parent (the first-run host); they sign in as a parent.
@@ -17,6 +18,8 @@ export const users = sqliteTable(
     id: integer('id').primaryKey({ autoIncrement: true }),
     email: text('email').notNull(),
     emailVerifiedAt: integer('email_verified_at', { mode: 'timestamp_ms' }),
+    /** scrypt PHC-like string; null when this user has never set a password. */
+    passwordHash: text('password_hash'),
     createdAt: integer('created_at', { mode: 'timestamp_ms' })
       .notNull()
       .default(sql`(unixepoch() * 1000)`),

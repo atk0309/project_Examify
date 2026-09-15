@@ -6,13 +6,16 @@ feedback at the end — mature, not babyish. Built by a parent for their kid(s);
 your own instance, and your family's data stays on your own box.
 
 It is intentionally small: a static question bank you edit in code, a four-screen client
-flow, passwordless magic-link sign-in gated by **invite-only households** in SQLite, and a
-single SQLite file. No SaaS, no tracking, no env-JSON allowlist to hand-edit.
+flow, host-picked sign-in (`password`, `magic-link`, or `local-otp`) gated by
+**invite-only households** in SQLite, and a single SQLite file. No SaaS, no tracking,
+no env-JSON allowlist to hand-edit.
 
 ## Features
 
-- **Magic-link sign-in** (no passwords), role-aware (Student / Parent), rate-limited,
-  with no email enumeration. Cloudflare Turnstile is **optional**.
+- **Host-picked auth** — password (no email service), magic-link (Resend / SMTP /
+  local outbox), or a local one-time code for tiny installs. Role-aware
+  (Student / Parent), rate-limited, no membership enumeration. Cloudflare
+  Turnstile is **optional**.
 - **Invite-only households** — first-run bootstrap creates the admin; parents invite
   students and other parents with a link. A parent sees only their own household's
   child(ren).
@@ -29,9 +32,9 @@ single SQLite file. No SaaS, no tracking, no env-JSON allowlist to hand-edit.
 ## The flow
 
 1. **`/setup`** (first run) or **`/signin`** — on a fresh install, the first visitor
-   creates the household and becomes admin. After that, pick a role (Student / Parent),
-   enter your email, and the app emails a one-time sign-in link **if you are already a
-   household member**. New people join via an invite link (`/invite/…`), not env JSON.
+   creates the household and becomes admin (and sets a password when `AUTH_MODE=password`).
+   After that, pick a role (Student / Parent) and sign in with the configured mode.
+   New people join via an invite link (`/invite/…`), not env JSON.
 2. **Dashboard** — a grid of subjects, each with a soft duotone icon and question count.
    The repo ships with a small hand-authored sample bank (Maths, Computer Science,
    Geography) plus an additive Biology example from BankIR — see
@@ -79,35 +82,52 @@ appears in no dashboard.
 
 ## Stack
 
-| Layer       | Choice                                                                          |
-| ----------- | ------------------------------------------------------------------------------- |
-| Runtime     | Node 22.22.2+ LTS, pnpm 10                                                      |
-| Framework   | Next.js 16 (App Router, Turbopack), React 19.2, TypeScript 6 strict             |
-| Styling     | Tailwind v4 with a CSS-first `@theme` token system; 3 themes                    |
-| DB          | SQLite (a single file), via Drizzle ORM + better-sqlite3                        |
-| Auth        | Magic-link (Resend optional) + iron-session cookies, **invite-only households** |
-| Captcha     | Optional Cloudflare Turnstile (off when keys are unset)                         |
-| Email       | Resend SDK, with a `tests/.tmp/outbox/*.json` short-circuit when key=test       |
-| Grading     | Anthropic Messages API (free-text), with a `test`-sentinel stub                 |
-| Tests       | Vitest (unit), Playwright (e2e)                                                 |
-| Lint/Format | ESLint 9 + Prettier + Tailwind plugin                                           |
+| Layer       | Choice                                                                                    |
+| ----------- | ----------------------------------------------------------------------------------------- |
+| Runtime     | Node 22 LTS (`>=22.22.2 <23`), pnpm 10                                                    |
+| Framework   | Next.js 16 (App Router, Turbopack), React 19.2, TypeScript 6 strict                       |
+| Styling     | Tailwind v4 with a CSS-first `@theme` token system; 3 themes                              |
+| DB          | SQLite (a single file), via Drizzle ORM + better-sqlite3                                  |
+| Auth        | `AUTH_MODE`: password / magic-link / local-otp + iron-session, **invite-only households** |
+| Captcha     | Optional Cloudflare Turnstile (off when keys are unset)                                   |
+| Email       | Resend, SMTP, or local outbox (`MAIL_TRANSPORT`)                                          |
+| Grading     | Anthropic Messages API (free-text), with a `test`-sentinel stub                           |
+| Tests       | Vitest (unit), Playwright (e2e)                                                           |
+| Lint/Format | ESLint 9 + Prettier + Tailwind plugin                                                     |
 
 ## Quick start
 
+### Installer (recommended)
+
+`install.sh` asks a few questions (site URL, secrets, auth mode, optional
+Turnstile and email), writes `.env`, installs, migrates, and builds:
+
 ```bash
-pnpm install
-cp .env.example .env        # dev defaults work out of the box
-pnpm dev                    # http://localhost:3000  -> redirects to /signin
+curl -fsSL https://raw.githubusercontent.com/atk0309/project_Examify/main/install.sh | bash
 ```
 
-With `RESEND_API_KEY=test`, sign-in emails are written to a local outbox
-(`MAIL_OUTBOX_DIR` if set, otherwise `tests/.tmp/outbox/*.json`) instead of being
-sent — open the link inside to "click" the magic link locally. On a fresh
-database, visit `/setup`, enter the setup code (`SETUP_BOOTSTRAP_SECRET`; the
-dev default works locally), and create the first household (you become the admin
-parent). Invite the student from the dashboard. With `ANTHROPIC_API_KEY=test`,
-free-text grading uses a deterministic local stub — no network, no API key needed
-for development.
+From a clone: `./install.sh`. Non-interactive: `EXAMIFY_NONINTERACTIVE=1 ./install.sh`
+(defaults to `AUTH_MODE=password` unless you set the env vars yourself).
+
+Then `pnpm start` (or `pnpm dev`), open `SITE_URL`, and complete **`/setup`**
+with the printed setup code.
+
+### Manual (developers)
+
+```bash
+pnpm install
+cp .env.example .env        # AUTH_MODE=magic-link; dev defaults work
+pnpm dev                    # http://localhost:3000  -> /setup on a fresh DB
+```
+
+With `RESEND_API_KEY=test`, magic-link / OTP messages are written to a local
+outbox (`MAIL_OUTBOX_DIR` if set, otherwise `tests/.tmp/outbox/*.json`). On a
+fresh database, visit `/setup`, enter the setup code (`SETUP_BOOTSTRAP_SECRET`;
+the dev default works locally), and create the first household. Invite the
+student from the dashboard. With `ANTHROPIC_API_KEY=test`, free-text grading
+uses a deterministic local stub — no network, no API key needed for development.
+
+Set `AUTH_MODE=password` in `.env` if you want to develop without mail.
 
 ## Access: invite-only households
 
@@ -119,16 +139,33 @@ Who may sign in is stored in SQLite, not env:
 2. **Invite** — from the parent dashboard, create a student invite (open or
    email-locked) or a parent invite (**email-locked**). Share `/invite/<token>`.
    Revoke unused links; remove a member if they should no longer have access.
-3. **Accept** — the invitee enters their email, receives a magic link, and joining the
-   household happens when they verify. After that they sign in at `/signin` like anyone
-   else.
+3. **Accept** — the invitee opens `/invite/<token>` and finishes in the configured
+   auth mode (set a password, click a magic link, or enter a local OTP). After
+   that they sign in at `/signin` like anyone else.
 4. **Privacy** — a parent/admin only sees students who share their household. One
    household cannot see another.
 
-The sign-in screen always shows "Check your inbox" whether or not the email is a member
-(anti-enumeration), and the same generic `sent` response is used if delivery fails
-(logged server-side). A silent non-delivery usually means they have not been invited
+Challenge modes always show a generic "sent" / "enter your code" screen whether or
+not the email is a member (anti-enumeration), including when delivery fails
+(logged server-side). Password mode always shows a generic "email or password is
+incorrect" error. A silent non-delivery usually means they have not been invited
 yet, or mail could not be sent.
+
+### Auth modes
+
+| `AUTH_MODE`  | Sign-in                                  | Mail required                      |
+| ------------ | ---------------------------------------- | ---------------------------------- |
+| `password`   | Email + password                         | No                                 |
+| `magic-link` | One-time URL (Resend, SMTP, or outbox)   | Yes, unless outbox opt-in          |
+| `local-otp`  | 6-digit code (outbox, or emailed if set) | Production: `ALLOW_LOCAL_OUTBOX=1` |
+
+`MAIL_TRANSPORT=auto` picks SMTP when `SMTP_HOST` is set, else Resend when a real
+key is set, else the local outbox. `SMTP_FROM` is required only when SMTP is the
+active transport. A leftover `SMTP_HOST` does not fail `resend` / `outbox`.
+Plaintext SMTP (no STARTTLS / `SMTP_SECURE`) needs `SMTP_ALLOW_INSECURE=1`.
+Hosts already on invite-only households (#56)
+keep working: unset `AUTH_MODE` is `magic-link`. Run `pnpm db:migrate` for the
+nullable `users.password_hash` column (safe no-op for magic-link-only hosts).
 
 ### Migrating from `FAMILIES` env JSON
 
@@ -212,22 +249,30 @@ applied at runtime via `accentCSS()`.
 
 Defined and validated by zod in `src/lib/env.ts`; the canonical reference is
 `.env.example`. Required in production: `SITE_URL`, `AUTH_SECRET`, `DATABASE_URL`,
-`ANTHROPIC_API_KEY`, `SETUP_BOOTSTRAP_SECRET`. Documented placeholder
-`AUTH_SECRET` / `SETUP_BOOTSTRAP_SECRET` values fail production boot. A leftover
-`FAMILIES` value that is set but invalid also crashes production boot.
-`RESEND_API_KEY` / `RESEND_FROM` are optional in outbox mode for **dev/test**
-(unset or `test` → local outbox). Production with no real Resend key does not
-write magic-link tokens to disk unless `ALLOW_LOCAL_OUTBOX=1`. A real Resend key
-**requires** `RESEND_FROM`. Turnstile keys are optional when **both** are unset;
-exactly one key in production crashes boot. Env validation **fails closed** in
-production for the required vars (a missing one crashes boot so your platform's
-healthcheck catches it). Access is empty-fail-closed: until someone completes
-`/setup` with the bootstrap secret (or a leftover `FAMILIES` import runs), nobody
-can sign in.
+`ANTHROPIC_API_KEY`, `SETUP_BOOTSTRAP_SECRET`. `AUTH_MODE` defaults to
+`magic-link`. Documented placeholder `AUTH_SECRET` / `SETUP_BOOTSTRAP_SECRET`
+values fail production boot. A leftover `FAMILIES` value that is set but invalid
+also crashes production boot. Mail is optional when `AUTH_MODE=password`.
+`MAIL_TRANSPORT=auto` (default) uses SMTP, Resend, or the outbox depending on
+what is set. Production with no real mail transport does not write tokens to
+disk unless `ALLOW_LOCAL_OUTBOX=1`. `local-otp` and explicit `outbox` require
+that opt-in in production. A real Resend key **requires** `RESEND_FROM`.
+Turnstile keys are optional when **both** are unset; exactly one key in
+production crashes boot. Env validation **fails closed** in production for the
+required vars. Access is empty-fail-closed: until someone completes `/setup`
+with the bootstrap secret (or a leftover `FAMILIES` import runs), nobody can
+sign in.
 
 ## Deploy
 
-Examify is a standard Next.js server + one SQLite file — anywhere Node 22.22.2+ runs works:
+Anywhere Node 22.22.2+ runs. The installer is the supported path:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/atk0309/project_Examify/main/install.sh | bash
+# then: pnpm start   and open SITE_URL/setup
+```
+
+Or the manual equivalent:
 
 ```bash
 pnpm install --frozen-lockfile
@@ -236,7 +281,8 @@ pnpm db:migrate && pnpm start    # run migrations at startup, then serve
 ```
 
 Point `DATABASE_URL` at a file on **persistent storage** so the database survives
-deploys, set the required env vars above, and healthcheck `GET /api/health`.
+deploys, set the required env vars above (`AUTH_MODE` included), and healthcheck
+`GET /api/health`.
 
 On hosts with ephemeral filesystems, mount persistent storage (for example at `/data`)
 and set `DATABASE_URL=file:/data/app.db`.

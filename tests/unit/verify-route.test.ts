@@ -10,7 +10,13 @@ class RedirectError extends Error {
   }
 }
 
-const consume = vi.hoisted(() => ({ current: undefined as ConsumeResult | undefined }));
+const consume = vi.hoisted(() => ({
+  current: undefined as ConsumeResult | undefined,
+  calls: [] as string[],
+}));
+const authMode = vi.hoisted(() => ({
+  current: 'magic-link' as 'password' | 'magic-link' | 'local-otp',
+}));
 const sessionHolder = vi.hoisted(() => ({
   current: {} as SessionData & { save: () => Promise<void> },
 }));
@@ -22,10 +28,21 @@ vi.mock('next/navigation', () => ({
 }));
 
 vi.mock('@/lib/auth', () => ({
-  consumeMagicToken: () => consume.current,
+  consumeMagicToken: (token: string) => {
+    consume.calls.push(token);
+    return consume.current;
+  },
   getRawSession: async () => sessionHolder.current,
   getSession: async () => sessionHolder.current,
 }));
+
+vi.mock('@/lib/env', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/env')>('@/lib/env');
+  return {
+    ...actual,
+    getAuthMode: () => authMode.current,
+  };
+});
 
 function makeSession(): SessionData & { save: () => Promise<void> } {
   return { save: vi.fn(async () => {}) };
@@ -48,6 +65,8 @@ async function callGet(url: string): Promise<RedirectError> {
 
 beforeEach(() => {
   consume.current = undefined;
+  consume.calls = [];
+  authMode.current = 'magic-link';
   sessionHolder.current = makeSession();
 });
 
@@ -56,6 +75,7 @@ describe('GET /signin/verify', () => {
     const err = await callGet('http://localhost/signin/verify');
     expect(err.url).toBe('/signin/verify/error?reason=missing');
     expect(sessionHolder.current.save).not.toHaveBeenCalled();
+    expect(consume.calls).toEqual([]);
   });
 
   it('redirects to the error page (with the reason) when the token is invalid', async () => {
@@ -89,4 +109,38 @@ describe('GET /signin/verify', () => {
     expect(sessionHolder.current.studentMode).toBe(false);
     expect(sessionHolder.current.save).toHaveBeenCalledOnce();
   });
+
+  it('refuses OTP-shaped bearers without calling consume', async () => {
+    consume.current = {
+      ok: true,
+      userId: 1,
+      role: 'student',
+      email: 'kid@example.com',
+      isNew: false,
+    };
+    const err = await callGet(
+      'http://localhost/signin/verify?token=otp%3Akid%40example.com%3Astudent%3A000000',
+    );
+    expect(err.url).toBe('/signin/verify/error?reason=not-found');
+    expect(consume.calls).toEqual([]);
+    expect(sessionHolder.current.save).not.toHaveBeenCalled();
+  });
+
+  it.each(['password', 'local-otp'] as const)(
+    'refuses leftover magic-link tokens when AUTH_MODE is %s',
+    async (mode) => {
+      authMode.current = mode;
+      consume.current = {
+        ok: true,
+        userId: 7,
+        role: 'parent',
+        email: 'p@example.com',
+        isNew: false,
+      };
+      const err = await callGet('http://localhost/signin/verify?token=leftover-magic-token');
+      expect(err.url).toBe('/signin/verify/error?reason=not-found');
+      expect(consume.calls).toEqual([]);
+      expect(sessionHolder.current.save).not.toHaveBeenCalled();
+    },
+  );
 });

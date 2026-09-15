@@ -166,4 +166,16 @@ describe('requestMagicLink', () => {
     );
     expect(state).toEqual({ status: 'error', reason: 'invalid' });
   });
+
+  it('refuses to issue a link when AUTH_MODE is password', async () => {
+    const { env } = await import('@/lib/env');
+    (env as { AUTH_MODE: typeof env.AUTH_MODE }).AUTH_MODE = 'password';
+    const { requestMagicLink } = await import('@/actions/requestMagicLink');
+    const state = await requestMagicLink(
+      { status: 'idle' },
+      form('student@example.com', 'student', 'ok'),
+    );
+    expect(state).toEqual({ status: 'error', reason: 'invalid' });
+    (env as { AUTH_MODE: typeof env.AUTH_MODE }).AUTH_MODE = 'magic-link';
+  });
 });

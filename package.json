@@ -2,7 +2,7 @@
   "name": "project-examify",
   "version": "0.1.0",
   "private": true,
-  "description": "Examify — a calm, mobile-first, self-hosted exam-practice app for families. Magic-link auth, SQLite, LLM-graded free-text.",
+  "description": "Examify — a calm, mobile-first, self-hosted exam-practice app for families. Password or magic-link auth, SQLite, LLM-graded free-text.",
   "license": "MIT",
   "repository": {
     "type": "git",

@@ -27,14 +27,14 @@ public issue. Security problems must use the private process in
 
 ```bash
 pnpm install
-cp .env.example .env   # dev defaults work out of the box — no real keys needed
+cp .env.example .env   # AUTH_MODE=magic-link; or set AUTH_MODE=password
 pnpm dev               # http://localhost:3000
 ```
 
-In development, magic-link emails are written to a local outbox
-(`MAIL_OUTBOX_DIR` if set, otherwise `tests/.tmp/outbox/*.json`)
-(`RESEND_API_KEY=test`) and free-text grading uses a local stub
-(`ANTHROPIC_API_KEY=test`), so the whole flow works offline.
+Or `./install.sh` from a clone. In development, magic-link / OTP messages are
+written to a local outbox (`MAIL_OUTBOX_DIR` if set, otherwise
+`tests/.tmp/outbox/*.json`) (`RESEND_API_KEY=test`) and free-text grading uses a
+local stub (`ANTHROPIC_API_KEY=test`), so the whole flow works offline.
 
 ## Commands
 
