@@ -11,7 +11,6 @@ import {
   writeFileSync,
 } from 'node:fs';
 import path from 'node:path';
-import { findRepoRoot } from 'examify-ingest';
 
 /** Keys the wizard / install twin may write. Never NEXT_PUBLIC_*. */
 export const ENV_STORE_KEYS = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY'] as const;
@@ -32,7 +31,12 @@ export function setEnvStoreRootForTests(root: string | null): void {
 }
 
 export function getEnvStoreRoot(): string {
-  return envStoreRootOverride ?? findRepoRoot(process.cwd());
+  // Repo cwd — same place install.sh writes `.env`. Tests override this.
+  return envStoreRootOverride ?? process.cwd();
+}
+
+function envStorePath(root: string, name: string): string {
+  return path.join(/*turbopackIgnore: true*/ root, name);
 }
 
 export function isEnvStoreKey(value: string): value is EnvStoreKey {
@@ -162,9 +166,9 @@ export function setEnvStoreSecret(
   const value = normalizeSecretInput(raw);
   if (!value) return { ok: false, reason: 'invalid' };
   try {
-    upsertEnvFile(path.join(root, PRIMARY_ENV_FILE), key, value);
-    const localPath = path.join(root, ENV_FILES[1]);
-    if (existsSync(localPath) && envFileHasKey(localPath, key)) {
+    upsertEnvFile(envStorePath(root, PRIMARY_ENV_FILE), key, value);
+    const localPath = envStorePath(root, ENV_FILES[1]);
+    if (existsSync(/*turbopackIgnore: true*/ localPath) && envFileHasKey(localPath, key)) {
       upsertEnvFile(localPath, key, value);
     }
     applyProcessEnv(key, value);
@@ -182,7 +186,7 @@ export function clearEnvStoreSecret(
   if (!isEnvStoreKey(key)) return { ok: false, reason: 'invalid' };
   try {
     for (const name of ENV_FILES) {
-      upsertEnvFile(path.join(root, name), key, null);
+      upsertEnvFile(envStorePath(root, name), key, null);
     }
     applyProcessEnv(key, null);
     return { ok: true };
