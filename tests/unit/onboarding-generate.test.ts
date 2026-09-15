@@ -568,10 +568,10 @@ describe('generateOnboardingSubject', () => {
     const prior = readFileSync(irPath, 'utf8');
     const writeSpy = vi.spyOn(ingest, 'writeFileAtomic');
     let seenSignal: AbortSignal | undefined;
-    vi.spyOn(ingest, 'generateSubject').mockImplementation(async (request) => {
+    vi.spyOn(ingest, 'generateSubject').mockImplementation((request) => {
       seenSignal = request.signal;
       expect(request.signal).toBeInstanceOf(AbortSignal);
-      await new Promise<never>((_resolve, reject) => {
+      return new Promise<never>((_resolve, reject) => {
         if (request.signal?.aborted) {
           reject(new ingest.GenerateAbortedError());
           return;
