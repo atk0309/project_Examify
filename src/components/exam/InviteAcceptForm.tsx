@@ -98,16 +98,22 @@ function PasswordInviteForm({
   );
   const [email, setEmail] = useState(lockedEmail ?? '');
   const [password, setPassword] = useState('');
+  const [submittedPassword, setSubmittedPassword] = useState('');
   const valid =
     EMAIL_RE.test(email.trim()) &&
     password.length >= PASSWORD_MIN_LENGTH &&
     password.length <= PASSWORD_MAX_LENGTH;
 
+  const submit = (formData: FormData) => {
+    setSubmittedPassword(String(formData.get('password') ?? ''));
+    formAction(formData);
+  };
+
   if (state.status === 'sent') {
     return (
       <PasswordInviteOtpForm
         email={state.email}
-        password={password}
+        password={submittedPassword || password}
         role={role}
         siteKey={siteKey}
       />
@@ -115,7 +121,7 @@ function PasswordInviteForm({
   }
 
   return (
-    <form className="screen login" action={formAction} data-testid="invite-form">
+    <form className="screen login" action={submit} data-testid="invite-form">
       {siteKey ? (
         <Script
           src="https://challenges.cloudflare.com/turnstile/v0/api.js"
@@ -144,6 +150,7 @@ function PasswordInviteForm({
           maxLength={PASSWORD_MAX_LENGTH}
           value={password}
           onChange={(e) => setPassword(e.target.value)}
+          disabled={pending}
           data-testid="invite-password-input"
         />
         <p className="role-hint">At least {PASSWORD_MIN_LENGTH} characters.</p>

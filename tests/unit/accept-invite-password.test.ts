@@ -246,6 +246,47 @@ describe('completePasswordInvite', () => {
     expect(user?.passwordHash).toBeTruthy();
   });
 
+  it('rolls back verification, membership, and password when the invite is revoked', async () => {
+    const {
+      bootstrapHousehold,
+      createHouseholdInvite,
+      revokeHouseholdInvite,
+      getMembershipForEmail,
+    } = await import('@/lib/households');
+    const host = bootstrapHousehold({ email: 'pat@example.com', householdName: 'Ours' });
+    if (!host.ok) throw new Error('bootstrap failed');
+    const invite = createHouseholdInvite({ actorUserId: host.userId, role: 'student' });
+    if (!invite.ok) throw new Error('invite failed');
+
+    const { acceptInviteWithPassword } = await import('@/actions/acceptInviteWithPassword');
+    const start = new FormData();
+    start.set('email', 'alex@example.com');
+    start.set('password', 'student-pass');
+    start.set('inviteToken', invite.token);
+    await acceptInviteWithPassword({ status: 'idle' }, start);
+    const code = sendEmailMock.mock.calls[0]?.[0].code;
+    expect(code).toMatch(/^\d{6}$/);
+
+    expect(revokeHouseholdInvite(host.userId, invite.invite.id)).toEqual({ ok: true });
+
+    const { completePasswordInvite } = await import('@/actions/completePasswordInvite');
+    const finish = new FormData();
+    finish.set('email', 'alex@example.com');
+    finish.set('role', 'student');
+    finish.set('password', 'student-pass');
+    finish.set('code', code!);
+    expect(await completePasswordInvite({ status: 'idle' }, finish)).toEqual({
+      status: 'error',
+      reason: 'invalid',
+    });
+
+    expect(getMembershipForEmail('alex@example.com')).toBeNull();
+    expect(await userByEmail('alex@example.com')).toBeUndefined();
+    const { db, schema } = await import('@/lib/db');
+    const tokens = db.select().from(schema.magicTokens).all();
+    expect(tokens.every((row) => row.consumedAt == null)).toBe(true);
+  });
+
   it('does not stamp emailVerifiedAt or attach membership on a wrong code', async () => {
     const invite = await seedOpenStudentInvite();
     const { acceptInviteWithPassword } = await import('@/actions/acceptInviteWithPassword');

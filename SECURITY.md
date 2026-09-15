@@ -44,7 +44,9 @@ get an initial response within a week.
   `AUTH_MODE=local-otp` and `MAIL_TRANSPORT=outbox` require this opt-in in
   production. The writer creates the directory as `0700` and each message as `0600`.
 - Prefer `AUTH_MODE=password` on a tiny self-host if you do not want to run
-  email. `AUTH_SECRET` and `SETUP_BOOTSTRAP_SECRET` remain the host secrets.
+  email for **sign-in**. Password-mode invite accept still needs SMTP, Resend,
+  or an allowed outbox (and fails closed if none can deliver). `AUTH_SECRET`
+  and `SETUP_BOOTSTRAP_SECRET` remain the host secrets.
 
 ## Password-mode invite links are secrets
 

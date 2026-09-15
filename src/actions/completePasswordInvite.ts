@@ -6,7 +6,6 @@ import { z } from 'zod';
 import { consumeLocalOtp, getRawSession } from '@/lib/auth';
 import { verifyTurnstile } from '@/lib/captcha';
 import { getAuthMode, isTurnstileEnabled } from '@/lib/env';
-import { setUserPasswordHash } from '@/lib/households';
 import { extractClientIp } from '@/lib/ip';
 import { hashPassword, passwordMeetsPolicy } from '@/lib/password';
 import { checkRateLimit } from '@/lib/rate-limit';
@@ -23,9 +22,9 @@ export type CompletePasswordInviteState =
   { status: 'idle' } | { status: 'error'; reason: 'invalid' | 'captcha' | 'rate_limited' };
 
 /**
- * Password-mode invite accept, step 2: consume the mailbox OTP (which
- * attaches membership and stamps `emailVerifiedAt`), then store the
- * password hash and establish the session.
+ * Password-mode invite accept, step 2: consume the mailbox OTP and persist
+ * the password hash in the same transaction that attaches membership and
+ * stamps `emailVerifiedAt`, then establish the session.
  */
 export async function completePasswordInvite(
   _prev: CompletePasswordInviteState,
@@ -56,10 +55,11 @@ export async function completePasswordInvite(
   const limit = checkRateLimit(ip, 'signin');
   if (!limit.ok) return { status: 'error', reason: 'rate_limited' };
 
-  const result = consumeLocalOtp(parsed.data.email, parsed.data.role, parsed.data.code);
+  const passwordHash = hashPassword(parsed.data.password);
+  const result = consumeLocalOtp(parsed.data.email, parsed.data.role, parsed.data.code, {
+    passwordHash,
+  });
   if (!result.ok) return { status: 'error', reason: 'invalid' };
-
-  setUserPasswordHash(result.userId, hashPassword(parsed.data.password));
 
   const session = await getRawSession();
   session.userId = result.userId;

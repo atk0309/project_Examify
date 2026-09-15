@@ -85,7 +85,7 @@ export async function acceptInviteWithPassword(
     code,
   });
   if (!result.ok) {
-    console.error('[auth] password-invite OTP delivery failed', { email, error: result.error });
+    console.error('[auth] password-invite OTP delivery failed', { error: result.error });
     return { status: 'error', reason: 'send_failed' };
   }
 

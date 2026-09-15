@@ -149,8 +149,9 @@ Who may sign in is stored in SQLite, not env:
    (already required for parents); never post links publicly. See
    [`SECURITY.md`](SECURITY.md).
 3. **Accept** — the invitee opens `/invite/<token>` and finishes in the configured
-   auth mode (set a password, click a magic link, or enter a local OTP). After
-   that they sign in at `/signin` like anyone else.
+   auth mode (set a password then enter the mailbox code, click a magic link, or
+   enter a local OTP). Success signs them in and opens the app at `/`. Later
+   visits use `/signin`.
 4. **Privacy** — a parent/admin only sees students who share their household. One
    household cannot see another.
 

@@ -225,37 +225,6 @@ describe('invites + consumeMagicToken', () => {
   });
 });
 
-describe('acceptInviteWithPassword', () => {
-  it('does not stamp emailVerifiedAt without mailbox proof', async () => {
-    const {
-      bootstrapHousehold,
-      createHouseholdInvite,
-      acceptInviteWithPassword,
-      getMembershipForEmail,
-    } = await lib();
-    const host = bootstrapHousehold({ email: 'pat@example.com', householdName: 'Ours' });
-    mustOk(host, 'bootstrap failed');
-    const invite = createHouseholdInvite({ actorUserId: host.userId, role: 'student' });
-    mustOk(invite, 'invite failed');
-
-    const result = acceptInviteWithPassword({
-      inviteToken: invite.token,
-      email: 'alex@example.com',
-      passwordHash: 'not-a-real-hash',
-    });
-    mustOk(result, 'accept failed');
-    expect(getMembershipForEmail('alex@example.com')?.role).toBe('student');
-
-    const { db, schema } = await import('@/lib/db');
-    const user = db
-      .select()
-      .from(schema.users)
-      .where(eq(schema.users.email, 'alex@example.com'))
-      .get();
-    expect(user?.emailVerifiedAt ?? null).toBeNull();
-  });
-});
-
 describe('removeHouseholdMember', () => {
   it('lets an admin remove a student and blocks self/admin removal', async () => {
     const {

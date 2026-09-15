@@ -244,7 +244,12 @@ export function issueLocalOtp(
  * counting as guesses; after five well-formed failures within the OTP lifetime,
  * outstanding codes for that email and role are invalidated.
  */
-export function consumeLocalOtp(email: string, role: SessionRole, code: string): ConsumeResult {
+export function consumeLocalOtp(
+  email: string,
+  role: SessionRole,
+  code: string,
+  opts?: { passwordHash?: string },
+): ConsumeResult {
   const trimmed = code.trim();
   if (!/^\d{6}$/.test(trimmed)) {
     consumeHashedBearer(`otp:${email}:${role}:invalid`);
@@ -258,7 +263,7 @@ export function consumeLocalOtp(email: string, role: SessionRole, code: string):
     return { ok: false, reason: 'not-found' };
   }
 
-  const result = consumeHashedBearer(otpBearer(email, role, trimmed));
+  const result = consumeHashedBearer(otpBearer(email, role, trimmed), opts);
   if (!result.ok) {
     recordOtpGuessFailure(email, role, now);
   }
@@ -312,9 +317,10 @@ export function consumeMagicToken(token: string): ConsumeResult {
  * session without persisting the user. The role the link was issued for is
  * carried on the token row and returned so the caller can set `session.role`.
  */
-function consumeHashedBearer(token: string): ConsumeResult {
+function consumeHashedBearer(token: string, opts?: { passwordHash?: string }): ConsumeResult {
   const tokenHash = sha256(token);
   const now = Date.now();
+  const passwordHash = opts?.passwordHash;
 
   try {
     return db.transaction((tx) => {
@@ -355,17 +361,21 @@ function consumeHashedBearer(token: string): ConsumeResult {
       let userId: number;
       let isNew = false;
       if (existing) {
-        if (!existing.emailVerifiedAt) {
-          tx.update(schema.users)
-            .set({ emailVerifiedAt: new Date(now) })
-            .where(eq(schema.users.id, existing.id))
-            .run();
+        const patch: { emailVerifiedAt?: Date; passwordHash?: string } = {};
+        if (!existing.emailVerifiedAt) patch.emailVerifiedAt = new Date(now);
+        if (passwordHash) patch.passwordHash = passwordHash;
+        if (Object.keys(patch).length > 0) {
+          tx.update(schema.users).set(patch).where(eq(schema.users.id, existing.id)).run();
         }
         userId = existing.id;
       } else {
         const inserted = tx
           .insert(schema.users)
-          .values({ email: row.email, emailVerifiedAt: new Date(now) })
+          .values({
+            email: row.email,
+            emailVerifiedAt: new Date(now),
+            ...(passwordHash ? { passwordHash } : {}),
+          })
           .returning({ id: schema.users.id })
           .get();
         if (!inserted) throw new Error('failed to create user');
