@@ -3,13 +3,7 @@ import { buildCacheKey, readCachedIr, writeCachedIr, writeRunManifest } from './
 import { stableJson } from './diff';
 import { PAGE_RASTER_PROFILE, pageImageHashesOf, resolvePageImages, type PageImage } from './pages';
 import { loadGeneratePrompt } from './prompt';
-import {
-  getProvider,
-  hasUsableKey,
-  throwIfAborted,
-  type ProviderDeps,
-  type ProviderEnv,
-} from './providers';
+import { getProvider, hasUsableKey, type ProviderDeps, type ProviderEnv } from './providers';
 import { writeFileAtomic } from './write-atomic';
 import {
   GENERATE_TEMPERATURE,
@@ -41,7 +35,6 @@ export type GenerateRequest = {
   dryRunIr?: boolean;
   env?: ProviderEnv;
   fetch?: typeof fetch;
-  signal?: AbortSignal;
   now?: () => Date;
 };
 
@@ -97,7 +90,6 @@ export async function generateSubject(request: GenerateRequest): Promise<Generat
   const env = request.env ?? {};
   const adapter = getProvider(request.provider);
   const persist = request.dryRunIr !== true;
-  throwIfAborted(request.signal);
 
   const prompt = loadGeneratePrompt();
   const sourceHashes = sourceHashesOf(request.sources);
@@ -130,9 +122,8 @@ export async function generateSubject(request: GenerateRequest): Promise<Generat
   }
 
   if (!bank) {
-    throwIfAborted(request.signal);
     adapter.requireReady(env);
-    const deps: ProviderDeps = { env, fetch: request.fetch, signal: request.signal };
+    const deps: ProviderDeps = { env, fetch: request.fetch };
     const raw = await adapter.generate(
       {
         provider: request.provider,
@@ -172,8 +163,6 @@ export async function generateSubject(request: GenerateRequest): Promise<Generat
     keyEnv: adapter.keyEnv,
     seedHonored: adapter.seedHonored,
   });
-
-  throwIfAborted(request.signal);
 
   const irPath = path.join(request.subjectDir, BANK_IR_FILE);
   const wroteIr = persist;

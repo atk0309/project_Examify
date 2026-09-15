@@ -8,12 +8,9 @@ import { ProviderConfigError, type GenerateProvider } from './types';
 export {
   PROVIDER_TIMEOUT_MS,
   ProviderConfigError,
-  abortError,
   hasUsableKey,
-  providerRequestSignal,
   providerTimeoutSignal,
   readRequiredKey,
-  throwIfAborted,
 } from './types';
 export type { ProviderDeps, ProviderEnv, ProviderRequest } from './types';
 export { UNTRUSTED_SOURCE_NOTE, fenceUntrustedText } from './content';

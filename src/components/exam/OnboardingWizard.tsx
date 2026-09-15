@@ -404,6 +404,9 @@ export function OnboardingWizard({
                 }}
                 onCancel={() => {
                   generateCancelRef.current = true;
+                  setGenerateNote('Generate cancelled');
+                  setGenerateBusy(false);
+                  setActiveGenerateId(null);
                   const token = generateCancelTokenRef.current;
                   if (!token) return;
                   const data = new FormData();

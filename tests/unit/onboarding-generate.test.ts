@@ -95,6 +95,7 @@ describe('onboarding generate graph', () => {
     expect(generate).toMatch(/from 'examify-ingest\/generate'/);
     expect(generate).toMatch(/generateSubject/);
     expect(generate).toMatch(/dryRunIr: true/);
+    expect(generate).not.toMatch(/signal: /);
     expect(generate).not.toMatch(/applyEmit|planEmit|applyOnboardingEmit/);
     const wizard = readFileSync(
       path.join(process.cwd(), 'src/components/exam/OnboardingWizard.tsx'),
@@ -123,6 +124,9 @@ describe('onboarding generate graph', () => {
     expect(wizard).toMatch(/className="wizard-callout" data-testid="wizard-generate-cancelled"/);
     expect(wizard).toMatch(
       /if \(result\.reason === 'cancelled'\) \{\s*setGenerateNote\('Generate cancelled'\)/,
+    );
+    expect(wizard).toMatch(
+      /generateCancelRef\.current = true;\s*setGenerateNote\('Generate cancelled'\);\s*setGenerateBusy\(false\)/,
     );
     expect(wizard).toMatch(/if \(wroteAny\) setIrReady\(true\)/);
 
@@ -200,9 +204,8 @@ describe('generateOnboardingSubject', () => {
       seed: 0,
       root,
     });
-    expect(generateSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ dryRunIr: true, signal: expect.any(AbortSignal) }),
-    );
+    expect(generateSpy).toHaveBeenCalledWith(expect.objectContaining({ dryRunIr: true }));
+    expect(generateSpy.mock.calls[0]?.[0]).not.toHaveProperty('signal');
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected generate');
     expect(result.result.wroteIr).toBe(true);
@@ -403,18 +406,16 @@ describe('generateOnboardingSubject', () => {
   });
 
   it('does not resurrect a subject deleted after provider return before write', async () => {
-    const ingest = await import('examify-ingest/generate');
-    const { generateOnboardingSubject } = await import('@/lib/onboarding-generate');
+    const { generateOnboardingSubject, setOnboardingGenerateBeforeCommitForTests } =
+      await import('@/lib/onboarding-generate');
     const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
     const root = tempRoot();
     seedSubject(root);
     setOnboardingContentRootForTests(root);
     const subjectDir = path.join(root, 'content/subjects/history');
     const irPath = path.join(subjectDir, 'bank.ir.json');
-    const write = ingest.writeFileAtomic;
-    vi.spyOn(ingest, 'writeFileAtomic').mockImplementation((dest, body, options) => {
+    setOnboardingGenerateBeforeCommitForTests(() => {
       rmSync(subjectDir, { recursive: true, force: true });
-      return write(dest, body, options);
     });
 
     const result = await generateOnboardingSubject({
@@ -430,7 +431,7 @@ describe('generateOnboardingSubject', () => {
     expect(existsSync(subjectDir)).toBe(false);
   });
 
-  it('aborts in-flight provider work when cancel is requested', async () => {
+  it('skips the IR write when cancel lands while generateSubject is in flight', async () => {
     const ingest = await import('examify-ingest/generate');
     const { generateOnboardingSubject, requestOnboardingGenerateCancel } =
       await import('@/lib/onboarding-generate');
@@ -440,19 +441,15 @@ describe('generateOnboardingSubject', () => {
     setOnboardingContentRootForTests(root);
     const irPath = path.join(root, 'content/subjects/history/bank.ir.json');
     const prior = readFileSync(irPath, 'utf8');
-    let sawSignal: AbortSignal | undefined;
+    const { generateSubject: actualGenerateSubject } =
+      await vi.importActual<typeof ingest>('examify-ingest/generate');
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     vi.spyOn(ingest, 'generateSubject').mockImplementation(async (request) => {
-      sawSignal = request.signal;
-      await new Promise<never>((_resolve, reject) => {
-        request.signal?.addEventListener(
-          'abort',
-          () => {
-            reject(Object.assign(new Error('The operation was aborted'), { name: 'AbortError' }));
-          },
-          { once: true },
-        );
-      });
-      throw new Error('unreachable');
+      await blocked;
+      return actualGenerateSubject(request);
     });
 
     const token = 'cancel-token-01';
@@ -464,12 +461,11 @@ describe('generateOnboardingSubject', () => {
       cancelToken: token,
     });
     await vi.waitFor(() => {
-      expect(sawSignal).toBeDefined();
+      expect(ingest.generateSubject).toHaveBeenCalled();
     });
-    const started = Date.now();
     requestOnboardingGenerateCancel(token);
+    release();
     const result = await pending;
-    expect(Date.now() - started).toBeLessThan(1000);
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected cancelled');
     expect(result.reason).toBe('cancelled');
