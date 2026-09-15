@@ -589,7 +589,7 @@ describe('onboarding household gate', () => {
     );
   });
 
-  it('exposes read-only AI configured flags including OpenAI env detection', async () => {
+  it('exposes AI configured flags including OpenAI env detection', async () => {
     const { bootstrapHousehold } = await import('@/lib/households');
     const { getOnboardingSnapshot } = await import('@/lib/onboarding');
     const host = bootstrapHousehold({ email: 'pat@example.com', householdName: 'Ours' });

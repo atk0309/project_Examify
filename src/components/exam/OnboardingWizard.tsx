@@ -13,6 +13,7 @@ import {
   previewOnboardingEmitAction,
   renameOnboardingSubjectAction,
   setOnboardingAiModeAction,
+  setOnboardingOpenAiKeyAction,
   setReplaceSampleAction,
   skipOnboardingAction,
   validateOnboardingAction,
@@ -380,6 +381,11 @@ export function OnboardingWizard({
                     const data = new FormData();
                     data.set('aiMode', mode);
                     applyResult(await setOnboardingAiModeAction(data));
+                  })
+                }
+                onOpenAiKey={(data) =>
+                  run(async () => {
+                    applyResult(await setOnboardingOpenAiKeyAction(data));
                   })
                 }
                 onCancel={() => {
@@ -1125,6 +1131,100 @@ function SubjectDropzone({
   );
 }
 
+function OpenAiKeyPanel({
+  configured,
+  pending,
+  onSave,
+  onClear,
+}: {
+  configured: boolean;
+  pending: boolean;
+  onSave: (key: string) => void;
+  onClear: () => void;
+}) {
+  const [rotating, setRotating] = useState(false);
+  const [value, setValue] = useState('');
+  const showField = !configured || rotating;
+
+  return (
+    <div className="wizard-secret" data-testid="wizard-openai-key">
+      <p className="login-fine">
+        Saved on this host in the same .env store as install.sh. The value is never shown again.
+      </p>
+      {showField ? (
+        <form
+          className="wizard-secret-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            onSave(value);
+            setValue('');
+            setRotating(false);
+          }}
+        >
+          <label className="field-label" htmlFor="wizard-openai-key-input">
+            OpenAI API key
+          </label>
+          <input
+            id="wizard-openai-key-input"
+            className="text-input"
+            type="password"
+            autoComplete="off"
+            value={value}
+            disabled={pending}
+            data-testid="wizard-openai-key-input"
+            onChange={(event) => setValue(event.target.value)}
+          />
+          <div className="wizard-secret-actions">
+            <button
+              className="btn btn-primary"
+              type="submit"
+              disabled={pending || value.trim().length < 1}
+              data-testid="wizard-openai-key-save"
+            >
+              Save key
+            </button>
+            {rotating ? (
+              <button
+                className="btn btn-ghost"
+                type="button"
+                disabled={pending}
+                data-testid="wizard-openai-key-cancel"
+                onClick={() => {
+                  setRotating(false);
+                  setValue('');
+                }}
+              >
+                Cancel
+              </button>
+            ) : null}
+          </div>
+        </form>
+      ) : (
+        <div className="wizard-secret-actions">
+          <button
+            className="btn btn-ghost"
+            type="button"
+            disabled={pending}
+            data-testid="wizard-openai-key-rotate"
+            onClick={() => setRotating(true)}
+          >
+            Rotate
+          </button>
+          <button
+            className="btn btn-ghost"
+            type="button"
+            disabled={pending}
+            data-testid="wizard-openai-key-clear"
+            onClick={onClear}
+          >
+            Clear
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AiStep({
   snapshot,
   pending,
@@ -1135,6 +1235,7 @@ function AiStep({
   irReady,
   onSeed,
   onSelect,
+  onOpenAiKey,
   onGenerate,
   onCancel,
   onGoValidate,
@@ -1148,6 +1249,7 @@ function AiStep({
   irReady: boolean;
   onSeed: (seed: number) => void;
   onSelect: (mode: OnboardingAiMode) => void;
+  onOpenAiKey: (data: FormData) => void;
   onGenerate: (subjectIds: string[]) => void;
   onCancel: () => void;
   onGoValidate: () => void;
@@ -1187,6 +1289,24 @@ function AiStep({
           );
         })}
       </div>
+
+      {snapshot.aiMode === 'cloud-openai' ? (
+        <OpenAiKeyPanel
+          configured={snapshot.openaiConfigured}
+          pending={busy}
+          onSave={(key) => {
+            const data = new FormData();
+            data.set('intent', 'set');
+            data.set('openaiApiKey', key);
+            onOpenAiKey(data);
+          }}
+          onClear={() => {
+            const data = new FormData();
+            data.set('intent', 'clear');
+            onOpenAiKey(data);
+          }}
+        />
+      ) : null}
 
       {provider ? (
         <div className="wizard-generate" data-testid="wizard-generate">

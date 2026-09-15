@@ -33,6 +33,7 @@ import { db, schema } from '@/lib/db';
 import type { HouseholdRole } from '@/lib/db/schema';
 import { SAMPLE_QUESTIONS, SAMPLE_SUBJECTS } from '@/lib/exam/data';
 import { env } from '@/lib/env';
+import { envStoreSecretConfigured } from '@/lib/env-store';
 import { getMembershipForUser } from '@/lib/households';
 import {
   EMPTY_AUTHORITATIVE_EMIT,
@@ -210,11 +211,6 @@ export function listOnboardingGenerateSources(
   return resolveSubjectSources(root, subjectId, subjectDir).map((source) => source.relPath);
 }
 
-function isUsableSecret(value: string | undefined): boolean {
-  const trimmed = value?.trim() ?? '';
-  return trimmed !== '' && trimmed !== 'test';
-}
-
 export function listOnboardingSubjects(root = getOnboardingContentRoot()): OnboardingSubject[] {
   const dir = subjectsDir(root);
   let names: string[] = [];
@@ -359,9 +355,12 @@ function aiFlags(): {
   localAgentConfigured: boolean;
 } {
   return {
-    anthropicConfigured: isUsableSecret(env.ANTHROPIC_API_KEY),
-    // Read-only detection — OPENAI_API_KEY is not in env.ts / never NEXT_PUBLIC_*.
-    openaiConfigured: isUsableSecret(process.env.OPENAI_API_KEY),
+    anthropicConfigured: envStoreSecretConfigured('ANTHROPIC_API_KEY', {
+      ANTHROPIC_API_KEY: env.ANTHROPIC_API_KEY,
+    }),
+    // OPENAI_API_KEY is not in env.ts / never NEXT_PUBLIC_*. Wizard + install.sh
+    // write the same `.env` store and update process.env for the current process.
+    openaiConfigured: envStoreSecretConfigured('OPENAI_API_KEY'),
     localAgentConfigured: Boolean(
       env.EXAMIFY_LLM_BASE_URL || process.env.EXAMIFY_INGEST_LOCAL_CMD?.trim(),
     ),

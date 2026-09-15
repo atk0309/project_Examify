@@ -56,7 +56,9 @@ Generate writes IR only. It never silently emits or applies:
    Cloud generate (`--provider anthropic` / `openai`) reads `ANTHROPIC_API_KEY`
    / `OPENAI_API_KEY` from the environment or repo `.env` / `.env.local` (existing
    env vars win) and fails closed on a cache miss if
-   the key is missing or is the `test` sentinel. A cache hit returns the prior
+   the key is missing or is the `test` sentinel. The `/onboarding` AI step
+   and `install.sh` can write `OPENAI_API_KEY` into that same `.env` store;
+   the wizard never echoes the value. A cache hit returns the prior
    IR without a network call. `--provider test` is the CI fixture (no
    network). `--provider local` uses quoted `EXAMIFY_INGEST_LOCAL_CMD` or
    `EXAMIFY_LLM_BASE_URL` (same multimodal payload as OpenAI — source text and

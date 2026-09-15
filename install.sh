@@ -164,6 +164,9 @@ write_env() {
     printf 'DATABASE_URL=%s\n' "${DATABASE_URL}"
     printf 'AUTH_MODE=%s\n' "${AUTH_MODE}"
     printf 'ANTHROPIC_API_KEY=%s\n' "${ANTHROPIC_API_KEY:-test}"
+    if [ -n "${OPENAI_API_KEY-}" ]; then
+      printf 'OPENAI_API_KEY=%s\n' "$OPENAI_API_KEY"
+    fi
     printf '\n'
     printf '%s\n' '# Mail: magic-link, local-otp, and password-mode invite accept.'
     printf 'MAIL_TRANSPORT=%s\n' "${MAIL_TRANSPORT}"
@@ -310,6 +313,13 @@ fi
 if [ "$NONINTERACTIVE" != "1" ] && confirm "Enable Cloudflare Turnstile (captcha)?" "n"; then
   prompt NEXT_PUBLIC_TURNSTILE_SITE_KEY "Turnstile site key"
   prompt TURNSTILE_SECRET_KEY "Turnstile secret key" "" secret
+fi
+
+if [ "$NONINTERACTIVE" != "1" ]; then
+  echo
+  echo "Optional: OPENAI_API_KEY for /onboarding Cloud (OpenAI) generate."
+  echo "Same .env store as the wizard. Leave blank to skip (you can set it later)."
+  prompt OPENAI_API_KEY "OpenAI API key" "" secret
 fi
 
 WROTE_ENV=0

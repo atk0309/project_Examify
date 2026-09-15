@@ -3,6 +3,7 @@
 import { redirect } from 'next/navigation';
 import { z } from 'zod';
 import { getSession } from '@/lib/auth';
+import { clearEnvStoreSecret, OPENAI_ENV_KEY, setEnvStoreSecret } from '@/lib/env-store';
 import {
   generateOnboardingSubject,
   isOnboardingGenerateCancelToken,
@@ -228,6 +229,25 @@ export async function cancelOnboardingGenerateAction(
   }
   requestOnboardingGenerateCancel(token);
   return { ok: true };
+}
+
+export async function setOnboardingOpenAiKeyAction(
+  formData: FormData,
+): Promise<{ ok: true; snapshot: OnboardingSnapshot } | OnboardingActionError> {
+  const gate = await requireOnboardingAdmin();
+  if (!gate.ok) return gate;
+  const intent = formData.get('intent');
+  if (intent === 'clear') {
+    const cleared = clearEnvStoreSecret(OPENAI_ENV_KEY);
+    if (!cleared.ok) return { ok: false, reason: cleared.reason };
+    return { ok: true, snapshot: snapshot(gate.householdId) };
+  }
+  if (intent !== 'set') return { ok: false, reason: 'invalid' };
+  const raw = formData.get('openaiApiKey');
+  if (typeof raw !== 'string') return { ok: false, reason: 'invalid' };
+  const written = setEnvStoreSecret(OPENAI_ENV_KEY, raw);
+  if (!written.ok) return { ok: false, reason: written.reason };
+  return { ok: true, snapshot: snapshot(gate.householdId) };
 }
 
 export async function setOnboardingAiModeAction(

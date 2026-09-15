@@ -30,7 +30,9 @@ Surface:
 - **`/setup`** — first-run household bootstrap (only when no household exists).
 - **`/onboarding`** — post-bootstrap content wizard (household **admin** only, while
   `onboarding_complete` is false). Welcome → subjects → PDF dropzones → AI setup
-  (optional `examify-ingest generate` after files + mode) → validate → Review
+  (optional `examify-ingest generate` after files + mode; OpenAI mode can
+  set / rotate / clear `OPENAI_API_KEY` in the same `.env` store as
+  `install.sh`, never echoed) → validate → Review
   (dry-run HITL) → apply → ready. The wizard is one stage at a time: desktop
   (≥900px) uses a left step rail + stage + sticky footer; mobile uses compact
   “Step N of M · Label” progress and a sticky bottom bar. Generate writes BankIR
@@ -148,7 +150,7 @@ src/
   actions/              # 'use server' actions (requestMagicLink, signInWithPassword,
                         #   verifyLocalOtp, acceptInviteWithPassword, completePasswordInvite,
                         #   bootstrapHousehold,
-                        #   onboarding (subjects/PDFs/AI mode + generate + ingest validate/dry-run/apply),
+                        #   onboarding (subjects/PDFs/AI mode + OpenAI key write + generate + ingest validate/dry-run/apply),
                         #   createInvite / revokeInvite / requestInviteLink, signOut,
                         #   recordAttempt, saveExamProgress + discardExamSession)
   components/
@@ -164,6 +166,7 @@ src/
     onboarding.ts       # first-run subjects/PDFs + examify-ingest emit (server-only)
     onboarding-generate.ts # AI-step generateSubject bridge (preview then commit if !cancelled)
     onboarding-types.ts # client-safe wizard snapshot / AI mode types
+    env-store.ts        # server-only `.env` upsert/clear (OPENAI_API_KEY write path)
     families.ts         # leftover FAMILIES JSON parser (optional one-shot import only)
     allowlist.ts        # isAllowedEmail(role,email), derived from household membership
     auth-mode.ts        # AUTH_MODE types + helpers (password / magic-link / local-otp)

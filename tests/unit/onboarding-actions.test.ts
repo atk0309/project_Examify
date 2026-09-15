@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
@@ -71,7 +71,9 @@ beforeEach(async () => {
 afterEach(async () => {
   const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
   const { resetOnboardingGenerateForTests } = await import('@/lib/onboarding-generate');
+  const { setEnvStoreRootForTests } = await import('@/lib/env-store');
   setOnboardingContentRootForTests(null);
+  setEnvStoreRootForTests(null);
   resetOnboardingGenerateForTests();
 });
 
@@ -93,6 +95,7 @@ describe('onboarding actions', () => {
       applyOnboardingEmitAction,
       cancelOnboardingGenerateAction,
       generateOnboardingSubjectAction,
+      setOnboardingOpenAiKeyAction,
     } = await import('@/actions/onboarding');
     const data = new FormData();
     data.set('id', 'history');
@@ -112,6 +115,10 @@ describe('onboarding actions', () => {
       ok: false,
       reason: 'forbidden',
     });
+    const openai = new FormData();
+    openai.set('intent', 'set');
+    openai.set('openaiApiKey', 'sk-should-not-write');
+    expect(await setOnboardingOpenAiKeyAction(openai)).toEqual({ ok: false, reason: 'forbidden' });
   });
 
   it('refuses apply before a dry-run preview', async () => {
@@ -532,6 +539,92 @@ describe('onboarding actions', () => {
     expect(JSON.stringify(result)).not.toMatch(/ANTHROPIC_API_KEY|sentinel|ENOENT|\.env/i);
   });
 
+  it('lets the admin set, rotate, and clear OPENAI_API_KEY without echoing it', async () => {
+    const { setEnvStoreRootForTests } = await import('@/lib/env-store');
+    const root = tempRoot();
+    setEnvStoreRootForTests(root);
+    writeFileSync(path.join(root, '.env'), 'ANTHROPIC_API_KEY=test\n');
+    await signInHost();
+    const secret = 'sk-openai-action-secret-never-echo';
+    const rotated = 'sk-openai-rotated-secret-never-echo';
+    const previous = process.env.OPENAI_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    try {
+      const { setOnboardingOpenAiKeyAction } = await import('@/actions/onboarding');
+      const set = new FormData();
+      set.set('intent', 'set');
+      set.set('openaiApiKey', secret);
+      const written = await setOnboardingOpenAiKeyAction(set);
+      expect(written.ok).toBe(true);
+      if (!written.ok) throw new Error('expected set');
+      expect(written.snapshot.openaiConfigured).toBe(true);
+      expect(JSON.stringify(written)).not.toContain(secret);
+      expect(JSON.stringify(written)).not.toMatch(/OPENAI_API_KEY=/);
+      expect(readFileSync(path.join(root, '.env'), 'utf8')).toContain(`OPENAI_API_KEY=${secret}`);
+
+      const rotate = new FormData();
+      rotate.set('intent', 'set');
+      rotate.set('openaiApiKey', rotated);
+      const rotatedResult = await setOnboardingOpenAiKeyAction(rotate);
+      expect(rotatedResult.ok).toBe(true);
+      if (!rotatedResult.ok) throw new Error('expected rotate');
+      expect(rotatedResult.snapshot.openaiConfigured).toBe(true);
+      expect(JSON.stringify(rotatedResult)).not.toContain(rotated);
+      expect(readFileSync(path.join(root, '.env'), 'utf8')).toContain(`OPENAI_API_KEY=${rotated}`);
+      expect(readFileSync(path.join(root, '.env'), 'utf8')).not.toContain(secret);
+
+      const clear = new FormData();
+      clear.set('intent', 'clear');
+      const cleared = await setOnboardingOpenAiKeyAction(clear);
+      expect(cleared.ok).toBe(true);
+      if (!cleared.ok) throw new Error('expected clear');
+      expect(cleared.snapshot.openaiConfigured).toBe(false);
+      expect(JSON.stringify(cleared)).not.toContain(rotated);
+      expect(readFileSync(path.join(root, '.env'), 'utf8')).not.toMatch(/OPENAI_API_KEY=/);
+    } finally {
+      if (previous === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = previous;
+    }
+  });
+
+  it('refuses OpenAI generate when the key is missing (fail closed, no echo)', async () => {
+    const root = tempRoot();
+    const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
+    setOnboardingContentRootForTests(root);
+    await signInHost();
+    fs.mkdirSync(path.join(root, 'content/subjects/history'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'content/source-pdfs/history'), { recursive: true });
+    writeFileSync(
+      path.join(root, 'content/subjects/history/bank.ir.json'),
+      JSON.stringify({
+        version: 1,
+        subject: { id: 'history', label: 'History', icon: 'geography', l: 0.6, c: 0.08, h: 40 },
+        difficulties: { easy: [], medium: [], hard: [] },
+      }),
+    );
+    writeFileSync(path.join(root, 'content/source-pdfs/history/notes.txt'), 'A source note.\n');
+    const previous = process.env.OPENAI_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    try {
+      const { generateOnboardingSubjectAction, setOnboardingAiModeAction } =
+        await import('@/actions/onboarding');
+      const mode = new FormData();
+      mode.set('aiMode', 'cloud-openai');
+      expect((await setOnboardingAiModeAction(mode)).ok).toBe(true);
+      const generate = new FormData();
+      generate.set('subjectId', 'history');
+      const result = await generateOnboardingSubjectAction(generate);
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error('expected fail-closed');
+      expect(result.reason).toBe('missing_key');
+      expect(result).not.toHaveProperty('message');
+      expect(JSON.stringify(result)).not.toMatch(/OPENAI_API_KEY|sentinel|ENOENT|\.env/i);
+    } finally {
+      if (previous === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = previous;
+    }
+  });
+
   it('validates hand-authored IR without calling generate', async () => {
     const root = tempRoot();
     const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
@@ -581,8 +674,13 @@ describe('onboarding actions', () => {
       cancelOnboardingGenerateAction,
       generateOnboardingSubjectAction,
       previewOnboardingEmitAction,
+      setOnboardingOpenAiKeyAction,
     } = await import('@/actions/onboarding');
     expect(await previewOnboardingEmitAction()).toEqual({ ok: false, reason: 'forbidden' });
+    const openai = new FormData();
+    openai.set('intent', 'set');
+    openai.set('openaiApiKey', 'sk-should-not-write');
+    expect(await setOnboardingOpenAiKeyAction(openai)).toEqual({ ok: false, reason: 'forbidden' });
     const generate = new FormData();
     generate.set('subjectId', 'history');
     expect(await generateOnboardingSubjectAction(generate)).toEqual({
@@ -616,5 +714,6 @@ describe('onboarding actions', () => {
       ok: false,
       reason: 'forbidden',
     });
+    expect(await setOnboardingOpenAiKeyAction(openai)).toEqual({ ok: false, reason: 'forbidden' });
   });
 });

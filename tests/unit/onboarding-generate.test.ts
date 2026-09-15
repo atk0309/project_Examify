@@ -244,6 +244,29 @@ describe('generateOnboardingSubject', () => {
     );
   });
 
+  it('fails closed for openai without a real key (no stub)', async () => {
+    const { generateOnboardingSubject } = await import('@/lib/onboarding-generate');
+    const root = tempRoot();
+    seedSubject(root);
+    const previous = process.env.OPENAI_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    try {
+      const result = await generateOnboardingSubject({
+        subjectId: 'history',
+        provider: 'openai',
+        seed: 0,
+        root,
+      });
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error('expected missing key');
+      expect(result.reason).toBe('missing_key');
+      expect(result.message).toMatch(/OPENAI_API_KEY/i);
+    } finally {
+      if (previous === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = previous;
+    }
+  });
+
   it('fails closed for anthropic without a real key (no stub)', async () => {
     const { generateOnboardingSubject } = await import('@/lib/onboarding-generate');
     const root = tempRoot();

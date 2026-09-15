@@ -109,7 +109,7 @@ appears in no dashboard.
 ### Installer (recommended)
 
 `install.sh` asks a few questions (site URL, secrets, auth mode, optional
-Turnstile and email), writes `.env`, installs, migrates, and builds:
+Turnstile, email, and OpenAI key), writes `.env`, installs, migrates, and builds:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/atk0309/project_Examify/main/install.sh | bash

@@ -65,7 +65,8 @@ matches a persist run; it does not populate `.examify-ingest/cache/pages/`.
 Cloud providers fail closed without a real env key (`ANTHROPIC_API_KEY` /
 `OPENAI_API_KEY`) **on a cache miss**. The generate CLI fills unset keys from
 the repo `.env` then `.env.local` (already-set env vars, including an empty
-string, win). A matching `cacheKey` reuses the cached
+string, win). `/onboarding` and `install.sh` write `OPENAI_API_KEY` into
+that same `.env` store. A matching `cacheKey` reuses the cached
 IR with no network and does not require the key. The app's
 `ANTHROPIC_API_KEY=test` sentinel is refused on a miss — use `--provider test`
 for CI. `local` needs `EXAMIFY_INGEST_LOCAL_CMD` (quoted executable + args;
