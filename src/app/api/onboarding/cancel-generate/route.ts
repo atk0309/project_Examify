@@ -55,6 +55,8 @@ export async function POST(request: Request): Promise<NextResponse> {
   if (!token || !isOnboardingGenerateCancelToken(token)) {
     return NextResponse.json({ ok: false, reason: 'invalid' }, { status: 400 });
   }
-  requestOnboardingGenerateCancel(token);
+  if (!requestOnboardingGenerateCancel(token)) {
+    return NextResponse.json({ ok: false, reason: 'already_committed' }, { status: 409 });
+  }
   return NextResponse.json({ ok: true });
 }

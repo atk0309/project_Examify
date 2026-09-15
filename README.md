@@ -42,7 +42,9 @@ no env-JSON allowlist to hand-edit.
    generate never auto-applies; cancel POSTs `/api/onboarding/cancel-generate`
    (not a queued Server Action) and skips the IR write without replacing
    prior IR (the wizard waits for an `ok` cancel response before claiming
-   cancelled); cancelled is a calm status, not an error toast; generate is
+   cancelled; cancel after that token already wrote IR is refused; an
+   acknowledged cancel unlocks nav while the provider is still pending);
+   cancelled is a calm status, not an error toast; generate is
    gated to wizard catalog subjects; an empty
    catalog is refused; a changed plan after dry-run is refused). Finish requires
    that confirmed apply; skip-without-emit keeps the sample bank.

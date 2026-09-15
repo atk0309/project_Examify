@@ -65,6 +65,7 @@ export type OnboardingActionError = {
     | 'missing_local'
     | 'empty_sources'
     | 'cancelled'
+    | 'already_committed'
     | 'rate_limited'
     | 'host_managed';
   message?: string;
@@ -225,7 +226,9 @@ export async function cancelOnboardingGenerateAction(
   if (typeof token !== 'string' || !isOnboardingGenerateCancelToken(token)) {
     return { ok: false, reason: 'invalid' };
   }
-  requestOnboardingGenerateCancel(token);
+  if (!requestOnboardingGenerateCancel(token)) {
+    return { ok: false, reason: 'already_committed' };
+  }
   return { ok: true };
 }
 

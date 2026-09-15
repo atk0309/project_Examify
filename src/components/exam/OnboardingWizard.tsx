@@ -134,6 +134,8 @@ function errorCopy(error: OnboardingActionError): string {
       return 'No source files for that subject (source-pdfs/<id>/, <id>.pdf, or files in the subject folder).';
     case 'cancelled':
       return 'Generate cancelled.';
+    case 'already_committed':
+      return 'Generate already finished — review the new BankIR.';
     case 'rate_limited':
       return 'Too many key updates. Try again in a bit.';
     case 'host_managed':
@@ -185,6 +187,7 @@ export function OnboardingWizard({
   const [generateSeed, setGenerateSeed] = useState(ONBOARDING_GENERATE_SEED_DEFAULT);
   const [generateBusy, setGenerateBusy] = useState(false);
   const [generateNote, setGenerateNote] = useState<string | null>(null);
+  const [generateCancelAck, setGenerateCancelAck] = useState(false);
   const [irReady, setIrReady] = useState(false);
   const [generateRuns, setGenerateRuns] = useState<Record<string, OnboardingGenerateResult>>({});
   const [activeGenerateId, setActiveGenerateId] = useState<string | null>(null);
@@ -196,11 +199,14 @@ export function OnboardingWizard({
   const stepIndex = STEPS.findIndex((entry) => entry.id === step);
   const current = STEPS[stepIndex]!;
   const wideStage = step === 'dry-run';
-  // Keep Cancel reachable: skip / Back / rail must not leave AI mid-generate.
-  const navLocked = pending || generateBusy;
+  // Keep Cancel reachable while generate is live. After an acknowledged
+  // cancel, do not let the hung Server Action's `pending` freeze the wizard.
+  const holdWizard = generateBusy || (pending && !generateCancelAck);
+  const navLocked = holdWizard;
 
   const run = (task: () => Promise<void>) => {
     startTransition(async () => {
+      setGenerateCancelAck(false);
       setError(null);
       setIssues([]);
       try {
@@ -331,7 +337,7 @@ export function OnboardingWizard({
             {step === 'subjects' ? (
               <SubjectsStep
                 snapshot={snapshot}
-                pending={pending}
+                pending={holdWizard}
                 onAdd={(data) =>
                   run(async () => {
                     if (applyResult(await addOnboardingSubjectAction(data))) {
@@ -362,7 +368,7 @@ export function OnboardingWizard({
             {step === 'files' ? (
               <FilesStep
                 snapshot={snapshot}
-                pending={pending}
+                pending={holdWizard}
                 onAttach={(data) =>
                   run(async () => {
                     applyResult(await attachOnboardingPdfAction(data));
@@ -379,7 +385,7 @@ export function OnboardingWizard({
             {step === 'ai' ? (
               <AiStep
                 snapshot={snapshot}
-                pending={pending}
+                pending={holdWizard}
                 generateBusy={generateBusy}
                 generateSeed={generateSeed}
                 generateRuns={generateRuns}
@@ -424,6 +430,7 @@ export function OnboardingWizard({
                       setError(null);
                       setGenerateNote('Generate cancelled');
                       setGenerateBusy(false);
+                      setGenerateCancelAck(true);
                       setActiveGenerateId(null);
                     } finally {
                       generateCancellingRef.current = false;
@@ -436,6 +443,7 @@ export function OnboardingWizard({
                     const token = crypto.randomUUID();
                     generateCancelTokenRef.current = token;
                     generateCancelRef.current = false;
+                    setGenerateCancelAck(false);
                     setGenerateNote(null);
                     setGenerateBusy(true);
                     let wroteAny = false;
@@ -477,10 +485,12 @@ export function OnboardingWizard({
                       if (wroteAny) setIrReady(true);
                       if (cancelled) setGenerateNote('Generate cancelled');
                     } finally {
-                      generateCancelTokenRef.current = null;
-                      generateCancelRef.current = false;
-                      setActiveGenerateId(null);
-                      setGenerateBusy(false);
+                      if (generateCancelTokenRef.current === token) {
+                        generateCancelTokenRef.current = null;
+                        generateCancelRef.current = false;
+                        setActiveGenerateId(null);
+                        setGenerateBusy(false);
+                      }
                     }
                   })
                 }
@@ -489,7 +499,7 @@ export function OnboardingWizard({
 
             {step === 'validate' ? (
               <ValidateStep
-                pending={pending}
+                pending={holdWizard}
                 validated={validated}
                 onValidate={() =>
                   run(async () => {
@@ -508,7 +518,7 @@ export function OnboardingWizard({
             {step === 'dry-run' ? (
               <DryRunStep
                 snapshot={snapshot}
-                pending={pending}
+                pending={holdWizard}
                 dryRun={dryRun}
                 onToggleReplace={(enabled) =>
                   run(async () => {
@@ -535,7 +545,7 @@ export function OnboardingWizard({
 
             {step === 'apply' ? (
               <ApplyStep
-                pending={pending}
+                pending={holdWizard}
                 applyState={applyState}
                 hasDryRun={Boolean(snapshot.hasDryRun && dryRun)}
                 onApply={() =>
@@ -610,7 +620,7 @@ export function OnboardingWizard({
                 <button
                   type="button"
                   className="btn btn-primary"
-                  disabled={pending}
+                  disabled={holdWizard}
                   data-testid="wizard-get-started"
                   onClick={() => go('subjects')}
                 >
@@ -622,7 +632,7 @@ export function OnboardingWizard({
                 <button
                   type="button"
                   className="btn btn-primary"
-                  disabled={pending || snapshot.subjects.length < 1}
+                  disabled={holdWizard || snapshot.subjects.length < 1}
                   data-testid="wizard-next"
                   onClick={() => go('files')}
                 >
@@ -646,7 +656,7 @@ export function OnboardingWizard({
                 <button
                   type="button"
                   className="btn btn-primary"
-                  disabled={pending || !validated}
+                  disabled={holdWizard || !validated}
                   data-testid="wizard-next"
                   onClick={() => go('dry-run')}
                 >
@@ -658,7 +668,7 @@ export function OnboardingWizard({
                 <button
                   type="button"
                   className="btn btn-primary"
-                  disabled={pending || !dryRun || !snapshot.hasDryRun}
+                  disabled={holdWizard || !dryRun || !snapshot.hasDryRun}
                   data-testid="wizard-to-apply"
                   onClick={() => {
                     setApplyState({ status: 'idle' });
@@ -673,7 +683,7 @@ export function OnboardingWizard({
                 <button
                   type="button"
                   className="btn btn-primary"
-                  disabled={pending}
+                  disabled={holdWizard}
                   data-testid="wizard-to-ready"
                   onClick={() => go('ready')}
                 >
@@ -685,7 +695,7 @@ export function OnboardingWizard({
                 <button
                   type="button"
                   className="btn btn-primary"
-                  disabled={pending}
+                  disabled={holdWizard}
                   data-testid="wizard-finish"
                   onClick={() =>
                     run(async () => {

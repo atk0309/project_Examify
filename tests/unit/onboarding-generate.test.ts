@@ -68,6 +68,12 @@ describe('onboarding generate mapping', () => {
     );
     expect(await postOnboardingGenerateCancel('cancel-token-01', forbidden)).toBe(false);
 
+    const committed = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ ok: false, reason: 'already_committed' }), { status: 409 }),
+    );
+    expect(await postOnboardingGenerateCancel('cancel-token-01', committed)).toBe(false);
+
     const ok = vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 }));
     expect(await postOnboardingGenerateCancel('cancel-token-01', ok)).toBe(true);
     expect(ok).toHaveBeenCalledWith(
@@ -135,7 +141,10 @@ describe('onboarding generate graph', () => {
       path.join(process.cwd(), 'src/components/exam/OnboardingWizard.tsx'),
       'utf8',
     );
-    expect(wizard).toMatch(/const navLocked = pending \|\| generateBusy/);
+    expect(wizard).toMatch(
+      /const holdWizard = generateBusy \|\| \(pending && !generateCancelAck\)/,
+    );
+    expect(wizard).toMatch(/const navLocked = holdWizard/);
     expect(wizard).toMatch(/const go = \(next: StepId\) => \{\s*if \(generateBusy\) return;/);
     expect(wizard).toMatch(/const skip = \(\) => \{\s*if \(generateBusy\) return;/);
     expect(wizard).toMatch(/disabled=\{!clickable \|\| navLocked\}/);
@@ -154,12 +163,12 @@ describe('onboarding generate graph', () => {
       /const recorded = await postOnboardingGenerateCancel\(token\);\s*if \(!recorded\) \{\s*setError\('Could not cancel generate\.'\)/,
     );
     expect(wizard).toMatch(
-      /generateCancelRef\.current = true;\s*if \(generateCancelTokenRef\.current !== token\) return;\s*setError\(null\);\s*setGenerateNote\('Generate cancelled'\);\s*setGenerateBusy\(false\)/,
+      /generateCancelRef\.current = true;\s*if \(generateCancelTokenRef\.current !== token\) return;\s*setError\(null\);\s*setGenerateNote\('Generate cancelled'\);\s*setGenerateBusy\(false\);\s*setGenerateCancelAck\(true\)/,
     );
     expect(wizard).toMatch(/postOnboardingGenerateCancel\(token\)/);
     expect(wizard).not.toMatch(/cancelOnboardingGenerateAction/);
     expect(wizard).toMatch(
-      /\} finally \{\s*generateCancelTokenRef\.current = null;\s*generateCancelRef\.current = false;/,
+      /\} finally \{\s*if \(generateCancelTokenRef\.current === token\) \{\s*generateCancelTokenRef\.current = null;/,
     );
     const welcomeSkipAt = wizard.indexOf('Use sample bank for now');
     expect(welcomeSkipAt).toBeGreaterThan(-1);
@@ -541,6 +550,25 @@ describe('generateOnboardingSubject', () => {
     if (result.ok) throw new Error('expected cancelled');
     expect(result.reason).toBe('cancelled');
     expect(readFileSync(irPath, 'utf8')).toBe(prior);
+  });
+
+  it('rejects cancel after the IR commit has already won', async () => {
+    const { generateOnboardingSubject, requestOnboardingGenerateCancel } =
+      await import('@/lib/onboarding-generate');
+    const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
+    const root = tempRoot();
+    seedSubject(root);
+    setOnboardingContentRootForTests(root);
+    const token = 'cancel-token-01';
+    const result = await generateOnboardingSubject({
+      subjectId: 'history',
+      provider: 'test',
+      seed: 0,
+      root,
+      cancelToken: token,
+    });
+    expect(result.ok).toBe(true);
+    expect(requestOnboardingGenerateCancel(token)).toBe(false);
   });
 
   it('evicts the oldest cancel token at FIFO cap 64', async () => {

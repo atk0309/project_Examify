@@ -44,7 +44,10 @@ Surface:
   then skips the IR write (provider abort is a parallel Ingestion PR); the
   preview is discarded and prior IR is unchanged. The wizard waits for an
   `ok` cancel response before claiming cancelled; a failed POST is an error,
-  not a calm cancel. User-initiated cancel is a calm status, not an error toast.
+  not a calm cancel. Cancel after that token already wrote IR returns
+  `already_committed` (not cancelled). An acknowledged cancel unlocks
+  skip / Back / rail even if the unaborted provider is still pending.
+  User-initiated cancel is a calm status, not an error toast.
   Generate is gated to wizard catalog subjects (`listOnboardingSubjects`).
   Delete/rename wait on the generate lock. A post-provider catalog
   re-check (#65) refuses a write if the id is gone.

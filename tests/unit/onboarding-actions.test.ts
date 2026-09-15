@@ -794,6 +794,50 @@ describe('onboarding actions', () => {
     expect(await invalid.json()).toEqual({ ok: false, reason: 'invalid' });
   });
 
+  it('rejects cancel-generate after that token already committed IR', async () => {
+    const root = tempRoot();
+    const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
+    setOnboardingContentRootForTests(root);
+    await signInHost();
+    fs.mkdirSync(path.join(root, 'content/subjects/history'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'content/source-pdfs/history'), { recursive: true });
+    writeFileSync(
+      path.join(root, 'content/subjects/history/bank.ir.json'),
+      JSON.stringify({
+        version: 1,
+        subject: { id: 'history', label: 'History', icon: 'geography', l: 0.6, c: 0.08, h: 40 },
+        difficulties: { easy: [], medium: [], hard: [] },
+      }),
+    );
+    writeFileSync(path.join(root, 'content/source-pdfs/history/notes.txt'), 'A source note.\n');
+
+    const { generateOnboardingSubjectAction, setOnboardingAiModeAction } =
+      await import('@/actions/onboarding');
+    const { POST } = await import('@/app/api/onboarding/cancel-generate/route');
+    const mode = new FormData();
+    mode.set('aiMode', 'skip-stub');
+    expect((await setOnboardingAiModeAction(mode)).ok).toBe(true);
+
+    const token = 'cancel-token-01';
+    const generate = new FormData();
+    generate.set('subjectId', 'history');
+    generate.set('cancelToken', token);
+    expect((await generateOnboardingSubjectAction(generate)).ok).toBe(true);
+
+    const late = await POST(
+      new Request('http://localhost:3000/api/onboarding/cancel-generate', {
+        method: 'POST',
+        headers: {
+          origin: 'http://localhost:3000',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ cancelToken: token }),
+      }),
+    );
+    expect(late.status).toBe(409);
+    expect(await late.json()).toEqual({ ok: false, reason: 'already_committed' });
+  });
+
   it('refuses cloud generate when the key is the test sentinel', async () => {
     const root = tempRoot();
     const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');

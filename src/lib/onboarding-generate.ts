@@ -44,7 +44,16 @@ const CANCEL_TOKEN_RE = /^[A-Za-z0-9_-]{8,64}$/;
  * generateSubject / providers.
  */
 const cancelledTokens = new Set<string>();
+const committedTokens = new Set<string>();
 const MAX_CANCEL_TOKENS = 64;
+
+function rememberToken(set: Set<string>, token: string): void {
+  set.add(token);
+  if (set.size > MAX_CANCEL_TOKENS) {
+    const first = set.values().next().value;
+    if (first) set.delete(first);
+  }
+}
 
 /** Single-flight: one onboarding generate commits at a time in this process. */
 let generateChain: Promise<unknown> = Promise.resolve();
@@ -53,21 +62,23 @@ export function isOnboardingGenerateCancelToken(token: string): boolean {
   return CANCEL_TOKEN_RE.test(token);
 }
 
-export function requestOnboardingGenerateCancel(token: string): void {
-  if (!isOnboardingGenerateCancelToken(token)) return;
-  cancelledTokens.add(token);
-  if (cancelledTokens.size > MAX_CANCEL_TOKENS) {
-    const first = cancelledTokens.values().next().value;
-    if (first) cancelledTokens.delete(first);
-  }
+/** False when this token already committed IR — cancel must not look successful. */
+export function requestOnboardingGenerateCancel(token: string): boolean {
+  if (!isOnboardingGenerateCancelToken(token)) return false;
+  if (committedTokens.has(token)) return false;
+  rememberToken(cancelledTokens, token);
+  return true;
 }
 
-export function clearOnboardingGenerateCancel(token: string | undefined): void {
-  if (token) cancelledTokens.delete(token);
+export function markOnboardingGenerateCommitted(token: string | undefined): void {
+  if (!token || !isOnboardingGenerateCancelToken(token)) return;
+  cancelledTokens.delete(token);
+  rememberToken(committedTokens, token);
 }
 
 export function resetOnboardingGenerateForTests(): void {
   cancelledTokens.clear();
+  committedTokens.clear();
   generateChain = Promise.resolve();
 }
 
@@ -207,7 +218,7 @@ async function generateOnboardingSubjectUnlocked(input: {
       return { ok: false, reason: 'missing', message: 'Subject is not in the wizard catalog.' };
     }
     ingestGenerate.writeFileAtomic(generated.irPath, stableJson(generated.bank));
-    clearOnboardingGenerateCancel(input.cancelToken);
+    markOnboardingGenerateCommitted(input.cancelToken);
     return { ok: true, result: publicGenerateResult(subjectId, root, generated, true) };
   } catch (error) {
     if (isGenerateCancelled(input.cancelToken)) {
