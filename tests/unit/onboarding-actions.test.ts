@@ -81,6 +81,7 @@ afterEach(async () => {
   setEnvStoreRootForTests(null);
   setInitialEnvironForTests(null);
   resetOnboardingGenerateForTests();
+  vi.restoreAllMocks();
 });
 
 async function signInHost() {
@@ -512,6 +513,329 @@ describe('onboarding actions', () => {
     const cancel = new FormData();
     cancel.set('cancelToken', 'cancel-token-01');
     expect(await cancelOnboardingGenerateAction(cancel)).toEqual({ ok: true });
+  });
+
+  it('returns cancelled and leaves prior IR unchanged when cancel lands before commit', async () => {
+    const root = tempRoot();
+    const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
+    setOnboardingContentRootForTests(root);
+    await signInHost();
+    const irPath = path.join(root, 'content/subjects/history/bank.ir.json');
+    fs.mkdirSync(path.join(root, 'content/subjects/history'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'content/source-pdfs/history'), { recursive: true });
+    const prior = `${JSON.stringify({
+      version: 1,
+      subject: { id: 'history', label: 'History', icon: 'geography', l: 0.6, c: 0.08, h: 40 },
+      difficulties: { easy: [], medium: [], hard: [] },
+    })}\n`;
+    writeFileSync(irPath, prior);
+    writeFileSync(path.join(root, 'content/source-pdfs/history/notes.txt'), 'A source note.\n');
+
+    const ingest = await import('examify-ingest/generate');
+    const { generateSubject: actualGenerateSubject } =
+      await vi.importActual<typeof ingest>('examify-ingest/generate');
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    vi.spyOn(ingest, 'generateSubject').mockImplementation(async (request) => {
+      await blocked;
+      return actualGenerateSubject(request);
+    });
+
+    const {
+      cancelOnboardingGenerateAction,
+      generateOnboardingSubjectAction,
+      setOnboardingAiModeAction,
+    } = await import('@/actions/onboarding');
+    const mode = new FormData();
+    mode.set('aiMode', 'skip-stub');
+    expect((await setOnboardingAiModeAction(mode)).ok).toBe(true);
+
+    const token = 'cancel-token-01';
+    const generate = new FormData();
+    generate.set('subjectId', 'history');
+    generate.set('cancelToken', token);
+    const pending = generateOnboardingSubjectAction(generate);
+    await vi.waitFor(() => {
+      expect(ingest.generateSubject).toHaveBeenCalled();
+    });
+    const cancel = new FormData();
+    cancel.set('cancelToken', token);
+    expect(await cancelOnboardingGenerateAction(cancel)).toEqual({ ok: true });
+    release();
+    expect(await pending).toEqual({ ok: false, reason: 'cancelled' });
+    expect(fs.readFileSync(irPath, 'utf8')).toBe(prior);
+  });
+
+  it('waits on the generate lock before deleting the active subject', async () => {
+    const root = tempRoot();
+    const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
+    setOnboardingContentRootForTests(root);
+    await signInHost();
+    const subjectDir = path.join(root, 'content/subjects/history');
+    fs.mkdirSync(subjectDir, { recursive: true });
+    fs.mkdirSync(path.join(root, 'content/source-pdfs/history'), { recursive: true });
+    writeFileSync(
+      path.join(subjectDir, 'bank.ir.json'),
+      JSON.stringify({
+        version: 1,
+        subject: { id: 'history', label: 'History', icon: 'geography', l: 0.6, c: 0.08, h: 40 },
+        difficulties: { easy: [], medium: [], hard: [] },
+      }),
+    );
+    writeFileSync(path.join(root, 'content/source-pdfs/history/notes.txt'), 'A source note.\n');
+
+    const ingest = await import('examify-ingest/generate');
+    const { generateSubject: actualGenerateSubject } =
+      await vi.importActual<typeof ingest>('examify-ingest/generate');
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    vi.spyOn(ingest, 'generateSubject').mockImplementation(async (request) => {
+      await blocked;
+      return actualGenerateSubject(request);
+    });
+
+    const {
+      deleteOnboardingSubjectAction,
+      generateOnboardingSubjectAction,
+      setOnboardingAiModeAction,
+    } = await import('@/actions/onboarding');
+    const mode = new FormData();
+    mode.set('aiMode', 'skip-stub');
+    expect((await setOnboardingAiModeAction(mode)).ok).toBe(true);
+
+    const generate = new FormData();
+    generate.set('subjectId', 'history');
+    const pendingGenerate = generateOnboardingSubjectAction(generate);
+    await vi.waitFor(() => {
+      expect(ingest.generateSubject).toHaveBeenCalled();
+    });
+
+    let deleteSettled = false;
+    const remove = new FormData();
+    remove.set('id', 'history');
+    const pendingDelete = deleteOnboardingSubjectAction(remove).then((result) => {
+      deleteSettled = true;
+      return result;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(deleteSettled).toBe(false);
+    expect(fs.existsSync(subjectDir)).toBe(true);
+
+    release();
+    expect((await pendingGenerate).ok).toBe(true);
+    expect((await pendingDelete).ok).toBe(true);
+    expect(deleteSettled).toBe(true);
+    expect(fs.existsSync(subjectDir)).toBe(false);
+  });
+
+  it('re-checks onboarding access after waiting for the generate lock', async () => {
+    const root = tempRoot();
+    const { completeOnboarding, setOnboardingContentRootForTests } =
+      await import('@/lib/onboarding');
+    setOnboardingContentRootForTests(root);
+    const host = await signInHost();
+    const subjectDir = path.join(root, 'content/subjects/history');
+    fs.mkdirSync(subjectDir, { recursive: true });
+    fs.mkdirSync(path.join(root, 'content/source-pdfs/history'), { recursive: true });
+    writeFileSync(
+      path.join(subjectDir, 'bank.ir.json'),
+      JSON.stringify({
+        version: 1,
+        subject: { id: 'history', label: 'History', icon: 'geography', l: 0.6, c: 0.08, h: 40 },
+        difficulties: { easy: [], medium: [], hard: [] },
+      }),
+    );
+    writeFileSync(path.join(root, 'content/source-pdfs/history/notes.txt'), 'A source note.\n');
+
+    const ingest = await import('examify-ingest/generate');
+    const { generateSubject: actualGenerateSubject } =
+      await vi.importActual<typeof ingest>('examify-ingest/generate');
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    vi.spyOn(ingest, 'generateSubject').mockImplementation(async (request) => {
+      await blocked;
+      return actualGenerateSubject(request);
+    });
+
+    const {
+      deleteOnboardingSubjectAction,
+      generateOnboardingSubjectAction,
+      setOnboardingAiModeAction,
+    } = await import('@/actions/onboarding');
+    const mode = new FormData();
+    mode.set('aiMode', 'skip-stub');
+    expect((await setOnboardingAiModeAction(mode)).ok).toBe(true);
+
+    const generate = new FormData();
+    generate.set('subjectId', 'history');
+    const pendingGenerate = generateOnboardingSubjectAction(generate);
+    await vi.waitFor(() => {
+      expect(ingest.generateSubject).toHaveBeenCalled();
+    });
+
+    const remove = new FormData();
+    remove.set('id', 'history');
+    const pendingDelete = deleteOnboardingSubjectAction(remove);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    completeOnboarding(host.householdId);
+    release();
+    expect((await pendingGenerate).ok).toBe(true);
+    expect(await pendingDelete).toEqual({ ok: false, reason: 'already_complete' });
+    expect(fs.existsSync(subjectDir)).toBe(true);
+  });
+
+  it('marks cancel via the concurrent route while generate is in flight', async () => {
+    const root = tempRoot();
+    const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
+    setOnboardingContentRootForTests(root);
+    await signInHost();
+    const irPath = path.join(root, 'content/subjects/history/bank.ir.json');
+    fs.mkdirSync(path.join(root, 'content/subjects/history'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'content/source-pdfs/history'), { recursive: true });
+    const prior = `${JSON.stringify({
+      version: 1,
+      subject: { id: 'history', label: 'History', icon: 'geography', l: 0.6, c: 0.08, h: 40 },
+      difficulties: { easy: [], medium: [], hard: [] },
+    })}\n`;
+    writeFileSync(irPath, prior);
+    writeFileSync(path.join(root, 'content/source-pdfs/history/notes.txt'), 'A source note.\n');
+
+    const ingest = await import('examify-ingest/generate');
+    const { generateSubject: actualGenerateSubject } =
+      await vi.importActual<typeof ingest>('examify-ingest/generate');
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    vi.spyOn(ingest, 'generateSubject').mockImplementation(async (request) => {
+      await blocked;
+      return actualGenerateSubject(request);
+    });
+
+    const { generateOnboardingSubjectAction, setOnboardingAiModeAction } =
+      await import('@/actions/onboarding');
+    const { POST } = await import('@/app/api/onboarding/cancel-generate/route');
+    const mode = new FormData();
+    mode.set('aiMode', 'skip-stub');
+    expect((await setOnboardingAiModeAction(mode)).ok).toBe(true);
+
+    const token = 'cancel-token-01';
+    const generate = new FormData();
+    generate.set('subjectId', 'history');
+    generate.set('cancelToken', token);
+    const pending = generateOnboardingSubjectAction(generate);
+    await vi.waitFor(() => {
+      expect(ingest.generateSubject).toHaveBeenCalled();
+    });
+    const cancel = await POST(
+      new Request('http://localhost:3000/api/onboarding/cancel-generate', {
+        method: 'POST',
+        headers: {
+          origin: 'http://localhost:3000',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ cancelToken: token }),
+      }),
+    );
+    expect(cancel.status).toBe(200);
+    expect(await cancel.json()).toEqual({ ok: true });
+    release();
+    expect(await pending).toEqual({ ok: false, reason: 'cancelled' });
+    expect(fs.readFileSync(irPath, 'utf8')).toBe(prior);
+  });
+
+  it('refuses cancel-generate without a session or a trusted origin', async () => {
+    const { POST } = await import('@/app/api/onboarding/cancel-generate/route');
+    const body = JSON.stringify({ cancelToken: 'cancel-token-01' });
+    const noSession = await POST(
+      new Request('http://localhost:3000/api/onboarding/cancel-generate', {
+        method: 'POST',
+        headers: {
+          origin: 'http://localhost:3000',
+          'content-type': 'application/json',
+        },
+        body,
+      }),
+    );
+    expect(noSession.status).toBe(403);
+    expect(await noSession.json()).toEqual({ ok: false, reason: 'forbidden' });
+
+    await signInHost();
+    const badOrigin = await POST(
+      new Request('http://localhost:3000/api/onboarding/cancel-generate', {
+        method: 'POST',
+        headers: {
+          origin: 'https://evil.example',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ cancelToken: 'cancel-token-01' }),
+      }),
+    );
+    expect(badOrigin.status).toBe(403);
+    expect(await badOrigin.json()).toEqual({ ok: false, reason: 'forbidden' });
+
+    const invalid = await POST(
+      new Request('http://localhost:3000/api/onboarding/cancel-generate', {
+        method: 'POST',
+        headers: {
+          origin: 'http://localhost:3000',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ cancelToken: 'nope' }),
+      }),
+    );
+    expect(invalid.status).toBe(400);
+    expect(await invalid.json()).toEqual({ ok: false, reason: 'invalid' });
+  });
+
+  it('rejects cancel-generate after that token already committed IR', async () => {
+    const root = tempRoot();
+    const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
+    setOnboardingContentRootForTests(root);
+    await signInHost();
+    fs.mkdirSync(path.join(root, 'content/subjects/history'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'content/source-pdfs/history'), { recursive: true });
+    writeFileSync(
+      path.join(root, 'content/subjects/history/bank.ir.json'),
+      JSON.stringify({
+        version: 1,
+        subject: { id: 'history', label: 'History', icon: 'geography', l: 0.6, c: 0.08, h: 40 },
+        difficulties: { easy: [], medium: [], hard: [] },
+      }),
+    );
+    writeFileSync(path.join(root, 'content/source-pdfs/history/notes.txt'), 'A source note.\n');
+
+    const { generateOnboardingSubjectAction, setOnboardingAiModeAction } =
+      await import('@/actions/onboarding');
+    const { POST } = await import('@/app/api/onboarding/cancel-generate/route');
+    const mode = new FormData();
+    mode.set('aiMode', 'skip-stub');
+    expect((await setOnboardingAiModeAction(mode)).ok).toBe(true);
+
+    const token = 'cancel-token-01';
+    const generate = new FormData();
+    generate.set('subjectId', 'history');
+    generate.set('cancelToken', token);
+    expect((await generateOnboardingSubjectAction(generate)).ok).toBe(true);
+
+    const late = await POST(
+      new Request('http://localhost:3000/api/onboarding/cancel-generate', {
+        method: 'POST',
+        headers: {
+          origin: 'http://localhost:3000',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ cancelToken: token }),
+      }),
+    );
+    expect(late.status).toBe(409);
+    expect(await late.json()).toEqual({ ok: false, reason: 'already_committed' });
   });
 
   it('refuses cloud generate when the key is the test sentinel', async () => {

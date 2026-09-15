@@ -56,6 +56,32 @@ afterEach(async () => {
 });
 
 describe('onboarding generate mapping', () => {
+  it('does not treat a failed cancel POST as cancelled', async () => {
+    const { postOnboardingGenerateCancel } = await import('@/lib/onboarding-types');
+    const rejected = vi.fn(async () => {
+      throw new Error('network');
+    });
+    expect(await postOnboardingGenerateCancel('cancel-token-01', rejected)).toBe(false);
+
+    const forbidden = vi.fn(
+      async () => new Response(JSON.stringify({ ok: false, reason: 'forbidden' }), { status: 403 }),
+    );
+    expect(await postOnboardingGenerateCancel('cancel-token-01', forbidden)).toBe(false);
+
+    const committed = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ ok: false, reason: 'already_committed' }), { status: 409 }),
+    );
+    expect(await postOnboardingGenerateCancel('cancel-token-01', committed)).toBe(false);
+
+    const ok = vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    expect(await postOnboardingGenerateCancel('cancel-token-01', ok)).toBe(true);
+    expect(ok).toHaveBeenCalledWith(
+      '/api/onboarding/cancel-generate',
+      expect.objectContaining({ method: 'POST', credentials: 'same-origin' }),
+    );
+  });
+
   it('maps wizard modes to ingest providers', () => {
     expect(providerForOnboardingAiMode('cloud')).toBe('anthropic');
     expect(providerForOnboardingAiMode('cloud-openai')).toBe('openai');
@@ -95,6 +121,9 @@ describe('onboarding generate graph', () => {
     expect(generate).toMatch(/from 'examify-ingest\/generate'/);
     expect(generate).toMatch(/generateSubject/);
     expect(generate).toMatch(/dryRunIr: true/);
+    expect(generate).not.toMatch(/signal: /);
+    expect(generate).toMatch(/const MAX_CANCEL_TOKENS = 64/);
+    expect(generate).toMatch(/oldest token[\s\S]*evicted \(FIFO\)/);
     expect(generate).not.toMatch(/applyEmit|planEmit|applyOnboardingEmit/);
     const wizard = readFileSync(
       path.join(process.cwd(), 'src/components/exam/OnboardingWizard.tsx'),
@@ -112,11 +141,35 @@ describe('onboarding generate graph', () => {
       path.join(process.cwd(), 'src/components/exam/OnboardingWizard.tsx'),
       'utf8',
     );
-    expect(wizard).toMatch(/const navLocked = pending \|\| generateBusy/);
+    expect(wizard).toMatch(
+      /const holdWizard = generateBusy \|\| \(pending && !generateCancelAck\)/,
+    );
+    expect(wizard).toMatch(/const navLocked = holdWizard/);
     expect(wizard).toMatch(/const go = \(next: StepId\) => \{\s*if \(generateBusy\) return;/);
     expect(wizard).toMatch(/const skip = \(\) => \{\s*if \(generateBusy\) return;/);
     expect(wizard).toMatch(/disabled=\{!clickable \|\| navLocked\}/);
-
+    expect(wizard).toMatch(/generateCancelRef\.current = true/);
+    expect(wizard).toMatch(/generateCancelTokenRef\.current = null/);
+    expect(wizard).toMatch(/generateCancelRef\.current = false/);
+    expect(wizard).toMatch(/data-testid="wizard-generate-cancelled"/);
+    expect(wizard).toMatch(/className="wizard-callout" data-testid="wizard-generate-cancelled"/);
+    expect(wizard).toMatch(
+      /if \(result\.reason === 'cancelled'\) \{\s*setGenerateNote\('Generate cancelled'\)/,
+    );
+    expect(wizard).toMatch(
+      /if \(result\.reason === 'cancelled' \|\| generateCancelRef\.current\) \{\s*cancelled = true;/,
+    );
+    expect(wizard).toMatch(
+      /const recorded = await postOnboardingGenerateCancel\(token\);\s*if \(!recorded\) \{\s*setError\('Could not cancel generate\.'\)/,
+    );
+    expect(wizard).toMatch(
+      /generateCancelRef\.current = true;\s*if \(generateCancelTokenRef\.current !== token\) return;\s*setError\(null\);\s*setGenerateNote\('Generate cancelled'\);\s*setGenerateBusy\(false\);\s*setGenerateCancelAck\(true\)/,
+    );
+    expect(wizard).toMatch(/postOnboardingGenerateCancel\(token\)/);
+    expect(wizard).not.toMatch(/cancelOnboardingGenerateAction/);
+    expect(wizard).toMatch(
+      /\} finally \{\s*if \(generateCancelTokenRef\.current === token\) \{\s*generateCancelTokenRef\.current = null;/,
+    );
     const welcomeSkipAt = wizard.indexOf('Use sample bank for now');
     expect(welcomeSkipAt).toBeGreaterThan(-1);
     const welcomeSkipDisabled = wizard.lastIndexOf('disabled=', welcomeSkipAt);
@@ -126,6 +179,18 @@ describe('onboarding generate graph', () => {
     expect(backAt).toBeGreaterThan(-1);
     const backDisabled = wizard.lastIndexOf('disabled=', backAt);
     expect(wizard.slice(backDisabled, backAt)).toMatch(/disabled=\{navLocked\}/);
+  });
+
+  it('keeps irReady on generate-all cancel after a subject finished', () => {
+    const wizard = readFileSync(
+      path.join(process.cwd(), 'src/components/exam/OnboardingWizard.tsx'),
+      'utf8',
+    );
+    expect(wizard).toMatch(
+      /\/\/ Keep IR-ready for subjects that already finished \(including generate-all cancel\)\./,
+    );
+    expect(wizard).toMatch(/if \(wroteAny\) setIrReady\(true\)/);
+    expect(wizard).toMatch(/if \(cancelled\) setGenerateNote\('Generate cancelled'\)/);
   });
 
   it('keeps dry-run step id and testids while the rail label is Review', () => {
@@ -192,6 +257,7 @@ describe('generateOnboardingSubject', () => {
       root,
     });
     expect(generateSpy).toHaveBeenCalledWith(expect.objectContaining({ dryRunIr: true }));
+    expect(generateSpy.mock.calls[0]?.[0]).not.toHaveProperty('signal');
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected generate');
     expect(result.result.wroteIr).toBe(true);
@@ -294,7 +360,8 @@ describe('generateOnboardingSubject', () => {
 
   it('discards the preview and leaves prior IR unchanged when cancel wins before commit', async () => {
     const ingest = await import('examify-ingest/generate');
-    const { generateOnboardingSubject } = await import('@/lib/onboarding-generate');
+    const { generateOnboardingSubject, requestOnboardingGenerateCancel } =
+      await import('@/lib/onboarding-generate');
     const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
     const root = tempRoot();
     seedSubject(root);
@@ -320,12 +387,13 @@ describe('generateOnboardingSubject', () => {
     })}\n`;
     writeFileSync(irPath, prior);
 
-    const controller = new AbortController();
+    const token = 'cancel-token-01';
     const actual = ingest.generateSubject;
     const spy = vi.spyOn(ingest, 'generateSubject').mockImplementation(async (request) => {
       expect(request.dryRunIr).toBe(true);
+      expect(request).not.toHaveProperty('signal');
       const generated = await actual(request);
-      controller.abort();
+      requestOnboardingGenerateCancel(token);
       return generated;
     });
 
@@ -334,7 +402,7 @@ describe('generateOnboardingSubject', () => {
       provider: 'test',
       seed: 0,
       root,
-      signal: controller.signal,
+      cancelToken: token,
     });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected cancelled');
@@ -389,6 +457,156 @@ describe('generateOnboardingSubject', () => {
     expect(result.reason).toBe('missing');
     expect(existsSync(irPath)).toBe(false);
     expect(existsSync(subjectDir)).toBe(false);
+  });
+
+  it('serializes generate commits on the process-local mutex', async () => {
+    const ingest = await import('examify-ingest/generate');
+    const { generateOnboardingSubject } = await import('@/lib/onboarding-generate');
+    const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
+    const root = tempRoot();
+    seedSubject(root);
+    setOnboardingContentRootForTests(root);
+    const { generateSubject: actualGenerateSubject } =
+      await vi.importActual<typeof ingest>('examify-ingest/generate');
+    let firstInFlight = false;
+    let secondStartedWhileFirstHeld = false;
+    let releaseFirst!: () => void;
+    const firstHold = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let calls = 0;
+    vi.spyOn(ingest, 'generateSubject').mockImplementation(async (request) => {
+      calls += 1;
+      if (calls === 1) {
+        firstInFlight = true;
+        await firstHold;
+        return actualGenerateSubject(request);
+      }
+      if (firstInFlight) secondStartedWhileFirstHeld = true;
+      return actualGenerateSubject(request);
+    });
+
+    const first = generateOnboardingSubject({
+      subjectId: 'history',
+      provider: 'test',
+      seed: 0,
+      root,
+    });
+    await vi.waitFor(() => {
+      expect(firstInFlight).toBe(true);
+    });
+    const second = generateOnboardingSubject({
+      subjectId: 'history',
+      provider: 'test',
+      seed: 1,
+      root,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(secondStartedWhileFirstHeld).toBe(false);
+    expect(calls).toBe(1);
+    firstInFlight = false;
+    releaseFirst();
+    expect((await first).ok).toBe(true);
+    expect((await second).ok).toBe(true);
+    expect(calls).toBe(2);
+  });
+
+  it('skips the IR write when cancel lands after generate starts and before commit', async () => {
+    const ingest = await import('examify-ingest/generate');
+    const { generateOnboardingSubject, requestOnboardingGenerateCancel } =
+      await import('@/lib/onboarding-generate');
+    const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
+    const root = tempRoot();
+    seedSubject(root);
+    setOnboardingContentRootForTests(root);
+    const irPath = path.join(root, 'content/subjects/history/bank.ir.json');
+    const prior = readFileSync(irPath, 'utf8');
+    const { generateSubject: actualGenerateSubject } =
+      await vi.importActual<typeof ingest>('examify-ingest/generate');
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    vi.spyOn(ingest, 'generateSubject').mockImplementation(async (request) => {
+      await blocked;
+      return actualGenerateSubject(request);
+    });
+
+    const token = 'cancel-token-01';
+    const pending = generateOnboardingSubject({
+      subjectId: 'history',
+      provider: 'test',
+      seed: 0,
+      root,
+      cancelToken: token,
+    });
+    await vi.waitFor(() => {
+      expect(ingest.generateSubject).toHaveBeenCalled();
+    });
+    requestOnboardingGenerateCancel(token);
+    release();
+    const result = await pending;
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected cancelled');
+    expect(result.reason).toBe('cancelled');
+    expect(readFileSync(irPath, 'utf8')).toBe(prior);
+  });
+
+  it('rejects cancel after the IR commit has already won', async () => {
+    const { generateOnboardingSubject, requestOnboardingGenerateCancel } =
+      await import('@/lib/onboarding-generate');
+    const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
+    const root = tempRoot();
+    seedSubject(root);
+    setOnboardingContentRootForTests(root);
+    const token = 'cancel-token-01';
+    const result = await generateOnboardingSubject({
+      subjectId: 'history',
+      provider: 'test',
+      seed: 0,
+      root,
+      cancelToken: token,
+    });
+    expect(result.ok).toBe(true);
+    expect(requestOnboardingGenerateCancel(token)).toBe(false);
+  });
+
+  it('evicts the oldest cancel token at FIFO cap 64', async () => {
+    const { generateOnboardingSubject, requestOnboardingGenerateCancel } =
+      await import('@/lib/onboarding-generate');
+    const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
+    const root = tempRoot();
+    seedSubject(root);
+    setOnboardingContentRootForTests(root);
+    const irPath = path.join(root, 'content/subjects/history/bank.ir.json');
+    const prior = readFileSync(irPath, 'utf8');
+
+    for (let i = 0; i < 65; i += 1) {
+      requestOnboardingGenerateCancel(`tok-${String(i).padStart(6, '0')}`);
+    }
+
+    const evicted = await generateOnboardingSubject({
+      subjectId: 'history',
+      provider: 'test',
+      seed: 0,
+      root,
+      cancelToken: 'tok-000000',
+    });
+    expect(evicted.ok).toBe(true);
+    if (!evicted.ok) throw new Error('expected evicted token to no longer cancel');
+
+    writeFileSync(irPath, prior);
+    const kept = await generateOnboardingSubject({
+      subjectId: 'history',
+      provider: 'test',
+      seed: 0,
+      root,
+      cancelToken: 'tok-000064',
+    });
+    expect(kept.ok).toBe(false);
+    if (kept.ok) throw new Error('expected newest token to still cancel');
+    expect(kept.reason).toBe('cancelled');
+    expect(readFileSync(irPath, 'utf8')).toBe(prior);
   });
 
   it('fails closed for local without CMD or BASE_URL', async () => {

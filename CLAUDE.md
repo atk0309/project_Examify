@@ -39,10 +39,20 @@ Surface:
   (≥900px) uses a left step rail + stage + sticky footer; mobile uses compact
   “Step N of M · Label” progress and a sticky bottom bar. Generate writes BankIR
   only and never auto-applies.
-  Cancel discards an in-flight preview and does not replace prior IR; generate
-  is gated to wizard catalog subjects (`listOnboardingSubjects`). While generate
-  is in flight, Welcome “Use sample bank”, later skip, Back, and the desktop
-  rail stay locked so Cancel remains reachable.
+  Cancel POSTs `/api/onboarding/cancel-generate` (a Route Handler, not a
+  queued Server Action) so the token can land while generate is in flight,
+  then skips the IR write (provider abort is a parallel Ingestion PR); the
+  preview is discarded and prior IR is unchanged. The wizard waits for an
+  `ok` cancel response before claiming cancelled; a failed POST is an error,
+  not a calm cancel. Cancel after that token already wrote IR returns
+  `already_committed` (not cancelled). An acknowledged cancel unlocks
+  skip / Back / rail even if the unaborted provider is still pending.
+  User-initiated cancel is a calm status, not an error toast.
+  Generate is gated to wizard catalog subjects (`listOnboardingSubjects`).
+  Delete/rename wait on the generate lock. A post-provider catalog
+  re-check (#65) refuses a write if the id is gone.
+  While generate is in flight, Welcome “Use sample bank”, later skip, Back,
+  and the desktop rail stay locked so Cancel remains reachable.
   Finish (“Open dashboard”) requires
   a confirmed apply of that dry-run; a changed plan is refused (`stale_preview`).
   Skip-without-emit is Welcome “Use sample bank for now” / later “Skip to
@@ -74,6 +84,10 @@ Surface:
   and redirects to `/signin`. `getSession` sends the browser here when membership
   no longer matches (cookie writes are illegal in a Server Component render).
 - **`/api/health`** — lightweight platform healthcheck.
+- **`/api/onboarding/cancel-generate`** — POST; household-admin generate
+  cancel. A Route Handler so the token is not queued behind the in-flight
+  generate Server Action. Same-origin + session; does not abort the provider
+  (Ingestion’s parallel PR).
 - **`/robots.txt`** — disallow-all (this is a private, allowlisted app).
 
 There is **no blog, no MDX, no admin panel, no public marketing page** — the first screen
@@ -142,6 +156,7 @@ grouped weekly Dependabot PRs in `.github/dependabot.yml`.
 src/
   app/                  # routes (App Router)
     api/health/         # platform healthcheck
+    api/onboarding/cancel-generate/ # concurrent generate cancel (not a Server Action)
     setup/              # household bootstrap (page); leftover /setup/wizard → /onboarding
     onboarding/         # admin-only content wizard (BankIR validate / dry-run / apply)
     signin/             # login (page); magic-link verify (route.ts) + verify/error (page)
@@ -167,6 +182,7 @@ src/
     household-types.ts  # client-safe PendingInvite type
     onboarding.ts       # first-run subjects/PDFs + examify-ingest emit (server-only)
     onboarding-generate.ts # AI-step generateSubject bridge (preview then commit if !cancelled)
+    onboarding-admin.ts # shared household-admin gate for wizard actions + cancel route
     onboarding-types.ts # client-safe wizard snapshot / AI mode types
     repo-root.ts        # shared `findRepoRoot` (env-store, content I/O, ingest keys)
     env-store.ts        # server-only `.env` upsert/clear (OPENAI_API_KEY write path)

@@ -30,8 +30,30 @@ export type GenerateOnboardingSuccess = {
 };
 
 const CANCEL_TOKEN_RE = /^[A-Za-z0-9_-]{8,64}$/;
+/**
+ * Process-local cancel tokens (insertion-order Set). At 65 the oldest token
+ * is evicted (FIFO). Generate is single-flight in this process, so 64 is
+ * leftover-token headroom after settle — not a concurrent-tab budget. A
+ * second tab shares this Set only if it hits the same Node process; 64
+ * in-flight cancel tokens would already imply a stuck process, so we do
+ * not raise the cap. Concurrent tabs are not a reason to raise it:
+ * generate is still single-flight, and extra tokens are leftovers.
+ *
+ * This Set only skips the wizard IR write. Provider HTTP abort is
+ * Ingestion's parallel PR — this module never passes a signal into
+ * generateSubject / providers.
+ */
 const cancelledTokens = new Set<string>();
+const committedTokens = new Set<string>();
 const MAX_CANCEL_TOKENS = 64;
+
+function rememberToken(set: Set<string>, token: string): void {
+  set.add(token);
+  if (set.size > MAX_CANCEL_TOKENS) {
+    const first = set.values().next().value;
+    if (first) set.delete(first);
+  }
+}
 
 /** Single-flight: one onboarding generate commits at a time in this process. */
 let generateChain: Promise<unknown> = Promise.resolve();
@@ -40,33 +62,36 @@ export function isOnboardingGenerateCancelToken(token: string): boolean {
   return CANCEL_TOKEN_RE.test(token);
 }
 
-export function requestOnboardingGenerateCancel(token: string): void {
-  if (!isOnboardingGenerateCancelToken(token)) return;
-  cancelledTokens.add(token);
-  if (cancelledTokens.size > MAX_CANCEL_TOKENS) {
-    const first = cancelledTokens.values().next().value;
-    if (first) cancelledTokens.delete(first);
-  }
+/** False when this token already committed IR — cancel must not look successful. */
+export function requestOnboardingGenerateCancel(token: string): boolean {
+  if (!isOnboardingGenerateCancelToken(token)) return false;
+  if (committedTokens.has(token)) return false;
+  rememberToken(cancelledTokens, token);
+  return true;
 }
 
-export function clearOnboardingGenerateCancel(token: string | undefined): void {
-  if (token) cancelledTokens.delete(token);
+export function markOnboardingGenerateCommitted(token: string | undefined): void {
+  if (!token || !isOnboardingGenerateCancelToken(token)) return;
+  cancelledTokens.delete(token);
+  rememberToken(committedTokens, token);
 }
 
 export function resetOnboardingGenerateForTests(): void {
   cancelledTokens.clear();
+  committedTokens.clear();
   generateChain = Promise.resolve();
 }
 
-function isGenerateCancelled(signal?: AbortSignal, token?: string): boolean {
-  return Boolean(signal?.aborted || (token && cancelledTokens.has(token)));
+function isGenerateCancelled(token?: string): boolean {
+  return Boolean(token && cancelledTokens.has(token));
 }
 
 function cancelledResult(): GenerateOnboardingError {
   return { ok: false, reason: 'cancelled', message: 'Generate cancelled.' };
 }
 
-function withGenerateLock<T>(task: () => Promise<T>): Promise<T> {
+/** Serialize generate commit with delete/rename so they cannot interleave the IR write. */
+export function withOnboardingGenerateLock<T>(task: () => Promise<T>): Promise<T> {
   const run = generateChain.then(task, task);
   generateChain = run.then(
     () => undefined,
@@ -124,18 +149,19 @@ function publicGenerateResult(
  * Draft BankIR for one wizard subject via `examify-ingest/generate`.
  * Preview uses ingest `dryRunIr` so `generateSubject` does not write
  * `bank.ir.json`. The wizard path commits that file only if the
- * AbortSignal / cancel token is still clear. Never emit / apply.
- * The returned payload is public progress metadata (no answers / keys / IR).
+ * cancel token is still clear. Never emit / apply.
+ * Does not pass AbortSignal into ingest generate/providers — that is a
+ * parallel Ingestion PR. The returned payload is public progress
+ * metadata (no answers / keys / IR).
  */
 export async function generateOnboardingSubject(input: {
   subjectId: string;
   provider: OnboardingGenerateProvider;
   seed: number;
   root?: string;
-  signal?: AbortSignal;
   cancelToken?: string;
 }): Promise<GenerateOnboardingSuccess | GenerateOnboardingError> {
-  return withGenerateLock(() => generateOnboardingSubjectUnlocked(input));
+  return withOnboardingGenerateLock(() => generateOnboardingSubjectUnlocked(input));
 }
 
 async function generateOnboardingSubjectUnlocked(input: {
@@ -143,7 +169,6 @@ async function generateOnboardingSubjectUnlocked(input: {
   provider: OnboardingGenerateProvider;
   seed: number;
   root?: string;
-  signal?: AbortSignal;
   cancelToken?: string;
 }): Promise<GenerateOnboardingSuccess | GenerateOnboardingError> {
   const subjectId = normalizeSubjectId(input.subjectId);
@@ -156,7 +181,7 @@ async function generateOnboardingSubjectUnlocked(input: {
     return { ok: false, reason: 'missing', message: 'Subject is not in the wizard catalog.' };
   }
 
-  if (isGenerateCancelled(input.signal, input.cancelToken)) {
+  if (isGenerateCancelled(input.cancelToken)) {
     return cancelledResult();
   }
 
@@ -168,8 +193,9 @@ async function generateOnboardingSubjectUnlocked(input: {
   } catch (error) {
     return mapGenerateError(error);
   }
-  if (!target)
+  if (!target) {
     return { ok: false, reason: 'missing', message: 'Subject is not in the wizard catalog.' };
+  }
 
   try {
     const generated = await ingestGenerate.generateSubject({
@@ -180,21 +206,24 @@ async function generateOnboardingSubjectUnlocked(input: {
       provider: input.provider,
       seed: input.seed,
       env: ingestGenerate.mergeRepoEnvFiles(root, process.env),
-      // Ingest has no cancel hook — preview only; caller owns the IR write.
+      // Ingest has no cancel hook in this PR — preview only; caller owns the IR write.
       dryRunIr: true,
     });
-    if (isGenerateCancelled(input.signal, input.cancelToken)) {
+    if (isGenerateCancelled(input.cancelToken)) {
       return cancelledResult();
     }
-    // Re-check after the provider returns: delete/rename must not be
-    // resurrected by writeFileAtomic's mkdirSync.
+    // #65: re-check after the provider returns so a delete/rename during
+    // generateSubject is not resurrected by writeFileAtomic's mkdirSync.
     if (!listOnboardingSubjects(root).some((row) => row.id === subjectId)) {
       return { ok: false, reason: 'missing', message: 'Subject is not in the wizard catalog.' };
     }
     ingestGenerate.writeFileAtomic(generated.irPath, stableJson(generated.bank));
-    clearOnboardingGenerateCancel(input.cancelToken);
+    markOnboardingGenerateCommitted(input.cancelToken);
     return { ok: true, result: publicGenerateResult(subjectId, root, generated, true) };
   } catch (error) {
+    if (isGenerateCancelled(input.cancelToken)) {
+      return cancelledResult();
+    }
     return mapGenerateError(error);
   }
 }

@@ -417,6 +417,7 @@ export type RenameSubjectResult =
   | { ok: true; subject: OnboardingSubject }
   | { ok: false; reason: 'invalid_id' | 'duplicate' | 'missing' | 'disk' };
 
+/** Wizard actions wait on `withOnboardingGenerateLock` so rename cannot race an IR commit. */
 export function renameOnboardingSubject(
   input: { id: string; nextId?: string; label: string; icon?: string },
   root = getOnboardingContentRoot(),
@@ -518,7 +519,8 @@ export type DeleteSubjectResult = { ok: true } | { ok: false; reason: 'invalid_i
 /**
  * Remove the subject's IR + source-pdf dirs. Prune of leftover generated JSON
  * happens on the next confirmed directory emit (#62 / HITL) — delete never
- * writes generated files itself.
+ * writes generated files itself. Wizard actions wait on
+ * `withOnboardingGenerateLock` so a late generate commit cannot recreate this id.
  */
 export function deleteOnboardingSubject(
   subjectId: string,
