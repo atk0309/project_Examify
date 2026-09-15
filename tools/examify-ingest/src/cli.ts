@@ -1,12 +1,8 @@
-import path from 'node:path';
 import { SAMPLE_QUESTIONS } from '../../../src/lib/exam/data';
 import { applyEmit, formatEmitPlan, planEmit } from './emit';
-import { NEXT_INGEST_COMMANDS, generateSubject } from './generate';
 import { collectQuestionIds } from './ids';
 import { findRepoRoot, isAuthoritativeCatalogInput, loadIrFiles, resolveIrFiles } from './load';
-import { getProvider, ProviderConfigError, type ProviderEnv } from './providers';
 import { DEFAULT_GENERATE_SEED, GENERATE_PROVIDERS, type GenerateProviderId } from './schema';
-import { resolveGenerateTargets } from './sources';
 import { validateIrCollection } from './validate';
 
 export const USAGE = `Usage:
@@ -34,7 +30,7 @@ export type CliIo = {
   cwd: string;
   stdout: { write: (chunk: string) => void };
   stderr: { write: (chunk: string) => void };
-  env?: ProviderEnv;
+  env?: Record<string, string | undefined>;
 };
 
 export type ParsedCli = {
@@ -277,75 +273,6 @@ function runValidateOrEmit(parsed: ParsedCli, io: CliIo): number {
   return 0;
 }
 
-async function runGenerate(parsed: ParsedCli, io: CliIo): Promise<number> {
-  if (!parsed.provider) {
-    io.stderr.write('generate requires --provider anthropic|openai|local|test\n');
-    return 2;
-  }
-
-  let repoRoot: string;
-  try {
-    repoRoot = findRepoRoot(io.cwd);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    io.stderr.write(`${message}\n`);
-    return 1;
-  }
-
-  let targets;
-  try {
-    targets = resolveGenerateTargets(parsed.paths, io.cwd, repoRoot, parsed.subject);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    io.stderr.write(`${message}\n`);
-    return 1;
-  }
-
-  const env = io.env ?? process.env;
-  try {
-    getProvider(parsed.provider).requireReady(env);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    io.stderr.write(`${message}\n`);
-    return 1;
-  }
-
-  try {
-    for (const target of targets) {
-      const result = await generateSubject({
-        repoRoot,
-        subject: target.subject,
-        subjectDir: target.subjectDir,
-        sources: target.sources,
-        provider: parsed.provider,
-        model: parsed.model ?? undefined,
-        seed: parsed.seed,
-        dryRunIr: parsed.dryRunIr,
-        env,
-      });
-      const verb = result.wroteIr ? 'wrote' : 'would write';
-      const cache = result.cacheHit ? 'cache hit' : 'generated';
-      io.stdout.write(
-        `${verb} ${pathFromRoot(repoRoot, result.irPath)} (${target.subjectId}, ${cache}, cacheKey=${result.cacheKey})\n`,
-      );
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    io.stderr.write(`${message}\n`);
-    return error instanceof ProviderConfigError ? 1 : 1;
-  }
-
-  io.stdout.write('\nGenerate writes BankIR only. Next (HITL, not auto-applied):\n');
-  for (const command of NEXT_INGEST_COMMANDS) {
-    io.stdout.write(`  ${command}\n`);
-  }
-  return 0;
-}
-
-function pathFromRoot(repoRoot: string, absPath: string): string {
-  return path.relative(repoRoot, absPath).split(path.sep).join('/') || absPath;
-}
-
 export function runCli(argv: readonly string[], io: CliIo): number {
   const parsed = parseArgs(argv);
   if ('error' in parsed) {
@@ -361,39 +288,4 @@ export function runCli(argv: readonly string[], io: CliIo): number {
     return 2;
   }
   return runValidateOrEmit(parsed, io);
-}
-
-export async function runCliAsync(argv: readonly string[], io: CliIo): Promise<number> {
-  const parsed = parseArgs(argv);
-  if ('error' in parsed) {
-    io.stderr.write(`${parsed.error}\n\n${USAGE}`);
-    return 2;
-  }
-  if (parsed.command === 'help') {
-    io.stdout.write(USAGE);
-    return 0;
-  }
-  if (parsed.command === 'generate') {
-    return runGenerate(parsed, io);
-  }
-  return runValidateOrEmit(parsed, io);
-}
-
-const isMain = process.argv[1] && /cli\.ts$/.test(process.argv[1]);
-if (isMain) {
-  void runCliAsync(process.argv.slice(2), {
-    cwd: process.cwd(),
-    stdout: process.stdout,
-    stderr: process.stderr,
-    env: process.env,
-  }).then(
-    (code) => {
-      process.exitCode = code;
-    },
-    (error: unknown) => {
-      const message = error instanceof Error ? error.message : String(error);
-      process.stderr.write(`${message}\n`);
-      process.exitCode = 1;
-    },
-  );
 }

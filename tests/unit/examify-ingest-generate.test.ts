@@ -11,18 +11,20 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_GENERATE_SEED,
-  NEXT_INGEST_COMMANDS,
-  buildCacheKey,
-  generateSubject,
-  loadGeneratePrompt,
   parseArgs,
-  publicSplitHasNoSecrets,
   runCli,
-  runCliAsync,
   runManifestSchema,
   splitIr,
   type BankIR,
 } from '../../tools/examify-ingest/src/index';
+import {
+  NEXT_INGEST_COMMANDS,
+  buildCacheKey,
+  generateSubject,
+  loadGeneratePrompt,
+  publicSplitHasNoSecrets,
+  runCliAsync,
+} from '../../tools/examify-ingest/src/generate-api';
 
 function examifyRepo(): string {
   const tmp = mkdtempSync(path.join(tmpdir(), 'examify-generate-'));

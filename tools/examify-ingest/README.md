@@ -186,15 +186,11 @@ committed biology sample is already registered.
 ## Library
 
 ```ts
-import {
-  generateSubject,
-  splitIr,
-  validateIrCollection,
-  FIXTURE_IDS,
-  runManifestSchema,
-} from 'examify-ingest';
+import { splitIr, validateIrCollection, FIXTURE_IDS, runManifestSchema } from 'examify-ingest';
+import { generateSubject } from 'examify-ingest/generate';
 ```
 
-`generateSubject` is the library entry the Setup Wizard can call later. It
-still only writes BankIR (+ gitignored run/cache files). Callers must run
-validate → emit dry-run → emit apply themselves.
+`generateSubject` is the library entry the Setup Wizard can call later
+(`examify-ingest/generate`, not the Phase 0 emit graph). It still only writes
+BankIR (+ gitignored run/cache files). Callers must run validate → emit
+dry-run → emit apply themselves.

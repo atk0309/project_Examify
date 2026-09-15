@@ -47,26 +47,4 @@ export {
   type PlannedFile,
 } from './emit';
 export { formatFileDiff, stableJson } from './diff';
-export { parseArgs, runCli, runCliAsync, USAGE, type CliIo, type ParsedCli } from './cli';
-export {
-  generateSubject,
-  generateTargets,
-  NEXT_INGEST_COMMANDS,
-  publicSplitHasNoSecrets,
-  type GenerateRequest,
-  type GenerateSubjectResult,
-} from './generate';
-export { buildCacheKey, ingestStateDir, irCachePath, readCachedIr } from './cache';
-export { loadGeneratePrompt, findIngestPackageRoot, generatePromptPath } from './prompt';
-export {
-  resolveGenerateTargets,
-  resolveSubjectSources,
-  sourceHashesOf,
-  defaultSubjectMeta,
-  SOURCE_PDFS_REL,
-  SUBJECTS_REL,
-  BANK_IR_FILE,
-  type GenerateTarget,
-  type ResolvedSource,
-} from './sources';
-export { getProvider, ProviderConfigError } from './providers';
+export { parseArgs, runCli, USAGE, type CliIo, type ParsedCli } from './cli';

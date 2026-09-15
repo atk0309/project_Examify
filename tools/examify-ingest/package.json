@@ -9,10 +9,11 @@
     "examify-ingest": "./bin/examify-ingest.mjs"
   },
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./generate": "./src/generate-api.ts"
   },
   "scripts": {
-    "examify-ingest": "tsx src/cli.ts",
+    "examify-ingest": "tsx src/main.ts",
     "typecheck": "tsc --noEmit"
   },
   "engines": {
