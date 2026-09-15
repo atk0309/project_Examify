@@ -2,8 +2,8 @@ import { extractJsonObject } from '../json';
 import { bankIrSchema, type BankIR } from '../schema';
 import { fenceUntrustedText, untrustedCaption, userGenerateMessage } from './content';
 import {
-  providerTimeoutSignal,
   readRequiredKey,
+  withProviderSignal,
   type GenerateProvider,
   type ProviderDeps,
   type ProviderRequest,
@@ -73,23 +73,25 @@ function buildContent(request: ProviderRequest): ContentBlock[] {
 async function callAnthropic(request: ProviderRequest, deps: ProviderDeps): Promise<BankIR> {
   const key = readRequiredKey(deps.env, KEY);
   const fetchFn = deps.fetch ?? fetch;
-  const res = await fetchFn(ANTHROPIC_URL, {
-    method: 'POST',
-    signal: providerTimeoutSignal(),
-    headers: {
-      'content-type': 'application/json',
-      'x-api-key': key,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model: request.model,
-      max_tokens: 8192,
-      temperature: 0,
-      // Messages API has no seed field; seed is in the user message + cacheKey.
-      system: request.prompt,
-      messages: [{ role: 'user', content: buildContent(request) }],
+  const res = await withProviderSignal(deps.signal, (signal) =>
+    fetchFn(ANTHROPIC_URL, {
+      method: 'POST',
+      signal,
+      headers: {
+        'content-type': 'application/json',
+        'x-api-key': key,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: request.model,
+        max_tokens: 8192,
+        temperature: 0,
+        // Messages API has no seed field; seed is in the user message + cacheKey.
+        system: request.prompt,
+        messages: [{ role: 'user', content: buildContent(request) }],
+      }),
     }),
-  });
+  );
   if (!res.ok) {
     throw new Error(`Anthropic returned HTTP ${res.status}`);
   }

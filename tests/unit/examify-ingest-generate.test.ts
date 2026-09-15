@@ -5,6 +5,7 @@ import {
   readFileSync,
   readdirSync,
   symlinkSync,
+  unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -28,8 +29,11 @@ import {
   UNTRUSTED_SOURCE_NOTE,
   buildCacheKey,
   extractJsonObject,
+  GenerateAbortedError,
   generateSubject,
+  irCachePath,
   loadGeneratePrompt,
+  providerRequestSignal,
   publicSplitHasNoSecrets,
   resolveGenerateTargets,
   resolvePageImages,
@@ -941,5 +945,481 @@ describe('examify-ingest generate helpers', () => {
     );
     expect(code).toBe(1);
     expect(streams.err()).toContain('sentinel');
+  });
+});
+
+function plantsSubject() {
+  return { id: 'plants', label: 'Plants', icon: 'biology', l: 0.58, c: 0.09, h: 142 } as const;
+}
+
+function abortFixtureBank(): BankIR {
+  return {
+    version: 1,
+    subject: plantsSubject(),
+    difficulties: {
+      easy: [
+        {
+          id: 'plants-easy-1',
+          type: 'mcq',
+          q: 'Abort fixture?',
+          choices: ['A', 'B', 'C', 'D'],
+          answer: 0,
+          provenance: { pdf: 'notes.txt', locator: 'p1' },
+        },
+      ],
+      medium: [],
+      hard: [],
+    },
+  };
+}
+
+function anthropicOkFetch(bank: BankIR): typeof fetch {
+  return async () =>
+    new Response(JSON.stringify({ content: [{ type: 'text', text: JSON.stringify(bank) }] }), {
+      status: 200,
+    });
+}
+
+function abortingFetch(
+  controller: AbortController,
+  seen: { signal?: AbortSignal; calls: number },
+): typeof fetch {
+  return async (_input, init) => {
+    seen.calls += 1;
+    const requestSignal = init?.signal ?? undefined;
+    if (requestSignal) seen.signal = requestSignal;
+    queueMicrotask(() => controller.abort());
+    return new Promise<Response>((_resolve, reject) => {
+      const signal = requestSignal;
+      if (!signal) {
+        reject(new Error('expected fetch signal'));
+        return;
+      }
+      const fail = () => reject(new DOMException('The operation was aborted.', 'AbortError'));
+      if (signal.aborted) {
+        fail();
+        return;
+      }
+      signal.addEventListener('abort', fail, { once: true });
+    });
+  };
+}
+
+describe('examify-ingest generate abort', () => {
+  it('combines a caller signal with the provider deadline', () => {
+    const controller = new AbortController();
+    const combined = providerRequestSignal(controller.signal);
+    expect(combined.aborted).toBe(false);
+    controller.abort();
+    expect(combined.aborted).toBe(true);
+    expect(providerRequestSignal().aborted).toBe(false);
+  });
+
+  it('abort before generate writes no IR (test provider)', async () => {
+    const root = examifyRepo();
+    const irPath = path.join(root, 'content/subjects/plants/bank.ir.json');
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      generateSubject({
+        repoRoot: root,
+        subject: plantsSubject(),
+        subjectDir: path.join(root, 'content/subjects/plants'),
+        sources: resolveSubjectSources(root, 'plants', path.join(root, 'content/subjects/plants')),
+        provider: 'test',
+        seed: 0,
+        env: {},
+        signal: controller.signal,
+      }),
+    ).rejects.toBeInstanceOf(GenerateAbortedError);
+    expect(existsSync(irPath)).toBe(false);
+    expect(existsSync(path.join(root, '.examify-ingest'))).toBe(false);
+  });
+
+  it('abort before mocked fetch never calls the provider and writes no IR', async () => {
+    const root = examifyRepo();
+    const irPath = path.join(root, 'content/subjects/plants/bank.ir.json');
+    const controller = new AbortController();
+    controller.abort();
+    let fetchCalls = 0;
+    await expect(
+      generateSubject({
+        repoRoot: root,
+        subject: plantsSubject(),
+        subjectDir: path.join(root, 'content/subjects/plants'),
+        sources: resolveSubjectSources(root, 'plants', path.join(root, 'content/subjects/plants')),
+        provider: 'anthropic',
+        seed: 0,
+        env: { ANTHROPIC_API_KEY: 'sk-ant-abort-before' },
+        signal: controller.signal,
+        fetch: async () => {
+          fetchCalls += 1;
+          throw new Error('network should not run when already aborted');
+        },
+      }),
+    ).rejects.toBeInstanceOf(GenerateAbortedError);
+    expect(fetchCalls).toBe(0);
+    expect(existsSync(irPath)).toBe(false);
+  });
+
+  it('abort during mocked fetch forwards the signal and writes no IR', async () => {
+    const root = examifyRepo();
+    const irPath = path.join(root, 'content/subjects/plants/bank.ir.json');
+    const controller = new AbortController();
+    const seen = { signal: undefined as AbortSignal | undefined, calls: 0 };
+    await expect(
+      generateSubject({
+        repoRoot: root,
+        subject: plantsSubject(),
+        subjectDir: path.join(root, 'content/subjects/plants'),
+        sources: resolveSubjectSources(root, 'plants', path.join(root, 'content/subjects/plants')),
+        provider: 'anthropic',
+        seed: 0,
+        env: { ANTHROPIC_API_KEY: 'sk-ant-abort-during' },
+        signal: controller.signal,
+        fetch: abortingFetch(controller, seen),
+      }),
+    ).rejects.toBeInstanceOf(GenerateAbortedError);
+    expect(seen.calls).toBe(1);
+    expect(seen.signal).toBeDefined();
+    expect(seen.signal?.aborted).toBe(true);
+    expect(existsSync(irPath)).toBe(false);
+    expect(existsSync(path.join(root, '.examify-ingest'))).toBe(false);
+  });
+
+  it('openai and local HTTP fetch receive a signal that aborts with the caller', async () => {
+    const root = examifyRepo();
+    const cases = [
+      {
+        provider: 'openai' as const,
+        env: { OPENAI_API_KEY: 'sk-openai-abort-signal' },
+      },
+      {
+        provider: 'local' as const,
+        env: { EXAMIFY_LLM_BASE_URL: 'http://127.0.0.1:9' },
+      },
+    ];
+    for (const row of cases) {
+      const controller = new AbortController();
+      const seen = { signal: undefined as AbortSignal | undefined, calls: 0 };
+      await expect(
+        generateSubject({
+          repoRoot: root,
+          subject: plantsSubject(),
+          subjectDir: path.join(root, 'content/subjects/plants'),
+          sources: resolveSubjectSources(
+            root,
+            'plants',
+            path.join(root, 'content/subjects/plants'),
+          ),
+          provider: row.provider,
+          seed: 0,
+          env: row.env,
+          signal: controller.signal,
+          fetch: abortingFetch(controller, seen),
+        }),
+      ).rejects.toBeInstanceOf(GenerateAbortedError);
+      expect(seen.calls).toBe(1);
+      expect(seen.signal?.aborted).toBe(true);
+      expect(existsSync(path.join(root, 'content/subjects/plants/bank.ir.json'))).toBe(false);
+    }
+  });
+
+  it('already-aborted signal short-circuits before cache reuse', async () => {
+    const root = examifyRepo();
+    const irPath = path.join(root, 'content/subjects/plants/bank.ir.json');
+    const request = {
+      repoRoot: root,
+      subject: plantsSubject(),
+      subjectDir: path.join(root, 'content/subjects/plants'),
+      sources: resolveSubjectSources(root, 'plants', path.join(root, 'content/subjects/plants')),
+      provider: 'anthropic' as const,
+      seed: 0,
+    };
+    await generateSubject({
+      ...request,
+      env: { ANTHROPIC_API_KEY: 'sk-ant-cache-abort' },
+      fetch: anthropicOkFetch(abortFixtureBank()),
+    });
+    expect(existsSync(irPath)).toBe(true);
+    unlinkSync(irPath);
+
+    const controller = new AbortController();
+    controller.abort();
+    let fetchCalls = 0;
+    await expect(
+      generateSubject({
+        ...request,
+        env: {},
+        signal: controller.signal,
+        fetch: async () => {
+          fetchCalls += 1;
+          throw new Error('network should not run on aborted cache hit');
+        },
+      }),
+    ).rejects.toBeInstanceOf(GenerateAbortedError);
+    expect(fetchCalls).toBe(0);
+    expect(existsSync(irPath)).toBe(false);
+  });
+
+  it('cache hit abort after lookup does not rewrite IR', async () => {
+    const root = examifyRepo();
+    const irPath = path.join(root, 'content/subjects/plants/bank.ir.json');
+    const request = {
+      repoRoot: root,
+      subject: plantsSubject(),
+      subjectDir: path.join(root, 'content/subjects/plants'),
+      sources: resolveSubjectSources(root, 'plants', path.join(root, 'content/subjects/plants')),
+      provider: 'anthropic' as const,
+      seed: 0,
+    };
+    await generateSubject({
+      ...request,
+      env: { ANTHROPIC_API_KEY: 'sk-ant-cache-abort-during' },
+      fetch: anthropicOkFetch(abortFixtureBank()),
+    });
+    unlinkSync(irPath);
+
+    const controller = new AbortController();
+    let fetchCalls = 0;
+    await expect(
+      generateSubject({
+        ...request,
+        env: {},
+        signal: controller.signal,
+        fetch: async () => {
+          fetchCalls += 1;
+          throw new Error('network should not run on cache hit');
+        },
+        now: () => {
+          controller.abort();
+          return new Date('2026-01-01T00:00:00.000Z');
+        },
+      }),
+    ).rejects.toBeInstanceOf(GenerateAbortedError);
+    expect(fetchCalls).toBe(0);
+    expect(existsSync(irPath)).toBe(false);
+  });
+
+  it('--dry-run-ir abort during fetch still writes nothing durable', async () => {
+    const root = examifyRepo();
+    const controller = new AbortController();
+    const seen = { signal: undefined as AbortSignal | undefined, calls: 0 };
+    await expect(
+      generateSubject({
+        repoRoot: root,
+        subject: plantsSubject(),
+        subjectDir: path.join(root, 'content/subjects/plants'),
+        sources: resolveSubjectSources(root, 'plants', path.join(root, 'content/subjects/plants')),
+        provider: 'openai',
+        seed: 0,
+        dryRunIr: true,
+        env: { OPENAI_API_KEY: 'sk-openai-dry-abort' },
+        signal: controller.signal,
+        fetch: abortingFetch(controller, seen),
+      }),
+    ).rejects.toBeInstanceOf(GenerateAbortedError);
+    expect(seen.calls).toBe(1);
+    expect(existsSync(path.join(root, 'content/subjects/plants/bank.ir.json'))).toBe(false);
+    expect(existsSync(path.join(root, '.examify-ingest'))).toBe(false);
+  });
+
+  it('local CMD is killed on abort and writes no IR', async () => {
+    const root = examifyRepo();
+    const script = path.join(root, 'hang-local-cmd.mjs');
+    writeFileSync(script, 'process.stdin.resume();\nsetInterval(() => {}, 1000);\n');
+    const controller = new AbortController();
+    const pending = generateSubject({
+      repoRoot: root,
+      subject: plantsSubject(),
+      subjectDir: path.join(root, 'content/subjects/plants'),
+      sources: resolveSubjectSources(root, 'plants', path.join(root, 'content/subjects/plants')),
+      provider: 'local',
+      seed: 0,
+      env: { EXAMIFY_INGEST_LOCAL_CMD: `node "${script}"` },
+      signal: controller.signal,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    controller.abort();
+    await expect(pending).rejects.toBeInstanceOf(GenerateAbortedError);
+    expect(existsSync(path.join(root, 'content/subjects/plants/bank.ir.json'))).toBe(false);
+  });
+
+  it('abort after provider returns writes no IR, IR cache, pages, or manifest', async () => {
+    const root = examifyRepo();
+    const irPath = path.join(root, 'content/subjects/plants/bank.ir.json');
+    writeFileSync(path.join(root, 'content/source-pdfs/plants/guide.pdf'), '%PDF-1.4 fixture\n');
+    const controller = new AbortController();
+    let fetchCalls = 0;
+    await expect(
+      generateSubject({
+        repoRoot: root,
+        subject: plantsSubject(),
+        subjectDir: path.join(root, 'content/subjects/plants'),
+        sources: resolveSubjectSources(root, 'plants', path.join(root, 'content/subjects/plants')),
+        provider: 'anthropic',
+        seed: 0,
+        env: { ANTHROPIC_API_KEY: 'sk-ant-abort-after-provider' },
+        signal: controller.signal,
+        rasterize: (_pdf, prefix) => {
+          writeFileSync(`${prefix}-1.png`, 'abort-after-provider-page');
+          return true;
+        },
+        fetch: async () => {
+          fetchCalls += 1;
+          return new Response(
+            JSON.stringify({
+              content: [{ type: 'text', text: JSON.stringify(abortFixtureBank()) }],
+            }),
+            { status: 200 },
+          );
+        },
+        now: () => {
+          controller.abort();
+          return new Date('2026-01-01T00:00:00.000Z');
+        },
+      }),
+    ).rejects.toBeInstanceOf(GenerateAbortedError);
+    expect(fetchCalls).toBe(1);
+    expect(existsSync(irPath)).toBe(false);
+    expect(existsSync(path.join(root, '.examify-ingest/cache/ir'))).toBe(false);
+    expect(existsSync(path.join(root, '.examify-ingest/cache/pages'))).toBe(false);
+    expect(existsSync(path.join(root, '.examify-ingest/runs'))).toBe(false);
+    expect(existsSync(path.join(root, '.examify-ingest'))).toBe(false);
+  });
+
+  it('successful persist still writes IR cache, page rasters, and manifest', async () => {
+    const root = examifyRepo();
+    writeFileSync(path.join(root, 'content/source-pdfs/plants/guide.pdf'), '%PDF-1.4 fixture\n');
+    const result = await generateSubject({
+      repoRoot: root,
+      subject: plantsSubject(),
+      subjectDir: path.join(root, 'content/subjects/plants'),
+      sources: resolveSubjectSources(root, 'plants', path.join(root, 'content/subjects/plants')),
+      provider: 'anthropic',
+      seed: 0,
+      env: { ANTHROPIC_API_KEY: 'sk-ant-persist-after-gate' },
+      rasterize: (_pdf, prefix) => {
+        writeFileSync(`${prefix}-1.png`, 'persist-after-gate-page');
+        return true;
+      },
+      fetch: anthropicOkFetch(abortFixtureBank()),
+    });
+    expect(result.wroteIr).toBe(true);
+    expect(existsSync(result.irPath)).toBe(true);
+    expect(existsSync(irCachePath(root, result.cacheKey))).toBe(true);
+    expect(existsSync(path.join(root, '.examify-ingest/cache/pages'))).toBe(true);
+    expect(result.manifestPath).toBeTruthy();
+    expect(existsSync(result.manifestPath!)).toBe(true);
+  });
+
+  it('local CMD success still writes BankIR (spawn path)', async () => {
+    const root = examifyRepo();
+    const script = path.join(root, 'ok-local-cmd.mjs');
+    writeFileSync(
+      script,
+      `
+let buf = '';
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', (chunk) => {
+  buf += chunk;
+});
+process.stdin.on('end', () => {
+  process.stdout.write(${JSON.stringify(JSON.stringify(abortFixtureBank()))});
+});
+`,
+    );
+    const result = await generateSubject({
+      repoRoot: root,
+      subject: plantsSubject(),
+      subjectDir: path.join(root, 'content/subjects/plants'),
+      sources: resolveSubjectSources(root, 'plants', path.join(root, 'content/subjects/plants')),
+      provider: 'local',
+      seed: 0,
+      env: { EXAMIFY_INGEST_LOCAL_CMD: `node "${script}"` },
+    });
+    expect(result.wroteIr).toBe(true);
+    expect(existsSync(result.irPath)).toBe(true);
+    expect(result.bank.difficulties.easy[0]?.q).toBe('Abort fixture?');
+  });
+
+  it('local CMD still completes when stderr floods the pipe', async () => {
+    const root = examifyRepo();
+    const script = path.join(root, 'stderr-flood-local-cmd.mjs');
+    writeFileSync(
+      script,
+      `
+process.stderr.write('x'.repeat(256 * 1024));
+let buf = '';
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', (chunk) => {
+  buf += chunk;
+});
+process.stdin.on('end', () => {
+  process.stdout.write(${JSON.stringify(JSON.stringify(abortFixtureBank()))});
+});
+`,
+    );
+    const result = await generateSubject({
+      repoRoot: root,
+      subject: plantsSubject(),
+      subjectDir: path.join(root, 'content/subjects/plants'),
+      sources: resolveSubjectSources(root, 'plants', path.join(root, 'content/subjects/plants')),
+      provider: 'local',
+      seed: 0,
+      env: { EXAMIFY_INGEST_LOCAL_CMD: `node "${script}"` },
+    });
+    expect(result.wroteIr).toBe(true);
+    expect(result.bank.difficulties.easy[0]?.q).toBe('Abort fixture?');
+  });
+
+  it('local CMD abort kills SIGTERM-ignoring descendants', async () => {
+    const root = examifyRepo();
+    const pidPath = path.join(root, 'grandchild.pid');
+    const script = path.join(root, 'tree-local-cmd.mjs');
+    writeFileSync(
+      script,
+      `
+import { spawn } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
+const child = spawn(
+  process.execPath,
+  ['-e', 'process.on("SIGTERM", () => {}); setInterval(() => {}, 1000);'],
+  { stdio: 'ignore' },
+);
+writeFileSync(${JSON.stringify(pidPath)}, String(child.pid));
+process.stdin.resume();
+setInterval(() => {}, 1000);
+`,
+    );
+    const controller = new AbortController();
+    const pending = generateSubject({
+      repoRoot: root,
+      subject: plantsSubject(),
+      subjectDir: path.join(root, 'content/subjects/plants'),
+      sources: resolveSubjectSources(root, 'plants', path.join(root, 'content/subjects/plants')),
+      provider: 'local',
+      seed: 0,
+      env: { EXAMIFY_INGEST_LOCAL_CMD: `node "${script}"` },
+      signal: controller.signal,
+    });
+    const started = Date.now();
+    while (!existsSync(pidPath) && Date.now() - started < 2000) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    expect(existsSync(pidPath)).toBe(true);
+    const grandchildPid = Number(readFileSync(pidPath, 'utf8'));
+    expect(grandchildPid).toBeGreaterThan(0);
+    controller.abort();
+    await expect(pending).rejects.toBeInstanceOf(GenerateAbortedError);
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    let alive = true;
+    try {
+      process.kill(grandchildPid, 0);
+    } catch {
+      alive = false;
+    }
+    expect(alive).toBe(false);
+    expect(existsSync(path.join(root, 'content/subjects/plants/bank.ir.json'))).toBe(false);
   });
 });
