@@ -3,10 +3,6 @@ import path from 'node:path';
 
 export type LoadedIrFile = { path: string; data: unknown };
 
-function isBankIrName(name: string): boolean {
-  return name === 'bank.ir.json';
-}
-
 /** Resolve a subjects directory (each child folder's bank.ir.json) or explicit IR file paths. */
 export function resolveIrFiles(inputs: readonly string[], cwd: string): string[] {
   const resolved: string[] = [];
@@ -49,9 +45,6 @@ export function resolveIrFiles(inputs: readonly string[], cwd: string): string[]
 
     if (!stats.isFile()) {
       throw new Error(`not a file or directory: ${input}`);
-    }
-    if (!isBankIrName(path.basename(abs)) && !abs.endsWith('.json')) {
-      throw new Error(`expected a BankIR JSON file: ${input}`);
     }
     if (!seen.has(abs)) {
       resolved.push(abs);
