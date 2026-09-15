@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   ONBOARDING_INGEST_CLI,
   onboardingGenerateAndEmitCli,
@@ -40,7 +40,10 @@ function seedSubject(root: string) {
 
 afterEach(async () => {
   const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
+  const { resetOnboardingGenerateForTests } = await import('@/lib/onboarding-generate');
   setOnboardingContentRootForTests(null);
+  resetOnboardingGenerateForTests();
+  vi.restoreAllMocks();
 });
 
 describe('onboarding generate mapping', () => {
@@ -71,6 +74,7 @@ describe('onboarding generate graph', () => {
     );
     expect(generate).toMatch(/from 'examify-ingest\/generate'/);
     expect(generate).toMatch(/generateSubject/);
+    expect(generate).toMatch(/dryRunIr: true/);
     expect(generate).not.toMatch(/applyEmit|planEmit|applyOnboardingEmit/);
     const wizard = readFileSync(
       path.join(process.cwd(), 'src/components/exam/OnboardingWizard.tsx'),
@@ -109,12 +113,16 @@ describe('generateOnboardingSubject', () => {
       keys: readFileSync(path.join(root, 'content/generated/keys/biology.json'), 'utf8'),
     };
 
+    const ingest = await import('examify-ingest/generate');
+    const generateSpy = vi.spyOn(ingest, 'generateSubject');
+
     const result = await generateOnboardingSubject({
       subjectId: 'history',
       provider: 'test',
       seed: 0,
       root,
     });
+    expect(generateSpy).toHaveBeenCalledWith(expect.objectContaining({ dryRunIr: true }));
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected generate');
     expect(result.result.wroteIr).toBe(true);
@@ -190,6 +198,59 @@ describe('generateOnboardingSubject', () => {
       if (previous === undefined) delete process.env.ANTHROPIC_API_KEY;
       else process.env.ANTHROPIC_API_KEY = previous;
     }
+  });
+
+  it('discards the preview and leaves prior IR unchanged when cancel wins before commit', async () => {
+    const ingest = await import('examify-ingest/generate');
+    const { generateOnboardingSubject } = await import('@/lib/onboarding-generate');
+    const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
+    const root = tempRoot();
+    seedSubject(root);
+    setOnboardingContentRootForTests(root);
+    const irPath = path.join(root, 'content/subjects/history/bank.ir.json');
+    const prior = 'PRIOR_IR_BYTES_MUST_NOT_CHANGE\n';
+    writeFileSync(irPath, prior);
+
+    const controller = new AbortController();
+    const actual = ingest.generateSubject;
+    const spy = vi.spyOn(ingest, 'generateSubject').mockImplementation(async (request) => {
+      expect(request.dryRunIr).toBe(true);
+      const generated = await actual(request);
+      controller.abort();
+      return generated;
+    });
+
+    const result = await generateOnboardingSubject({
+      subjectId: 'history',
+      provider: 'test',
+      seed: 0,
+      root,
+      signal: controller.signal,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected cancelled');
+    expect(result.reason).toBe('cancelled');
+    expect(readFileSync(irPath, 'utf8')).toBe(prior);
+    expect(spy).toHaveBeenCalled();
+  });
+
+  it('refuses a kebab-case id that is not in the wizard catalog', async () => {
+    const { generateOnboardingSubject } = await import('@/lib/onboarding-generate');
+    const root = tempRoot();
+    seedSubject(root);
+    mkdirSync(path.join(root, 'content/source-pdfs/rogue-id'), { recursive: true });
+    writeFileSync(path.join(root, 'content/source-pdfs/rogue-id/notes.txt'), 'foreign source\n');
+
+    const result = await generateOnboardingSubject({
+      subjectId: 'rogue-id',
+      provider: 'test',
+      seed: 0,
+      root,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected missing catalog member');
+    expect(result.reason).toBe('missing');
+    expect(existsSync(path.join(root, 'content/subjects/rogue-id/bank.ir.json'))).toBe(false);
   });
 
   it('fails closed for local without CMD or BASE_URL', async () => {

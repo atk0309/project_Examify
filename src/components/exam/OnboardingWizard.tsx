@@ -8,6 +8,7 @@ import {
   deleteOnboardingSubjectAction,
   detachOnboardingPdfAction,
   finishOnboardingAction,
+  cancelOnboardingGenerateAction,
   generateOnboardingSubjectAction,
   previewOnboardingEmitAction,
   renameOnboardingSubjectAction,
@@ -102,22 +103,15 @@ function errorCopy(error: OnboardingActionError): string {
     case 'missing_provider':
       return 'Choose an AI mode before generating BankIR.';
     case 'missing_key':
-      return (
-        error.message ??
-        'This provider needs a real API key in the env store (fail closed — no stub).'
-      );
+      return 'This provider needs a real API key in the env store (fail closed — no stub).';
     case 'missing_local':
-      return (
-        error.message ??
-        'Local generate needs EXAMIFY_INGEST_LOCAL_CMD and/or EXAMIFY_LLM_BASE_URL.'
-      );
+      return 'Local generate needs EXAMIFY_INGEST_LOCAL_CMD and/or EXAMIFY_LLM_BASE_URL.';
     case 'empty_sources':
-      return (
-        error.message ??
-        'No source files for that subject (source-pdfs/<id>/, <id>.pdf, or files in the subject folder).'
-      );
+      return 'No source files for that subject (source-pdfs/<id>/, <id>.pdf, or files in the subject folder).';
+    case 'cancelled':
+      return 'Generate cancelled.';
     default:
-      return error.message ?? 'Something went wrong.';
+      return 'Something went wrong.';
   }
 }
 
@@ -152,6 +146,7 @@ export function OnboardingWizard({
   const [generateRuns, setGenerateRuns] = useState<Record<string, OnboardingGenerateResult>>({});
   const [activeGenerateId, setActiveGenerateId] = useState<string | null>(null);
   const generateCancelRef = useRef(false);
+  const generateCancelTokenRef = useRef<string | null>(null);
   const [pending, startTransition] = useTransition();
 
   const stepIndex = STEPS.findIndex((entry) => entry.id === step);
@@ -282,13 +277,19 @@ export function OnboardingWizard({
           }
           onCancel={() => {
             generateCancelRef.current = true;
+            const token = generateCancelTokenRef.current;
+            if (!token) return;
+            const data = new FormData();
+            data.set('cancelToken', token);
+            void cancelOnboardingGenerateAction(data);
           }}
           onGoValidate={() => go('validate')}
           onGenerate={(subjectIds) =>
             run(async () => {
+              const token = crypto.randomUUID();
+              generateCancelTokenRef.current = token;
               generateCancelRef.current = false;
               setGenerateBusy(true);
-              setIrReady(false);
               let wroteAny = false;
               try {
                 for (const subjectId of subjectIds) {
@@ -297,8 +298,10 @@ export function OnboardingWizard({
                   const data = new FormData();
                   data.set('subjectId', subjectId);
                   data.set('seed', String(generateSeed));
+                  data.set('cancelToken', token);
                   const result = await generateOnboardingSubjectAction(data);
                   if (!result.ok) {
+                    if (result.reason === 'cancelled' || generateCancelRef.current) break;
                     applyResult(result);
                     return;
                   }
@@ -309,7 +312,8 @@ export function OnboardingWizard({
                   wroteAny = wroteAny || result.result.wroteIr;
                   if (generateCancelRef.current) break;
                 }
-                if (wroteAny && !generateCancelRef.current) setIrReady(true);
+                // Keep IR-ready for subjects that already finished (including generate-all cancel).
+                if (wroteAny) setIrReady(true);
               } finally {
                 setActiveGenerateId(null);
                 setGenerateBusy(false);

@@ -36,9 +36,10 @@ no env-JSON allowlist to hand-edit.
    After bootstrap, **`/onboarding`** lets the household admin add subjects, attach
    local study PDFs, choose an AI mode, optionally generate BankIR from those
    files, and emit through `examify-ingest` (validate + dry-run HITL, then apply;
-   generate never auto-applies; an empty catalog is refused; a changed plan after
-   dry-run is refused). Finish requires that confirmed apply; skip-without-emit
-   keeps the sample bank.
+   generate never auto-applies; cancel discards an in-flight preview and does
+   not replace prior IR; generate is gated to wizard catalog subjects; an empty
+   catalog is refused; a changed plan after dry-run is refused). Finish requires
+   that confirmed apply; skip-without-emit keeps the sample bank.
    Bootstrap signs in the first household administrator and redirects to
    `/onboarding`. After onboarding, invited users join through `/invite/…` and
    authenticate in the configured mode. Later visits use `/signin`.

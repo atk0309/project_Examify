@@ -28,7 +28,9 @@ first-run `/setup`, the admin wizard at `/onboarding` can add subjects, attach
 local PDFs (under `content/source-pdfs/<subject>/` only), optionally generate
 BankIR on the AI step (`examify-ingest/generate`, IR only), and run the same
 directory emit (validate, dry-run HITL with planned deletes, then apply). The
-wizard does **not** auto-emit or auto-apply after generate. Hand-authored IR
+wizard does **not** auto-emit or auto-apply after generate. Cancel discards
+an in-flight generate preview and does not replace prior `bank.ir.json`.
+Generate is limited to subjects in the wizard catalog. Hand-authored IR
 can skip generate. Apply refuses if the plan hash no longer
 matches the confirmed dry-run. Finish requires that confirmed apply; skip is
 the no-emit exit (sample bank). Deleting a subject removes its IR/source dirs;

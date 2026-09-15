@@ -3,7 +3,11 @@
 import { redirect } from 'next/navigation';
 import { z } from 'zod';
 import { getSession } from '@/lib/auth';
-import { generateOnboardingSubject } from '@/lib/onboarding-generate';
+import {
+  generateOnboardingSubject,
+  isOnboardingGenerateCancelToken,
+  requestOnboardingGenerateCancel,
+} from '@/lib/onboarding-generate';
 import {
   addOnboardingSubject,
   adminCanOpenOnboarding,
@@ -56,7 +60,8 @@ export type OnboardingActionError = {
     | 'missing_provider'
     | 'missing_key'
     | 'missing_local'
-    | 'empty_sources';
+    | 'empty_sources'
+    | 'cancelled';
   message?: string;
   issues?: { file: string; message: string }[];
 };
@@ -187,6 +192,11 @@ export async function generateOnboardingSubjectAction(
       ? { success: true as const, data: ONBOARDING_GENERATE_SEED_DEFAULT }
       : generateSeedSchema.safeParse(rawSeed);
   if (!seedParsed.success) return { ok: false, reason: 'invalid' };
+  const rawToken = formData.get('cancelToken');
+  const cancelToken =
+    typeof rawToken === 'string' && isOnboardingGenerateCancelToken(rawToken)
+      ? rawToken
+      : undefined;
 
   const state = getHouseholdOnboarding(gate.householdId).state;
   if (!state.aiMode) return { ok: false, reason: 'missing_provider' };
@@ -196,13 +206,28 @@ export async function generateOnboardingSubjectAction(
     subjectId,
     provider,
     seed: seedParsed.data,
+    cancelToken,
   });
   if (!generated.ok) {
-    return { ok: false, reason: generated.reason, message: generated.message };
+    // Safe codes only — never forward raw provider / path / env messages.
+    return { ok: false, reason: generated.reason };
   }
   // IR changed — any prior HITL dry-run / apply is stale. Generate never emit/applies.
   invalidateOnboardingEmit(gate.householdId);
   return { ok: true, snapshot: snapshot(gate.householdId), result: generated.result };
+}
+
+export async function cancelOnboardingGenerateAction(
+  formData: FormData,
+): Promise<{ ok: true } | OnboardingActionError> {
+  const gate = await requireOnboardingAdmin();
+  if (!gate.ok) return gate;
+  const token = formData.get('cancelToken');
+  if (typeof token !== 'string' || !isOnboardingGenerateCancelToken(token)) {
+    return { ok: false, reason: 'invalid' };
+  }
+  requestOnboardingGenerateCancel(token);
+  return { ok: true };
 }
 
 export async function setOnboardingAiModeAction(

@@ -88,7 +88,9 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   when no household exists, and only after `SETUP_BOOTSTRAP_SECRET` matches (required
   in production; captcha is not identity). After bootstrap, `/onboarding` lets the
   household admin add subjects, attach local PDFs, choose an AI mode, optionally
-  run `examify-ingest generate` (BankIR only; never emit/apply), and emit
+  run `examify-ingest generate` (BankIR only; never emit/apply; cancel
+  discards the in-flight preview and does not replace prior IR; subject
+  ids must be in the wizard catalog), and emit
   BankIR via `examify-ingest` (directory-only, dry-run HITL before apply, empty
   catalog fail-closed; `--replace-sample` only behind an explicit advanced toggle).
   Apply re-hashes the current plan and refuses if it differs from the confirmed

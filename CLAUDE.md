@@ -32,6 +32,8 @@ Surface:
   `onboarding_complete` is false). Welcome → subjects → PDF dropzones → AI setup
   (optional `examify-ingest generate` after files + mode) → validate → dry-run
   HITL → apply → ready. Generate writes BankIR only and never auto-applies.
+  Cancel discards an in-flight preview and does not replace prior IR; generate
+  is gated to wizard catalog subjects (`listOnboardingSubjects`).
   Finish (“Open dashboard”) requires
   a confirmed apply of that dry-run; a changed plan is refused (`stale_preview`).
   Skip-without-emit is Welcome “Use sample bank for now” / later “Skip to
@@ -155,7 +157,7 @@ src/
     households.ts       # bootstrap, invites, membership, optional FAMILIES import (server-only)
     household-types.ts  # client-safe PendingInvite type
     onboarding.ts       # first-run subjects/PDFs + examify-ingest emit (server-only)
-    onboarding-generate.ts # AI-step generateSubject bridge (examify-ingest/generate)
+    onboarding-generate.ts # AI-step generateSubject bridge (preview then commit if !cancelled)
     onboarding-types.ts # client-safe wizard snapshot / AI mode types
     families.ts         # leftover FAMILIES JSON parser (optional one-shot import only)
     allowlist.ts        # isAllowedEmail(role,email), derived from household membership

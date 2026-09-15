@@ -70,7 +70,9 @@ beforeEach(async () => {
 
 afterEach(async () => {
   const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
+  const { resetOnboardingGenerateForTests } = await import('@/lib/onboarding-generate');
   setOnboardingContentRootForTests(null);
+  resetOnboardingGenerateForTests();
 });
 
 async function signInHost() {
@@ -89,6 +91,7 @@ describe('onboarding actions', () => {
     const {
       addOnboardingSubjectAction,
       applyOnboardingEmitAction,
+      cancelOnboardingGenerateAction,
       generateOnboardingSubjectAction,
     } = await import('@/actions/onboarding');
     const data = new FormData();
@@ -100,6 +103,12 @@ describe('onboarding actions', () => {
     const generate = new FormData();
     generate.set('subjectId', 'history');
     expect(await generateOnboardingSubjectAction(generate)).toEqual({
+      ok: false,
+      reason: 'forbidden',
+    });
+    const cancel = new FormData();
+    cancel.set('cancelToken', 'cancel-token-01');
+    expect(await cancelOnboardingGenerateAction(cancel)).toEqual({
       ok: false,
       reason: 'forbidden',
     });
@@ -368,7 +377,10 @@ describe('onboarding actions', () => {
     });
 
     const { saveOnboardingState } = await import('@/lib/onboarding');
-    saveOnboardingState(host.householdId, { dryRunHash: 'stale-before-generate' });
+    saveOnboardingState(host.householdId, {
+      dryRunHash: 'stale-before-generate',
+      applied: true,
+    });
 
     const mode = new FormData();
     mode.set('aiMode', 'skip-stub');
@@ -388,7 +400,88 @@ describe('onboarding actions', () => {
       '[]\n',
     );
     expect(result.snapshot.hasDryRun).toBe(false);
+    expect(result.snapshot.hasApplied).toBe(false);
     expect((await validateOnboardingAction()).ok).toBe(true);
+  });
+
+  it('refuses generate for a kebab-case id that is not in the wizard catalog', async () => {
+    const root = tempRoot();
+    const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
+    setOnboardingContentRootForTests(root);
+    await signInHost();
+    fs.mkdirSync(path.join(root, 'content/subjects/history'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'content/source-pdfs/history'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'content/source-pdfs/rogue-id'), { recursive: true });
+    writeFileSync(
+      path.join(root, 'content/subjects/history/bank.ir.json'),
+      JSON.stringify({
+        version: 1,
+        subject: { id: 'history', label: 'History', icon: 'geography', l: 0.6, c: 0.08, h: 40 },
+        difficulties: { easy: [], medium: [], hard: [] },
+      }),
+    );
+    writeFileSync(path.join(root, 'content/source-pdfs/history/notes.txt'), 'A source note.\n');
+    writeFileSync(path.join(root, 'content/source-pdfs/rogue-id/notes.txt'), 'Foreign source.\n');
+
+    const { generateOnboardingSubjectAction, setOnboardingAiModeAction } =
+      await import('@/actions/onboarding');
+    const mode = new FormData();
+    mode.set('aiMode', 'skip-stub');
+    expect((await setOnboardingAiModeAction(mode)).ok).toBe(true);
+    const generate = new FormData();
+    generate.set('subjectId', 'rogue-id');
+    expect(await generateOnboardingSubjectAction(generate)).toEqual({
+      ok: false,
+      reason: 'missing',
+    });
+    expect(fs.existsSync(path.join(root, 'content/subjects/rogue-id/bank.ir.json'))).toBe(false);
+  });
+
+  it('does not replace prior IR when cancel wins before commit', async () => {
+    const root = tempRoot();
+    const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
+    setOnboardingContentRootForTests(root);
+    await signInHost();
+    const irPath = path.join(root, 'content/subjects/history/bank.ir.json');
+    fs.mkdirSync(path.join(root, 'content/subjects/history'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'content/source-pdfs/history'), { recursive: true });
+    const prior = 'PRIOR_IR_BYTES_MUST_NOT_CHANGE\n';
+    writeFileSync(irPath, prior);
+    writeFileSync(path.join(root, 'content/source-pdfs/history/notes.txt'), 'A source note.\n');
+
+    const {
+      cancelOnboardingGenerateAction,
+      generateOnboardingSubjectAction,
+      setOnboardingAiModeAction,
+    } = await import('@/actions/onboarding');
+    const mode = new FormData();
+    mode.set('aiMode', 'skip-stub');
+    expect((await setOnboardingAiModeAction(mode)).ok).toBe(true);
+
+    const token = 'cancel-token-01';
+    const cancel = new FormData();
+    cancel.set('cancelToken', token);
+    expect(await cancelOnboardingGenerateAction(cancel)).toEqual({ ok: true });
+    const generate = new FormData();
+    generate.set('subjectId', 'history');
+    generate.set('cancelToken', token);
+    expect(await generateOnboardingSubjectAction(generate)).toEqual({
+      ok: false,
+      reason: 'cancelled',
+    });
+    expect(fs.readFileSync(irPath, 'utf8')).toBe(prior);
+  });
+
+  it('lets the admin mark an in-flight generate cancelled', async () => {
+    await signInHost();
+    const { cancelOnboardingGenerateAction } = await import('@/actions/onboarding');
+    expect(await cancelOnboardingGenerateAction(new FormData())).toEqual({
+      ok: false,
+      reason: 'invalid',
+    });
+    const cancel = new FormData();
+    cancel.set('cancelToken', 'cancel-token-01');
+    expect(await cancelOnboardingGenerateAction(cancel)).toEqual({ ok: true });
   });
 
   it('refuses cloud generate when the key is the test sentinel', async () => {
@@ -418,6 +511,8 @@ describe('onboarding actions', () => {
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected fail-closed');
     expect(result.reason).toBe('missing_key');
+    expect(result).not.toHaveProperty('message');
+    expect(JSON.stringify(result)).not.toMatch(/ANTHROPIC_API_KEY|sentinel|ENOENT|\.env/i);
   });
 
   it('validates hand-authored IR without calling generate', async () => {
@@ -465,12 +560,21 @@ describe('onboarding actions', () => {
     sessionHolder.current.userId = parent.id;
     sessionHolder.current.role = 'parent';
     sessionHolder.current.email = 'other@example.com';
-    const { generateOnboardingSubjectAction, previewOnboardingEmitAction } =
-      await import('@/actions/onboarding');
+    const {
+      cancelOnboardingGenerateAction,
+      generateOnboardingSubjectAction,
+      previewOnboardingEmitAction,
+    } = await import('@/actions/onboarding');
     expect(await previewOnboardingEmitAction()).toEqual({ ok: false, reason: 'forbidden' });
     const generate = new FormData();
     generate.set('subjectId', 'history');
     expect(await generateOnboardingSubjectAction(generate)).toEqual({
+      ok: false,
+      reason: 'forbidden',
+    });
+    const cancel = new FormData();
+    cancel.set('cancelToken', 'cancel-token-01');
+    expect(await cancelOnboardingGenerateAction(cancel)).toEqual({
       ok: false,
       reason: 'forbidden',
     });
@@ -488,6 +592,10 @@ describe('onboarding actions', () => {
     sessionHolder.current.email = 'kid@example.com';
     expect(await previewOnboardingEmitAction()).toEqual({ ok: false, reason: 'forbidden' });
     expect(await generateOnboardingSubjectAction(generate)).toEqual({
+      ok: false,
+      reason: 'forbidden',
+    });
+    expect(await cancelOnboardingGenerateAction(cancel)).toEqual({
       ok: false,
       reason: 'forbidden',
     });
