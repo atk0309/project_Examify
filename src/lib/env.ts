@@ -151,8 +151,8 @@ function buildEnvSchema(isProd: boolean) {
       // so an exam never silently scores every free-text answer as full marks.
       ANTHROPIC_API_KEY: z.preprocess((v) => v ?? dev('test'), z.string().min(1)),
 
-      // Optional local-agent endpoint for examify-ingest generate --provider local.
-      // Not a secret. validate / emit do not call it. Never expose via NEXT_PUBLIC_*.
+      // Optional local-agent endpoint for examify-ingest generate --provider local
+      // (CLI and /onboarding AI step). Not a secret. Never expose via NEXT_PUBLIC_*.
       EXAMIFY_LLM_BASE_URL: z.preprocess(emptyToUndef, z.string().url().optional()),
 
       // Turnstile is optional. Both site + secret must be set to enable captcha;

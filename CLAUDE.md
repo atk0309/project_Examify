@@ -30,7 +30,11 @@ Surface:
 - **`/setup`** — first-run household bootstrap (only when no household exists).
 - **`/onboarding`** — post-bootstrap content wizard (household **admin** only, while
   `onboarding_complete` is false). Welcome → subjects → PDF dropzones → AI setup
-  → validate → dry-run HITL → apply → ready. Finish (“Open dashboard”) requires
+  (optional `examify-ingest generate` after files + mode) → validate → dry-run
+  HITL → apply → ready. Generate writes BankIR only and never auto-applies.
+  Cancel discards an in-flight preview and does not replace prior IR; generate
+  is gated to wizard catalog subjects (`listOnboardingSubjects`).
+  Finish (“Open dashboard”) requires
   a confirmed apply of that dry-run; a changed plan is refused (`stale_preview`).
   Skip-without-emit is Welcome “Use sample bank for now” / later “Skip to
   dashboard” — same skip semantics, sample bank stays usable, parent-dashboard
@@ -139,7 +143,7 @@ src/
   actions/              # 'use server' actions (requestMagicLink, signInWithPassword,
                         #   verifyLocalOtp, acceptInviteWithPassword, completePasswordInvite,
                         #   bootstrapHousehold,
-                        #   onboarding (subjects/PDFs/AI mode + ingest validate/dry-run/apply),
+                        #   onboarding (subjects/PDFs/AI mode + generate + ingest validate/dry-run/apply),
                         #   createInvite / revokeInvite / requestInviteLink, signOut,
                         #   recordAttempt, saveExamProgress + discardExamSession)
   components/
@@ -153,6 +157,7 @@ src/
     households.ts       # bootstrap, invites, membership, optional FAMILIES import (server-only)
     household-types.ts  # client-safe PendingInvite type
     onboarding.ts       # first-run subjects/PDFs + examify-ingest emit (server-only)
+    onboarding-generate.ts # AI-step generateSubject bridge (preview then commit if !cancelled)
     onboarding-types.ts # client-safe wizard snapshot / AI mode types
     families.ts         # leftover FAMILIES JSON parser (optional one-shot import only)
     allowlist.ts        # isAllowedEmail(role,email), derived from household membership
@@ -203,9 +208,10 @@ bank from source PDFs kept local-only in the gitignored `content/source-pdfs/`.
 Automated path: author or `pnpm examify-ingest generate` a
 `content/subjects/<id>/bank.ir.json`, then `pnpm examify-ingest validate`,
 `emit --dry-run`, and only afterward `emit --apply`
-(or use `/onboarding` after first-run bootstrap — same directory emit, HITL
-dry-run before apply, empty tree refused). Generate never auto-applies; it
-writes IR + gitignored `.examify-ingest/` run/cache files only. Cloud
+(or use `/onboarding` after first-run bootstrap — AI-step generate is optional,
+then the same directory emit, HITL dry-run before apply, empty tree refused).
+Generate never auto-applies; it writes IR + gitignored `.examify-ingest/`
+run/cache files only. Cloud
 providers fail closed without an env key (generate also fills unset keys from
 repo `.env` / `.env.local`); `--provider test` is the CI
 fixture. OpenAI-compatible generate fails closed when the only sources are

@@ -15,9 +15,10 @@ pnpm examify-ingest emit content/subjects --dry-run
 pnpm examify-ingest emit content/subjects --apply
 ```
 
-The first-run `/onboarding` wizard still calls this same directory emit
-(validate, dry-run, then apply). It does not auto-run generate. `--replace-sample`
-is off unless the admin enables the advanced toggle.
+The first-run `/onboarding` wizard can run generate on the AI step (same
+`generateSubject` entry, BankIR only), then this same directory emit
+(validate, dry-run, then apply). It does not auto-emit or auto-apply after
+generate. `--replace-sample` is off unless the admin enables the advanced toggle.
 
 ## Install
 

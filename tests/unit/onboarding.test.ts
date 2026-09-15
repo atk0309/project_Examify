@@ -589,6 +589,31 @@ describe('onboarding household gate', () => {
     );
   });
 
+  it('exposes read-only AI configured flags including OpenAI env detection', async () => {
+    const { bootstrapHousehold } = await import('@/lib/households');
+    const { getOnboardingSnapshot } = await import('@/lib/onboarding');
+    const host = bootstrapHousehold({ email: 'pat@example.com', householdName: 'Ours' });
+    expect(host.ok).toBe(true);
+    if (!host.ok) throw new Error('bootstrap');
+    const previous = process.env.OPENAI_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    try {
+      const snap = getOnboardingSnapshot(host.householdId);
+      expect(snap.openaiConfigured).toBe(false);
+      expect(snap.anthropicConfigured).toBe(false);
+    } finally {
+      if (previous === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = previous;
+    }
+    process.env.OPENAI_API_KEY = 'sk-test-not-a-sentinel';
+    try {
+      expect(getOnboardingSnapshot(host.householdId).openaiConfigured).toBe(true);
+    } finally {
+      if (previous === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = previous;
+    }
+  });
+
   it('marks finish eligibility on apply and clears it on catalog invalidation', async () => {
     const { bootstrapHousehold } = await import('@/lib/households');
     const {

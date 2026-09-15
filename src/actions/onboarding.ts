@@ -4,6 +4,11 @@ import { redirect } from 'next/navigation';
 import { z } from 'zod';
 import { getSession } from '@/lib/auth';
 import {
+  generateOnboardingSubject,
+  isOnboardingGenerateCancelToken,
+  requestOnboardingGenerateCancel,
+} from '@/lib/onboarding-generate';
+import {
   addOnboardingSubject,
   adminCanOpenOnboarding,
   applyOnboardingEmit,
@@ -19,7 +24,9 @@ import {
   isOnboardingAiMode,
   markOnboardingApplied,
   MAX_SOURCE_PDF_BYTES,
+  ONBOARDING_GENERATE_SEED_DEFAULT,
   previewOnboardingEmit,
+  providerForOnboardingAiMode,
   publicDryRun,
   renameOnboardingSubject,
   saveOnboardingState,
@@ -30,6 +37,7 @@ import {
 import {
   SUBJECT_ICON_OPTIONS,
   type OnboardingDryRun,
+  type OnboardingGenerateResult,
   type OnboardingSnapshot,
 } from '@/lib/onboarding-types';
 
@@ -48,7 +56,12 @@ export type OnboardingActionError = {
     | 'dry_run_required'
     | 'stale_preview'
     | 'emit_required'
-    | 'already_complete';
+    | 'already_complete'
+    | 'missing_provider'
+    | 'missing_key'
+    | 'missing_local'
+    | 'empty_sources'
+    | 'cancelled';
   message?: string;
   issues?: { file: string; message: string }[];
 };
@@ -157,6 +170,64 @@ export async function detachOnboardingPdfAction(
   const result = detachSourcePdf({ subjectId, filename });
   if (!result.ok) return { ok: false, reason: result.reason };
   return { ok: true, snapshot: snapshot(gate.householdId) };
+}
+
+const generateSeedSchema = z.coerce.number().int();
+
+export async function generateOnboardingSubjectAction(
+  formData: FormData,
+): Promise<
+  | { ok: true; snapshot: OnboardingSnapshot; result: OnboardingGenerateResult }
+  | OnboardingActionError
+> {
+  const gate = await requireOnboardingAdmin();
+  if (!gate.ok) return gate;
+  const subjectId = formData.get('subjectId');
+  if (typeof subjectId !== 'string' || !subjectId.trim()) {
+    return { ok: false, reason: 'invalid_id' };
+  }
+  const rawSeed = formData.get('seed');
+  const seedParsed =
+    rawSeed == null || rawSeed === ''
+      ? { success: true as const, data: ONBOARDING_GENERATE_SEED_DEFAULT }
+      : generateSeedSchema.safeParse(rawSeed);
+  if (!seedParsed.success) return { ok: false, reason: 'invalid' };
+  const rawToken = formData.get('cancelToken');
+  const cancelToken =
+    typeof rawToken === 'string' && isOnboardingGenerateCancelToken(rawToken)
+      ? rawToken
+      : undefined;
+
+  const state = getHouseholdOnboarding(gate.householdId).state;
+  if (!state.aiMode) return { ok: false, reason: 'missing_provider' };
+  const provider = providerForOnboardingAiMode(state.aiMode);
+
+  const generated = await generateOnboardingSubject({
+    subjectId,
+    provider,
+    seed: seedParsed.data,
+    cancelToken,
+  });
+  if (!generated.ok) {
+    // Safe codes only — never forward raw provider / path / env messages.
+    return { ok: false, reason: generated.reason };
+  }
+  // IR changed — any prior HITL dry-run / apply is stale. Generate never emit/applies.
+  invalidateOnboardingEmit(gate.householdId);
+  return { ok: true, snapshot: snapshot(gate.householdId), result: generated.result };
+}
+
+export async function cancelOnboardingGenerateAction(
+  formData: FormData,
+): Promise<{ ok: true } | OnboardingActionError> {
+  const gate = await requireOnboardingAdmin();
+  if (!gate.ok) return gate;
+  const token = formData.get('cancelToken');
+  if (typeof token !== 'string' || !isOnboardingGenerateCancelToken(token)) {
+    return { ok: false, reason: 'invalid' };
+  }
+  requestOnboardingGenerateCancel(token);
+  return { ok: true };
 }
 
 export async function setOnboardingAiModeAction(

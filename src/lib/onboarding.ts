@@ -22,6 +22,7 @@ import {
   planEmit,
   publicQuestionIds,
   resolveIrFiles,
+  resolveSubjectSources,
   SUBJECT_ID_RE,
   validateIrCollection,
   type PlannedFile,
@@ -50,8 +51,13 @@ import {
 
 export {
   EMPTY_AUTHORITATIVE_EMIT,
+  ONBOARDING_GENERATE_SEED_DEFAULT,
   ONBOARDING_INGEST_CLI,
   SUBJECT_ICON_OPTIONS,
+  onboardingGenerateAndEmitCli,
+  onboardingGenerateBatchIds,
+  onboardingGenerateCli,
+  providerForOnboardingAiMode,
 } from '@/lib/onboarding-types';
 export { getOnboardingContentRoot, setOnboardingContentRootForTests } from '@/lib/content-root';
 
@@ -195,6 +201,20 @@ function listPdfNames(subjectId: string, root: string): string[] {
   }
 }
 
+/** Rel-paths `examify-ingest generate` would read — same resolver as generate. */
+export function listOnboardingGenerateSources(
+  subjectId: string,
+  root = getOnboardingContentRoot(),
+): string[] {
+  const subjectDir = path.join(subjectsDir(root), subjectId);
+  return resolveSubjectSources(root, subjectId, subjectDir).map((source) => source.relPath);
+}
+
+function isUsableSecret(value: string | undefined): boolean {
+  const trimmed = value?.trim() ?? '';
+  return trimmed !== '' && trimmed !== 'test';
+}
+
 export function listOnboardingSubjects(root = getOnboardingContentRoot()): OnboardingSubject[] {
   const dir = subjectsDir(root);
   let names: string[] = [];
@@ -225,6 +245,7 @@ export function listOnboardingSubjects(root = getOnboardingContentRoot()): Onboa
       icon,
       hasIr,
       sourceFiles: listPdfNames(id, root),
+      generateSources: listOnboardingGenerateSources(id, root),
     };
   });
 }
@@ -332,10 +353,18 @@ export function completeOnboarding(householdId: number): void {
     .run();
 }
 
-function aiFlags(): { anthropicConfigured: boolean; localAgentConfigured: boolean } {
+function aiFlags(): {
+  anthropicConfigured: boolean;
+  openaiConfigured: boolean;
+  localAgentConfigured: boolean;
+} {
   return {
-    anthropicConfigured: Boolean(env.ANTHROPIC_API_KEY && env.ANTHROPIC_API_KEY !== 'test'),
-    localAgentConfigured: Boolean(env.EXAMIFY_LLM_BASE_URL),
+    anthropicConfigured: isUsableSecret(env.ANTHROPIC_API_KEY),
+    // Read-only detection — OPENAI_API_KEY is not in env.ts / never NEXT_PUBLIC_*.
+    openaiConfigured: isUsableSecret(process.env.OPENAI_API_KEY),
+    localAgentConfigured: Boolean(
+      env.EXAMIFY_LLM_BASE_URL || process.env.EXAMIFY_INGEST_LOCAL_CMD?.trim(),
+    ),
   };
 }
 
