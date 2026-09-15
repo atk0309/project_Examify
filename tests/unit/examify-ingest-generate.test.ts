@@ -658,6 +658,7 @@ describe('examify-ingest generate helpers', () => {
       ok: true,
     });
     expect(extractJsonObject('{ "q": "use } brace" }')).toEqual({ q: 'use } brace' });
+    expect(extractJsonObject(`${'```'.repeat(50)}\n{ "ok": true }`)).toEqual({ ok: true });
   });
 
   it('provider timeout is a bounded deadline', () => {

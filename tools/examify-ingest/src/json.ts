@@ -1,7 +1,6 @@
 /** Pull the first JSON object out of model text (fenced or trailing prose). */
 export function extractJsonObject(text: string): unknown {
-  const fenced = [...text.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)].map((m) => m[1] ?? '');
-  const candidates = [...fenced, text];
+  const candidates = [...extractFencedBlocks(text), text];
   for (const candidate of candidates) {
     for (const slice of scanJsonObjects(candidate)) {
       try {
@@ -15,6 +14,27 @@ export function extractJsonObject(text: string): unknown {
     }
   }
   throw new Error('provider output is not a JSON object');
+}
+
+/** Linear scan for ``` fences. Avoids a backtracking regex on model text. */
+export function extractFencedBlocks(text: string): string[] {
+  const out: string[] = [];
+  let i = 0;
+  while (i < text.length) {
+    const start = text.indexOf('```', i);
+    if (start === -1) break;
+    let pos = start + 3;
+    while (pos < text.length && text[pos] !== '\n' && text[pos] !== '\r') {
+      pos += 1;
+    }
+    if (pos < text.length && text[pos] === '\r') pos += 1;
+    if (pos < text.length && text[pos] === '\n') pos += 1;
+    const end = text.indexOf('```', pos);
+    if (end === -1) break;
+    out.push(text.slice(pos, end));
+    i = end + 3;
+  }
+  return out;
 }
 
 /** String-aware, brace-balanced object slices in encounter order. */
