@@ -3,7 +3,9 @@ import { extractJsonObject } from '../json';
 import { bankIrSchema, type BankIR } from '../schema';
 import { UNTRUSTED_SOURCE_NOTE, buildOpenAiCompatibleUserContent } from './content';
 import {
+  PROVIDER_TIMEOUT_MS,
   ProviderConfigError,
+  providerTimeoutSignal,
   type GenerateProvider,
   type ProviderDeps,
   type ProviderEnv,
@@ -70,6 +72,7 @@ async function generateViaHttp(
   const url = new URL('/v1/chat/completions', baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`);
   const res = await fetchFn(url, {
     method: 'POST',
+    signal: providerTimeoutSignal(),
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
       model: request.model,
@@ -126,8 +129,13 @@ function generateViaCmd(request: ProviderRequest, cmdLine: string): BankIR {
     input: payload,
     encoding: 'utf8',
     maxBuffer: 10 * 1024 * 1024,
+    timeout: PROVIDER_TIMEOUT_MS,
   });
   if (result.error) {
+    const code = (result.error as NodeJS.ErrnoException).code;
+    if (code === 'ETIMEDOUT' || result.error.message.includes('ETIMEDOUT')) {
+      throw new Error(`local command timed out after ${PROVIDER_TIMEOUT_MS}ms`);
+    }
     throw new Error(`local command failed to start: ${result.error.message}`);
   }
   if (result.status !== 0) {

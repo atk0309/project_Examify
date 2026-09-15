@@ -1,10 +1,10 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { buildCacheKey, readCachedIr, writeCachedIr, writeRunManifest } from './cache';
 import { stableJson } from './diff';
-import { resolvePageImages } from './pages';
+import { PAGE_RASTER_PROFILE, pageImageHashesOf, resolvePageImages } from './pages';
 import { loadGeneratePrompt } from './prompt';
 import { getProvider, hasUsableKey, type ProviderDeps, type ProviderEnv } from './providers';
+import { writeFileAtomic } from './write-atomic';
 import {
   GENERATE_TEMPERATURE,
   bankIrSchema,
@@ -94,6 +94,8 @@ export async function generateSubject(request: GenerateRequest): Promise<Generat
   const prompt = loadGeneratePrompt();
   const sourceHashes = sourceHashesOf(request.sources);
   const model = request.model?.trim() || adapter.defaultModel;
+  const pageImages = resolvePageImages(request.repoRoot, request.sources, { persist });
+  const pageImageHashes = pageImageHashesOf(pageImages);
   const cacheKey = buildCacheKey({
     promptVersion: prompt.version,
     promptHash: prompt.hash,
@@ -102,6 +104,8 @@ export async function generateSubject(request: GenerateRequest): Promise<Generat
     seed: request.seed,
     sourceHashes,
     subject: request.subject,
+    pageImageHashes,
+    pageRasterProfile: PAGE_RASTER_PROFILE,
   });
 
   let bank = readCachedIr(request.repoRoot, cacheKey);
@@ -118,7 +122,6 @@ export async function generateSubject(request: GenerateRequest): Promise<Generat
 
   if (!bank) {
     adapter.requireReady(env);
-    const pageImages = resolvePageImages(request.repoRoot, request.sources, { persist });
     const deps: ProviderDeps = { env, fetch: request.fetch };
     const raw = await adapter.generate(
       {
@@ -165,8 +168,7 @@ export async function generateSubject(request: GenerateRequest): Promise<Generat
   let manifestPath: string | null = null;
   if (persist) {
     manifestPath = writeRunManifest(request.repoRoot, cacheKey, timestamp, stableJson(manifest));
-    mkdirSync(request.subjectDir, { recursive: true });
-    writeFileSync(irPath, stableJson(bank), 'utf8');
+    writeFileAtomic(irPath, stableJson(bank));
   }
 
   return { bank, cacheKey, cacheHit, manifest, manifestPath, irPath, wroteIr };

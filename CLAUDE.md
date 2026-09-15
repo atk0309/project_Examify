@@ -201,7 +201,8 @@ validate → emit path, adding subjects (all 13 original duotone icons remain in
 bank from source PDFs kept local-only in the gitignored `content/source-pdfs/`.
 
 Automated path: author or `pnpm examify-ingest generate` a
-`content/subjects/<id>/bank.ir.json`, then `pnpm examify-ingest validate|emit`
+`content/subjects/<id>/bank.ir.json`, then `pnpm examify-ingest validate`,
+`emit --dry-run`, and only afterward `emit --apply`
 (or use `/onboarding` after first-run bootstrap — same directory emit, HITL
 dry-run before apply, empty tree refused). Generate never auto-applies; it
 writes IR + gitignored `.examify-ingest/` run/cache files only. Cloud

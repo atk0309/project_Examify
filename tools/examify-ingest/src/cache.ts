@@ -3,6 +3,7 @@ import path from 'node:path';
 import { stableJson } from './diff';
 import { sha256Bytes, sortRecord } from './hash';
 import { bankIrSchema, INGEST_STATE_DIR, type BankIR, type BankIrSubject } from './schema';
+import { writeFileAtomic } from './write-atomic';
 
 export function ingestStateDir(repoRoot: string): string {
   return path.join(repoRoot, INGEST_STATE_DIR);
@@ -28,6 +29,8 @@ export function buildCacheKey(input: {
   seed: number;
   sourceHashes: Record<string, string>;
   subject: BankIrSubject;
+  pageImageHashes: readonly string[];
+  pageRasterProfile: string;
 }): string {
   return sha256Bytes(
     stableJson({
@@ -38,6 +41,8 @@ export function buildCacheKey(input: {
       seed: input.seed,
       sourceHashes: sortRecord(input.sourceHashes),
       subject: input.subject,
+      pageImageHashes: [...input.pageImageHashes],
+      pageRasterProfile: input.pageRasterProfile,
     }),
   );
 }
@@ -54,9 +59,7 @@ export function readCachedIr(repoRoot: string, cacheKey: string): BankIR | null 
 }
 
 export function writeCachedIr(repoRoot: string, cacheKey: string, bank: BankIR): void {
-  const abs = irCachePath(repoRoot, cacheKey);
-  mkdirSync(path.dirname(abs), { recursive: true });
-  writeFileSync(abs, stableJson(bank), 'utf8');
+  writeFileAtomic(irCachePath(repoRoot, cacheKey), stableJson(bank));
 }
 
 export function writeRunManifest(
@@ -72,8 +75,7 @@ export function writeRunManifest(
   return abs;
 }
 
-export function listCachedPageImages(dir: string): string[] {
-  if (!existsSync(path.join(dir, '.done'))) return [];
+export function listPagePngs(dir: string): string[] {
   try {
     return readdirSync(dir)
       .filter((name) => /^page-\d+\.png$/.test(name))
@@ -82,4 +84,9 @@ export function listCachedPageImages(dir: string): string[] {
   } catch {
     return [];
   }
+}
+
+export function listCachedPageImages(dir: string): string[] {
+  if (!existsSync(path.join(dir, '.done'))) return [];
+  return listPagePngs(dir);
 }

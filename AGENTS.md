@@ -48,8 +48,8 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   `{ id, type, q, choices? }` in `data.ts` **plus** a matching `ANSWER_KEYS[id]`
   (with provenance) in `answer-keys.server.ts`, **or** author
   `content/subjects/<id>/bank.ir.json` (by hand or `pnpm examify-ingest generate`)
-  and run `pnpm examify-ingest emit --apply`
-  (dry-run by default; never clobbers any sample-bank id without
+  then `pnpm examify-ingest validate` → `emit --dry-run` → `emit --apply`
+  (emit is dry-run by default; never clobbers any sample-bank id without
   `--replace-sample`; partial emit (explicit IR files or mixed file+dir argv)
   merges `subjects.json`; a whole-tree emit of subjects directories only
   (`content/subjects`) deletes leftover generated subject JSON). The live app

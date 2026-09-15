@@ -52,12 +52,14 @@ pnpm examify-ingest emit content/subjects --apply --replace-sample
 ```
 
 `generate` accepts `content/subjects` or `content/subjects/<id>` (not an IR
-file). It reads source files from `content/source-pdfs/<id>/` (and
-`content/source-pdfs/<id>.pdf`) plus any `.pdf`/`.txt`/`.md`/image files in the
-subject folder except `bank.ir.json`. `--provider` is required
+file). It reads source files from `content/source-pdfs/<id>/` and standalone
+`content/source-pdfs/<id>.{pdf,png,jpg,jpeg,webp,txt,md}` plus any of those
+extensions in the subject folder except `bank.ir.json`. `--provider` is required
 (`anthropic` / `openai` / `local` / `test`). Default `--seed` is `0` and is
 recorded in the run manifest. `--dry-run-ir` prints the would-write path and
-writes nothing durable (no IR, cache, manifest, or new page rasters).
+writes nothing durable (no IR, cache, or manifest). It still rasterizes missing
+PDF pages into a temp directory when `pdftoppm` is available so the preview
+matches a persist run; it does not populate `.examify-ingest/cache/pages/`.
 
 Cloud providers fail closed without a real env key (`ANTHROPIC_API_KEY` /
 `OPENAI_API_KEY`) **on a cache miss**. A matching `cacheKey` reuses the cached
@@ -77,11 +79,13 @@ prompt hash, seed, `seedHonored`, temperature `0`, source file hashes,
 cacheKey, timestamp, subject ids, and key presence/name only — never the key
 value. `cacheKey` is a stable hash of promptVersion + prompt hash + provider
 
-- model + seed + source hashes + subject meta, so a prompt-text change
-  invalidates old cache. PDF page images, when rasterized with `pdftoppm`,
-  are reused from `.examify-ingest/cache/pages/<pdf-sha256>/` and framed as
-  untrusted data, same as source files. Sources must stay under
-  `content/subjects/<id>/` or `content/source-pdfs/<id>`.
+- model + seed + source hashes + subject meta + ordered page-image hashes +
+  the raster profile (`pdftoppm-png-r150`), so a prompt-text change or a later
+  rasterized run cannot replay a hashes-only cache entry. PDF page images, when
+  rasterized with `pdftoppm`, are reused from
+  `.examify-ingest/cache/pages/<pdf-sha256>/` and framed as untrusted data, same
+  as source files. Provider HTTP/CMD calls use a 180s deadline. Sources must
+  stay under `content/subjects/<id>/` or `content/source-pdfs/<id>`.
 
 Source blobs are wrapped as `UNTRUSTED SOURCE MATERIAL`. That fence makes
 prompt injection harder; it is not sufficient on its own. A human still

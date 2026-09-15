@@ -9,6 +9,10 @@ export {
 } from './generate';
 export { runCliAsync } from './generate-cli';
 export { buildCacheKey, ingestStateDir, irCachePath, readCachedIr } from './cache';
+export { extractJsonObject } from './json';
+export { PAGE_RASTER_PROFILE, pageImageHashesOf, resolvePageImages } from './pages';
+export { sortRecord } from './hash';
+export { writeFileAtomic } from './write-atomic';
 export { loadGeneratePrompt, findIngestPackageRoot, generatePromptPath } from './prompt';
 export {
   resolveGenerateTargets,
@@ -16,6 +20,8 @@ export {
   sourceHashesOf,
   defaultSubjectMeta,
   isAllowedSourceRel,
+  hasStandaloneSourceFile,
+  SOURCE_EXT,
   SOURCE_PDFS_REL,
   SUBJECTS_REL,
   BANK_IR_FILE,
@@ -24,6 +30,7 @@ export {
 } from './sources';
 export {
   getProvider,
+  PROVIDER_TIMEOUT_MS,
   ProviderConfigError,
   UNTRUSTED_SOURCE_NOTE,
   splitCommandLine,

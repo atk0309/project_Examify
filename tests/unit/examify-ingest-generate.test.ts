@@ -19,14 +19,21 @@ import {
 } from '../../tools/examify-ingest/src/index';
 import {
   NEXT_INGEST_COMMANDS,
+  PAGE_RASTER_PROFILE,
+  PROVIDER_TIMEOUT_MS,
   UNTRUSTED_SOURCE_NOTE,
   buildCacheKey,
+  extractJsonObject,
   generateSubject,
   loadGeneratePrompt,
   publicSplitHasNoSecrets,
+  resolveGenerateTargets,
+  resolvePageImages,
   resolveSubjectSources,
   runCliAsync,
+  sortRecord,
   splitCommandLine,
+  writeFileAtomic,
 } from '../../tools/examify-ingest/src/generate-api';
 
 function examifyRepo(): string {
@@ -143,6 +150,8 @@ describe('examify-ingest generate', () => {
       seed: 0,
       sourceHashes: ir1.meta?.sourceHashes ?? {},
       subject: ir1.subject,
+      pageImageHashes: [],
+      pageRasterProfile: PAGE_RASTER_PROFILE,
     });
     expect(secondStreams.out()).toContain(expectedKey);
   });
@@ -342,6 +351,7 @@ describe('examify-ingest generate', () => {
         expect(url).toContain('anthropic.com');
         const headers = new Headers(init?.headers);
         expect(headers.get('x-api-key')).toBe(secret);
+        expect(init?.signal).toBeDefined();
         const body = JSON.parse(String(init?.body)) as { temperature: number };
         expect(body.temperature).toBe(0);
         expect(JSON.stringify(body)).toContain(UNTRUSTED_SOURCE_NOTE);
@@ -419,6 +429,7 @@ describe('examify-ingest generate', () => {
       seed: 7,
       env: { OPENAI_API_KEY: secret },
       fetch: async (_input, init) => {
+        expect(init?.signal).toBeDefined();
         const headers = new Headers(init?.headers);
         expect(headers.get('authorization')).toBe(`Bearer ${secret}`);
         const body = JSON.parse(String(init?.body)) as { temperature: number; seed: number };
@@ -467,6 +478,7 @@ describe('examify-ingest generate', () => {
       env: { EXAMIFY_LLM_BASE_URL: 'http://127.0.0.1:9' },
       fetch: async (_input, init) => {
         fetchCalls += 1;
+        expect(init?.signal).toBeDefined();
         const body = JSON.parse(String(init?.body)) as {
           messages: { role: string; content: unknown }[];
         };
@@ -564,5 +576,91 @@ describe('examify-ingest generate', () => {
       '/opt/local bin/model',
       '--json',
     ]);
+  });
+
+  it('cacheKey changes when page-image hashes change', () => {
+    const prompt = loadGeneratePrompt();
+    const base = {
+      promptVersion: prompt.version,
+      promptHash: prompt.hash,
+      provider: 'openai',
+      model: 'gpt-4o',
+      seed: 0,
+      sourceHashes: { 'content/source-pdfs/plants/guide.pdf': 'pdf-sha' },
+      subject: { id: 'plants', label: 'Plants', icon: 'biology', l: 0.58, c: 0.09, h: 142 },
+      pageRasterProfile: PAGE_RASTER_PROFILE,
+    };
+    const withoutPages = buildCacheKey({ ...base, pageImageHashes: [] });
+    const withPages = buildCacheKey({
+      ...base,
+      pageImageHashes: ['content/source-pdfs/plants/guide.pdf#1=page-sha'],
+    });
+    expect(withoutPages).not.toBe(withPages);
+  });
+
+  it('--dry-run-ir rasterizes pages into temp storage and does not persist them', () => {
+    const root = examifyRepo();
+    const pdfPath = path.join(root, 'content/source-pdfs/plants/guide.pdf');
+    writeFileSync(pdfPath, '%PDF-1.4 fixture\n');
+    const sources = resolveSubjectSources(
+      root,
+      'plants',
+      path.join(root, 'content/subjects/plants'),
+    );
+    const rasterize = (_pdf: string, prefix: string) => {
+      writeFileSync(`${prefix}-1.png`, 'fake-png');
+      return true;
+    };
+
+    const dry = resolvePageImages(root, sources, { persist: false, rasterize });
+    expect(dry).toHaveLength(1);
+    expect(dry[0]?.page).toBe(1);
+    expect(existsSync(path.join(root, '.examify-ingest'))).toBe(false);
+
+    const persisted = resolvePageImages(root, sources, { persist: true, rasterize });
+    expect(persisted).toHaveLength(1);
+    expect(existsSync(path.join(root, '.examify-ingest/cache/pages'))).toBe(true);
+  });
+
+  it('accepts a standalone source-pdfs/<id>.txt without a subject folder', () => {
+    const root = examifyRepo();
+    writeFileSync(path.join(root, 'content/source-pdfs/geology.txt'), 'Rocks weather.\n');
+    const targets = resolveGenerateTargets(
+      [path.join(root, 'content/subjects')],
+      root,
+      root,
+      'geology',
+    );
+    expect(targets).toHaveLength(1);
+    expect(targets[0]?.subjectId).toBe('geology');
+    expect(targets[0]?.sources.map((source) => source.relPath)).toEqual([
+      'content/source-pdfs/geology.txt',
+    ]);
+  });
+
+  it('writes bank.ir.json atomically over an existing file', () => {
+    const root = examifyRepo();
+    const dest = path.join(root, 'content/subjects/plants/bank.ir.json');
+    writeFileSync(dest, '{ "stale": true }\n');
+    writeFileAtomic(dest, '{ "ok": true }\n');
+    expect(readFileSync(dest, 'utf8')).toBe('{ "ok": true }\n');
+  });
+});
+
+describe('examify-ingest generate helpers', () => {
+  it('sortRecord uses code-unit order', () => {
+    expect(Object.keys(sortRecord({ b: '1', a: '2', A: '3' }))).toEqual(['A', 'a', 'b']);
+  });
+
+  it('extractJsonObject returns the first complete object', () => {
+    expect(extractJsonObject('prefix { "a": 1 } { "b": 2 }')).toEqual({ a: 1 });
+    expect(extractJsonObject('```\nnot json\n```\n```json\n{"ok":true}\n```')).toEqual({
+      ok: true,
+    });
+    expect(extractJsonObject('{ "q": "use } brace" }')).toEqual({ q: 'use } brace' });
+  });
+
+  it('provider timeout is a bounded deadline', () => {
+    expect(PROVIDER_TIMEOUT_MS).toBe(180_000);
   });
 });

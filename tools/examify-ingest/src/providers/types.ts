@@ -25,6 +25,12 @@ export type ProviderRequest = {
   pageImages: readonly PageImage[];
 };
 
+export const PROVIDER_TIMEOUT_MS = 180_000;
+
+export function providerTimeoutSignal(): AbortSignal {
+  return AbortSignal.timeout(PROVIDER_TIMEOUT_MS);
+}
+
 export type ProviderDeps = {
   env: ProviderEnv;
   fetch?: typeof fetch;

@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
-import { sha256Bytes } from './hash';
+import { compareCodeUnit, sha256Bytes } from './hash';
 import { SUBJECT_ID_RE, subjectSchema, type BankIrSubject } from './schema';
 
 export const SOURCE_PDFS_REL = 'content/source-pdfs';
@@ -8,7 +8,7 @@ export const SUBJECTS_REL = 'content/subjects';
 export const BANK_IR_FILE = 'bank.ir.json';
 export const SUBJECT_META_FILE = 'subject.json';
 
-const SOURCE_EXT = new Set(['.pdf', '.png', '.jpg', '.jpeg', '.webp', '.txt', '.md']);
+export const SOURCE_EXT = new Set(['.pdf', '.png', '.jpg', '.jpeg', '.webp', '.txt', '.md']);
 const SKIP_NAMES = new Set([BANK_IR_FILE, SUBJECT_META_FILE]);
 
 export type SourceKind = 'pdf' | 'image' | 'text' | 'other';
@@ -207,7 +207,7 @@ function walkFiles(absDir: string, into: string[]): void {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`cannot read ${absDir}: ${message}`, { cause: error });
   }
-  for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+  for (const entry of entries.sort((a, b) => compareCodeUnit(a.name, b.name))) {
     if (entry.name.startsWith('.')) continue;
     const abs = path.join(absDir, entry.name);
     if (entry.isDirectory()) walkFiles(abs, into);
@@ -240,11 +240,19 @@ export function resolveSubjectSources(
     addSource(collected, repoRoot, subjectId, path.join(sourceRoot, `${subjectId}${ext}`));
   }
 
-  return [...collected.values()].sort((a, b) => a.relPath.localeCompare(b.relPath));
+  return [...collected.values()].sort((a, b) => compareCodeUnit(a.relPath, b.relPath));
 }
 
 export function sourceHashesOf(sources: readonly ResolvedSource[]): Record<string, string> {
   return Object.fromEntries(sources.map((source) => [source.relPath, source.sha256]));
+}
+
+export function hasStandaloneSourceFile(repoRoot: string, subjectId: string): boolean {
+  const sourceRoot = path.join(repoRoot, SOURCE_PDFS_REL);
+  for (const ext of SOURCE_EXT) {
+    if (existsSync(path.join(sourceRoot, `${subjectId}${ext}`))) return true;
+  }
+  return false;
 }
 
 function isSubjectsTree(absDir: string): boolean {
@@ -335,13 +343,13 @@ export function resolveGenerateTargets(
     const childNames = readdirSync(abs, { withFileTypes: true })
       .filter((entry) => entry.isDirectory() && SUBJECT_ID_RE.test(entry.name))
       .map((entry) => entry.name)
-      .sort();
+      .sort(compareCodeUnit);
 
     const wanted = subjectFilter ? [subjectFilter] : childNames;
     if (subjectFilter && !childNames.includes(subjectFilter)) {
       const subjectDir = path.join(abs, subjectFilter);
       const sourceDir = path.join(repoRoot, SOURCE_PDFS_REL, subjectFilter);
-      if (!existsSync(sourceDir) && !existsSync(`${sourceDir}.pdf`)) {
+      if (!existsSync(sourceDir) && !hasStandaloneSourceFile(repoRoot, subjectFilter)) {
         throw new Error(
           `no subject folder or source-pdfs for "${subjectFilter}" (looked in ${path.join(input, subjectFilter)} and ${SOURCE_PDFS_REL}/${subjectFilter})`,
         );

@@ -2,6 +2,7 @@ import { extractJsonObject } from '../json';
 import { bankIrSchema, type BankIR } from '../schema';
 import { buildOpenAiCompatibleUserContent } from './content';
 import {
+  providerTimeoutSignal,
   readRequiredKey,
   type GenerateProvider,
   type ProviderDeps,
@@ -16,6 +17,7 @@ async function callOpenAi(request: ProviderRequest, deps: ProviderDeps): Promise
   const fetchFn = deps.fetch ?? fetch;
   const res = await fetchFn(OPENAI_URL, {
     method: 'POST',
+    signal: providerTimeoutSignal(),
     headers: {
       'content-type': 'application/json',
       authorization: `Bearer ${key}`,

@@ -5,7 +5,13 @@ import { openaiProvider } from './openai';
 import { testProvider } from './test';
 import { ProviderConfigError, type GenerateProvider } from './types';
 
-export { ProviderConfigError, hasUsableKey, readRequiredKey } from './types';
+export {
+  PROVIDER_TIMEOUT_MS,
+  ProviderConfigError,
+  hasUsableKey,
+  providerTimeoutSignal,
+  readRequiredKey,
+} from './types';
 export type { ProviderDeps, ProviderEnv, ProviderRequest } from './types';
 export { UNTRUSTED_SOURCE_NOTE, fenceUntrustedText } from './content';
 export { splitCommandLine } from './local';
