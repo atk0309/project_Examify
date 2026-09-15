@@ -104,6 +104,38 @@ describe('onboarding generate graph', () => {
     expect(wizard).not.toMatch(/generateSubject/);
     expect(wizard).toMatch(/case 'invalid':\n      return 'That input is not valid\.'/);
   });
+
+  it('locks Welcome skip, Back, and rail while generateBusy so Cancel stays reachable', () => {
+    const wizard = readFileSync(
+      path.join(process.cwd(), 'src/components/exam/OnboardingWizard.tsx'),
+      'utf8',
+    );
+    expect(wizard).toMatch(/const navLocked = pending \|\| generateBusy/);
+    expect(wizard).toMatch(/const go = \(next: StepId\) => \{\s*if \(generateBusy\) return;/);
+    expect(wizard).toMatch(/const skip = \(\) => \{\s*if \(generateBusy\) return;/);
+    expect(wizard).toMatch(/disabled=\{!clickable \|\| navLocked\}/);
+
+    const welcomeSkipAt = wizard.indexOf('Use sample bank for now');
+    expect(welcomeSkipAt).toBeGreaterThan(-1);
+    const welcomeSkipDisabled = wizard.lastIndexOf('disabled=', welcomeSkipAt);
+    expect(wizard.slice(welcomeSkipDisabled, welcomeSkipAt)).toMatch(/disabled=\{navLocked\}/);
+
+    const backAt = wizard.indexOf('data-testid="wizard-back"');
+    expect(backAt).toBeGreaterThan(-1);
+    const backDisabled = wizard.lastIndexOf('disabled=', backAt);
+    expect(wizard.slice(backDisabled, backAt)).toMatch(/disabled=\{navLocked\}/);
+  });
+
+  it('keeps dry-run step id and testids while the rail label is Review', () => {
+    const wizard = readFileSync(
+      path.join(process.cwd(), 'src/components/exam/OnboardingWizard.tsx'),
+      'utf8',
+    );
+    expect(wizard).toMatch(/\{ id: 'dry-run', label: 'Review' \}/);
+    expect(wizard).toContain('data-testid="wizard-dry-run"');
+    expect(wizard).toContain('data-testid="wizard-dry-run-summary"');
+    expect(wizard).toContain('data-testid="wizard-planned-deletes"');
+  });
 });
 
 describe('onboarding generate sources', () => {

@@ -30,10 +30,15 @@ Surface:
 - **`/setup`** — first-run household bootstrap (only when no household exists).
 - **`/onboarding`** — post-bootstrap content wizard (household **admin** only, while
   `onboarding_complete` is false). Welcome → subjects → PDF dropzones → AI setup
-  (optional `examify-ingest generate` after files + mode) → validate → dry-run
-  HITL → apply → ready. Generate writes BankIR only and never auto-applies.
+  (optional `examify-ingest generate` after files + mode) → validate → Review
+  (dry-run HITL) → apply → ready. The wizard is one stage at a time: desktop
+  (≥900px) uses a left step rail + stage + sticky footer; mobile uses compact
+  “Step N of M · Label” progress and a sticky bottom bar. Generate writes BankIR
+  only and never auto-applies.
   Cancel discards an in-flight preview and does not replace prior IR; generate
-  is gated to wizard catalog subjects (`listOnboardingSubjects`).
+  is gated to wizard catalog subjects (`listOnboardingSubjects`). While generate
+  is in flight, Welcome “Use sample bank”, later skip, Back, and the desktop
+  rail stay locked so Cancel remains reachable.
   Finish (“Open dashboard”) requires
   a confirmed apply of that dry-run; a changed plan is refused (`stale_preview`).
   Skip-without-emit is Welcome “Use sample bank for now” / later “Skip to

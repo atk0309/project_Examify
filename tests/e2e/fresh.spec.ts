@@ -20,6 +20,36 @@ test('first-run bootstrap creates the admin without Turnstile', async ({ page })
   await expect(page).toHaveURL(/\/onboarding/);
   await expect(page.getByTestId('onboarding-wizard')).toBeVisible();
   await expect(page.getByTestId('wizard-welcome')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Set up your family’s content' })).toBeVisible();
+  await expect(page.getByTestId('wizard-rail')).toBeVisible();
+  await expect(page.getByTestId('wizard-progress')).toHaveCount(0);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByTestId('wizard-rail')).toBeHidden();
+  await page.getByTestId('wizard-get-started').click();
+  await expect(page.getByTestId('wizard-subjects')).toBeVisible();
+  await expect(page.getByTestId('wizard-progress')).toContainText('Step 2 of 8');
+  await expect(page.getByTestId('wizard-progress')).toContainText('Subjects');
+  if ((await page.getByTestId('wizard-add-subject').count()) === 0) {
+    await page.getByRole('button', { name: 'Add a subject' }).click();
+  }
+  await page.getByTestId('wizard-subject-label').fill('History');
+  await expect(page.getByTestId('wizard-subject-id')).toHaveValue('history');
+  await page.getByTestId('wizard-add-subject-submit').click();
+  await expect(page.getByTestId('wizard-subjects')).toContainText('History');
+  await expect(page.getByTestId('wizard-subjects')).toContainText('history');
+  await page.getByTestId('wizard-next').click();
+  await expect(page.getByTestId('wizard-files')).toBeVisible();
+
+  await page.setViewportSize({ width: 1100, height: 800 });
+  await expect(page.getByTestId('wizard-rail')).toBeVisible();
+  await expect(page.getByTestId('wizard-progress')).toBeHidden();
+  await expect(page.getByTestId('wizard-rail')).toContainText('Review');
+  await page.getByTestId('wizard-back').click();
+  await expect(page.getByTestId('wizard-subjects')).toBeVisible();
+  await expect(page.getByTestId('wizard-subjects')).toContainText('History');
+  await expect(page.getByRole('button', { name: 'Welcome' })).toBeEnabled();
+  await page.locator('.wizard-skip-menu summary').click();
   await page.getByTestId('wizard-skip').click();
   await expect(page).toHaveURL(/\/$/);
   await expect(page.getByTestId('finish-content-setup')).toBeVisible();
