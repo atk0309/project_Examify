@@ -2,7 +2,7 @@
 
 import { headers } from 'next/headers';
 import { z } from 'zod';
-import { issueLocalOtp, issueMagicLink } from '@/lib/auth';
+import { invalidateIssuedOtp, issueLocalOtp, issueMagicLink } from '@/lib/auth';
 import { verifyTurnstile } from '@/lib/captcha';
 import { renderMagicLinkEmail, renderOtpEmail, sendEmail } from '@/lib/email';
 import { env, getAuthMode, isTurnstileEnabled } from '@/lib/env';
@@ -64,7 +64,7 @@ export async function requestInviteLink(
   const { email } = parsed.data;
   if (emailMayAcceptInvite(invite, email)) {
     if (mode === 'local-otp') {
-      const { code } = issueLocalOtp(email, invite.role, { inviteId: invite.id });
+      const { id, code } = issueLocalOtp(email, invite.role, { inviteId: invite.id });
       const rendered = renderOtpEmail({ code, email, siteName: siteConfig.name });
       const result = await sendEmail({
         to: email,
@@ -74,6 +74,7 @@ export async function requestInviteLink(
         code,
       });
       if (!result.ok) {
+        invalidateIssuedOtp(id);
         console.error('[auth] invite local-otp delivery failed', { email, error: result.error });
       }
     } else {

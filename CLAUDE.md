@@ -271,9 +271,11 @@ These are non-negotiable. Don't "fix" them out.
 - **Password-mode invite accept requires mailbox proof.** `/invite/<token>` is a
   secret that starts a join. `acceptInviteWithPassword` issues a one-time code
   (local OTP + mail transport); `completePasswordInvite` consumes it, attaches
-  membership, stamps `emailVerifiedAt`, and stores the password hash. Email-lock
-  only chooses which mailbox we send to. Missing mail transport fails closed
-  (`send_failed`) instead of trusting the URL. Parent invites stay email-locked;
+  membership, stamps `emailVerifiedAt`, and stores the password hash. The token
+  must carry `magic_tokens.invite_id` (a leftover sign-in OTP is refused).
+  Email-lock only chooses which mailbox we send to. Missing mail transport
+  fails closed (`send_failed`) instead of trusting the URL; if `sendEmail`
+  fails after issue, the unused OTP is invalidated. Parent invites stay email-locked;
   do not post links publicly. See `SECURITY.md`.
 - **No enumeration.** Challenge modes (`magic-link`, `local-otp`): `requestMagicLink`
   always returns the generic `sent` state once Turnstile (when enabled) + rate-limit

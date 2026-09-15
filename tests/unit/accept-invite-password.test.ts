@@ -208,6 +208,51 @@ describe('acceptInviteWithPassword', () => {
     const { getMembershipForEmail } = await import('@/lib/households');
     expect(getMembershipForEmail('alex@example.com')).toBeNull();
     expect(await userByEmail('alex@example.com')).toBeUndefined();
+
+    const code = sendEmailMock.mock.calls[0]?.[0].code;
+    expect(code).toMatch(/^\d{6}$/);
+    const { db, schema } = await import('@/lib/db');
+    const tokens = db.select().from(schema.magicTokens).all();
+    expect(tokens).toHaveLength(1);
+    expect(tokens[0]?.consumedAt).toBeInstanceOf(Date);
+
+    const { completePasswordInvite } = await import('@/actions/completePasswordInvite');
+    const finish = new FormData();
+    finish.set('email', 'alex@example.com');
+    finish.set('role', 'student');
+    finish.set('password', 'student-pass');
+    finish.set('code', code!);
+    expect(await completePasswordInvite({ status: 'idle' }, finish)).toEqual({
+      status: 'error',
+      reason: 'invalid',
+    });
+  });
+});
+
+describe('requestInviteLink local-otp', () => {
+  it('invalidates the issued OTP when mail cannot be delivered', async () => {
+    const { env } = await import('@/lib/env');
+    (env as { AUTH_MODE: typeof env.AUTH_MODE }).AUTH_MODE = 'local-otp';
+    const invite = await seedOpenStudentInvite();
+    sendEmailMock.mockResolvedValue({ ok: false, error: 'email-not-configured' });
+    const { requestInviteLink } = await import('@/actions/requestInviteLink');
+    const data = new FormData();
+    data.set('email', 'alex@example.com');
+    data.set('inviteToken', invite.token);
+    expect(await requestInviteLink({ status: 'idle' }, data)).toEqual({
+      status: 'sent',
+      email: 'alex@example.com',
+    });
+
+    const code = sendEmailMock.mock.calls[0]?.[0].code;
+    expect(code).toMatch(/^\d{6}$/);
+    const { db, schema } = await import('@/lib/db');
+    const tokens = db.select().from(schema.magicTokens).all();
+    expect(tokens).toHaveLength(1);
+    expect(tokens[0]?.consumedAt).toBeInstanceOf(Date);
+
+    const { consumeLocalOtp } = await import('@/lib/auth');
+    expect(consumeLocalOtp('alex@example.com', 'student', code!).ok).toBe(false);
   });
 });
 
@@ -311,5 +356,32 @@ describe('completePasswordInvite', () => {
     expect(getMembershipForEmail('alex@example.com')).toBeNull();
     expect(await userByEmail('alex@example.com')).toBeUndefined();
     expect(sessionHolder.current.save).not.toHaveBeenCalled();
+  });
+
+  it('refuses complete when the OTP has no inviteId', async () => {
+    const { issueLocalOtp } = await import('@/lib/auth');
+    const issued = issueLocalOtp('alex@example.com', 'student');
+
+    const { completePasswordInvite } = await import('@/actions/completePasswordInvite');
+    const finish = new FormData();
+    finish.set('email', 'alex@example.com');
+    finish.set('role', 'student');
+    finish.set('password', 'student-pass');
+    finish.set('code', issued.code);
+    expect(await completePasswordInvite({ status: 'idle' }, finish)).toEqual({
+      status: 'error',
+      reason: 'invalid',
+    });
+
+    const { getMembershipForEmail } = await import('@/lib/households');
+    expect(getMembershipForEmail('alex@example.com')).toBeNull();
+    expect(await userByEmail('alex@example.com')).toBeUndefined();
+    expect(sessionHolder.current.save).not.toHaveBeenCalled();
+
+    const { db, schema } = await import('@/lib/db');
+    const tokens = db.select().from(schema.magicTokens).all();
+    expect(tokens).toHaveLength(1);
+    expect(tokens[0]?.inviteId).toBeNull();
+    expect(tokens[0]?.consumedAt).toBeNull();
   });
 });

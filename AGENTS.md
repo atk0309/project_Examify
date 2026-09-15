@@ -107,7 +107,9 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   (`createInvite`); accept goes through `/invite/[token]` using the configured
   `AUTH_MODE` (password, magic-link verify, or local OTP). In `password` mode the
   invitee must confirm a mailbox OTP before membership / `emailVerifiedAt`
-  (`completePasswordInvite`); missing mail fails closed. Treat links as secrets
+  (`completePasswordInvite`); the token must carry `invite_id`, and a failed
+  send after issue invalidates the unused OTP. Missing mail fails closed.
+  Treat links as secrets
   and do not post them publicly (`SECURITY.md`). Do not bring back a
   required `FAMILIES` env allowlist. A leftover `FAMILIES` JSON is imported once
   if the DB has no households. Production boot fails if `FAMILIES` is set and invalid.

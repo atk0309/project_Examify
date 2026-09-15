@@ -205,6 +205,54 @@ describe('local-otp auth', () => {
     expect(state).toEqual({ status: 'error', reason: 'invalid' });
   });
 
+  it('invalidates the issued OTP when sendEmail fails after issue', async () => {
+    await seedParent();
+    const email = await import('@/lib/email');
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const send = vi.spyOn(email, 'sendEmail').mockResolvedValueOnce({ ok: false, error: 'boom' });
+    const { requestMagicLink } = await import('@/actions/requestMagicLink');
+    const { consumeLocalOtp } = await import('@/lib/auth');
+
+    expect(await requestMagicLink({ status: 'idle' }, requestForm('pat@example.com'))).toEqual({
+      status: 'sent',
+      email: 'pat@example.com',
+    });
+    expect(errorSpy).toHaveBeenCalled();
+    const code = send.mock.calls[0]?.[0].code;
+    expect(code).toMatch(/^\d{6}$/);
+
+    const { db, schema } = await import('@/lib/db');
+    const tokens = db.select().from(schema.magicTokens).all();
+    expect(tokens).toHaveLength(1);
+    expect(tokens[0]?.consumedAt).toBeInstanceOf(Date);
+    expect(consumeLocalOtp('pat@example.com', 'parent', code!).ok).toBe(false);
+
+    errorSpy.mockRestore();
+  });
+
+  it('invalidates only the issued OTP id, not a later unused code', async () => {
+    await seedParent();
+    const { issueLocalOtp, invalidateIssuedOtp, consumeLocalOtp } = await import('@/lib/auth');
+    const first = issueLocalOtp('pat@example.com', 'parent');
+    const second = issueLocalOtp('pat@example.com', 'parent');
+    invalidateIssuedOtp(first.id);
+    expect(consumeLocalOtp('pat@example.com', 'parent', first.code).ok).toBe(false);
+    expect(consumeLocalOtp('pat@example.com', 'parent', second.code).ok).toBe(true);
+  });
+
+  it('refuses consumeLocalOtp with requireInviteId when the token has none', async () => {
+    await seedParent();
+    const { issueLocalOtp, consumeLocalOtp } = await import('@/lib/auth');
+    const issued = issueLocalOtp('pat@example.com', 'parent');
+    expect(
+      consumeLocalOtp('pat@example.com', 'parent', issued.code, { requireInviteId: true }),
+    ).toEqual({
+      ok: false,
+      reason: 'invite-invalid',
+    });
+    expect(consumeLocalOtp('pat@example.com', 'parent', issued.code).ok).toBe(true);
+  });
+
   it('refuses an OTP bearer on the magic-link consume path (verify route)', async () => {
     await seedParent();
     const { issueLocalOtp, consumeMagicToken, consumeLocalOtp } = await import('@/lib/auth');
