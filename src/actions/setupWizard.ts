@@ -107,7 +107,12 @@ export async function attachWizardFileAction(
   if (file.size > MAX_WIZARD_UPLOAD_BYTES) return { ok: false, reason: 'too_large' };
   const bytes = Buffer.from(await file.arrayBuffer());
   const result = attachWizardFile({ subjectId, filename: file.name, bytes });
-  if (!result.ok) return result;
+  if (!result.ok) {
+    return {
+      ok: false,
+      reason: result.reason === 'missing_subject' ? 'missing' : result.reason,
+    };
+  }
   if (result.kind === 'ir') clearWizardDryRun(gate.householdId);
   return { ok: true, snapshot: getWizardSnapshot(gate.householdId) };
 }

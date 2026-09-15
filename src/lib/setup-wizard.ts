@@ -235,7 +235,10 @@ export function listWizardSubjects(root = getWizardContentRoot()): WizardSubject
     const meta = readSubjectMeta(subjectDir, id);
     const label = ir?.label ?? meta?.label ?? id;
     const icon = ir?.icon ?? meta?.icon ?? id;
-    const files = listPdfNames(id, root).map((name) => ({ name, kind: 'pdf' as const }));
+    const files: WizardSubject['files'] = listPdfNames(id, root).map((name) => ({
+      name,
+      kind: 'pdf',
+    }));
     if (ir || existsSync(path.join(subjectDir, BANK_IR_FILE))) {
       files.unshift({ name: BANK_IR_FILE, kind: 'ir' });
     }
