@@ -11,7 +11,12 @@ export {
 export { runCliAsync } from './generate-cli';
 export { buildCacheKey, ingestStateDir, irCachePath, readCachedIr } from './cache';
 export { extractJsonObject } from './json';
-export { PAGE_RASTER_PROFILE, pageImageHashesOf, resolvePageImages } from './pages';
+export {
+  PAGE_RASTER_PROFILE,
+  pageImageHashesOf,
+  persistPageImages,
+  resolvePageImages,
+} from './pages';
 export { sortRecord } from './hash';
 export { writeFileAtomic } from './write-atomic';
 export { mergeRepoEnvFiles, parseEnvFile } from './repo-env';

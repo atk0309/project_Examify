@@ -1,7 +1,13 @@
 import path from 'node:path';
 import { buildCacheKey, readCachedIr, writeCachedIr, writeRunManifest } from './cache';
 import { stableJson } from './diff';
-import { PAGE_RASTER_PROFILE, pageImageHashesOf, resolvePageImages, type PageImage } from './pages';
+import {
+  PAGE_RASTER_PROFILE,
+  pageImageHashesOf,
+  persistPageImages,
+  resolvePageImages,
+  type PageImage,
+} from './pages';
 import { loadGeneratePrompt } from './prompt';
 import {
   getProvider,
@@ -42,7 +48,12 @@ export type GenerateRequest = {
   env?: ProviderEnv;
   fetch?: typeof fetch;
   now?: () => Date;
-  /** Combined with the 180s provider deadline. Abort writes no IR/cache/manifest. */
+  /** Test seam — same hook as `resolvePageImages`. Durable page cache waits for abort. */
+  rasterize?: (pdfAbsPath: string, prefix: string) => boolean;
+  /**
+   * Combined with the 180s provider deadline. Abort writes no IR, IR cache,
+   * page-raster cache, or run manifest.
+   */
   signal?: AbortSignal;
 };
 
@@ -108,7 +119,12 @@ export async function generateSubject(request: GenerateRequest): Promise<Generat
   const prompt = loadGeneratePrompt();
   const sourceHashes = sourceHashesOf(request.sources);
   const model = request.model?.trim() || adapter.defaultModel;
-  const pageImages = resolvePageImages(request.repoRoot, request.sources, { persist });
+  // Rasterize in temp (or reuse existing page cache). Durable page writes wait
+  // for the same final abort gate as IR / IR cache / manifest.
+  const pageImages = resolvePageImages(request.repoRoot, request.sources, {
+    persist: false,
+    rasterize: request.rasterize,
+  });
   assertReadableProviderInput(request.provider, env, request.sources, pageImages);
   const pageImageHashes = pageImageHashesOf(pageImages);
   const cacheKey = buildCacheKey({
@@ -167,8 +183,6 @@ export async function generateSubject(request: GenerateRequest): Promise<Generat
       attachMeta(raw, request, sourceHashes, prompt.version),
       `${request.provider} output`,
     );
-    await checkpointAbort(request.signal);
-    if (persist) writeCachedIr(request.repoRoot, cacheKey, bank);
   }
 
   const now = request.now ?? (() => new Date());
@@ -195,6 +209,8 @@ export async function generateSubject(request: GenerateRequest): Promise<Generat
   const wroteIr = persist;
   let manifestPath: string | null = null;
   if (persist) {
+    persistPageImages(request.repoRoot, request.sources, pageImages);
+    writeCachedIr(request.repoRoot, cacheKey, bank);
     manifestPath = writeRunManifest(request.repoRoot, cacheKey, timestamp, stableJson(manifest));
     writeFileAtomic(irPath, stableJson(bank));
   }

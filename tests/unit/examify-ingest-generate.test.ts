@@ -31,6 +31,7 @@ import {
   extractJsonObject,
   GenerateAbortedError,
   generateSubject,
+  irCachePath,
   loadGeneratePrompt,
   providerRequestSignal,
   publicSplitHasNoSecrets,
@@ -1235,6 +1236,74 @@ describe('examify-ingest generate abort', () => {
     controller.abort();
     await expect(pending).rejects.toBeInstanceOf(GenerateAbortedError);
     expect(existsSync(path.join(root, 'content/subjects/plants/bank.ir.json'))).toBe(false);
+  });
+
+  it('abort after provider returns writes no IR, IR cache, pages, or manifest', async () => {
+    const root = examifyRepo();
+    const irPath = path.join(root, 'content/subjects/plants/bank.ir.json');
+    writeFileSync(path.join(root, 'content/source-pdfs/plants/guide.pdf'), '%PDF-1.4 fixture\n');
+    const controller = new AbortController();
+    let fetchCalls = 0;
+    await expect(
+      generateSubject({
+        repoRoot: root,
+        subject: plantsSubject(),
+        subjectDir: path.join(root, 'content/subjects/plants'),
+        sources: resolveSubjectSources(root, 'plants', path.join(root, 'content/subjects/plants')),
+        provider: 'anthropic',
+        seed: 0,
+        env: { ANTHROPIC_API_KEY: 'sk-ant-abort-after-provider' },
+        signal: controller.signal,
+        rasterize: (_pdf, prefix) => {
+          writeFileSync(`${prefix}-1.png`, 'abort-after-provider-page');
+          return true;
+        },
+        fetch: async () => {
+          fetchCalls += 1;
+          return new Response(
+            JSON.stringify({
+              content: [{ type: 'text', text: JSON.stringify(abortFixtureBank()) }],
+            }),
+            { status: 200 },
+          );
+        },
+        now: () => {
+          controller.abort();
+          return new Date('2026-01-01T00:00:00.000Z');
+        },
+      }),
+    ).rejects.toBeInstanceOf(GenerateAbortedError);
+    expect(fetchCalls).toBe(1);
+    expect(existsSync(irPath)).toBe(false);
+    expect(existsSync(path.join(root, '.examify-ingest/cache/ir'))).toBe(false);
+    expect(existsSync(path.join(root, '.examify-ingest/cache/pages'))).toBe(false);
+    expect(existsSync(path.join(root, '.examify-ingest/runs'))).toBe(false);
+    expect(existsSync(path.join(root, '.examify-ingest'))).toBe(false);
+  });
+
+  it('successful persist still writes IR cache, page rasters, and manifest', async () => {
+    const root = examifyRepo();
+    writeFileSync(path.join(root, 'content/source-pdfs/plants/guide.pdf'), '%PDF-1.4 fixture\n');
+    const result = await generateSubject({
+      repoRoot: root,
+      subject: plantsSubject(),
+      subjectDir: path.join(root, 'content/subjects/plants'),
+      sources: resolveSubjectSources(root, 'plants', path.join(root, 'content/subjects/plants')),
+      provider: 'anthropic',
+      seed: 0,
+      env: { ANTHROPIC_API_KEY: 'sk-ant-persist-after-gate' },
+      rasterize: (_pdf, prefix) => {
+        writeFileSync(`${prefix}-1.png`, 'persist-after-gate-page');
+        return true;
+      },
+      fetch: anthropicOkFetch(abortFixtureBank()),
+    });
+    expect(result.wroteIr).toBe(true);
+    expect(existsSync(result.irPath)).toBe(true);
+    expect(existsSync(irCachePath(root, result.cacheKey))).toBe(true);
+    expect(existsSync(path.join(root, '.examify-ingest/cache/pages'))).toBe(true);
+    expect(result.manifestPath).toBeTruthy();
+    expect(existsSync(result.manifestPath!)).toBe(true);
   });
 
   it('local CMD success still writes BankIR (spawn path)', async () => {

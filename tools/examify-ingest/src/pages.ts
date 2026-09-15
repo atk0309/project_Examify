@@ -104,3 +104,27 @@ export function resolvePageImages(
   }
   return pages;
 }
+
+/**
+ * Commit in-memory rasters to `.examify-ingest/cache/pages/<pdf-sha256>/`.
+ * Skips a PDF that already has a finished cache dir (read-only reuse).
+ * Call only after generate's final abort checkpoint.
+ */
+export function persistPageImages(
+  repoRoot: string,
+  sources: readonly ResolvedSource[],
+  pages: readonly PageImage[],
+): void {
+  for (const source of sources) {
+    if (source.kind !== 'pdf') continue;
+    const dir = pagesCacheDir(repoRoot, source.sha256);
+    if (listCachedPageImages(dir).length > 0) continue;
+    const mine = pages.filter((page) => page.sourceRelPath === source.relPath);
+    if (mine.length === 0) continue;
+    mkdirSync(dir, { recursive: true });
+    for (const page of mine) {
+      writeFileSync(path.join(dir, `page-${page.page}.png`), page.bytes);
+    }
+    writeFileSync(path.join(dir, '.done'), 'ok\n', 'utf8');
+  }
+}

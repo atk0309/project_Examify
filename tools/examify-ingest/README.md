@@ -99,11 +99,11 @@ PDF page images, when rasterized with `pdftoppm`, are reused from
 `.examify-ingest/cache/pages/<pdf-sha256>/` and framed as untrusted data, same
 as source files. OpenAI-compatible generate (`openai` and local HTTP) cannot
 inline raw PDF bytes: if the only sources are PDFs and no page images were
-  rasterized, the run fails closed. Provider HTTP/CMD calls use a 180s deadline,
-  optionally combined with `generateSubject({ signal })` via `AbortSignal.any`.
-  Abort throws `GenerateAbortedError` and writes no IR, IR cache, page-raster
-  cache, or run manifest.
-  Sources must stay under `content/subjects/<id>/` or `content/source-pdfs/<id>`.
+rasterized, the run fails closed. Provider HTTP/CMD calls use a 180s deadline,
+optionally combined with `generateSubject({ signal })` via `AbortSignal.any`.
+Abort throws `GenerateAbortedError` and writes no IR, IR cache, page-raster
+cache, or run manifest.
+Sources must stay under `content/subjects/<id>/` or `content/source-pdfs/<id>`.
 
 Source blobs are wrapped as `UNTRUSTED SOURCE MATERIAL` with static
 `BEGIN`/`END` markers. Those delimiters stay fixed on prompt v2 on purpose:
