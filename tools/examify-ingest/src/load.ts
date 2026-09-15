@@ -1,7 +1,23 @@
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync, type Stats } from 'node:fs';
 import path from 'node:path';
 
 export type LoadedIrFile = { path: string; data: unknown };
+
+function isEnoent(error: unknown): boolean {
+  return (
+    error instanceof Error && 'code' in error && (error as NodeJS.ErrnoException).code === 'ENOENT'
+  );
+}
+
+function statOrThrow(absPath: string, label: string): Stats {
+  try {
+    return statSync(absPath);
+  } catch (error) {
+    if (isEnoent(error)) throw new Error(`path not found: ${label}`);
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`cannot stat ${label}: ${message}`, { cause: error });
+  }
+}
 
 /** Resolve a subjects directory (each child folder's bank.ir.json) or explicit IR file paths. */
 export function resolveIrFiles(inputs: readonly string[], cwd: string): string[] {
@@ -10,12 +26,7 @@ export function resolveIrFiles(inputs: readonly string[], cwd: string): string[]
 
   for (const input of inputs) {
     const abs = path.resolve(cwd, input);
-    let stats;
-    try {
-      stats = statSync(abs);
-    } catch {
-      throw new Error(`path not found: ${input}`);
-    }
+    const stats = statOrThrow(abs, input);
 
     if (stats.isDirectory()) {
       const entries = readdirSync(abs, { withFileTypes: true })
@@ -33,8 +44,10 @@ export function resolveIrFiles(inputs: readonly string[], cwd: string): string[]
             }
             found += 1;
           }
-        } catch {
-          // skip subject dirs without a bank.ir.json
+        } catch (error) {
+          if (isEnoent(error)) continue;
+          const message = error instanceof Error ? error.message : String(error);
+          throw new Error(`cannot stat ${candidate}: ${message}`, { cause: error });
         }
       }
       if (found === 0) {

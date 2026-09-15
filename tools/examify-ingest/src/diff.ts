@@ -2,7 +2,10 @@ export function stableJson(value: unknown): string {
   return `${JSON.stringify(value, null, 2)}\n`;
 }
 
-function lineDiff(before: string, after: string): string[] {
+/** Skip the O(n×m) table when a dry-run diff would allocate more than this many cells. */
+export const MAX_DIFF_CELLS = 1_000_000;
+
+function lineDiff(before: string, after: string): string[] | null {
   const a = before.split('\n');
   const b = after.split('\n');
   // Drop the trailing empty line that JSON.stringify + '\n' produces on both sides
@@ -12,6 +15,7 @@ function lineDiff(before: string, after: string): string[] {
 
   const n = a.length;
   const m = b.length;
+  if ((n + 1) * (m + 1) > MAX_DIFF_CELLS) return null;
   const dp: number[][] = Array.from({ length: n + 1 }, () => Array<number>(m + 1).fill(0));
   for (let i = n - 1; i >= 0; i--) {
     for (let j = m - 1; j >= 0; j--) {
@@ -67,6 +71,14 @@ export function formatFileDiff(relPath: string, existing: string | null, planned
   }
 
   const hunk = lineDiff(existing, planned);
+  if (hunk === null) {
+    return [
+      `would update ${relPath}`,
+      `--- ${relPath} (on disk)`,
+      `+++ ${relPath} (planned)`,
+      '(detailed diff omitted; file too large)',
+    ].join('\n');
+  }
   return [
     `would update ${relPath}`,
     `--- ${relPath} (on disk)`,

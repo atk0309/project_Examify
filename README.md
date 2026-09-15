@@ -198,8 +198,8 @@ questions. Content lives in two files keyed by a shared, globally-unique questio
 `buildExam()` assembles each mini exam from the bank (`EXAM_CONFIG.length` caps the
 paper, `shuffle` randomises order), and a unit-test guard enforces that the two files
 stay in lockstep. You can also author `content/subjects/<id>/bank.ir.json` and emit
-the split with `pnpm examify-ingest` (dry-run by default; `--apply` writes
-`content/generated/`). The full guide — adding subjects and difficulties, writing
+the split with `pnpm examify-ingest emit content/subjects --dry-run` (or
+`--apply` to write `content/generated/`). The full guide — adding subjects and difficulties, writing
 rubrics the LLM grader marks well, the Phase 0 ingest CLI, and a workflow for
 generating a question bank from your own study-material PDFs — is in
 [`docs/content-authoring.md`](docs/content-authoring.md) and

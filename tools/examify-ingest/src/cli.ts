@@ -121,7 +121,14 @@ export function runCli(argv: readonly string[], io: CliIo): number {
     return 1;
   }
 
-  const planned = planEmit(result.banks, repoRoot);
+  let planned;
+  try {
+    planned = planEmit(result.banks, repoRoot);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    io.stderr.write(`${message}\n`);
+    return 1;
+  }
   if (!parsed.apply) {
     io.stdout.write(`${formatEmitPlan(planned)}\n`);
     io.stdout.write('\n(dry-run; pass --apply to write)\n');

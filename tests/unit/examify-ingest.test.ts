@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -8,13 +8,18 @@ import {
   applyEmit,
   collectQuestionIds,
   FIXTURE_IDS,
+  formatFileDiff,
   parseArgs,
   planEmit,
+  readGeneratedSubjects,
+  resolveIrFiles,
   runCli,
   splitIr,
   validateIrCollection,
   type BankIR,
 } from '../../tools/examify-ingest/src/index';
+import { MAX_DIFF_CELLS } from '../../tools/examify-ingest/src/diff';
+import { renderGeneratedPublic } from '../../tools/examify-ingest/src/registrars';
 
 const repoRoot = path.resolve(__dirname, '../..');
 const SAMPLE_IDS = collectQuestionIds(SAMPLE_QUESTIONS);
@@ -202,6 +207,78 @@ describe('examify-ingest emit plan', () => {
     expect(readFileSync(path.join(generated, 'questions/biology.json'), 'utf8')).toContain(
       'biology-easy-1',
     );
+  });
+
+  it('refuses a malformed or invalid generated subject catalog', () => {
+    const validated = validateIrCollection([
+      { path: 'biology/bank.ir.json', data: loadBiologyIr() },
+    ]);
+    expect(validated.ok).toBe(true);
+    if (!validated.ok) return;
+
+    const tmp = mkdtempSync(path.join(tmpdir(), 'examify-catalog-'));
+    mkdirSync(path.join(tmp, 'content/generated'), { recursive: true });
+    writeFileSync(path.join(tmp, 'content/generated/subjects.json'), '{not-json');
+    expect(() => planEmit(validated.banks, tmp)).toThrow(
+      /failed to read generated subject catalog/,
+    );
+
+    writeFileSync(
+      path.join(tmp, 'content/generated/subjects.json'),
+      `${JSON.stringify([{ id: 'not a kebab id', label: 'X', icon: 'x', l: 0, c: 0, h: 0 }], null, 2)}\n`,
+    );
+    expect(() => readGeneratedSubjects(tmp)).toThrow(/invalid generated subject catalog/);
+  });
+});
+
+describe('examify-ingest load + registrars + diffs', () => {
+  it('skips missing optional bank.ir.json but surfaces other stat errors', () => {
+    const tmp = mkdtempSync(path.join(tmpdir(), 'examify-load-'));
+    mkdirSync(path.join(tmp, 'biology'));
+    writeFileSync(
+      path.join(tmp, 'biology/bank.ir.json'),
+      readFileSync(path.join(repoRoot, 'content/subjects/biology/bank.ir.json')),
+    );
+    mkdirSync(path.join(tmp, 'empty-subject'));
+    expect(resolveIrFiles([tmp], tmp)).toEqual([path.join(tmp, 'biology/bank.ir.json')]);
+
+    expect(() => resolveIrFiles(['missing-ir.json'], tmp)).toThrow(/path not found/);
+
+    const blocked = path.join(tmp, 'blocked');
+    mkdirSync(blocked);
+    writeFileSync(path.join(blocked, 'bank.ir.json'), '{}');
+    chmodSync(blocked, 0);
+    try {
+      try {
+        statSync(path.join(blocked, 'bank.ir.json'));
+      } catch {
+        expect(() => resolveIrFiles([tmp], tmp)).toThrow(/cannot stat/);
+      }
+    } finally {
+      chmodSync(blocked, 0o755);
+    }
+  });
+
+  it('uses injective hyphen-to-underscore import aliases', () => {
+    const rendered = renderGeneratedPublic([
+      { id: 'foo-1', label: 'Foo 1', icon: 'foo', l: 0.5, c: 0.1, h: 40 },
+      { id: 'foo1', label: 'Foo1', icon: 'foo', l: 0.5, c: 0.1, h: 40 },
+    ]);
+    expect(rendered).toContain('import foo_1Questions from');
+    expect(rendered).toContain('import foo1Questions from');
+    expect(rendered.match(/import foo1Questions/g)?.length).toBe(1);
+  });
+
+  it('omits detailed diffs when the LCS table would be too large', () => {
+    const lines = Array.from(
+      { length: Math.ceil(Math.sqrt(MAX_DIFF_CELLS)) + 2 },
+      (_, i) => `L${i}`,
+    );
+    const before = `${lines.join('\n')}\n`;
+    const after = `${['changed', ...lines.slice(1)].join('\n')}\n`;
+    const out = formatFileDiff('content/generated/questions/huge.json', before, after);
+    expect(out).toContain('would update content/generated/questions/huge.json');
+    expect(out).toContain('(detailed diff omitted; file too large)');
   });
 });
 

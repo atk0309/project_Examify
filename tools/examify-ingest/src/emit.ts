@@ -25,18 +25,18 @@ function readExisting(absPath: string): string | null {
 export function readGeneratedSubjects(repoRoot: string): BankIrSubject[] {
   const raw = readExisting(path.join(repoRoot, GENERATED_DIR, 'subjects.json'));
   if (raw === null) return [];
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) return [];
-    const subjects: BankIrSubject[] = [];
-    for (const item of parsed) {
-      const result = subjectSchema.safeParse(item);
-      if (result.success) subjects.push(result.data);
-    }
-    return subjects;
-  } catch {
-    return [];
+    parsed = JSON.parse(raw) as unknown;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`failed to read generated subject catalog: ${message}`);
   }
+  const result = subjectSchema.array().safeParse(parsed);
+  if (!result.success) {
+    throw new Error(`invalid generated subject catalog: ${result.error.message}`);
+  }
+  return result.data;
 }
 
 /** Upsert this run's subjects; keep on-disk subjects that are not in this run. */

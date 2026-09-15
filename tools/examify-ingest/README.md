@@ -127,10 +127,10 @@ Keys are server-only: the app imports them from
 Generated files are meant to be committed. Source PDFs stay in the gitignored
 `content/source-pdfs/` directory.
 
-After `emit --apply` of a **new** subject, register its public questions in
-`src/lib/exam/generated-public.ts` and its keys in
-`src/lib/exam/generated-keys.server.ts` (one import each). The committed
-biology sample is already wired.
+After `emit --apply`, `planEmit` rewrites
+`src/lib/exam/generated-public.ts` and
+`src/lib/exam/generated-keys.server.ts` from the merged catalog. Do not add
+those imports by hand. The committed biology sample is already registered.
 
 ## Library
 

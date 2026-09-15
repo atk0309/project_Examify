@@ -2,6 +2,32 @@ import type { DifficultyId, Question, QuestionBank, Subject } from './data';
 
 const DIFFICULTIES: DifficultyId[] = ['easy', 'medium', 'hard'];
 
+type QuestionBucket = { subjectId: string; difficulty: DifficultyId };
+
+function indexQuestionIds(bank: QuestionBank): Map<string, QuestionBucket> {
+  const index = new Map<string, QuestionBucket>();
+  for (const [subjectId, byDiff] of Object.entries(bank)) {
+    for (const difficulty of DIFFICULTIES) {
+      for (const question of byDiff?.[difficulty] ?? []) {
+        index.set(question.id, { subjectId, difficulty });
+      }
+    }
+  }
+  return index;
+}
+
+function removeQuestion(
+  bank: QuestionBank,
+  subjectId: string,
+  difficulty: DifficultyId,
+  id: string,
+): void {
+  const bucket = bank[subjectId];
+  const list = bucket?.[difficulty];
+  if (!bucket || !list) return;
+  bucket[difficulty] = list.filter((question) => question.id !== id);
+}
+
 function cloneQuestion(question: Question): Question {
   return question.type === 'mcq'
     ? { id: question.id, type: 'mcq', q: question.q, choices: [...question.choices] }
@@ -45,8 +71,9 @@ export function mergeSubjects(
 
 /**
  * Additive merge of generated question banks onto the sample.
- * Existing sample ids are kept. Colliding sample ids are replaced only when
- * `replaceSample` is true (the emit CLI is the gate that sets this).
+ * Question ids are unique across the whole bank. Existing sample ids are kept
+ * unless `replaceSample` is true (the emit CLI is the gate that sets this);
+ * a cross-bucket collision is skipped, or moved when replacement is allowed.
  */
 export function mergeQuestions(
   sample: QuestionBank,
@@ -54,28 +81,48 @@ export function mergeQuestions(
   replaceSample = false,
 ): QuestionBank {
   const out = cloneBank(sample);
+  const index = indexQuestionIds(out);
+
   for (const [subjectId, byDiff] of Object.entries(generated)) {
-    if (!out[subjectId]) {
+    const incomingItems: { difficulty: DifficultyId; question: Question }[] = [];
+    for (const difficulty of DIFFICULTIES) {
+      for (const question of byDiff?.[difficulty] ?? []) {
+        incomingItems.push({ difficulty, question });
+      }
+    }
+
+    const hasCollision = incomingItems.some((item) => index.has(item.question.id));
+    if (!out[subjectId] && !hasCollision) {
       out[subjectId] = cloneBank({ [subjectId]: byDiff })[subjectId] ?? {};
+      for (const { difficulty, question } of incomingItems) {
+        index.set(question.id, { subjectId, difficulty });
+      }
       continue;
     }
-    for (const difficulty of DIFFICULTIES) {
-      const incoming = byDiff?.[difficulty] ?? [];
-      if (incoming.length === 0) continue;
-      const existing = out[subjectId][difficulty] ? [...out[subjectId][difficulty]] : [];
-      const existingIds = new Set(existing.map((question) => question.id));
-      for (const question of incoming) {
-        if (!existingIds.has(question.id)) {
-          existing.push(cloneQuestion(question));
-          existingIds.add(question.id);
-          continue;
-        }
-        if (replaceSample) {
-          const index = existing.findIndex((item) => item.id === question.id);
-          if (index >= 0) existing[index] = cloneQuestion(question);
+
+    if (!out[subjectId]) out[subjectId] = {};
+
+    for (const { difficulty, question } of incomingItems) {
+      const existing = index.get(question.id);
+      if (existing) {
+        if (!replaceSample) continue;
+        const sameBucket = existing.subjectId === subjectId && existing.difficulty === difficulty;
+        if (sameBucket) {
+          const list = out[subjectId][difficulty] ? [...out[subjectId][difficulty]] : [];
+          const pos = list.findIndex((item) => item.id === question.id);
+          if (pos >= 0) {
+            list[pos] = cloneQuestion(question);
+            out[subjectId][difficulty] = list;
+            continue;
+          }
+        } else {
+          removeQuestion(out, existing.subjectId, existing.difficulty, question.id);
         }
       }
-      out[subjectId][difficulty] = existing;
+      const list = out[subjectId][difficulty] ? [...out[subjectId][difficulty]] : [];
+      list.push(cloneQuestion(question));
+      out[subjectId][difficulty] = list;
+      index.set(question.id, { subjectId, difficulty });
     }
   }
   return out;

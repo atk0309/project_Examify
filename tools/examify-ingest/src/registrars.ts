@@ -1,8 +1,8 @@
 import type { BankIrSubject } from './schema';
 
 function importAlias(subjectId: string, suffix: 'Questions' | 'Keys'): string {
-  const camel = subjectId.replace(/-([a-z0-9])/gi, (_, ch: string) => ch.toUpperCase());
-  return `${camel}${suffix}`;
+  const identifier = subjectId.replaceAll('-', '_');
+  return `${identifier}${suffix}`;
 }
 
 /** Rewrite `generated-public.ts` from the merged generated subject catalog. */

@@ -53,6 +53,38 @@ describe('merge generated content', () => {
     );
   });
 
+  it('skips a cross-bucket id collision unless replaceSample is set', () => {
+    const generated = {
+      biology: {
+        easy: [
+          {
+            id: 'maths-easy-2',
+            type: 'mcq' as const,
+            q: 'CROSS-BUCKET',
+            choices: ['A', 'B', 'C', 'D'],
+          },
+          {
+            id: 'biology-easy-new',
+            type: 'free' as const,
+            q: 'New biology item',
+          },
+        ],
+      },
+    };
+    const kept = mergeQuestions(SAMPLE_QUESTIONS, generated, false);
+    expect(kept.maths!.easy!.some((question) => question.id === 'maths-easy-2')).toBe(true);
+    expect(kept.maths!.easy![1]!.q).toBe(SAMPLE_QUESTIONS.maths!.easy![1]!.q);
+    expect(kept.biology!.easy!.map((question) => question.id)).toEqual(['biology-easy-new']);
+
+    const replaced = mergeQuestions(SAMPLE_QUESTIONS, generated, true);
+    expect(replaced.maths!.easy!.some((question) => question.id === 'maths-easy-2')).toBe(false);
+    expect(replaced.biology!.easy!.map((question) => question.id)).toEqual([
+      'maths-easy-2',
+      'biology-easy-new',
+    ]);
+    expect(replaced.biology!.easy![0]!.q).toBe('CROSS-BUCKET');
+  });
+
   it('does not replace a sample-bank id unless replaceSample is set', () => {
     const generated = {
       maths: {
