@@ -1,7 +1,6 @@
 /**
- * Additive generated public bank. `examify-ingest emit --apply` writes
- * `content/generated/questions/<id>.json`; register a new subject here
- * (never import `content/generated/keys/` from this module).
+ * Additive generated public bank. Written by examify-ingest emit --apply.
+ * Do not import content/generated/keys/ from this module.
  */
 import generatedSubjects from '../../../content/generated/subjects.json';
 import biologyQuestions from '../../../content/generated/questions/biology.json';

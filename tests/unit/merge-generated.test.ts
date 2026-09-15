@@ -53,12 +53,12 @@ describe('merge generated content', () => {
     );
   });
 
-  it('does not replace a fixture id unless replaceSample is set', () => {
+  it('does not replace a sample-bank id unless replaceSample is set', () => {
     const generated = {
       maths: {
         easy: [
           {
-            id: 'maths-easy-1',
+            id: 'maths-easy-2',
             type: 'mcq' as const,
             q: 'REPLACED',
             choices: ['A', 'B', 'C', 'D'],
@@ -67,9 +67,9 @@ describe('merge generated content', () => {
       },
     };
     const kept = mergeQuestions(SAMPLE_QUESTIONS, generated, false);
-    expect(kept.maths!.easy![0]!.q).toBe(SAMPLE_QUESTIONS.maths!.easy![0]!.q);
+    expect(kept.maths!.easy![1]!.q).toBe(SAMPLE_QUESTIONS.maths!.easy![1]!.q);
     const replaced = mergeQuestions(SAMPLE_QUESTIONS, generated, true);
-    expect(replaced.maths!.easy![0]!.q).toBe('REPLACED');
+    expect(replaced.maths!.easy![1]!.q).toBe('REPLACED');
   });
 
   it('keeps sample subject metadata when generated repeats an id', () => {
@@ -82,14 +82,14 @@ describe('merge generated content', () => {
   });
 
   it('merges keys additively and protects fixture ids', () => {
-    const sample = { 'maths-easy-1': { type: 'mcq' as const, answer: 2 } };
+    const sample = { 'maths-easy-2': { type: 'mcq' as const, answer: 2 } };
     const generated = {
-      'maths-easy-1': { type: 'mcq' as const, answer: 0 },
+      'maths-easy-2': { type: 'mcq' as const, answer: 0 },
       'biology-easy-1': { type: 'mcq' as const, answer: 2 },
     };
-    expect(mergeKeys(sample, generated, false)['maths-easy-1']!.answer).toBe(2);
+    expect(mergeKeys(sample, generated, false)['maths-easy-2']!.answer).toBe(2);
     expect(mergeKeys(sample, generated, false)['biology-easy-1']!.answer).toBe(2);
-    expect(mergeKeys(sample, generated, true)['maths-easy-1']!.answer).toBe(0);
+    expect(mergeKeys(sample, generated, true)['maths-easy-2']!.answer).toBe(0);
   });
 });
 

@@ -1,8 +1,12 @@
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { SAMPLE_QUESTIONS } from '@/lib/exam/data';
+import { SAMPLE_FIXTURE_IDS } from '@/lib/exam/fixture-ids';
 import {
+  applyEmit,
+  collectQuestionIds,
   FIXTURE_IDS,
   parseArgs,
   planEmit,
@@ -11,9 +15,9 @@ import {
   validateIrCollection,
   type BankIR,
 } from '../../tools/examify-ingest/src/index';
-import { SAMPLE_FIXTURE_IDS } from '@/lib/exam/fixture-ids';
 
 const repoRoot = path.resolve(__dirname, '../..');
+const SAMPLE_IDS = collectQuestionIds(SAMPLE_QUESTIONS);
 
 function loadBiologyIr(): BankIR {
   return JSON.parse(
@@ -21,14 +25,14 @@ function loadBiologyIr(): BankIR {
   ) as BankIR;
 }
 
-function collidingFixtureIr(): BankIR {
+function collidingSampleIr(id: 'maths-easy-1' | 'maths-easy-2'): BankIR {
   return {
     version: 1,
     subject: { id: 'maths', label: 'Maths', icon: 'maths', l: 0.5, c: 0.05, h: 150 },
     difficulties: {
       easy: [
         {
-          id: 'maths-easy-1',
+          id,
           type: 'mcq',
           q: 'Replaced fixture question?',
           choices: ['A', 'B', 'C', 'D'],
@@ -43,8 +47,11 @@ function collidingFixtureIr(): BankIR {
 }
 
 describe('examify-ingest schema + split', () => {
-  it('keeps FIXTURE_IDS in lockstep with the app', () => {
+  it('freezes every sample-bank id, including the test-coupled fixtures', () => {
     expect([...FIXTURE_IDS]).toEqual([...SAMPLE_FIXTURE_IDS]);
+    expect(SAMPLE_IDS.length).toBeGreaterThan(FIXTURE_IDS.length);
+    for (const id of FIXTURE_IDS) expect(SAMPLE_IDS).toContain(id);
+    expect(SAMPLE_IDS).toContain('maths-easy-2');
   });
 
   it('validates the sample biology IR', () => {
@@ -66,19 +73,24 @@ describe('examify-ingest schema + split', () => {
     expect(Object.keys(split.questions.easy![1]!).sort()).toEqual(['id', 'q', 'type']);
   });
 
-  it('refuses frozen fixture ids unless --replace-sample', () => {
-    const files = [{ path: 'maths/bank.ir.json', data: collidingFixtureIr() }];
-    const blocked = validateIrCollection(files);
-    expect(blocked.ok).toBe(false);
-    if (!blocked.ok) {
-      expect(blocked.errors.some((error) => error.message.includes('maths-easy-1'))).toBe(true);
-      expect(blocked.errors.some((error) => error.message.includes('--replace-sample'))).toBe(true);
-    }
+  it('refuses any sample-bank id unless --replace-sample', () => {
+    for (const id of ['maths-easy-1', 'maths-easy-2'] as const) {
+      const files = [{ path: 'maths/bank.ir.json', data: collidingSampleIr(id) }];
+      const blocked = validateIrCollection(files, { frozenIds: SAMPLE_IDS });
+      expect(blocked.ok, `${id} should be frozen`).toBe(false);
+      if (!blocked.ok) {
+        expect(blocked.errors.some((error) => error.message.includes(id))).toBe(true);
+        expect(blocked.errors.some((error) => error.message.includes('--replace-sample'))).toBe(
+          true,
+        );
+      }
 
-    const allowed = validateIrCollection(files, { replaceSample: true });
-    expect(allowed.ok, allowed.ok ? '' : allowed.errors.map((e) => e.message).join('\n')).toBe(
-      true,
-    );
+      const allowed = validateIrCollection(files, { frozenIds: SAMPLE_IDS, replaceSample: true });
+      expect(
+        allowed.ok,
+        allowed.ok ? '' : allowed.errors.map((error) => error.message).join('\n'),
+      ).toBe(true);
+    }
   });
 
   it('rejects ids that do not follow the subject-difficulty convention', () => {
@@ -116,6 +128,80 @@ describe('examify-ingest emit plan', () => {
     expect(keys.contents).toContain('"answer"');
     expect(keys.contents).toContain('"rubric"');
     expect(keys.contents).toContain('"provenance"');
+  });
+
+  it('partial emit upserts subjects.json and leaves other subject files alone', () => {
+    const validated = validateIrCollection([
+      { path: 'biology/bank.ir.json', data: loadBiologyIr() },
+    ]);
+    expect(validated.ok).toBe(true);
+    if (!validated.ok) return;
+
+    const tmp = mkdtempSync(path.join(tmpdir(), 'examify-partial-'));
+    const generated = path.join(tmp, 'content/generated');
+    mkdirSync(path.join(generated, 'questions'), { recursive: true });
+    mkdirSync(path.join(generated, 'keys'), { recursive: true });
+
+    const chemistrySubject = {
+      id: 'chemistry',
+      label: 'Chemistry',
+      icon: 'chemistry',
+      l: 0.55,
+      c: 0.1,
+      h: 40,
+    };
+    const chemistryQuestions = {
+      easy: [
+        {
+          id: 'chemistry-easy-1',
+          type: 'mcq',
+          q: 'Keep this chemistry question',
+          choices: ['A', 'B', 'C', 'D'],
+        },
+      ],
+      medium: [],
+      hard: [],
+    };
+    const chemistryKeys = {
+      'chemistry-easy-1': {
+        type: 'mcq',
+        answer: 1,
+        provenance: { pdf: 'hand-authored', locator: 'keep-me' },
+      },
+    };
+    writeFileSync(
+      path.join(generated, 'subjects.json'),
+      `${JSON.stringify([chemistrySubject], null, 2)}\n`,
+    );
+    const questionsPath = path.join(generated, 'questions/chemistry.json');
+    const keysPath = path.join(generated, 'keys/chemistry.json');
+    const questionsBefore = `${JSON.stringify(chemistryQuestions, null, 2)}\n`;
+    const keysBefore = `${JSON.stringify(chemistryKeys, null, 2)}\n`;
+    writeFileSync(questionsPath, questionsBefore);
+    writeFileSync(keysPath, keysBefore);
+
+    const planned = planEmit(validated.banks, tmp);
+    expect(planned.map((file) => file.relPath)).toEqual([
+      'content/generated/subjects.json',
+      'content/generated/questions/biology.json',
+      'content/generated/keys/biology.json',
+    ]);
+    expect(JSON.parse(planned[0]!.contents).map((subject: { id: string }) => subject.id)).toEqual([
+      'chemistry',
+      'biology',
+    ]);
+
+    applyEmit(planned);
+    expect(readFileSync(questionsPath, 'utf8')).toBe(questionsBefore);
+    expect(readFileSync(keysPath, 'utf8')).toBe(keysBefore);
+    expect(
+      JSON.parse(readFileSync(path.join(generated, 'subjects.json'), 'utf8')).map(
+        (s: { id: string }) => s.id,
+      ),
+    ).toEqual(['chemistry', 'biology']);
+    expect(readFileSync(path.join(generated, 'questions/biology.json'), 'utf8')).toContain(
+      'biology-easy-1',
+    );
   });
 });
 
@@ -161,10 +247,10 @@ describe('examify-ingest CLI', () => {
     expect(out).toContain('(dry-run; pass --apply to write)');
   });
 
-  it('CLI validate refuses a fixture collision without --replace-sample', () => {
+  it('CLI validate refuses a non-fixture sample-bank id without --replace-sample', () => {
     const tmp = mkdtempSync(path.join(tmpdir(), 'examify-ir-'));
     const irPath = path.join(tmp, 'bank.ir.json');
-    writeFileSync(irPath, JSON.stringify(collidingFixtureIr()), 'utf8');
+    writeFileSync(irPath, JSON.stringify(collidingSampleIr('maths-easy-2')), 'utf8');
     const stderr: string[] = [];
     const code = runCli(['validate', irPath], {
       cwd: repoRoot,
@@ -172,6 +258,44 @@ describe('examify-ingest CLI', () => {
       stderr: { write: (chunk) => void stderr.push(chunk) },
     });
     expect(code).toBe(1);
+    expect(stderr.join('')).toContain('maths-easy-2');
     expect(stderr.join('')).toContain('--replace-sample');
+  });
+
+  it('CLI emit --apply of biology alone keeps another generated subject', () => {
+    const tmp = mkdtempSync(path.join(tmpdir(), 'examify-cli-partial-'));
+    writeFileSync(path.join(tmp, 'package.json'), JSON.stringify({ name: 'project-examify' }));
+    mkdirSync(path.join(tmp, 'content/generated/questions'), { recursive: true });
+    mkdirSync(path.join(tmp, 'content/generated/keys'), { recursive: true });
+    mkdirSync(path.join(tmp, 'content/subjects/biology'), { recursive: true });
+    writeFileSync(
+      path.join(tmp, 'content/subjects/biology/bank.ir.json'),
+      readFileSync(path.join(repoRoot, 'content/subjects/biology/bank.ir.json')),
+    );
+    const chemistryQuestions = `${JSON.stringify({ easy: [], medium: [], hard: [] }, null, 2)}\n`;
+    const chemistryKeys = `${JSON.stringify({}, null, 2)}\n`;
+    writeFileSync(
+      path.join(tmp, 'content/generated/subjects.json'),
+      `${JSON.stringify([{ id: 'chemistry', label: 'Chemistry', icon: 'chemistry', l: 0.5, c: 0.1, h: 40 }], null, 2)}\n`,
+    );
+    writeFileSync(path.join(tmp, 'content/generated/questions/chemistry.json'), chemistryQuestions);
+    writeFileSync(path.join(tmp, 'content/generated/keys/chemistry.json'), chemistryKeys);
+
+    const code = runCli(['emit', 'content/subjects/biology/bank.ir.json', '--apply'], {
+      cwd: tmp,
+      stdout: { write: () => undefined },
+      stderr: { write: () => undefined },
+    });
+    expect(code).toBe(0);
+    const subjects = JSON.parse(
+      readFileSync(path.join(tmp, 'content/generated/subjects.json'), 'utf8'),
+    ) as { id: string }[];
+    expect(subjects.map((subject) => subject.id)).toEqual(['chemistry', 'biology']);
+    expect(readFileSync(path.join(tmp, 'content/generated/questions/chemistry.json'), 'utf8')).toBe(
+      chemistryQuestions,
+    );
+    expect(readFileSync(path.join(tmp, 'content/generated/keys/chemistry.json'), 'utf8')).toBe(
+      chemistryKeys,
+    );
   });
 });

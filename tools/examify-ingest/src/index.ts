@@ -1,4 +1,5 @@
 export { FIXTURE_IDS, FIXTURE_ID_SET, type FixtureId } from './fixtures';
+export { collectQuestionIds } from './ids';
 export {
   bankIrSchema,
   DIFFICULTIES,
@@ -19,6 +20,14 @@ export {
   type ValidatedBank,
 } from './validate';
 export { findRepoRoot, loadIrFiles, resolveIrFiles } from './load';
-export { applyEmit, formatEmitPlan, GENERATED_DIR, planEmit, type PlannedFile } from './emit';
+export {
+  applyEmit,
+  formatEmitPlan,
+  GENERATED_DIR,
+  mergeGeneratedSubjects,
+  planEmit,
+  readGeneratedSubjects,
+  type PlannedFile,
+} from './emit';
 export { formatFileDiff, stableJson } from './diff';
 export { parseArgs, runCli, USAGE, type CliIo, type ParsedCli } from './cli';

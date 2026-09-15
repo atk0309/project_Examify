@@ -468,7 +468,7 @@ export const SUBJECTS: Subject[] = mergeSubjects(SAMPLE_SUBJECTS, GENERATED_SUBJ
 export const QUESTIONS: QuestionBank = mergeQuestions(
   SAMPLE_QUESTIONS,
   GENERATED_QUESTIONS,
-  generatedReplacesSample(GENERATED_QUESTIONS),
+  generatedReplacesSample(GENERATED_QUESTIONS, SAMPLE_QUESTIONS),
 );
 
 export function countQuestions(subjectId: string): number {

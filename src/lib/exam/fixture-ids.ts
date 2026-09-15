@@ -1,6 +1,7 @@
 /**
- * Sample-bank ids frozen by unit-test fixtures.
+ * Test-coupled sample ids (must remain in the sample bank).
  * Keep in lockstep with `FIXTURE_IDS` in `tools/examify-ingest`.
+ * Validate/emit freeze every SAMPLE_QUESTIONS id, not only this list.
  */
 export const SAMPLE_FIXTURE_IDS = [
   'maths-easy-1',

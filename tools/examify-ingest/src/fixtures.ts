@@ -1,4 +1,7 @@
-/** Sample-bank ids frozen by unit-test fixtures. Do not collide unless --replace-sample. */
+/**
+ * Test-coupled sample ids (must remain in the sample bank).
+ * Validate/emit freeze *every* SAMPLE_QUESTIONS id, not only this list.
+ */
 export const FIXTURE_IDS = [
   'maths-easy-1',
   'maths-hard-1',

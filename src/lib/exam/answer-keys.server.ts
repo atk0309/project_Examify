@@ -338,7 +338,7 @@ export const SAMPLE_ANSWER_KEYS: Record<string, AnswerKey> = {
 export const ANSWER_KEYS: Record<string, AnswerKey> = mergeKeys(
   SAMPLE_ANSWER_KEYS,
   GENERATED_KEYS,
-  generatedReplacesSampleIds(Object.keys(GENERATED_KEYS)),
+  generatedReplacesSampleIds(Object.keys(GENERATED_KEYS), Object.keys(SAMPLE_ANSWER_KEYS)),
 );
 
 export function keyById(id: string): AnswerKey | undefined {

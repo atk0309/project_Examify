@@ -174,9 +174,9 @@ Automated path (Phase 0, no PDF extract / no LLM generate): author
 `content/subjects/<id>/bank.ir.json`, then `pnpm examify-ingest validate|emit`.
 `emit` is dry-run by default; `--apply` writes `content/generated/` (public
 subjects/questions + server-only keys). The app merges those files onto the
-sample bank. Frozen fixture ids (`maths-easy-1`, `maths-hard-1`,
-`geography-medium-1`, `geography-medium-free-1`, `geography-medium-free-2`)
-are refused unless `--replace-sample`.
+sample bank. Any id already in the sample bank is refused unless
+`--replace-sample`. A partial emit merges `subjects.json` by id and leaves
+other generated subject files in place.
 
 ## Styling / theming
 

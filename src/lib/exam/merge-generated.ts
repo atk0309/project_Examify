@@ -1,4 +1,3 @@
-import { SAMPLE_FIXTURE_ID_SET } from './fixture-ids';
 import type { DifficultyId, Question, QuestionBank, Subject } from './data';
 
 const DIFFICULTIES: DifficultyId[] = ['easy', 'medium', 'hard'];
@@ -46,7 +45,7 @@ export function mergeSubjects(
 
 /**
  * Additive merge of generated question banks onto the sample.
- * Existing sample ids are kept. Frozen fixture ids are replaced only when
+ * Existing sample ids are kept. Colliding sample ids are replaced only when
  * `replaceSample` is true (the emit CLI is the gate that sets this).
  */
 export function mergeQuestions(
@@ -71,7 +70,7 @@ export function mergeQuestions(
           existingIds.add(question.id);
           continue;
         }
-        if (replaceSample && SAMPLE_FIXTURE_ID_SET.has(question.id)) {
+        if (replaceSample) {
           const index = existing.findIndex((item) => item.id === question.id);
           if (index >= 0) existing[index] = cloneQuestion(question);
         }
@@ -91,7 +90,7 @@ export function mergeKeys<T>(
   const out: Record<string, T> = { ...sample };
   for (const [id, key] of Object.entries(generated)) {
     if (id in out) {
-      if (replaceSample && SAMPLE_FIXTURE_ID_SET.has(id)) out[id] = key;
+      if (replaceSample) out[id] = key;
       continue;
     }
     out[id] = key;
@@ -99,14 +98,18 @@ export function mergeKeys<T>(
   return out;
 }
 
-/** True when generated content includes a frozen fixture id (emit --replace-sample). */
-export function generatedReplacesSample(generated: QuestionBank): boolean {
-  return generatedReplacesSampleIds(questionIds(generated));
+/** True when generated content collides with any sample-bank id. */
+export function generatedReplacesSample(generated: QuestionBank, sample: QuestionBank): boolean {
+  return generatedReplacesSampleIds(questionIds(generated), questionIds(sample));
 }
 
-export function generatedReplacesSampleIds(ids: Iterable<string>): boolean {
+export function generatedReplacesSampleIds(
+  ids: Iterable<string>,
+  sampleIds: Iterable<string>,
+): boolean {
+  const frozen = sampleIds instanceof Set ? sampleIds : new Set(sampleIds);
   for (const id of ids) {
-    if (SAMPLE_FIXTURE_ID_SET.has(id)) return true;
+    if (frozen.has(id)) return true;
   }
   return false;
 }

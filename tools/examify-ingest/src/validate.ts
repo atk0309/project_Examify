@@ -1,10 +1,11 @@
-import { FIXTURE_ID_SET } from './fixtures';
 import { bankIrSchema, DIFFICULTIES, type BankIR, type DifficultyId } from './schema';
 import type { SplitIr } from './schema';
 import { publicQuestionIds, splitIr } from './split';
 
 export type ValidateOptions = {
   replaceSample?: boolean;
+  /** Question ids already in the sample bank. Collisions error unless replaceSample. */
+  frozenIds?: Iterable<string>;
 };
 
 export type ValidateIssue = {
@@ -91,6 +92,7 @@ export function validateIrCollection(
   const banks: ValidatedBank[] = [];
   const subjectIds = new Map<string, string>();
   const questionIds = new Map<string, string>();
+  const frozenIds = new Set(options.frozenIds ?? []);
 
   if (files.length === 0) {
     return { ok: false, errors: [{ message: 'no BankIR files to validate' }] };
@@ -123,10 +125,10 @@ export function validateIrCollection(
         questionIds.set(id, file.path);
       }
 
-      if (FIXTURE_ID_SET.has(id) && !options.replaceSample) {
+      if (frozenIds.has(id) && !options.replaceSample) {
         errors.push({
           path: file.path,
-          message: `id "${id}" collides with a frozen sample fixture; pass --replace-sample to overwrite`,
+          message: `id "${id}" collides with a sample-bank id; pass --replace-sample to overwrite`,
         });
       }
     }

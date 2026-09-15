@@ -43,11 +43,17 @@ one or more explicit IR file paths.
 `emit` is **dry-run by default**. It prints a diff against the files already on
 disk (or `would create`). Pass `--apply` to write.
 
-`--replace-sample` is required if any IR id collides with a frozen sample
-fixture (`maths-easy-1`, `maths-hard-1`, `geography-medium-1`,
-`geography-medium-free-1`, `geography-medium-free-2`). Additive subjects are
-the default; do not clobber those ids unless you intend to replace the sample
-fixtures and update the unit tests that reference them.
+`--replace-sample` is required if any IR id collides with an id already in the
+hand-authored sample bank (`SAMPLE_QUESTIONS`). Additive subjects are the
+default; do not clobber sample ids unless you intend to replace them and update
+any unit tests that reference them.
+
+`emit` **merges** `content/generated/subjects.json` by subject id: this run
+upserts its subjects and leaves other generated subjects (and their
+`questions/` + `keys/` files) in place. It does not delete files for subjects
+that disappeared from the IR set. When `src/lib/exam/generated-public.ts` and
+`generated-keys.server.ts` already exist, `--apply` rewrites those registrars
+from the merged catalog.
 
 ## BankIR shape (version 1)
 

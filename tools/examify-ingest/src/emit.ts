@@ -1,6 +1,8 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { formatFileDiff, stableJson } from './diff';
+import { renderGeneratedKeys, renderGeneratedPublic } from './registrars';
+import { subjectSchema, type BankIrSubject } from './schema';
 import type { ValidatedBank } from './validate';
 
 export const GENERATED_DIR = 'content/generated';
@@ -20,27 +22,82 @@ function readExisting(absPath: string): string | null {
   }
 }
 
+export function readGeneratedSubjects(repoRoot: string): BankIrSubject[] {
+  const raw = readExisting(path.join(repoRoot, GENERATED_DIR, 'subjects.json'));
+  if (raw === null) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    const subjects: BankIrSubject[] = [];
+    for (const item of parsed) {
+      const result = subjectSchema.safeParse(item);
+      if (result.success) subjects.push(result.data);
+    }
+    return subjects;
+  } catch {
+    return [];
+  }
+}
+
+/** Upsert this run's subjects; keep on-disk subjects that are not in this run. */
+export function mergeGeneratedSubjects(
+  existing: readonly BankIrSubject[],
+  incoming: readonly BankIrSubject[],
+): BankIrSubject[] {
+  const incomingById = new Map(incoming.map((subject) => [subject.id, subject]));
+  const out: BankIrSubject[] = [];
+  const seen = new Set<string>();
+  for (const subject of existing) {
+    out.push(incomingById.get(subject.id) ?? subject);
+    seen.add(subject.id);
+  }
+  for (const subject of incoming) {
+    if (seen.has(subject.id)) continue;
+    out.push(subject);
+    seen.add(subject.id);
+  }
+  return out;
+}
+
+function pushFile(files: PlannedFile[], repoRoot: string, relPath: string, contents: string): void {
+  const absPath = path.join(repoRoot, relPath);
+  files.push({
+    relPath,
+    absPath,
+    contents,
+    existing: readExisting(absPath),
+  });
+}
+
 /** Plan the public/server-only JSON files for a validated IR collection. */
 export function planEmit(banks: readonly ValidatedBank[], repoRoot: string): PlannedFile[] {
-  const subjects = banks.map((entry) => entry.split.subject);
+  const incoming = banks.map((entry) => entry.split.subject);
+  const subjects = mergeGeneratedSubjects(readGeneratedSubjects(repoRoot), incoming);
   const files: PlannedFile[] = [];
 
-  const push = (relPath: string, value: unknown) => {
-    const absPath = path.join(repoRoot, relPath);
-    files.push({
-      relPath,
-      absPath,
-      contents: stableJson(value),
-      existing: readExisting(absPath),
-    });
-  };
-
-  push(`${GENERATED_DIR}/subjects.json`, subjects);
+  pushFile(files, repoRoot, `${GENERATED_DIR}/subjects.json`, stableJson(subjects));
 
   for (const entry of banks) {
     const id = entry.split.subject.id;
-    push(`${GENERATED_DIR}/questions/${id}.json`, entry.split.questions);
-    push(`${GENERATED_DIR}/keys/${id}.json`, entry.split.keys);
+    pushFile(
+      files,
+      repoRoot,
+      `${GENERATED_DIR}/questions/${id}.json`,
+      stableJson(entry.split.questions),
+    );
+    pushFile(files, repoRoot, `${GENERATED_DIR}/keys/${id}.json`, stableJson(entry.split.keys));
+  }
+
+  const publicRegistrar = path.join(repoRoot, 'src/lib/exam/generated-public.ts');
+  const keysRegistrar = path.join(repoRoot, 'src/lib/exam/generated-keys.server.ts');
+  if (existsSync(publicRegistrar) || existsSync(keysRegistrar)) {
+    pushFile(files, repoRoot, 'src/lib/exam/generated-public.ts', renderGeneratedPublic(subjects));
+    pushFile(
+      files,
+      repoRoot,
+      'src/lib/exam/generated-keys.server.ts',
+      renderGeneratedKeys(subjects),
+    );
   }
 
   return files;

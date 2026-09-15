@@ -1,5 +1,7 @@
-import { findRepoRoot, loadIrFiles, resolveIrFiles } from './load';
+import { SAMPLE_QUESTIONS } from '../../../src/lib/exam/data';
 import { applyEmit, formatEmitPlan, planEmit } from './emit';
+import { collectQuestionIds } from './ids';
+import { findRepoRoot, loadIrFiles, resolveIrFiles } from './load';
 import { validateIrCollection } from './validate';
 
 export const USAGE = `Usage:
@@ -91,7 +93,10 @@ export function runCli(argv: readonly string[], io: CliIo): number {
     return 1;
   }
 
-  const result = validateIrCollection(files, { replaceSample: parsed.replaceSample });
+  const result = validateIrCollection(files, {
+    replaceSample: parsed.replaceSample,
+    frozenIds: collectQuestionIds(SAMPLE_QUESTIONS),
+  });
   if (!result.ok) {
     printIssues(io, result.errors);
     io.stderr.write(

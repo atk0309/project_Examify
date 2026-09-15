@@ -38,12 +38,13 @@ there is still no PDF extract or LLM generate step.
 3. `emit` writes `content/generated/subjects.json`,
    `content/generated/questions/<id>.json` (public fields only), and
    `content/generated/keys/<id>.json` (answers, rubrics, provenance). The app
-   merges those files onto the sample bank. Register a newly emitted subject in
-   `src/lib/exam/generated-public.ts` and `src/lib/exam/generated-keys.server.ts`.
+   merges those files onto the sample bank. `--apply` also rewrites
+   `src/lib/exam/generated-public.ts` and `src/lib/exam/generated-keys.server.ts`
+   from the merged catalog. A partial emit upserts `subjects.json` and does not
+   clobber other generated subjects.
 
-Ids that collide with the frozen sample fixtures (`maths-easy-1`, `maths-hard-1`,
-`geography-medium-1`, `geography-medium-free-1`, `geography-medium-free-2`) are
-refused unless you pass `--replace-sample`. Full IR shape, commands, and the
+Ids that collide with **any** id already in the sample bank (`SAMPLE_QUESTIONS`)
+are refused unless you pass `--replace-sample`. Full IR shape, commands, and the
 `splitIr` contract: [`tools/examify-ingest/README.md`](../tools/examify-ingest/README.md).
 
 ## Question shapes
