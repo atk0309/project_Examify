@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import { ExamApp, type Resumable } from '@/components/exam/ExamApp';
 import { ParentDashboard } from '@/components/exam/ParentDashboard';
 import { getSession } from '@/lib/auth';
+import { getAuthMode } from '@/lib/env';
 import { getExamSessions } from '@/lib/exam-session';
 import {
   canInvite,
@@ -95,6 +96,7 @@ export default async function HomePage() {
         pendingInvites={pendingInvites}
         members={members}
         canInvite={canInvite(session.userId)}
+        authMode={getAuthMode()}
       />
     );
   }

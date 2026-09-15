@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { createInvite } from '@/actions/createInvite';
 import { removeMember } from '@/actions/removeMember';
 import { revokeInvite } from '@/actions/revokeInvite';
+import type { AuthMode } from '@/lib/auth-mode';
 import type { HouseholdMemberView, PendingInvite } from '@/lib/household-types';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -12,9 +13,11 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 export function HouseholdInvites({
   pending,
   members = [],
+  authMode,
 }: {
   pending: PendingInvite[];
   members?: HouseholdMemberView[];
+  authMode: AuthMode;
 }) {
   const router = useRouter();
   const [busy, startTransition] = useTransition();
@@ -108,6 +111,11 @@ export function HouseholdInvites({
         Share a link to add a student or another parent. Student links may be open; parent invites
         must be locked to one email.
       </p>
+      <p className="subtitle">
+        {authMode === 'password'
+          ? 'Treat the invite link like a password. Anyone who has it can join — locking it to an email is not mailbox proof. Prefer an email lock (required for parents) and never post the URL publicly.'
+          : 'Share the invite link privately. Do not post it publicly.'}
+      </p>
 
       <form action={onCreate} className="invite-create" data-testid="create-invite-form">
         <div className="role-seg" role="radiogroup" aria-label="Invite role">
@@ -170,6 +178,11 @@ export function HouseholdInvites({
           >
             {copied ? 'Copied' : 'Copy link'}
           </button>
+          <p className="invite-meta">
+            {authMode === 'password'
+              ? 'Anyone with this URL can join. Share it only with the person you mean to invite.'
+              : 'Share this only with the person you mean to invite.'}
+          </p>
         </div>
       ) : null}
 

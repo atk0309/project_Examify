@@ -139,6 +139,11 @@ Who may sign in is stored in SQLite, not env:
 2. **Invite** — from the parent dashboard, create a student invite (open or
    email-locked) or a parent invite (**email-locked**). Share `/invite/<token>`.
    Revoke unused links; remove a member if they should no longer have access.
+   When `AUTH_MODE=password`, that URL is a **secret** (a bearer token):
+   email-lock is not mailbox verification, so anyone who has the link and
+   knows the locked email can join. Treat invite links like passwords;
+   prefer email-lock (already required for parents); never post them
+   publicly. See [`SECURITY.md`](SECURITY.md).
 3. **Accept** — the invitee opens `/invite/<token>` and finishes in the configured
    auth mode (set a password, click a magic link, or enter a local OTP). After
    that they sign in at `/signin` like anyone else.

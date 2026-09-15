@@ -29,6 +29,8 @@ Surface:
   child's.
 - **`/setup`** — first-run household bootstrap (only when no household exists).
 - **`/invite/[token]`** — accept a household invite (password, magic-link, or local OTP).
+  In `AUTH_MODE=password` the URL is a bearer token (email-lock is not mailbox proof);
+  see `SECURITY.md`.
 - **`/signin`** — sign-in UI for the configured `AUTH_MODE` (password, magic-link, or
   local OTP) with a Student/Parent role control. Redirects to
   `/setup` when the instance has no household yet.
@@ -219,6 +221,11 @@ These are non-negotiable. Don't "fix" them out.
   it is not required. Set-but-invalid JSON **crashes production boot**. Entries
   with `parents: []` parse (legacy standalone child) but are **skipped** on import
   so we never create an unadministrable household.
+- **Password-mode invite links are bearer tokens.** `/invite/<token>` grants access
+  to whoever has the URL. Email-lock only matches the typed address; it does not
+  prove mailbox ownership (unlike magic-link / local-otp accept). Treat invite URLs
+  like passwords; parent invites stay email-locked; do not post links publicly.
+  The create/accept UI surfaces this. See `SECURITY.md`.
 - **No enumeration.** Challenge modes (`magic-link`, `local-otp`): `requestMagicLink`
   always returns the generic `sent` state once Turnstile (when enabled) + rate-limit
   pass; it only issues a link/code when the email is a household member for that

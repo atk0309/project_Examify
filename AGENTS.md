@@ -77,7 +77,9 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   when no household exists, and only after `SETUP_BOOTSTRAP_SECRET` matches (required
   in production; captcha is not identity). Parents/admins mint invite links
   (`createInvite`); accept goes through `/invite/[token]` using the configured
-  `AUTH_MODE` (password, magic-link verify, or local OTP). Do not bring back a
+  `AUTH_MODE` (password, magic-link verify, or local OTP). In `password` mode those
+  URLs are bearer tokens — email-lock is not mailbox proof; treat links like
+  passwords and do not post them publicly (`SECURITY.md`). Do not bring back a
   required `FAMILIES` env allowlist. A leftover `FAMILIES` JSON is imported once
   if the DB has no households. Production boot fails if `FAMILIES` is set and invalid.
 - **Auth mode** is `AUTH_MODE` (`password` | `magic-link` | `local-otp`, default

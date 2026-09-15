@@ -153,7 +153,7 @@ function PasswordInviteForm({
       ) : (
         <p className="login-fine">
           {MailIcon.lock}
-          Only this invite can add you to the household.
+          Treat this link like a password — anyone who has it can join if they know the email.
         </p>
       )}
     </form>

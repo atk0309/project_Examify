@@ -45,3 +45,21 @@ get an initial response within a week.
   production. The writer creates the directory as `0700` and each message as `0600`.
 - Prefer `AUTH_MODE=password` on a tiny self-host if you do not want to run
   email. `AUTH_SECRET` and `SETUP_BOOTSTRAP_SECRET` remain the host secrets.
+
+## Password-mode invite links are secrets
+
+When `AUTH_MODE=password`, `/invite/<token>` URLs are **bearer tokens**. Sharing
+the link is sharing household access.
+
+- **Email-lock is not mailbox verification.** It only requires the joiner to type
+  the locked address; it does not prove they can receive mail there. Anyone who
+  has the URL and knows or guesses the locked email can set a password and join.
+- Open student invites are broader still: anyone with the URL can pick an email
+  and join.
+- Treat invite links like passwords. Do not post them publicly, in tickets, or
+  in chat logs. Revoke unused or leaked links from the parent dashboard.
+- Prefer an email lock on every invite. Parent invites are already required to
+  be locked; lock student invites too when you know the address.
+- In `magic-link` / `local-otp` modes, accept still sends a mailbox challenge, so
+  the invite URL alone is not enough to join. Password mode has no mailbox proof
+  at accept time — that is the difference.
