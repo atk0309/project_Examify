@@ -1,5 +1,6 @@
 /** Library + CLI entry for Phase 2 generate. Import from `examify-ingest/generate`. */
 export {
+  assertReadableProviderInput,
   generateSubject,
   generateTargets,
   NEXT_INGEST_COMMANDS,
@@ -13,6 +14,7 @@ export { extractJsonObject } from './json';
 export { PAGE_RASTER_PROFILE, pageImageHashesOf, resolvePageImages } from './pages';
 export { sortRecord } from './hash';
 export { writeFileAtomic } from './write-atomic';
+export { mergeRepoEnvFiles, parseEnvFile } from './repo-env';
 export { loadGeneratePrompt, findIngestPackageRoot, generatePromptPath } from './prompt';
 export {
   resolveGenerateTargets,

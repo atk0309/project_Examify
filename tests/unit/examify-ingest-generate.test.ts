@@ -18,6 +18,8 @@ import {
   type BankIR,
 } from '../../tools/examify-ingest/src/index';
 import {
+  assertReadableProviderInput,
+  mergeRepoEnvFiles,
   NEXT_INGEST_COMMANDS,
   PAGE_RASTER_PROFILE,
   PROVIDER_TIMEOUT_MS,
@@ -663,5 +665,97 @@ describe('examify-ingest generate helpers', () => {
 
   it('provider timeout is a bounded deadline', () => {
     expect(PROVIDER_TIMEOUT_MS).toBe(180_000);
+  });
+
+  it('refuses OpenAI-compatible PDF-only runs without page images', () => {
+    const pdf = {
+      absPath: '/tmp/guide.pdf',
+      relPath: 'content/source-pdfs/plants/guide.pdf',
+      sha256: 'pdf-sha',
+      bytes: Buffer.from('%PDF-1.4\n'),
+      kind: 'pdf' as const,
+      mediaType: 'application/pdf',
+    };
+    expect(() => assertReadableProviderInput('openai', {}, [pdf], [])).toThrow(/cannot read PDF/);
+    expect(() =>
+      assertReadableProviderInput(
+        'local',
+        { EXAMIFY_LLM_BASE_URL: 'http://127.0.0.1:9' },
+        [pdf],
+        [],
+      ),
+    ).toThrow(/cannot read PDF/);
+    expect(() =>
+      assertReadableProviderInput('local', { EXAMIFY_INGEST_LOCAL_CMD: 'true' }, [pdf], []),
+    ).not.toThrow();
+    expect(() => assertReadableProviderInput('anthropic', {}, [pdf], [])).not.toThrow();
+    expect(() =>
+      assertReadableProviderInput(
+        'openai',
+        {},
+        [pdf],
+        [
+          {
+            sourceRelPath: pdf.relPath,
+            page: 1,
+            absPath: '/tmp/page-1.png',
+            sha256: 'page-sha',
+            bytes: Buffer.from('png'),
+            mediaType: 'image/png',
+          },
+        ],
+      ),
+    ).not.toThrow();
+  });
+
+  it('fills unset generate keys from repo .env files', () => {
+    const root = examifyRepo();
+    writeFileSync(path.join(root, '.env'), 'ANTHROPIC_API_KEY=from-dotenv\nOTHER=keep\n');
+    writeFileSync(path.join(root, '.env.local'), 'ANTHROPIC_API_KEY=from-local\n');
+    expect(mergeRepoEnvFiles(root, {})).toMatchObject({
+      ANTHROPIC_API_KEY: 'from-local',
+      OTHER: 'keep',
+    });
+    expect(mergeRepoEnvFiles(root, { ANTHROPIC_API_KEY: '' })).toMatchObject({
+      ANTHROPIC_API_KEY: '',
+      OTHER: 'keep',
+    });
+  });
+
+  it('generateSubject refuses openai PDF-only input without rasters', async () => {
+    const root = examifyRepo();
+    const subjectDir = path.join(root, 'content/subjects/pdfonly');
+    mkdirSync(subjectDir, { recursive: true });
+    const pdfPath = path.join(root, 'content/source-pdfs/pdfonly.pdf');
+    mkdirSync(path.dirname(pdfPath), { recursive: true });
+    writeFileSync(pdfPath, '%PDF-1.4 fixture\n');
+    await expect(
+      generateSubject({
+        repoRoot: root,
+        subject: { id: 'pdfonly', label: 'PDF Only', icon: 'biology', l: 0.5, c: 0.1, h: 140 },
+        subjectDir,
+        sources: resolveSubjectSources(root, 'pdfonly', subjectDir),
+        provider: 'openai',
+        seed: 0,
+        env: { OPENAI_API_KEY: 'sk-openai-not-used' },
+        fetch: async () => {
+          throw new Error('network should not run when PDFs are unreadable');
+        },
+      }),
+    ).rejects.toThrow(/cannot read PDF/);
+  });
+
+  it('CLI generate loads ANTHROPIC_API_KEY from repo .env', async () => {
+    const root = examifyRepo();
+    writeFileSync(path.join(root, '.env'), 'ANTHROPIC_API_KEY=test\n');
+    const streams = io();
+    streams.handle.cwd = root;
+    streams.handle.env = {};
+    const code = await runCliAsync(
+      ['generate', '--provider', 'anthropic', 'content/subjects/plants'],
+      streams.handle,
+    );
+    expect(code).toBe(1);
+    expect(streams.err()).toContain('sentinel');
   });
 });

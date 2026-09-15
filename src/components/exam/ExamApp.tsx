@@ -22,6 +22,7 @@ import {
   buildExam,
   countQuestions,
   DIFFICULTIES,
+  difficultiesWithQuestions,
   QUESTIONS,
   SUBJECTS,
   type DifficultyId,
@@ -299,17 +300,22 @@ function ProgressScreen({
 function DifficultyScreen({
   subject,
   sat,
+  questionBank,
   onBack,
   onHome,
   onStart,
 }: {
   subject: Subject;
   sat: number;
+  questionBank: QuestionBank;
   onBack: () => void;
   onHome: () => void;
   onStart: (diff: DifficultyId) => void;
 }) {
-  const [sel, setSel] = useState<DifficultyId>('medium');
+  const available = DIFFICULTIES.filter((d) =>
+    difficultiesWithQuestions(subject.id, questionBank).includes(d.id),
+  );
+  const [sel, setSel] = useState<DifficultyId>(available[0]?.id ?? 'easy');
   const rankClass: Record<DifficultyId, string> = { easy: 'r1', medium: 'r2', hard: 'r3' };
   return (
     <div className="screen" style={accentCSS(subject, sat)}>
@@ -329,7 +335,7 @@ function DifficultyScreen({
           </div>
         </div>
         <div className="diff-list">
-          {DIFFICULTIES.map((d) => (
+          {available.map((d) => (
             <DifficultyCard
               key={d.id}
               diff={d}
@@ -340,7 +346,11 @@ function DifficultyScreen({
           ))}
         </div>
         <div className="action-dock">
-          <button className="btn btn-primary" onClick={() => onStart(sel)}>
+          <button
+            className="btn btn-primary"
+            disabled={available.length === 0}
+            onClick={() => onStart(sel)}
+          >
             Start mini exam {UIcon.arrow}
           </button>
         </div>
@@ -795,6 +805,7 @@ export function ExamApp({
     if (!subject) return;
     cancelPendingSave();
     const qs = buildExam(subject.id, diff, questionBank);
+    if (qs.length === 0) return;
     const blank: Answer[] = qs.map(() => null);
     setDifficulty(diff);
     setQuestions(qs);
@@ -936,6 +947,7 @@ export function ExamApp({
       <DifficultyScreen
         subject={subject}
         sat={sat}
+        questionBank={questionBank}
         onBack={goHome}
         onHome={goHome}
         onStart={startExam}
@@ -978,6 +990,7 @@ export function ExamApp({
       <DifficultyScreen
         subject={subject}
         sat={sat}
+        questionBank={questionBank}
         onBack={goHome}
         onHome={goHome}
         onStart={startExam}

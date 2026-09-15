@@ -479,6 +479,16 @@ export function countQuestions(subjectId: string, questions: QuestionBank = QUES
   return Object.values(bank).reduce((n, arr) => n + (arr?.length ?? 0), 0);
 }
 
+/** Difficulties that actually have questions — empty tiers are not offered. */
+export function difficultiesWithQuestions(
+  subjectId: string,
+  questions: QuestionBank = QUESTIONS,
+): DifficultyId[] {
+  return DIFFICULTIES.map((d) => d.id).filter(
+    (id) => (questions[subjectId]?.[id]?.length ?? 0) > 0,
+  );
+}
+
 /**
  * Look up a public question by `id` within a specific subject + difficulty bank.
  * Used by the server-side scorer to resolve a submitted item's snapshot (and,

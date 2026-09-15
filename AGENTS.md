@@ -57,8 +57,11 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   without rebuilding. Guide: `docs/content-authoring.md` and
   `tools/examify-ingest/README.md`. Generate writes IR only — still
   validate → emit --dry-run → emit --apply. It never auto-applies. Cloud
-  providers fail closed without an env key; `--provider test` is the CI
-  fixture. Run cache/manifests are gitignored under `.examify-ingest/`.
+  providers fail closed without an env key (generate also reads repo `.env` /
+  `.env.local` for unset keys); `--provider test` is the CI
+  fixture. OpenAI-compatible generate refuses PDF-only input when no page
+  images were rasterized. Run cache/manifests are gitignored under
+  `.examify-ingest/`.
 - **Free-text is LLM-graded server-side** (`src/lib/grading/index.ts`,
   `ANTHROPIC_API_KEY`; `test` → deterministic stub). Grading never throws — failures
   fall to `needs_review`. A free item is "correct" at `PASS_THRESHOLD` (0.6). The UI

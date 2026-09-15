@@ -62,7 +62,9 @@ PDF pages into a temp directory when `pdftoppm` is available so the preview
 matches a persist run; it does not populate `.examify-ingest/cache/pages/`.
 
 Cloud providers fail closed without a real env key (`ANTHROPIC_API_KEY` /
-`OPENAI_API_KEY`) **on a cache miss**. A matching `cacheKey` reuses the cached
+`OPENAI_API_KEY`) **on a cache miss**. The generate CLI fills unset keys from
+the repo `.env` then `.env.local` (already-set env vars, including an empty
+string, win). A matching `cacheKey` reuses the cached
 IR with no network and does not require the key. The app's
 `ANTHROPIC_API_KEY=test` sentinel is refused on a miss — use `--provider test`
 for CI. `local` needs `EXAMIFY_INGEST_LOCAL_CMD` (quoted executable + args;
@@ -84,8 +86,10 @@ value. `cacheKey` is a stable hash of promptVersion + prompt hash + provider
   rasterized run cannot replay a hashes-only cache entry. PDF page images, when
   rasterized with `pdftoppm`, are reused from
   `.examify-ingest/cache/pages/<pdf-sha256>/` and framed as untrusted data, same
-  as source files. Provider HTTP/CMD calls use a 180s deadline. Sources must
-  stay under `content/subjects/<id>/` or `content/source-pdfs/<id>`.
+  as source files. OpenAI-compatible generate (`openai` and local HTTP) cannot
+  inline raw PDF bytes: if the only sources are PDFs and no page images were
+  rasterized, the run fails closed. Provider HTTP/CMD calls use a 180s deadline.
+  Sources must stay under `content/subjects/<id>/` or `content/source-pdfs/<id>`.
 
 Source blobs are wrapped as `UNTRUSTED SOURCE MATERIAL`. That fence makes
 prompt injection harder; it is not sufficient on its own. A human still

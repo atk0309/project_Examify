@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { buildCacheKey, readCachedIr, writeCachedIr, writeRunManifest } from './cache';
 import { stableJson } from './diff';
-import { PAGE_RASTER_PROFILE, pageImageHashesOf, resolvePageImages } from './pages';
+import { PAGE_RASTER_PROFILE, pageImageHashesOf, resolvePageImages, type PageImage } from './pages';
 import { loadGeneratePrompt } from './prompt';
 import { getProvider, hasUsableKey, type ProviderDeps, type ProviderEnv } from './providers';
 import { writeFileAtomic } from './write-atomic';
@@ -95,6 +95,7 @@ export async function generateSubject(request: GenerateRequest): Promise<Generat
   const sourceHashes = sourceHashesOf(request.sources);
   const model = request.model?.trim() || adapter.defaultModel;
   const pageImages = resolvePageImages(request.repoRoot, request.sources, { persist });
+  assertReadableProviderInput(request.provider, env, request.sources, pageImages);
   const pageImageHashes = pageImageHashesOf(pageImages);
   const cacheKey = buildCacheKey({
     promptVersion: prompt.version,
@@ -172,6 +173,26 @@ export async function generateSubject(request: GenerateRequest): Promise<Generat
   }
 
   return { bank, cacheKey, cacheHit, manifest, manifestPath, irPath, wroteIr };
+}
+
+/**
+ * OpenAI-compatible chat cannot inline raw PDF bytes. Fail closed when the
+ * only sources are PDFs and no page images (or text/image) are available.
+ * Anthropic inlines PDFs; local CMD sends raw bytes; `--provider test` does not read files.
+ */
+export function assertReadableProviderInput(
+  provider: GenerateProviderId,
+  env: ProviderEnv,
+  sources: readonly ResolvedSource[],
+  pageImages: readonly PageImage[],
+): void {
+  if (provider === 'test' || provider === 'anthropic') return;
+  if (pageImages.length > 0) return;
+  if (sources.some((source) => source.kind === 'text' || source.kind === 'image')) return;
+  if (provider === 'local' && (env.EXAMIFY_INGEST_LOCAL_CMD?.trim() ?? '')) return;
+  throw new Error(
+    'OpenAI-compatible generate cannot read PDF bytes; install pdftoppm so pages rasterize, or add a .txt/.md/.png source',
+  );
 }
 
 export async function generateTargets(
