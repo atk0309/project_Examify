@@ -16,6 +16,8 @@ describe('public question bank (I2 leak guard)', () => {
     for (const q of questions) {
       expect(q, `question ${q.id} must not expose an answer key`).not.toHaveProperty('answer');
       expect(q, `question ${q.id} must not expose a rubric`).not.toHaveProperty('rubric');
+      expect(q, `question ${q.id} must not expose maxScore`).not.toHaveProperty('maxScore');
+      expect(q, `question ${q.id} must not expose provenance`).not.toHaveProperty('provenance');
     }
   });
 

@@ -84,6 +84,9 @@ importers:
       eslint-config-next:
         specifier: 16.3.3
         version: 16.3.3(@typescript-eslint/parser@8.68.0(eslint@9.39.5(jiti@2.7.0))(typescript@6.0.3))(eslint@9.39.5(jiti@2.7.0))(typescript@6.0.3)
+      examify-ingest:
+        specifier: workspace:0.1.0
+        version: link:tools/examify-ingest
       husky:
         specifier: 9.1.7
         version: 9.1.7
@@ -114,6 +117,19 @@ importers:
       vitest:
         specifier: 5.0.0
         version: 5.0.0(@types/node@26.1.1)(jsdom@30.0.1)(vite@8.0.16(@types/node@26.1.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.1)(yaml@2.9.0))
+
+  tools/examify-ingest:
+    dependencies:
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
+    devDependencies:
+      tsx:
+        specifier: 4.23.1
+        version: 4.23.1
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
 
 packages:
 

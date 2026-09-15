@@ -18,7 +18,33 @@ The hard rule: **never put an `answer` or `rubric` into `data.ts`.** Everything 
 public bank is bundled into client JavaScript; the key store imports `server-only`, so
 the build fails if it ever ends up in the client graph. A unit-test guard
 (`tests/unit/answer-keys.test.ts`) additionally asserts no question object carries an
-`answer`/`rubric` property.
+`answer`/`rubric`/`maxScore`/`provenance` property.
+
+## Automated path (Phase 0 ingest)
+
+You can also author a **BankIR** JSON document and emit the two-file split with
+`examify-ingest` instead of editing TypeScript by hand. This is scaffolding only —
+there is still no PDF extract or LLM generate step.
+
+1. Write `content/subjects/<subject-id>/bank.ir.json` (see the biology sample).
+2. From the repo root:
+
+   ```bash
+   pnpm examify-ingest validate content/subjects
+   pnpm examify-ingest emit content/subjects --dry-run
+   pnpm examify-ingest emit content/subjects --apply
+   ```
+
+3. `emit` writes `content/generated/subjects.json`,
+   `content/generated/questions/<id>.json` (public fields only), and
+   `content/generated/keys/<id>.json` (answers, rubrics, provenance). The app
+   merges those files onto the sample bank. Register a newly emitted subject in
+   `src/lib/exam/generated-public.ts` and `src/lib/exam/generated-keys.server.ts`.
+
+Ids that collide with the frozen sample fixtures (`maths-easy-1`, `maths-hard-1`,
+`geography-medium-1`, `geography-medium-free-1`, `geography-medium-free-2`) are
+refused unless you pass `--replace-sample`. Full IR shape, commands, and the
+`splitIr` contract: [`tools/examify-ingest/README.md`](../tools/examify-ingest/README.md).
 
 ## Question shapes
 

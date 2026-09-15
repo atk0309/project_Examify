@@ -1,0 +1,22 @@
+{
+  "easy": [
+    {
+      "id": "biology-easy-1",
+      "type": "mcq",
+      "q": "Which organelle is known as the powerhouse of the cell?",
+      "choices": [
+        "Nucleus",
+        "Ribosome",
+        "Mitochondrion",
+        "Golgi apparatus"
+      ]
+    },
+    {
+      "id": "biology-easy-free-1",
+      "type": "free",
+      "q": "Explain two differences between a plant cell and an animal cell."
+    }
+  ],
+  "medium": [],
+  "hard": []
+}

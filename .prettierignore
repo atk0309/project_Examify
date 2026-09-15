@@ -6,3 +6,4 @@ playwright-report
 test-results
 pnpm-lock.yaml
 src/lib/db/migrations
+content/generated/**/*.json

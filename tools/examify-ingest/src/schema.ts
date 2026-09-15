@@ -1,0 +1,83 @@
+import { z } from 'zod';
+
+export const SUBJECT_ID_RE = /^[a-z][a-z0-9-]*$/;
+export const DIFFICULTIES = ['easy', 'medium', 'hard'] as const;
+export type DifficultyId = (typeof DIFFICULTIES)[number];
+
+const provenanceSchema = z.object({
+  pdf: z.string().min(1),
+  locator: z.string().min(1),
+});
+
+const mcqItemSchema = z.object({
+  id: z.string().min(1),
+  type: z.literal('mcq'),
+  q: z.string().min(1),
+  choices: z.array(z.string().min(1)).length(4),
+  answer: z.number().int().min(0).max(3),
+  provenance: provenanceSchema,
+});
+
+const freeItemSchema = z.object({
+  id: z.string().min(1),
+  type: z.literal('free'),
+  q: z.string().min(1),
+  rubric: z.string().min(1),
+  maxScore: z.number().positive(),
+  provenance: provenanceSchema,
+});
+
+export const bankItemSchema = z.discriminatedUnion('type', [mcqItemSchema, freeItemSchema]);
+
+export const subjectSchema = z.object({
+  id: z.string().regex(SUBJECT_ID_RE, 'subject.id must be kebab-case (^[a-z][a-z0-9-]*$)'),
+  label: z.string().min(1),
+  icon: z.string().min(1),
+  l: z.number(),
+  c: z.number(),
+  h: z.number(),
+});
+
+export const bankIrMetaSchema = z
+  .object({
+    promptVersion: z.string().optional(),
+    provider: z.string().optional(),
+    seed: z.union([z.string(), z.number()]).optional(),
+    sourceHashes: z.record(z.string(), z.string()).optional(),
+  })
+  .strict();
+
+export const bankIrSchema = z
+  .object({
+    version: z.literal(1),
+    subject: subjectSchema,
+    difficulties: z.object({
+      easy: z.array(bankItemSchema).default([]),
+      medium: z.array(bankItemSchema).default([]),
+      hard: z.array(bankItemSchema).default([]),
+    }),
+    meta: bankIrMetaSchema.optional(),
+  })
+  .strict();
+
+export type Provenance = z.infer<typeof provenanceSchema>;
+export type McqIrItem = z.infer<typeof mcqItemSchema>;
+export type FreeIrItem = z.infer<typeof freeItemSchema>;
+export type BankIrItem = z.infer<typeof bankItemSchema>;
+export type BankIrSubject = z.infer<typeof subjectSchema>;
+export type BankIR = z.infer<typeof bankIrSchema>;
+
+export type PublicMcqQuestion = { id: string; type: 'mcq'; q: string; choices: string[] };
+export type PublicFreeQuestion = { id: string; type: 'free'; q: string };
+export type PublicQuestion = PublicMcqQuestion | PublicFreeQuestion;
+export type PublicQuestionBank = Partial<Record<DifficultyId, PublicQuestion[]>>;
+
+export type McqKey = { type: 'mcq'; answer: number; provenance: Provenance };
+export type FreeKey = { type: 'free'; rubric: string; maxScore: number; provenance: Provenance };
+export type AnswerKey = McqKey | FreeKey;
+
+export type SplitIr = {
+  subject: BankIrSubject;
+  questions: Record<DifficultyId, PublicQuestion[]>;
+  keys: Record<string, AnswerKey>;
+};

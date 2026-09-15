@@ -67,20 +67,21 @@ grouped weekly Dependabot PRs in `.github/dependabot.yml`.
 
 ## Commands cheat-sheet
 
-| Command             | What it does                                       |
-| ------------------- | -------------------------------------------------- |
-| `pnpm dev`          | Next.js dev server with Turbopack                  |
-| `pnpm build`        | Production build                                   |
-| `pnpm start`        | Run the production build (`PORT` defaults to 3000) |
-| `pnpm lint`         | ESLint flat-config across the repo                 |
-| `pnpm format`       | Prettier write                                     |
-| `pnpm format:check` | Prettier dry-run (CI guard)                        |
-| `pnpm typecheck`    | `tsc --noEmit`                                     |
-| `pnpm test`         | Vitest unit suite                                  |
-| `pnpm test:e2e`     | Playwright e2e (`pnpm build` then both suites)     |
-| `pnpm db:generate`  | Generate a new Drizzle migration from schema diffs |
-| `pnpm db:migrate`   | Apply pending migrations to `DATABASE_URL`         |
-| `pnpm db:studio`    | Drizzle Studio against the local DB                |
+| Command               | What it does                                       |
+| --------------------- | -------------------------------------------------- |
+| `pnpm dev`            | Next.js dev server with Turbopack                  |
+| `pnpm build`          | Production build                                   |
+| `pnpm start`          | Run the production build (`PORT` defaults to 3000) |
+| `pnpm lint`           | ESLint flat-config across the repo                 |
+| `pnpm format`         | Prettier write                                     |
+| `pnpm format:check`   | Prettier dry-run (CI guard)                        |
+| `pnpm typecheck`      | `tsc --noEmit`                                     |
+| `pnpm test`           | Vitest unit suite                                  |
+| `pnpm test:e2e`       | Playwright e2e (`pnpm build` then both suites)     |
+| `pnpm db:generate`    | Generate a new Drizzle migration from schema diffs |
+| `pnpm db:migrate`     | Apply pending migrations to `DATABASE_URL`         |
+| `pnpm db:studio`      | Drizzle Studio against the local DB                |
+| `pnpm examify-ingest` | Validate / emit BankIR (`tools/examify-ingest`)    |
 
 ## Branch + PR rules
 
@@ -118,7 +119,7 @@ src/
     exam/               # ExamApp (flow), ProgressView, ParentDashboard, LoginForm, icons
     analytics/          # Plausible (opt-in)
   lib/
-    exam/data.ts        # SUBJECTS + QUESTIONS bank + accentCSS + buildExam
+    exam/data.ts        # SAMPLE + generated SUBJECTS/QUESTIONS + accentCSS + buildExam
     exam/attempts.ts    # validate + re-score a submitted attempt; aggregate helpers (pure)
     progress.ts         # persist/read attempts; resolveChildren(parentEmail) per-family (server-only)
     exam-session.ts     # save/list/clear an in-progress exam for resume (server-only)
@@ -132,6 +133,12 @@ tests/
   unit/                 # vitest specs
   e2e/                  # playwright specs (setup-db.ts runs pre-Playwright)
   stubs/                # vitest-only stubs (e.g. server-only no-op)
+tools/
+  examify-ingest/       # Phase 0 BankIR validate + emit (no PDF/LLM)
+content/
+  subjects/             # BankIR sources (*/bank.ir.json)
+  generated/            # public subjects/questions + server-only keys (committed)
+  source-pdfs/          # gitignored local PDFs
 ```
 
 `@/*` resolves to `src/*`.
@@ -156,11 +163,20 @@ keyed by a shared, globally-unique question `id` — **never** put an `answer` o
 - **Exam length:** `EXAM_CONFIG.length` (caps at bank size); `shuffle` toggles order.
 
 The shipped bank is a **hand-authored sample** (Maths, Computer Science, Geography —
-5 MCQ + 1–2 free-text per difficulty) meant to be replaced with the family's own
-content. `docs/content-authoring.md` is the full guide: question/key formats, rubric
-style, adding subjects (all 13 original duotone icons remain in `icons.tsx`, reusable),
+5 MCQ + 1–2 free-text per difficulty) plus an additive **Biology** example emitted
+from `content/subjects/biology/bank.ir.json`. `docs/content-authoring.md` is the
+full guide: question/key formats, rubric style, the Phase 0 `examify-ingest` path,
+adding subjects (all 13 original duotone icons remain in `icons.tsx`, reusable),
 and the vision-first workflow for generating a grounded bank from source PDFs kept
 local-only in the gitignored `content/source-pdfs/`.
+
+Automated path (Phase 0, no PDF extract / no LLM generate): author
+`content/subjects/<id>/bank.ir.json`, then `pnpm examify-ingest validate|emit`.
+`emit` is dry-run by default; `--apply` writes `content/generated/` (public
+subjects/questions + server-only keys). The app merges those files onto the
+sample bank. Frozen fixture ids (`maths-easy-1`, `maths-hard-1`,
+`geography-medium-1`, `geography-medium-free-1`, `geography-medium-free-2`)
+are refused unless `--replace-sample`.
 
 ## Styling / theming
 
