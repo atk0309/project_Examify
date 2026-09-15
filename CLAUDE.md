@@ -33,9 +33,10 @@ Surface:
   → validate → dry-run HITL → apply → ready. Skip leaves the sample bank usable
   and shows a parent-dashboard “Finish content setup” chip; invited students and
   parents never see it. Directory-only `examify-ingest` emit (dry-run before
-  apply, empty catalog refused). Not a replacement for `install.sh` auth-mode
-  picking. Existing households are backfilled complete. `/setup/wizard` redirects
-  here.
+  apply, empty catalog refused). Delete removes IR/source dirs only; prune of
+  leftover generated JSON waits for confirmed directory apply (#62). Not a
+  replacement for `install.sh` auth-mode picking. Existing households are
+  backfilled complete. `/setup/wizard` redirects here.
 - **`/invite/[token]`** — accept a household invite (password, magic-link, or local OTP).
   In `AUTH_MODE=password` the URL is a secret that starts a join; membership and
   `emailVerifiedAt` wait for a mailbox OTP (`completePasswordInvite`). Fail closed

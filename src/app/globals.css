@@ -1742,7 +1742,8 @@
     color: var(--text-muted);
     font-size: var(--fs-caption);
   }
-  .wizard-cli {
+  .wizard-cli,
+  .wizard-diff {
     margin: 0;
     padding: var(--sp-4);
     border-radius: var(--r-md);
@@ -1750,6 +1751,10 @@
     font-size: var(--fs-caption);
     overflow-x: auto;
     white-space: pre-wrap;
+  }
+  .wizard-diff {
+    max-height: 16rem;
+    overflow-y: auto;
   }
   .wizard-dropzone {
     display: grid;

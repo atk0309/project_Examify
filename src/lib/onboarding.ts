@@ -17,6 +17,7 @@ import {
   applyEmit,
   collectQuestionIds,
   findRepoRoot,
+  formatFileDiff,
   isAuthoritativeCatalogInput,
   loadIrFiles,
   planEmit,
@@ -435,13 +436,12 @@ export function renameOnboardingSubject(
   };
 }
 
-export type DeleteSubjectResult =
-  { ok: true; pruned: boolean } | { ok: false; reason: 'invalid_id' | 'missing' };
+export type DeleteSubjectResult = { ok: true } | { ok: false; reason: 'invalid_id' | 'missing' };
 
 /**
- * Remove the subject's IR + source-pdf dirs, then run a whole-tree directory
- * emit so leftover generated JSON is pruned (#62). An empty remaining catalog
- * is not applied (fail closed — will not wipe generated content).
+ * Remove the subject's IR + source-pdf dirs. Prune of leftover generated JSON
+ * happens on the next confirmed directory emit (#62 / HITL) — delete never
+ * writes generated files itself.
  */
 export function deleteOnboardingSubject(
   subjectId: string,
@@ -453,11 +453,7 @@ export function deleteOnboardingSubject(
   if (!existsSync(dir)) return { ok: false, reason: 'missing' };
   rmSync(dir, { recursive: true, force: true });
   rmSync(path.join(sourcePdfsDir(root), id), { recursive: true, force: true });
-
-  const emit = applyOnboardingEmit({ replaceSample: false }, root);
-  if (emit.ok) return { ok: true, pruned: true };
-  if (emit.reason === 'empty_catalog') return { ok: true, pruned: false };
-  return { ok: true, pruned: false };
+  return { ok: true };
 }
 
 export type AttachPdfResult =
@@ -550,6 +546,10 @@ function loadSubjectsTree(
     return { ok: false, reason: 'invalid', message };
   }
   if (!pruneMissing) {
+    const abs = path.resolve(root, SUBJECTS_REL);
+    if (!existsSync(abs)) {
+      return { ok: false, reason: 'empty_catalog', message: EMPTY_AUTHORITATIVE_EMIT };
+    }
     return {
       ok: false,
       reason: 'invalid',
@@ -582,6 +582,33 @@ function toPublicPlan(files: readonly PlannedFile[]): OnboardingPlanEntry[] {
   });
 }
 
+function isSecretPlanPath(relPath: string): boolean {
+  const normalized = relPath.replaceAll('\\', '/');
+  return (
+    normalized.includes('/keys/') ||
+    normalized.endsWith('/keys') ||
+    normalized.endsWith('generated-keys.server.ts')
+  );
+}
+
+/**
+ * Same shape as CLI `formatEmitPlan`, but key-file bodies never leave the server.
+ * Planned deletes stay visible (`would delete …`) so HITL can confirm prune.
+ */
+export function formatPublicEmitPlan(files: readonly PlannedFile[]): string {
+  return files
+    .map((file) => {
+      if (file.delete) return `would delete ${file.relPath}`;
+      if (isSecretPlanPath(file.relPath)) {
+        if (file.existing === null) return `would create ${file.relPath}`;
+        if (file.existing === file.contents) return `unchanged ${file.relPath}`;
+        return `would update ${file.relPath}`;
+      }
+      return formatFileDiff(file.relPath, file.existing, file.contents);
+    })
+    .join('\n\n');
+}
+
 function hashPlan(files: readonly PlannedFile[]): string {
   const material = files
     .map((file) => {
@@ -610,9 +637,10 @@ export type CatalogEmitPreview =
   | { ok: false; reason: 'empty_catalog' | 'invalid'; message: string; issues?: OnboardingIssue[] };
 
 /**
- * Authoritative directory emit of `content/subjects` — same contract as
- * `pnpm examify-ingest emit content/subjects`. Planned file contents stay
- * on the server; the public dry-run is paths + counts + colliding sample ids.
+ * Authoritative directory emit of `content/subjects` via the same Node package
+ * as `pnpm examify-ingest emit content/subjects` (no browser, no shell-out).
+ * Planned key-file bodies stay on the server; HITL sees paths, actions, and a
+ * redacted CLI-shaped diff (including `would delete`).
  */
 export function previewOnboardingEmit(
   replaceSample: boolean,
@@ -664,6 +692,7 @@ export function previewOnboardingEmit(
       collisions,
       replaceSample,
       plan: toPublicPlan(planned),
+      diff: formatPublicEmitPlan(planned),
     },
   };
 }

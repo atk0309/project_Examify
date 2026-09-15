@@ -152,8 +152,12 @@ describe('onboarding actions', () => {
     const preview = await previewOnboardingEmitAction();
     expect(preview.ok).toBe(true);
     if (!preview.ok) throw new Error('expected dry-run');
-    expect(JSON.stringify(preview.dryRun)).not.toContain('A fixture question?');
     expect(JSON.stringify(preview.dryRun)).not.toContain('"answer"');
+    expect(JSON.stringify(preview.dryRun)).not.toContain('hand-authored');
+    expect(preview.dryRun.diff).toMatch(
+      /would create content\/generated\/questions\/history\.json/,
+    );
+    expect(preview.dryRun.diff).toContain('would create content/generated/keys/history.json');
     const applied = await applyOnboardingEmitAction();
     expect(applied.ok).toBe(true);
     expect(fs.existsSync(path.join(root, 'content/generated/questions/history.json'))).toBe(true);

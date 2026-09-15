@@ -27,7 +27,9 @@ You can also author a **BankIR** JSON document and emit the two-file split with
 there is still no PDF extract or LLM generate step. After first-run `/setup`, the
 admin wizard at `/onboarding` can add subjects, attach local PDFs (under
 `content/source-pdfs/<subject>/` only), and run the same directory emit
-(validate, dry-run HITL, then apply). An empty subjects tree is refused and never
+(validate, dry-run HITL with planned deletes, then apply). Deleting a subject
+removes its IR/source dirs; leftover generated JSON is pruned only on the
+confirmed whole-tree apply (#62). An empty subjects tree is refused and never
 wipes generated files. Author `bank.ir.json` on disk (or offline); the files step
 does not write IR. AI generate-from-files is not in this release. `--replace-sample`
 is off unless the admin enables the advanced toggle.

@@ -42,7 +42,7 @@ export type OnboardingIssue = {
 
 export type OnboardingPlanAction = 'add' | 'update' | 'unchanged' | 'delete';
 
-/** Public emit plan row — paths only, never file contents (keys stay server-only). */
+/** Public emit plan row — paths + action. Key file bodies never ship. */
 export type OnboardingPlanEntry = {
   path: string;
   action: OnboardingPlanAction;
@@ -55,6 +55,8 @@ export type OnboardingDryRun = {
   collisions: string[];
   replaceSample: boolean;
   plan: OnboardingPlanEntry[];
+  /** CLI-shaped dry-run (`formatEmitPlan`), with keys/ bodies redacted. */
+  diff: string;
 };
 
 export type OnboardingSampleSubject = {

@@ -133,7 +133,7 @@ describe('onboarding catalog emit', () => {
     expect(readFileSync(leftover.keysPath, 'utf8')).toBe(leftover.keys);
   });
 
-  it('dry-run plan is paths only and never includes key contents', async () => {
+  it('dry-run includes a public CLI-shaped diff and never includes key contents', async () => {
     const { previewOnboardingEmit, setOnboardingContentRootForTests } =
       await import('@/lib/onboarding');
     const root = tempRoot();
@@ -152,10 +152,55 @@ describe('onboarding catalog emit', () => {
     expect(serialized).not.toContain('do-not-leak');
     expect(serialized).not.toContain('secret.pdf');
     expect(serialized).not.toContain('"answer"');
-    expect(serialized).not.toContain('A fixture question?');
     expect(preview.dryRun.plan.some((file) => file.path.endsWith('keys/history.json'))).toBe(true);
     expect(preview.dryRun.plan.every((file) => file.path && file.action)).toBe(true);
     expect(preview.dryRun.questionCount).toBe(1);
+    expect(preview.dryRun.diff).toMatch(/would (create|update|delete) /);
+    expect(preview.dryRun.diff).not.toContain('do-not-leak');
+    expect(preview.dryRun.diff).not.toContain('secret.pdf');
+  });
+
+  it('delete removes IR only; prune waits for confirmed directory apply', async () => {
+    const {
+      applyOnboardingEmit,
+      deleteOnboardingSubject,
+      previewOnboardingEmit,
+      setOnboardingContentRootForTests,
+    } = await import('@/lib/onboarding');
+    const root = tempRoot();
+    setOnboardingContentRootForTests(root);
+    mkdirSync(path.join(root, 'content/subjects/history'), { recursive: true });
+    writeFileSync(
+      path.join(root, 'content/subjects/history/bank.ir.json'),
+      JSON.stringify(fixtureIr('history', 'History')),
+    );
+    mkdirSync(path.join(root, 'content/subjects/civics'), { recursive: true });
+    writeFileSync(
+      path.join(root, 'content/subjects/civics/bank.ir.json'),
+      JSON.stringify(fixtureIr('civics', 'Civics')),
+    );
+    const leftover = seedGenerated(root, 'chemistry');
+
+    expect(deleteOnboardingSubject('history', root)).toEqual({ ok: true });
+    expect(existsSync(path.join(root, 'content/subjects/history/bank.ir.json'))).toBe(false);
+    expect(readFileSync(leftover.keysPath, 'utf8')).toBe(leftover.keys);
+
+    const preview = previewOnboardingEmit(false, root);
+    expect(preview.ok).toBe(true);
+    if (!preview.ok) throw new Error('expected preview');
+    expect(
+      preview.dryRun.plan.some((row) => row.action === 'delete' && row.path.includes('chemistry')),
+    ).toBe(true);
+    expect(preview.dryRun.diff).toContain(
+      'would delete content/generated/questions/chemistry.json',
+    );
+    expect(preview.dryRun.diff).toContain('would delete content/generated/keys/chemistry.json');
+    expect(preview.dryRun.diff).not.toContain('do-not-leak');
+
+    const applied = applyOnboardingEmit({ replaceSample: false }, root);
+    expect(applied.ok).toBe(true);
+    expect(existsSync(leftover.questionsPath)).toBe(false);
+    expect(existsSync(leftover.keysPath)).toBe(false);
   });
 
   it('surfaces every colliding SAMPLE_QUESTIONS id, not only ingest fixtures', async () => {
@@ -188,7 +233,7 @@ describe('onboarding catalog emit', () => {
 });
 
 describe('onboarding subjects and files', () => {
-  it('adds, renames, and deletes a subject, then prunes leftover generated JSON', async () => {
+  it('adds, renames, and deletes a subject without writing generated files', async () => {
     const {
       addOnboardingSubject,
       deleteOnboardingSubject,
@@ -220,10 +265,10 @@ describe('onboarding subjects and files', () => {
       JSON.stringify(fixtureIr('civics', 'Civics')),
     );
 
-    expect(deleteOnboardingSubject('world-history', root)).toEqual({ ok: true, pruned: true });
+    expect(deleteOnboardingSubject('world-history', root)).toEqual({ ok: true });
     expect(listOnboardingSubjects(root).map((row) => row.id)).toEqual(['civics']);
-    expect(existsSync(leftover.questionsPath)).toBe(false);
-    expect(existsSync(leftover.keysPath)).toBe(false);
+    expect(existsSync(leftover.questionsPath)).toBe(true);
+    expect(existsSync(leftover.keysPath)).toBe(true);
   });
 
   it('attaches PDFs under source-pdfs only and refuses IR / oversized files', async () => {
@@ -274,8 +319,14 @@ describe('onboarding subjects and files', () => {
       JSON.stringify(fixtureIr('history', 'History')),
     );
     const leftover = seedGenerated(root, 'history');
-    expect(deleteOnboardingSubject('history', root)).toEqual({ ok: true, pruned: false });
+    expect(deleteOnboardingSubject('history', root)).toEqual({ ok: true });
     expect(readFileSync(leftover.keysPath, 'utf8')).toBe(leftover.keys);
+    const { previewOnboardingEmit } = await import('@/lib/onboarding');
+    const preview = previewOnboardingEmit(false, root);
+    expect(preview.ok).toBe(false);
+    if (preview.ok) throw new Error('expected refuse');
+    expect(preview.reason).toBe('empty_catalog');
+    expect(preview.message).toMatch(/will not wipe generated content/);
   });
 });
 

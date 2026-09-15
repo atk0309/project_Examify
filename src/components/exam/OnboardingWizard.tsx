@@ -924,9 +924,12 @@ function DryRunStep({
   return (
     <div className="wizard-panel" data-testid="wizard-dry-run">
       <p className="subtitle">
-        Mandatory HITL preview of content/generated/subjects.json, questions/, and keys/. Additive
-        by default. Generate does not write.
+        Mandatory HITL preview — the same dry-run as `pnpm examify-ingest emit content/subjects
+        --dry-run`. Includes planned deletes. Apply is the only write. Additive by default.
       </p>
+      <pre className="wizard-cli" data-testid="wizard-cli-emit">
+        {ONBOARDING_INGEST_CLI.slice(1).join('\n')}
+      </pre>
       <label className="wizard-advanced">
         <input
           type="checkbox"
@@ -962,6 +965,15 @@ function DryRunStep({
               ))}
             </ul>
           ) : null}
+          {dryRun.plan.some((entry) => entry.action === 'delete') ? (
+            <p className="login-fine" data-testid="wizard-planned-deletes">
+              Planned deletes:{' '}
+              {dryRun.plan
+                .filter((entry) => entry.action === 'delete')
+                .map((entry) => entry.path)
+                .join(', ')}
+            </p>
+          ) : null}
           <ul className="wizard-plan" data-testid="wizard-plan">
             {dryRun.plan.map((entry) => (
               <li key={entry.path}>
@@ -969,6 +981,9 @@ function DryRunStep({
               </li>
             ))}
           </ul>
+          <pre className="wizard-diff" data-testid="wizard-diff">
+            {dryRun.diff}
+          </pre>
         </div>
       ) : null}
     </div>
