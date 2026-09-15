@@ -39,9 +39,11 @@ Surface:
   (≥900px) uses a left step rail + stage + sticky footer; mobile uses compact
   “Step N of M · Label” progress and a sticky bottom bar. Generate writes BankIR
   only and never auto-applies.
-  Cancel marks the wizard token and skips the IR write (provider abort is
-  a parallel Ingestion PR); the preview is discarded and prior IR is
-  unchanged. User-initiated cancel is a calm status, not an error toast.
+  Cancel POSTs `/api/onboarding/cancel-generate` (a Route Handler, not a
+  queued Server Action) so the token can land while generate is in flight,
+  then skips the IR write (provider abort is a parallel Ingestion PR); the
+  preview is discarded and prior IR is unchanged. User-initiated cancel is
+  a calm status, not an error toast.
   Generate is gated to wizard catalog subjects (`listOnboardingSubjects`).
   Delete/rename wait on the generate lock. A post-provider catalog
   re-check (#65) refuses a write if the id is gone.
@@ -78,6 +80,10 @@ Surface:
   and redirects to `/signin`. `getSession` sends the browser here when membership
   no longer matches (cookie writes are illegal in a Server Component render).
 - **`/api/health`** — lightweight platform healthcheck.
+- **`/api/onboarding/cancel-generate`** — POST; household-admin generate
+  cancel. A Route Handler so the token is not queued behind the in-flight
+  generate Server Action. Same-origin + session; does not abort the provider
+  (Ingestion’s parallel PR).
 - **`/robots.txt`** — disallow-all (this is a private, allowlisted app).
 
 There is **no blog, no MDX, no admin panel, no public marketing page** — the first screen
@@ -146,6 +152,7 @@ grouped weekly Dependabot PRs in `.github/dependabot.yml`.
 src/
   app/                  # routes (App Router)
     api/health/         # platform healthcheck
+    api/onboarding/cancel-generate/ # concurrent generate cancel (not a Server Action)
     setup/              # household bootstrap (page); leftover /setup/wizard → /onboarding
     onboarding/         # admin-only content wizard (BankIR validate / dry-run / apply)
     signin/             # login (page); magic-link verify (route.ts) + verify/error (page)
@@ -171,6 +178,7 @@ src/
     household-types.ts  # client-safe PendingInvite type
     onboarding.ts       # first-run subjects/PDFs + examify-ingest emit (server-only)
     onboarding-generate.ts # AI-step generateSubject bridge (preview then commit if !cancelled)
+    onboarding-admin.ts # shared household-admin gate for wizard actions + cancel route
     onboarding-types.ts # client-safe wizard snapshot / AI mode types
     repo-root.ts        # shared `findRepoRoot` (env-store, content I/O, ingest keys)
     env-store.ts        # server-only `.env` upsert/clear (OPENAI_API_KEY write path)

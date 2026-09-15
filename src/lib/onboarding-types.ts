@@ -14,6 +14,12 @@ export type OnboardingGenerateProvider = (typeof ONBOARDING_GENERATE_PROVIDERS)[
 
 export const ONBOARDING_GENERATE_SEED_DEFAULT = 0;
 
+/**
+ * Concurrent generate-cancel. Next.js queues Server Actions from the same
+ * client, so Cancel cannot be another action behind generate.
+ */
+export const ONBOARDING_CANCEL_GENERATE_PATH = '/api/onboarding/cancel-generate';
+
 export function providerForOnboardingAiMode(mode: OnboardingAiMode): OnboardingGenerateProvider {
   switch (mode) {
     case 'cloud':

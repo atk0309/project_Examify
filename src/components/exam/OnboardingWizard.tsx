@@ -8,7 +8,6 @@ import {
   deleteOnboardingSubjectAction,
   detachOnboardingPdfAction,
   finishOnboardingAction,
-  cancelOnboardingGenerateAction,
   generateOnboardingSubjectAction,
   previewOnboardingEmitAction,
   renameOnboardingSubjectAction,
@@ -23,6 +22,7 @@ import type { AuthMode } from '@/lib/auth-mode';
 import type { HouseholdMemberView, PendingInvite } from '@/lib/household-types';
 import {
   EMPTY_AUTHORITATIVE_EMIT,
+  ONBOARDING_CANCEL_GENERATE_PATH,
   ONBOARDING_GENERATE_SEED_DEFAULT,
   ONBOARDING_INGEST_CLI,
   SUBJECT_ICON_OPTIONS,
@@ -409,9 +409,13 @@ export function OnboardingWizard({
                   setActiveGenerateId(null);
                   const token = generateCancelTokenRef.current;
                   if (!token) return;
-                  const data = new FormData();
-                  data.set('cancelToken', token);
-                  void cancelOnboardingGenerateAction(data);
+                  // Route Handler, not a Server Action — those queue behind generate.
+                  void fetch(ONBOARDING_CANCEL_GENERATE_PATH, {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: { 'content-type': 'application/json' },
+                    body: JSON.stringify({ cancelToken: token }),
+                  });
                 }}
                 onGoValidate={() => go('validate')}
                 onGenerate={(subjectIds) =>

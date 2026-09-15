@@ -133,6 +133,8 @@ describe('onboarding generate graph', () => {
     expect(wizard).toMatch(
       /generateCancelRef\.current = true;\s*setGenerateNote\('Generate cancelled'\);\s*setGenerateBusy\(false\)/,
     );
+    expect(wizard).toMatch(/fetch\(ONBOARDING_CANCEL_GENERATE_PATH/);
+    expect(wizard).not.toMatch(/cancelOnboardingGenerateAction/);
     expect(wizard).toMatch(
       /\} finally \{\s*generateCancelTokenRef\.current = null;\s*generateCancelRef\.current = false;/,
     );
