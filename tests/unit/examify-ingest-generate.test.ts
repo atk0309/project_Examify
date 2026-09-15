@@ -985,10 +985,11 @@ function abortingFetch(
 ): typeof fetch {
   return async (_input, init) => {
     seen.calls += 1;
-    seen.signal = init?.signal;
+    const requestSignal = init?.signal ?? undefined;
+    if (requestSignal) seen.signal = requestSignal;
     queueMicrotask(() => controller.abort());
     return new Promise<Response>((_resolve, reject) => {
-      const signal = init?.signal;
+      const signal = requestSignal;
       if (!signal) {
         reject(new Error('expected fetch signal'));
         return;
