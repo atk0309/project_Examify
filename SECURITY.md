@@ -44,4 +44,29 @@ get an initial response within a week.
   `AUTH_MODE=local-otp` and `MAIL_TRANSPORT=outbox` require this opt-in in
   production. The writer creates the directory as `0700` and each message as `0600`.
 - Prefer `AUTH_MODE=password` on a tiny self-host if you do not want to run
-  email. `AUTH_SECRET` and `SETUP_BOOTSTRAP_SECRET` remain the host secrets.
+  email for **sign-in**. Password-mode invite accept still needs SMTP, Resend,
+  or an allowed outbox (and fails closed if none can deliver). `AUTH_SECRET`
+  and `SETUP_BOOTSTRAP_SECRET` remain the host secrets.
+
+## Password-mode invite links are secrets
+
+When `AUTH_MODE=password`, `/invite/<token>` URLs are still **secrets** (sharing
+the link starts a join), but accept does **not** complete — and does **not**
+stamp `emailVerifiedAt` — until the invitee proves the mailbox.
+
+- **Mailbox proof before join.** Password-mode accept issues a one-time code to
+  the typed address (same local-OTP + mail transport as `AUTH_MODE=local-otp`).
+  Membership and `emailVerifiedAt` are set only when that code is consumed.
+- **Email-lock is not mailbox verification.** It only chooses which address we
+  send the code to. Typing the locked email is not enough.
+- Open student invites let anyone with the URL start a join for an email they
+  control — they still have to prove that mailbox.
+- **Fail closed without mail.** If no SMTP / Resend / allowed outbox can
+  deliver the code, accept returns a clear error instead of trusting the invite
+  URL. Production outbox still needs `ALLOW_LOCAL_OUTBOX=1`.
+- Treat invite links like passwords. Do not post them publicly, in tickets, or
+  in chat logs. Revoke unused or leaked links from the parent dashboard.
+- Prefer an email lock on every invite. Parent invites are already required to
+  be locked; lock student invites too when you know the address.
+- In `magic-link` / `local-otp` modes, accept already sent a mailbox challenge.
+  Password sign-in itself still needs no mail; only invite accept does.

@@ -165,7 +165,7 @@ write_env() {
     printf 'AUTH_MODE=%s\n' "${AUTH_MODE}"
     printf 'ANTHROPIC_API_KEY=%s\n' "${ANTHROPIC_API_KEY:-test}"
     printf '\n'
-    printf '%s\n' '# Mail: used by magic-link and local-otp. password mode ignores these.'
+    printf '%s\n' '# Mail: magic-link, local-otp, and password-mode invite accept.'
     printf 'MAIL_TRANSPORT=%s\n' "${MAIL_TRANSPORT}"
   } > "$dest"
 
@@ -253,7 +253,7 @@ if [ -z "${AUTH_MODE}" ]; then
   else
     echo
     echo "How should people sign in?"
-    echo "  1) password     — email + password; no email service required (recommended)"
+    echo "  1) password     — email + password; invite accept still needs mail or an outbox"
     echo "  2) magic-link   — one-time URL via Resend, SMTP, or a local outbox"
     echo "  3) local-otp    — 6-digit code written to the host outbox (tiny / LAN installs)"
     prompt AUTH_MODE_CHOICE "Choose 1, 2, or 3" "1"

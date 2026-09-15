@@ -3,6 +3,7 @@ import path from 'node:path';
 import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
+import { eq } from 'drizzle-orm';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionData } from '@/lib/auth';
 
@@ -14,6 +15,20 @@ delete process.env.FAMILIES;
 const sessionHolder = vi.hoisted(() => ({
   current: {} as SessionData & { save: () => Promise<void> },
 }));
+
+const sendEmailMock = vi.hoisted(() =>
+  vi.fn<
+    (opts: { to: string; code?: string }) => Promise<{ ok: boolean; error?: string; id?: string }>
+  >(async () => ({ ok: true, id: 'test' })),
+);
+
+vi.mock('@/lib/email', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/email')>('@/lib/email');
+  return {
+    ...actual,
+    sendEmail: sendEmailMock,
+  };
+});
 
 vi.mock('@/lib/auth', async () => {
   const actual = await vi.importActual<typeof import('@/lib/auth')>('@/lib/auth');
@@ -52,6 +67,8 @@ afterAll(() => {
 afterEach(async () => {
   const { env } = await import('@/lib/env');
   (env as { AUTH_MODE: typeof env.AUTH_MODE }).AUTH_MODE = 'magic-link';
+  sendEmailMock.mockReset();
+  sendEmailMock.mockResolvedValue({ ok: true, id: 'test' });
 });
 
 beforeEach(async () => {
@@ -69,31 +86,45 @@ beforeEach(async () => {
   (env as { AUTH_MODE: typeof env.AUTH_MODE }).AUTH_MODE = 'password';
   (env as { TURNSTILE_SECRET_KEY?: string }).TURNSTILE_SECRET_KEY = undefined;
   (env as { NEXT_PUBLIC_TURNSTILE_SITE_KEY?: string }).NEXT_PUBLIC_TURNSTILE_SITE_KEY = undefined;
+  sendEmailMock.mockResolvedValue({ ok: true, id: 'test' });
 });
 
-describe('acceptInviteWithPassword', () => {
-  it('joins a student and establishes a session', async () => {
-    const { bootstrapHousehold, createHouseholdInvite } = await import('@/lib/households');
-    const host = bootstrapHousehold({
-      email: 'pat@example.com',
-      householdName: 'Ours',
-    });
-    if (!host.ok) throw new Error('bootstrap failed');
-    const invite = createHouseholdInvite({ actorUserId: host.userId, role: 'student' });
-    if (!invite.ok) throw new Error('invite failed');
+async function seedOpenStudentInvite() {
+  const { bootstrapHousehold, createHouseholdInvite } = await import('@/lib/households');
+  const host = bootstrapHousehold({
+    email: 'pat@example.com',
+    householdName: 'Ours',
+  });
+  if (!host.ok) throw new Error('bootstrap failed');
+  const invite = createHouseholdInvite({ actorUserId: host.userId, role: 'student' });
+  if (!invite.ok) throw new Error('invite failed');
+  return invite;
+}
 
+async function userByEmail(email: string) {
+  const { db, schema } = await import('@/lib/db');
+  return db.select().from(schema.users).where(eq(schema.users.email, email)).get();
+}
+
+describe('acceptInviteWithPassword', () => {
+  it('issues a mailbox OTP and does not join or stamp emailVerifiedAt', async () => {
+    const invite = await seedOpenStudentInvite();
     const { acceptInviteWithPassword } = await import('@/actions/acceptInviteWithPassword');
     const data = new FormData();
     data.set('email', 'alex@example.com');
     data.set('password', 'student-pass');
     data.set('inviteToken', invite.token);
 
-    await expect(acceptInviteWithPassword({ status: 'idle' }, data)).rejects.toMatchObject({
-      url: '/',
+    expect(await acceptInviteWithPassword({ status: 'idle' }, data)).toEqual({
+      status: 'sent',
+      email: 'alex@example.com',
     });
-    expect(sessionHolder.current.email).toBe('alex@example.com');
-    expect(sessionHolder.current.role).toBe('student');
-    expect(sessionHolder.current.save).toHaveBeenCalledOnce();
+    expect(sendEmailMock).toHaveBeenCalledOnce();
+    expect(sendEmailMock.mock.calls[0]?.[0].code).toMatch(/^\d{6}$/);
+
+    const { getMembershipForEmail } = await import('@/lib/households');
+    expect(getMembershipForEmail('alex@example.com')).toBeNull();
+    expect(await userByEmail('alex@example.com')).toBeUndefined();
   });
 
   it('reports an invalid invite token', async () => {
@@ -106,6 +137,7 @@ describe('acceptInviteWithPassword', () => {
       status: 'error',
       reason: 'invite_invalid',
     });
+    expect(sendEmailMock).not.toHaveBeenCalled();
   });
 
   it('returns generic invalid when the email does not match the lock', async () => {
@@ -128,6 +160,7 @@ describe('acceptInviteWithPassword', () => {
       status: 'error',
       reason: 'invalid',
     });
+    expect(sendEmailMock).not.toHaveBeenCalled();
   });
 
   it('rejects a short password', async () => {
@@ -140,5 +173,143 @@ describe('acceptInviteWithPassword', () => {
       status: 'error',
       reason: 'invalid',
     });
+  });
+
+  it('fails closed when mailbox proof cannot be delivered', async () => {
+    const invite = await seedOpenStudentInvite();
+    const envMod = await import('@/lib/env');
+    const spy = vi.spyOn(envMod, 'canDeliverMailboxProof').mockReturnValue(false);
+    const { acceptInviteWithPassword } = await import('@/actions/acceptInviteWithPassword');
+    const data = new FormData();
+    data.set('email', 'alex@example.com');
+    data.set('password', 'student-pass');
+    data.set('inviteToken', invite.token);
+    expect(await acceptInviteWithPassword({ status: 'idle' }, data)).toEqual({
+      status: 'error',
+      reason: 'send_failed',
+    });
+    expect(sendEmailMock).not.toHaveBeenCalled();
+    spy.mockRestore();
+  });
+
+  it('fails closed when mail cannot be delivered', async () => {
+    const invite = await seedOpenStudentInvite();
+    sendEmailMock.mockResolvedValue({ ok: false, error: 'email-not-configured' });
+    const { acceptInviteWithPassword } = await import('@/actions/acceptInviteWithPassword');
+    const data = new FormData();
+    data.set('email', 'alex@example.com');
+    data.set('password', 'student-pass');
+    data.set('inviteToken', invite.token);
+    expect(await acceptInviteWithPassword({ status: 'idle' }, data)).toEqual({
+      status: 'error',
+      reason: 'send_failed',
+    });
+
+    const { getMembershipForEmail } = await import('@/lib/households');
+    expect(getMembershipForEmail('alex@example.com')).toBeNull();
+    expect(await userByEmail('alex@example.com')).toBeUndefined();
+  });
+});
+
+describe('completePasswordInvite', () => {
+  it('joins after a valid OTP and stamps emailVerifiedAt', async () => {
+    const invite = await seedOpenStudentInvite();
+    const { acceptInviteWithPassword } = await import('@/actions/acceptInviteWithPassword');
+    const start = new FormData();
+    start.set('email', 'alex@example.com');
+    start.set('password', 'student-pass');
+    start.set('inviteToken', invite.token);
+    expect(await acceptInviteWithPassword({ status: 'idle' }, start)).toMatchObject({
+      status: 'sent',
+    });
+    const code = sendEmailMock.mock.calls[0]?.[0].code;
+    expect(code).toMatch(/^\d{6}$/);
+
+    const { completePasswordInvite } = await import('@/actions/completePasswordInvite');
+    const finish = new FormData();
+    finish.set('email', 'alex@example.com');
+    finish.set('role', 'student');
+    finish.set('password', 'student-pass');
+    finish.set('code', code!);
+
+    await expect(completePasswordInvite({ status: 'idle' }, finish)).rejects.toMatchObject({
+      url: '/',
+    });
+    expect(sessionHolder.current.email).toBe('alex@example.com');
+    expect(sessionHolder.current.role).toBe('student');
+    expect(sessionHolder.current.save).toHaveBeenCalledOnce();
+
+    const { getMembershipForEmail } = await import('@/lib/households');
+    expect(getMembershipForEmail('alex@example.com')?.role).toBe('student');
+    const user = await userByEmail('alex@example.com');
+    expect(user?.emailVerifiedAt).toBeInstanceOf(Date);
+    expect(user?.passwordHash).toBeTruthy();
+  });
+
+  it('rolls back verification, membership, and password when the invite is revoked', async () => {
+    const {
+      bootstrapHousehold,
+      createHouseholdInvite,
+      revokeHouseholdInvite,
+      getMembershipForEmail,
+    } = await import('@/lib/households');
+    const host = bootstrapHousehold({ email: 'pat@example.com', householdName: 'Ours' });
+    if (!host.ok) throw new Error('bootstrap failed');
+    const invite = createHouseholdInvite({ actorUserId: host.userId, role: 'student' });
+    if (!invite.ok) throw new Error('invite failed');
+
+    const { acceptInviteWithPassword } = await import('@/actions/acceptInviteWithPassword');
+    const start = new FormData();
+    start.set('email', 'alex@example.com');
+    start.set('password', 'student-pass');
+    start.set('inviteToken', invite.token);
+    await acceptInviteWithPassword({ status: 'idle' }, start);
+    const code = sendEmailMock.mock.calls[0]?.[0].code;
+    expect(code).toMatch(/^\d{6}$/);
+
+    expect(revokeHouseholdInvite(host.userId, invite.invite.id)).toEqual({ ok: true });
+
+    const { completePasswordInvite } = await import('@/actions/completePasswordInvite');
+    const finish = new FormData();
+    finish.set('email', 'alex@example.com');
+    finish.set('role', 'student');
+    finish.set('password', 'student-pass');
+    finish.set('code', code!);
+    expect(await completePasswordInvite({ status: 'idle' }, finish)).toEqual({
+      status: 'error',
+      reason: 'invalid',
+    });
+
+    expect(getMembershipForEmail('alex@example.com')).toBeNull();
+    expect(await userByEmail('alex@example.com')).toBeUndefined();
+    const { db, schema } = await import('@/lib/db');
+    const tokens = db.select().from(schema.magicTokens).all();
+    expect(tokens.every((row) => row.consumedAt == null)).toBe(true);
+  });
+
+  it('does not stamp emailVerifiedAt or attach membership on a wrong code', async () => {
+    const invite = await seedOpenStudentInvite();
+    const { acceptInviteWithPassword } = await import('@/actions/acceptInviteWithPassword');
+    const start = new FormData();
+    start.set('email', 'alex@example.com');
+    start.set('password', 'student-pass');
+    start.set('inviteToken', invite.token);
+    await acceptInviteWithPassword({ status: 'idle' }, start);
+
+    const { completePasswordInvite } = await import('@/actions/completePasswordInvite');
+    const finish = new FormData();
+    finish.set('email', 'alex@example.com');
+    finish.set('role', 'student');
+    finish.set('password', 'student-pass');
+    finish.set('code', '000000');
+    expect(await completePasswordInvite({ status: 'idle' }, finish)).toEqual({
+      status: 'error',
+      reason: 'invalid',
+    });
+
+    const { getMembershipForEmail } = await import('@/lib/households');
+    expect(getMembershipForEmail('alex@example.com')).toBeNull();
+    expect(await userByEmail('alex@example.com')).toBeUndefined();
+    expect(sessionHolder.current.save).not.toHaveBeenCalled();
   });
 });

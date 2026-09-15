@@ -310,6 +310,18 @@ export function allowLocalMailOutbox(): boolean {
   return env.ALLOW_LOCAL_OUTBOX === true;
 }
 
+/**
+ * Whether password-mode invite accept can deliver a mailbox-proof OTP.
+ * SMTP / Resend need their required fields; the local outbox needs the
+ * usual opt-in. Callers fail closed instead of trusting the invite URL.
+ */
+export function canDeliverMailboxProof(): boolean {
+  const transport = resolveMailTransport();
+  if (transport === 'smtp') return Boolean(env.SMTP_HOST && env.SMTP_FROM);
+  if (transport === 'resend') return isResendConfigured() && Boolean(env.RESEND_FROM);
+  return allowLocalMailOutbox();
+}
+
 export function getAuthMode(): AuthMode {
   return env.AUTH_MODE;
 }

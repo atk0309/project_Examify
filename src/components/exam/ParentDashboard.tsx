@@ -10,6 +10,7 @@ import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { setStudentMode } from '@/actions/toggleStudentMode';
 import { signOut } from '@/actions/signOut';
+import type { AuthMode } from '@/lib/auth-mode';
 import type { ProgressData } from '@/lib/exam/attempts';
 import type { HouseholdMemberView, PendingInvite } from '@/lib/household-types';
 import { ComparisonView } from './ComparisonView';
@@ -33,6 +34,7 @@ export function ParentDashboard({
   pendingInvites = [],
   members = [],
   canInvite = false,
+  authMode,
 }: {
   students: ChildSnapshot[];
   ownProgress: ProgressData;
@@ -40,6 +42,7 @@ export function ParentDashboard({
   pendingInvites?: PendingInvite[];
   members?: HouseholdMemberView[];
   canInvite?: boolean;
+  authMode: AuthMode;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -88,7 +91,9 @@ export function ParentDashboard({
             </button>
           </div>
 
-          {canInvite ? <HouseholdInvites pending={pendingInvites} members={members} /> : null}
+          {canInvite ? (
+            <HouseholdInvites pending={pendingInvites} members={members} authMode={authMode} />
+          ) : null}
 
           {students.length > 1 ? (
             <div className="role-seg" role="radiogroup" aria-label="Compare against">

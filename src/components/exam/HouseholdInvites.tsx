@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { createInvite } from '@/actions/createInvite';
 import { removeMember } from '@/actions/removeMember';
 import { revokeInvite } from '@/actions/revokeInvite';
+import type { AuthMode } from '@/lib/auth-mode';
 import type { HouseholdMemberView, PendingInvite } from '@/lib/household-types';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -12,9 +13,11 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 export function HouseholdInvites({
   pending,
   members = [],
+  authMode,
 }: {
   pending: PendingInvite[];
   members?: HouseholdMemberView[];
+  authMode: AuthMode;
 }) {
   const router = useRouter();
   const [busy, startTransition] = useTransition();
@@ -22,12 +25,14 @@ export function HouseholdInvites({
   const [email, setEmail] = useState('');
   const [createdUrl, setCreatedUrl] = useState<string | null>(null);
   const [createdId, setCreatedId] = useState<number | null>(null);
+  const [createdLocked, setCreatedLocked] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
   const onCreate = (formData: FormData) => {
     setError(null);
     setCopied(false);
+    const locked = EMAIL_RE.test(String(formData.get('email') ?? '').trim());
     startTransition(async () => {
       const result = await createInvite(formData);
       if (!result.ok) {
@@ -42,6 +47,7 @@ export function HouseholdInvites({
       }
       setCreatedUrl(result.url);
       setCreatedId(result.id);
+      setCreatedLocked(locked);
       setEmail('');
       router.refresh();
     });
@@ -64,6 +70,7 @@ export function HouseholdInvites({
       if (createdId === inviteId) {
         setCreatedUrl(null);
         setCreatedId(null);
+        setCreatedLocked(false);
         setCopied(false);
       }
       router.refresh();
@@ -107,6 +114,11 @@ export function HouseholdInvites({
       <p className="subtitle">
         Share a link to add a student or another parent. Student links may be open; parent invites
         must be locked to one email.
+      </p>
+      <p className="subtitle">
+        {authMode === 'password'
+          ? 'Treat the invite link as a secret and do not post it publicly. The invitee must enter a one-time code sent to their email before they join. An email lock only chooses which mailbox we send to (required for parents). An open student link lets anyone with the URL start a join for an email they control.'
+          : 'Share the invite link privately. Do not post it publicly.'}
       </p>
 
       <form action={onCreate} className="invite-create" data-testid="create-invite-form">
@@ -170,6 +182,13 @@ export function HouseholdInvites({
           >
             {copied ? 'Copied' : 'Copy link'}
           </button>
+          <p className="invite-meta">
+            {authMode === 'password'
+              ? createdLocked
+                ? 'This link is a secret. We send a one-time code to the locked email; typing the address is not enough. Do not post it publicly.'
+                : 'This is an open link: anyone who has it can start a join for an email they control — they still have to prove that mailbox. Do not post it publicly.'
+              : 'Share this only with the person you mean to invite.'}
+          </p>
         </div>
       ) : null}
 
