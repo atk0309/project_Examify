@@ -35,6 +35,9 @@ test('first-run bootstrap creates the admin without Turnstile', async ({ page })
   }
   await page.getByTestId('wizard-subject-label').fill('History');
   await expect(page.getByTestId('wizard-subject-id')).toHaveValue('history');
+  await page.getByTestId('wizard-add-subject-submit').click();
+  await expect(page.getByTestId('wizard-subjects')).toContainText('History');
+  await expect(page.getByTestId('wizard-subjects')).toContainText('history');
   await page.getByTestId('wizard-next').click();
   await expect(page.getByTestId('wizard-files')).toBeVisible();
 
@@ -42,6 +45,10 @@ test('first-run bootstrap creates the admin without Turnstile', async ({ page })
   await expect(page.getByTestId('wizard-rail')).toBeVisible();
   await expect(page.getByTestId('wizard-progress')).toBeHidden();
   await expect(page.getByTestId('wizard-rail')).toContainText('Review');
+  await page.getByTestId('wizard-back').click();
+  await expect(page.getByTestId('wizard-subjects')).toBeVisible();
+  await expect(page.getByTestId('wizard-subjects')).toContainText('History');
+  await expect(page.getByRole('button', { name: 'Welcome' })).toBeEnabled();
   await page.locator('.wizard-skip-menu summary').click();
   await page.getByTestId('wizard-skip').click();
   await expect(page).toHaveURL(/\/$/);

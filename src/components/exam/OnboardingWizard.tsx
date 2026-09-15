@@ -189,6 +189,8 @@ export function OnboardingWizard({
   const stepIndex = STEPS.findIndex((entry) => entry.id === step);
   const current = STEPS[stepIndex]!;
   const wideStage = step === 'dry-run';
+  // Keep Cancel reachable: skip / Back / rail must not leave AI mid-generate.
+  const navLocked = pending || generateBusy;
 
   const run = (task: () => Promise<void>) => {
     startTransition(async () => {
@@ -216,15 +218,18 @@ export function OnboardingWizard({
   };
 
   const go = (next: StepId) => {
+    if (generateBusy) return;
     setError(null);
     setStep(next);
   };
 
-  const skip = () =>
+  const skip = () => {
+    if (generateBusy) return;
     run(async () => {
       const result = await skipOnboardingAction();
       if (result) applyResult(result);
     });
+  };
 
   return (
     <div className="screen wizard wizard-shell" data-testid="onboarding-wizard">
@@ -238,7 +243,7 @@ export function OnboardingWizard({
             <button
               type="button"
               className="btn btn-quiet"
-              disabled={pending || generateBusy}
+              disabled={navLocked}
               data-testid="wizard-skip"
               onClick={skip}
             >
@@ -263,7 +268,7 @@ export function OnboardingWizard({
                     type="button"
                     className="wizard-rail-btn"
                     aria-current={index === stepIndex ? 'step' : undefined}
-                    disabled={!clickable || pending}
+                    disabled={!clickable || navLocked}
                     onClick={() => go(entry.id)}
                   >
                     <span className="wizard-rail-index" aria-hidden>
@@ -534,7 +539,7 @@ export function OnboardingWizard({
                 <button
                   type="button"
                   className="btn btn-ghost"
-                  disabled={pending}
+                  disabled={navLocked}
                   data-testid="wizard-back"
                   onClick={() => go(STEPS[stepIndex - 1]!.id)}
                 >
@@ -570,7 +575,7 @@ export function OnboardingWizard({
                 <button
                   type="button"
                   className="btn btn-primary"
-                  disabled={pending || generateBusy}
+                  disabled={navLocked}
                   data-testid="wizard-next"
                   onClick={() => go(STEPS[stepIndex + 1]!.id)}
                 >
@@ -639,7 +644,7 @@ export function OnboardingWizard({
               <button
                 type="button"
                 className="btn btn-quiet"
-                disabled={pending}
+                disabled={navLocked}
                 data-testid="wizard-skip"
                 onClick={skip}
               >

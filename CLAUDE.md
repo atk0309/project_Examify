@@ -36,7 +36,9 @@ Surface:
   “Step N of M · Label” progress and a sticky bottom bar. Generate writes BankIR
   only and never auto-applies.
   Cancel discards an in-flight preview and does not replace prior IR; generate
-  is gated to wizard catalog subjects (`listOnboardingSubjects`).
+  is gated to wizard catalog subjects (`listOnboardingSubjects`). While generate
+  is in flight, Welcome “Use sample bank”, later skip, Back, and the desktop
+  rail stay locked so Cancel remains reachable.
   Finish (“Open dashboard”) requires
   a confirmed apply of that dry-run; a changed plan is refused (`stale_preview`).
   Skip-without-emit is Welcome “Use sample bank for now” / later “Skip to

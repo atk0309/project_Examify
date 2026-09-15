@@ -90,7 +90,8 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   household admin add subjects, attach local PDFs, choose an AI mode, optionally
   run `examify-ingest generate` (BankIR only; never emit/apply; cancel
   discards the in-flight preview and does not replace prior IR; subject
-  ids must be in the wizard catalog), and emit
+  ids must be in the wizard catalog; skip / Back / desktop rail lock while
+  generate is in flight so Cancel stays reachable), and emit
   BankIR via `examify-ingest` (directory-only, Review / dry-run HITL before apply,
   empty catalog fail-closed; `--replace-sample` only behind an explicit advanced
   toggle). `/onboarding` is one stage at a time: desktop ≥900px uses a left step
