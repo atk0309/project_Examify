@@ -30,13 +30,16 @@ Surface:
 - **`/setup`** — first-run household bootstrap (only when no household exists).
 - **`/onboarding`** — post-bootstrap content wizard (household **admin** only, while
   `onboarding_complete` is false). Welcome → subjects → PDF dropzones → AI setup
-  → validate → dry-run HITL → apply → ready. Skip leaves the sample bank usable
-  and shows a parent-dashboard “Finish content setup” chip; invited students and
-  parents never see it. Directory-only `examify-ingest` emit (dry-run before
-  apply, empty catalog refused). Delete removes IR/source dirs only; prune of
-  leftover generated JSON waits for confirmed directory apply (#62). Not a
-  replacement for `install.sh` auth-mode picking. Existing households are
-  backfilled complete. `/setup/wizard` redirects here.
+  → validate → dry-run HITL → apply → ready. Finish (“Open dashboard”) requires
+  a confirmed apply of that dry-run; a changed plan is refused (`stale_preview`).
+  Skip-without-emit is Welcome “Use sample bank for now” / later “Skip to
+  dashboard” — same skip semantics, sample bank stays usable, parent-dashboard
+  “Finish content setup” chip remains. Invited students and parents never see
+  it. Directory-only `examify-ingest` emit (dry-run before apply, empty catalog
+  refused). Delete removes IR/source dirs only; prune of leftover generated JSON
+  waits for confirmed directory apply (#62). Not a replacement for `install.sh`
+  auth-mode picking. Existing households are backfilled complete.
+  `/setup/wizard` redirects here.
 - **`/invite/[token]`** — accept a household invite (password, magic-link, or local OTP).
   In `AUTH_MODE=password` the URL is a secret that starts a join; membership and
   `emailVerifiedAt` wait for a mailbox OTP (`completePasswordInvite`). Fail closed

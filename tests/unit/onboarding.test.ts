@@ -126,7 +126,7 @@ describe('onboarding catalog emit', () => {
     expect(preview.message).toBe(EMPTY_AUTHORITATIVE_EMIT);
     expect(preview.message).toMatch(/will not wipe generated content/);
 
-    const applied = applyOnboardingEmit({ replaceSample: false }, root);
+    const applied = applyOnboardingEmit({ replaceSample: false, expectedHash: 'unused' }, root);
     expect(applied.ok).toBe(false);
     expect(readFileSync(leftover.subjectsPath, 'utf8')).toBe(leftover.subjects);
     expect(readFileSync(leftover.questionsPath, 'utf8')).toBe(leftover.questions);
@@ -197,10 +197,44 @@ describe('onboarding catalog emit', () => {
     expect(preview.dryRun.diff).toContain('would delete content/generated/keys/chemistry.json');
     expect(preview.dryRun.diff).not.toContain('do-not-leak');
 
-    const applied = applyOnboardingEmit({ replaceSample: false }, root);
+    const applied = applyOnboardingEmit(
+      { replaceSample: false, expectedHash: preview.dryRun.hash },
+      root,
+    );
     expect(applied.ok).toBe(true);
     expect(existsSync(leftover.questionsPath)).toBe(false);
     expect(existsSync(leftover.keysPath)).toBe(false);
+  });
+
+  it('refuses apply when the plan no longer matches the confirmed dry-run hash', async () => {
+    const { applyOnboardingEmit, previewOnboardingEmit, setOnboardingContentRootForTests } =
+      await import('@/lib/onboarding');
+    const root = tempRoot();
+    mkdirSync(path.join(root, 'content/subjects/history'), { recursive: true });
+    writeFileSync(
+      path.join(root, 'content/subjects/history/bank.ir.json'),
+      JSON.stringify(fixtureIr('history', 'History')),
+    );
+    setOnboardingContentRootForTests(root);
+
+    const preview = previewOnboardingEmit(false, root);
+    expect(preview.ok).toBe(true);
+    if (!preview.ok) throw new Error('expected preview');
+
+    writeFileSync(
+      path.join(root, 'content/subjects/history/bank.ir.json'),
+      JSON.stringify(fixtureIr('history', 'History', 'history-easy-changed')),
+    );
+
+    const applied = applyOnboardingEmit(
+      { replaceSample: false, expectedHash: preview.dryRun.hash },
+      root,
+    );
+    expect(applied.ok).toBe(false);
+    if (applied.ok) throw new Error('expected stale refuse');
+    expect(applied.reason).toBe('stale_preview');
+    expect(existsSync(path.join(root, 'content/generated/questions/history.json'))).toBe(false);
+    expect(existsSync(path.join(root, 'content/generated/keys/history.json'))).toBe(false);
   });
 
   it('surfaces every colliding SAMPLE_QUESTIONS id, not only ingest fixtures', async () => {
@@ -306,6 +340,93 @@ describe('onboarding subjects and files', () => {
         root,
       ),
     ).toEqual({ ok: false, reason: 'too_large' });
+
+    expect(
+      attachSourcePdf(
+        { subjectId: 'history', filename: 'fake.pdf', bytes: Buffer.from('not-a-pdf-payload') },
+        root,
+      ),
+    ).toEqual({ ok: false, reason: 'invalid_type' });
+    expect(existsSync(path.join(root, 'content/source-pdfs/history/fake.pdf'))).toBe(false);
+    expect(existsSync(path.join(root, 'content/source-pdfs/history/notes.pdf'))).toBe(true);
+  });
+
+  it('accepts only buffers that start with the PDF magic', async () => {
+    const { hasPdfMagic } = await import('@/lib/onboarding');
+    expect(hasPdfMagic(Buffer.from('%PDF-1.7'))).toBe(true);
+    expect(hasPdfMagic(Buffer.from('%PDF'))).toBe(true);
+    expect(hasPdfMagic(Buffer.from('%PD'))).toBe(false);
+    expect(hasPdfMagic(Buffer.from('PDF-1.4'))).toBe(false);
+    expect(hasPdfMagic(Buffer.alloc(0))).toBe(false);
+  });
+
+  it('does not leave the IR dir renamed when the destination PDF dir already exists', async () => {
+    const {
+      addOnboardingSubject,
+      attachSourcePdf,
+      listOnboardingSubjects,
+      renameOnboardingSubject,
+      setOnboardingContentRootForTests,
+    } = await import('@/lib/onboarding');
+    const root = tempRoot();
+    setOnboardingContentRootForTests(root);
+    expect(
+      addOnboardingSubject({ id: 'history', label: 'History', icon: 'geography' }, root).ok,
+    ).toBe(true);
+    expect(
+      attachSourcePdf(
+        { subjectId: 'history', filename: 'notes.pdf', bytes: Buffer.from('%PDF-1.4 fixture') },
+        root,
+      ).ok,
+    ).toBe(true);
+
+    mkdirSync(path.join(root, 'content/source-pdfs/world-history'), { recursive: true });
+    writeFileSync(
+      path.join(root, 'content/source-pdfs/world-history/other.pdf'),
+      '%PDF-1.4 leftover',
+    );
+
+    const renamed = renameOnboardingSubject(
+      { id: 'history', nextId: 'world-history', label: 'World History', icon: 'geography' },
+      root,
+    );
+    expect(renamed).toEqual({ ok: false, reason: 'duplicate' });
+    expect(listOnboardingSubjects(root).map((row) => row.id)).toEqual(['history']);
+    expect(existsSync(path.join(root, 'content/subjects/history/bank.ir.json'))).toBe(true);
+    expect(existsSync(path.join(root, 'content/subjects/world-history'))).toBe(false);
+    expect(existsSync(path.join(root, 'content/source-pdfs/history/notes.pdf'))).toBe(true);
+    expect(existsSync(path.join(root, 'content/source-pdfs/world-history/other.pdf'))).toBe(true);
+  });
+
+  it('moves IR and source-pdf dirs together on a successful id rename', async () => {
+    const {
+      addOnboardingSubject,
+      attachSourcePdf,
+      listOnboardingSubjects,
+      renameOnboardingSubject,
+      setOnboardingContentRootForTests,
+    } = await import('@/lib/onboarding');
+    const root = tempRoot();
+    setOnboardingContentRootForTests(root);
+    expect(
+      addOnboardingSubject({ id: 'history', label: 'History', icon: 'geography' }, root).ok,
+    ).toBe(true);
+    expect(
+      attachSourcePdf(
+        { subjectId: 'history', filename: 'notes.pdf', bytes: Buffer.from('%PDF-1.4 fixture') },
+        root,
+      ).ok,
+    ).toBe(true);
+
+    const renamed = renameOnboardingSubject(
+      { id: 'history', nextId: 'world-history', label: 'World History', icon: 'geography' },
+      root,
+    );
+    expect(renamed.ok).toBe(true);
+    expect(listOnboardingSubjects(root).map((row) => row.id)).toEqual(['world-history']);
+    expect(existsSync(path.join(root, 'content/subjects/history'))).toBe(false);
+    expect(existsSync(path.join(root, 'content/source-pdfs/history'))).toBe(false);
+    expect(existsSync(path.join(root, 'content/source-pdfs/world-history/notes.pdf'))).toBe(true);
   });
 
   it('delete of the last IR subject refuses wipe and leaves generated files', async () => {

@@ -24,6 +24,8 @@ export type OnboardingState = {
   skipped?: boolean;
   aiMode?: OnboardingAiMode;
   dryRunHash?: string;
+  /** Set after a confirmed HITL apply. Finish requires this; skip does not. */
+  applied?: boolean;
   replaceSample?: boolean;
 };
 
@@ -70,6 +72,7 @@ export type OnboardingSnapshot = {
   aiMode: OnboardingAiMode | null;
   replaceSample: boolean;
   hasDryRun: boolean;
+  hasApplied: boolean;
   anthropicConfigured: boolean;
   localAgentConfigured: boolean;
 };

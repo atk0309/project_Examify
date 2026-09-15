@@ -36,9 +36,10 @@ no env-JSON allowlist to hand-edit.
    After bootstrap, **`/onboarding`** lets the household admin add subjects, attach
    local study PDFs, choose how a later generate step should talk to a model, and
    emit BankIR through `examify-ingest` (validate + dry-run HITL, then apply; an
-   empty catalog is refused). Skip keeps the sample bank. After that, pick a
-   role (Student / Parent) and sign in with the configured mode. New people join via
-   an invite link (`/invite/…`), not env JSON.
+   empty catalog is refused; a changed plan after dry-run is refused). Finish
+   requires that confirmed apply; skip-without-emit keeps the sample bank.
+   After that, pick a role (Student / Parent) and sign in with the configured
+   mode. New people join via an invite link (`/invite/…`), not env JSON.
 2. **Dashboard** — a grid of subjects, each with a soft duotone icon and question count.
    The repo ships with a small hand-authored sample bank (Maths, Computer Science,
    Geography) plus an additive Biology example from BankIR — see

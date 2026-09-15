@@ -120,6 +120,7 @@ export function parseOnboardingState(raw: unknown): OnboardingState {
     aiMode:
       typeof rec.aiMode === 'string' && isOnboardingAiMode(rec.aiMode) ? rec.aiMode : undefined,
     dryRunHash: typeof rec.dryRunHash === 'string' ? rec.dryRunHash : undefined,
+    applied: rec.applied === true,
     replaceSample: rec.replaceSample === true,
   };
 }
@@ -154,6 +155,11 @@ export function isSafeUploadName(name: string): boolean {
     !base.includes('..') &&
     /^[A-Za-z0-9._()[\] -]+$/.test(base)
   );
+}
+
+/** PDF files start with the `%PDF` magic. Extension alone is not enough. */
+export function hasPdfMagic(bytes: Buffer): boolean {
+  return bytes.byteLength >= 4 && bytes.subarray(0, 4).equals(Buffer.from('%PDF', 'ascii'));
 }
 
 function subjectsDir(root = getOnboardingContentRoot()): string {
@@ -291,6 +297,27 @@ export function clearOnboardingDryRun(householdId: number): void {
     .run();
 }
 
+/** Catalog mutations drop both the HITL hash and the finish-after-apply flag. */
+export function invalidateOnboardingEmit(householdId: number): void {
+  const current = getHouseholdOnboarding(householdId);
+  if (!current.state.dryRunHash && !current.state.applied) return;
+  const { dryRunHash: _hash, applied: _applied, ...rest } = current.state;
+  db.update(schema.households)
+    .set({ onboardingState: rest })
+    .where(eq(schema.households.id, householdId))
+    .run();
+}
+
+/** Confirmed apply: keep finish eligible, drop the used dry-run hash. */
+export function markOnboardingApplied(householdId: number): void {
+  const current = getHouseholdOnboarding(householdId);
+  const { dryRunHash: _dropped, ...rest } = current.state;
+  db.update(schema.households)
+    .set({ onboardingState: { ...rest, applied: true } })
+    .where(eq(schema.households.id, householdId))
+    .run();
+}
+
 export function skipOnboarding(householdId: number): void {
   const current = getHouseholdOnboarding(householdId);
   db.update(schema.households)
@@ -331,6 +358,7 @@ export function getOnboardingSnapshot(
     aiMode: state.aiMode ?? null,
     replaceSample: state.replaceSample === true,
     hasDryRun: Boolean(state.dryRunHash),
+    hasApplied: state.applied === true,
     ...aiFlags(),
   };
 }
@@ -365,7 +393,7 @@ export function addOnboardingSubject(
 
 export type RenameSubjectResult =
   | { ok: true; subject: OnboardingSubject }
-  | { ok: false; reason: 'invalid_id' | 'duplicate' | 'missing' };
+  | { ok: false; reason: 'invalid_id' | 'duplicate' | 'missing' | 'disk' };
 
 export function renameOnboardingSubject(
   input: { id: string; nextId?: string; label: string; icon?: string },
@@ -403,16 +431,39 @@ export function renameOnboardingSubject(
 
   let workingId = id;
   if (nextId !== id) {
-    const dest = path.join(subjectsDir(root), nextId);
-    if (existsSync(dest)) return { ok: false, reason: 'duplicate' };
+    const fromIr = path.join(subjectsDir(root), id);
+    const destIr = path.join(subjectsDir(root), nextId);
+    const fromPdf = path.join(sourcePdfsDir(root), id);
+    const destPdf = path.join(sourcePdfsDir(root), nextId);
+    // Check both destinations before moving anything so a PDF clash cannot
+    // leave the IR dir half-renamed.
+    if (existsSync(destIr)) return { ok: false, reason: 'duplicate' };
+    const movePdfs = existsSync(fromPdf);
+    if (movePdfs && existsSync(destPdf)) return { ok: false, reason: 'duplicate' };
+
     mkdirSync(subjectsDir(root), { recursive: true });
-    renameSync(path.join(subjectsDir(root), id), dest);
-    const sourceFrom = path.join(sourcePdfsDir(root), id);
-    const sourceTo = path.join(sourcePdfsDir(root), nextId);
-    if (existsSync(sourceFrom)) {
-      mkdirSync(sourcePdfsDir(root), { recursive: true });
-      if (existsSync(sourceTo)) return { ok: false, reason: 'duplicate' };
-      renameSync(sourceFrom, sourceTo);
+    try {
+      renameSync(fromIr, destIr);
+    } catch (error) {
+      if (isDiskError(error)) return { ok: false, reason: 'disk' };
+      throw error;
+    }
+
+    if (movePdfs) {
+      try {
+        mkdirSync(sourcePdfsDir(root), { recursive: true });
+        renameSync(fromPdf, destPdf);
+      } catch (error) {
+        try {
+          if (existsSync(destIr) && !existsSync(fromIr)) {
+            renameSync(destIr, fromIr);
+          }
+        } catch {
+          // Best-effort IR rollback; still report the PDF-move failure.
+        }
+        if (isDiskError(error)) return { ok: false, reason: 'disk' };
+        throw error;
+      }
     }
     workingId = nextId;
   }
@@ -473,6 +524,7 @@ export function attachSourcePdf(
   if (input.bytes.byteLength === 0 || input.bytes.byteLength > MAX_SOURCE_PDF_BYTES) {
     return { ok: false, reason: 'too_large' };
   }
+  if (!hasPdfMagic(input.bytes)) return { ok: false, reason: 'invalid_type' };
 
   const dest = path.join(sourcePdfsDir(root), subjectId, input.filename);
   try {
@@ -705,14 +757,31 @@ export type CatalogEmitApply =
       subjectCount: number;
       plan: OnboardingPlanEntry[];
     }
-  | { ok: false; reason: 'empty_catalog' | 'invalid'; message: string; issues?: OnboardingIssue[] };
+  | {
+      ok: false;
+      reason: 'empty_catalog' | 'invalid' | 'stale_preview';
+      message: string;
+      issues?: OnboardingIssue[];
+    };
 
+/**
+ * Re-preview the current tree, refuse if the plan hash is not the confirmed
+ * dry-run, then `applyEmit` that same planned list. Never apply a newer
+ * unconfirmed plan (a concurrent IR change after HITL confirm).
+ */
 export function applyOnboardingEmit(
-  input: { replaceSample: boolean },
+  input: { replaceSample: boolean; expectedHash: string },
   root = getOnboardingContentRoot(),
 ): CatalogEmitApply {
   const preview = previewOnboardingEmit(input.replaceSample, root);
   if (!preview.ok) return preview;
+  if (preview.dryRun.hash !== input.expectedHash) {
+    return {
+      ok: false,
+      reason: 'stale_preview',
+      message: 'Subjects or BankIR changed since the last dry-run. Preview again.',
+    };
+  }
   applyEmit(preview.planned);
   return {
     ok: true,

@@ -81,8 +81,11 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   household admin add subjects, attach local PDFs, choose an AI mode, and emit
   BankIR via `examify-ingest` (directory-only, dry-run HITL before apply, empty
   catalog fail-closed; `--replace-sample` only behind an explicit advanced toggle).
-  Delete does not write generated files; prune runs on confirmed apply. Skip keeps
-  the sample bank and a dashboard chip. Invited members never see it.
+  Apply re-hashes the current plan and refuses if it differs from the confirmed
+  dry-run (never applies an unconfirmed plan). Finish requires that confirmed
+  apply; skip-without-emit matches Welcome skip (sample bank + dashboard chip).
+  Delete does not write generated files; prune runs on confirmed apply.
+  Invited members never see it.
   Existing households are migrated as already complete.
   Parents/admins mint invite links
   (`createInvite`); accept goes through `/invite/[token]` using the configured

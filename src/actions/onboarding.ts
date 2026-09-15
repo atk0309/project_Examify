@@ -15,7 +15,9 @@ import {
   getOnboardingForUser,
   getOnboardingSnapshot,
   getHouseholdOnboarding,
+  invalidateOnboardingEmit,
   isOnboardingAiMode,
+  markOnboardingApplied,
   MAX_SOURCE_PDF_BYTES,
   previewOnboardingEmit,
   publicDryRun,
@@ -45,6 +47,7 @@ export type OnboardingActionError = {
     | 'empty_catalog'
     | 'dry_run_required'
     | 'stale_preview'
+    | 'emit_required'
     | 'already_complete';
   message?: string;
   issues?: { file: string; message: string }[];
@@ -88,7 +91,7 @@ export async function addOnboardingSubjectAction(
   if (!parsed.success) return { ok: false, reason: 'invalid' };
   const result = addOnboardingSubject(parsed.data);
   if (!result.ok) return { ok: false, reason: result.reason };
-  clearOnboardingDryRun(gate.householdId);
+  invalidateOnboardingEmit(gate.householdId);
   return { ok: true, snapshot: snapshot(gate.householdId) };
 }
 
@@ -108,7 +111,7 @@ export async function renameOnboardingSubjectAction(
   if (!parsed.success) return { ok: false, reason: 'invalid' };
   const result = renameOnboardingSubject(parsed.data);
   if (!result.ok) return { ok: false, reason: result.reason };
-  clearOnboardingDryRun(gate.householdId);
+  invalidateOnboardingEmit(gate.householdId);
   return { ok: true, snapshot: snapshot(gate.householdId) };
 }
 
@@ -120,7 +123,7 @@ export async function deleteOnboardingSubjectAction(
   const id = typeof formData.get('id') === 'string' ? formData.get('id') : '';
   const result = deleteOnboardingSubject(String(id));
   if (!result.ok) return { ok: false, reason: result.reason };
-  clearOnboardingDryRun(gate.householdId);
+  invalidateOnboardingEmit(gate.householdId);
   return { ok: true, snapshot: snapshot(gate.householdId) };
 }
 
@@ -176,7 +179,7 @@ export async function setReplaceSampleAction(
   if (!gate.ok) return gate;
   const enabled = formData.get('replaceSample') === '1';
   saveOnboardingState(gate.householdId, { replaceSample: enabled });
-  clearOnboardingDryRun(gate.householdId);
+  invalidateOnboardingEmit(gate.householdId);
   return { ok: true, snapshot: snapshot(gate.householdId) };
 }
 
@@ -231,21 +234,17 @@ export async function applyOnboardingEmitAction(): Promise<
   const state = getHouseholdOnboarding(gate.householdId).state;
   if (!state.dryRunHash) return { ok: false, reason: 'dry_run_required' };
   const replaceSample = state.replaceSample === true;
-  const preview = previewOnboardingEmit(replaceSample);
-  if (!preview.ok) {
-    return {
-      ok: false,
-      reason: preview.reason,
-      message: preview.message,
-      issues: preview.issues,
-    };
-  }
-  if (preview.dryRun.hash !== state.dryRunHash) return { ok: false, reason: 'stale_preview' };
-  const applied = applyOnboardingEmit({ replaceSample });
+  // Single re-preview lives inside applyOnboardingEmit: hash must match the
+  // confirmed dry-run, then that same planned list is applied. A second
+  // preview here would race and could apply an unconfirmed plan.
+  const applied = applyOnboardingEmit({
+    replaceSample,
+    expectedHash: state.dryRunHash,
+  });
   if (!applied.ok) {
     return { ok: false, reason: applied.reason, message: applied.message, issues: applied.issues };
   }
-  clearOnboardingDryRun(gate.householdId);
+  markOnboardingApplied(gate.householdId);
   return {
     ok: true,
     snapshot: snapshot(gate.householdId),
@@ -265,6 +264,8 @@ export async function skipOnboardingAction(): Promise<OnboardingActionError | vo
 export async function finishOnboardingAction(): Promise<OnboardingActionError | void> {
   const gate = await requireOnboardingAdmin();
   if (!gate.ok) return gate;
+  const state = getHouseholdOnboarding(gate.householdId).state;
+  if (state.applied !== true) return { ok: false, reason: 'emit_required' };
   completeOnboarding(gate.householdId);
   redirect('/');
 }

@@ -86,6 +86,8 @@ function errorCopy(error: OnboardingActionError): string {
       return 'Run a dry-run preview before applying.';
     case 'stale_preview':
       return 'Subjects or BankIR changed since the last dry-run. Preview again.';
+    case 'emit_required':
+      return 'Confirm apply before opening the dashboard, or skip to keep the sample bank.';
     case 'already_complete':
       return 'Content setup is already finished.';
     default:
