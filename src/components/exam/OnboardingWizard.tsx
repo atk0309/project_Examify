@@ -78,7 +78,7 @@ function errorCopy(error: OnboardingActionError): string {
     case 'forbidden':
       return 'Only the household admin can continue content setup.';
     case 'invalid':
-      return error.message ?? 'That input is not valid.';
+      return 'That input is not valid.';
     case 'invalid_id':
       return 'Subject id must be kebab-case (a-z, digits, hyphens) and unique.';
     case 'invalid_type':

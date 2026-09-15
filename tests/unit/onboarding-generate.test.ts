@@ -93,6 +93,7 @@ describe('onboarding generate graph', () => {
     );
     expect(wizard).not.toMatch(/examify-ingest\/generate/);
     expect(wizard).not.toMatch(/generateSubject/);
+    expect(wizard).toMatch(/case 'invalid':\n      return 'That input is not valid\.'/);
   });
 });
 
