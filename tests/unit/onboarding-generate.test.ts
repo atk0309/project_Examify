@@ -124,6 +124,7 @@ describe('onboarding generate graph', () => {
     expect(generate).toMatch(/signal: controller\.signal/);
     expect(generate).toMatch(/abortControllers\.get\(token\)\?\.abort\(\)/);
     expect(generate).toMatch(/GenerateAbortedError/);
+    expect(generate).not.toMatch(/isAbortError/);
     expect(generate).toMatch(/dropGenerateAbort\(token\)/);
     expect(generate).toMatch(/const MAX_CANCEL_TOKENS = 64/);
     expect(generate).toMatch(/oldest token[\s\S]*evicted \(FIFO\)/);
@@ -635,6 +636,35 @@ describe('generateOnboardingSubject', () => {
     expect(result.reason).not.toBe('invalid');
     expect(result.message).toBe('Generate cancelled.');
     expect(result.message).not.toMatch(/raw abort|generate aborted/i);
+    expect(writeSpy).not.toHaveBeenCalled();
+    expect(readFileSync(irPath, 'utf8')).toBe(prior);
+  });
+
+  it('does not treat a bare AbortError timeout as cancelled', async () => {
+    const ingest = await import('examify-ingest/generate');
+    const { generateOnboardingSubject } = await import('@/lib/onboarding-generate');
+    const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
+    const root = tempRoot();
+    seedSubject(root);
+    setOnboardingContentRootForTests(root);
+    const irPath = path.join(root, 'content/subjects/history/bank.ir.json');
+    const prior = readFileSync(irPath, 'utf8');
+    const writeSpy = vi.spyOn(ingest, 'writeFileAtomic');
+    const timeout = new DOMException('The operation was aborted due to timeout', 'AbortError');
+    vi.spyOn(ingest, 'generateSubject').mockRejectedValue(timeout);
+
+    const result = await generateOnboardingSubject({
+      subjectId: 'history',
+      provider: 'test',
+      seed: 0,
+      root,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected failure');
+    expect(result.reason).not.toBe('cancelled');
+    expect(result.reason).toBe('invalid');
+    expect(result.message).not.toBe('Generate cancelled.');
+    expect(ingest.isAbortError(timeout)).toBe(true);
     expect(writeSpy).not.toHaveBeenCalled();
     expect(readFileSync(irPath, 'utf8')).toBe(prior);
   });

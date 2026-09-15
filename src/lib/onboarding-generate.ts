@@ -99,9 +99,9 @@ function dropGenerateAbort(token?: string): void {
   abortControllers.delete(token);
 }
 
-function isGenerateAbort(error: unknown): boolean {
-  if (error instanceof ingestGenerate.GenerateAbortedError) return true;
-  return ingestGenerate.isAbortError(error);
+/** User cancel only — not a bare `AbortError` from the 180s provider timeout. */
+function isUserGenerateAbort(error: unknown): boolean {
+  return error instanceof ingestGenerate.GenerateAbortedError;
 }
 
 function isGenerateCancelled(token?: string): boolean {
@@ -131,7 +131,7 @@ function stableJson(value: unknown): string {
 }
 
 function mapGenerateError(error: unknown): GenerateOnboardingError {
-  if (isGenerateAbort(error)) {
+  if (isUserGenerateAbort(error)) {
     return cancelledResult();
   }
   const message = error instanceof Error ? error.message : String(error);
@@ -177,8 +177,9 @@ function publicGenerateResult(
  * cancel token is still clear. Never emit / apply.
  * A cancel token mints an AbortController whose signal is passed into
  * ingest generate/providers so Cancel aborts HTTP/CMD, not only the
- * IR write. Abort and `GenerateAbortedError` map to `cancelled` (never
- * raw abort text). The returned payload is public progress metadata
+ * IR write. `GenerateAbortedError` maps to `cancelled` (never raw abort
+ * text). A bare `AbortError` (provider 180s timeout) is a real failure,
+ * not user cancel. The returned payload is public progress metadata
  * (no answers / keys / IR).
  */
 export async function generateOnboardingSubject(input: {
@@ -255,7 +256,7 @@ async function generateOnboardingSubjectUnlocked(input: {
     markOnboardingGenerateCommitted(token);
     return { ok: true, result: publicGenerateResult(subjectId, root, generated, true) };
   } catch (error) {
-    if (isGenerateCancelled(token) || isGenerateAbort(error)) {
+    if (isGenerateCancelled(token) || isUserGenerateAbort(error)) {
       return cancelledResult();
     }
     return mapGenerateError(error);
