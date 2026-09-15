@@ -11,6 +11,16 @@ export class ProviderConfigError extends Error {
   }
 }
 
+/** Fail-closed cancel: generate writes no IR/cache/manifest after this. */
+export class GenerateAbortedError extends Error {
+  readonly code = 'GENERATE_ABORTED';
+
+  constructor(message = 'generate aborted') {
+    super(message);
+    this.name = 'GenerateAbortedError';
+  }
+}
+
 export type ProviderEnv = Record<string, string | undefined>;
 
 export type ProviderRequest = {
@@ -31,9 +41,40 @@ export function providerTimeoutSignal(): AbortSignal {
   return AbortSignal.timeout(PROVIDER_TIMEOUT_MS);
 }
 
+/** 180s deadline, optionally combined with a caller AbortSignal. */
+export function providerRequestSignal(userSignal?: AbortSignal): AbortSignal {
+  const timeout = providerTimeoutSignal();
+  if (!userSignal) return timeout;
+  return AbortSignal.any([userSignal, timeout]);
+}
+
+export function isAbortError(error: unknown): boolean {
+  if (error instanceof GenerateAbortedError) return true;
+  return error instanceof Error && error.name === 'AbortError';
+}
+
+export function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new GenerateAbortedError();
+}
+
+export async function withProviderSignal<T>(
+  userSignal: AbortSignal | undefined,
+  work: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  throwIfAborted(userSignal);
+  const signal = providerRequestSignal(userSignal);
+  try {
+    return await work(signal);
+  } catch (error) {
+    throwIfAborted(userSignal);
+    throw error;
+  }
+}
+
 export type ProviderDeps = {
   env: ProviderEnv;
   fetch?: typeof fetch;
+  signal?: AbortSignal;
 };
 
 export type GenerateProvider = {

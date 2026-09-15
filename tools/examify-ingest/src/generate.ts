@@ -3,7 +3,13 @@ import { buildCacheKey, readCachedIr, writeCachedIr, writeRunManifest } from './
 import { stableJson } from './diff';
 import { PAGE_RASTER_PROFILE, pageImageHashesOf, resolvePageImages, type PageImage } from './pages';
 import { loadGeneratePrompt } from './prompt';
-import { getProvider, hasUsableKey, type ProviderDeps, type ProviderEnv } from './providers';
+import {
+  getProvider,
+  hasUsableKey,
+  throwIfAborted,
+  type ProviderDeps,
+  type ProviderEnv,
+} from './providers';
 import { writeFileAtomic } from './write-atomic';
 import {
   GENERATE_TEMPERATURE,
@@ -36,6 +42,8 @@ export type GenerateRequest = {
   env?: ProviderEnv;
   fetch?: typeof fetch;
   now?: () => Date;
+  /** Combined with the 180s provider deadline. Abort writes no IR/cache/manifest. */
+  signal?: AbortSignal;
 };
 
 export type GenerateSubjectResult = {
@@ -80,7 +88,13 @@ function assertValidBank(bank: BankIR, label: string): BankIR {
   return parsed.data;
 }
 
+async function checkpointAbort(signal?: AbortSignal): Promise<void> {
+  if (signal) await Promise.resolve();
+  throwIfAborted(signal);
+}
+
 export async function generateSubject(request: GenerateRequest): Promise<GenerateSubjectResult> {
+  await checkpointAbort(request.signal);
   if (request.sources.length === 0) {
     throw new Error(
       `no source files for ${request.subject.id} (looked in ${request.subjectDir} and content/source-pdfs/${request.subject.id})`,
@@ -109,6 +123,8 @@ export async function generateSubject(request: GenerateRequest): Promise<Generat
     pageRasterProfile: PAGE_RASTER_PROFILE,
   });
 
+  await checkpointAbort(request.signal);
+
   let bank = readCachedIr(request.repoRoot, cacheKey);
   let cacheHit = bank !== null;
   if (bank) {
@@ -121,27 +137,37 @@ export async function generateSubject(request: GenerateRequest): Promise<Generat
     }
   }
 
+  await checkpointAbort(request.signal);
+
   if (!bank) {
     adapter.requireReady(env);
-    const deps: ProviderDeps = { env, fetch: request.fetch };
-    const raw = await adapter.generate(
-      {
-        provider: request.provider,
-        model,
-        seed: request.seed,
-        temperature: 0,
-        prompt: prompt.text,
-        promptVersion: prompt.version,
-        subject: request.subject,
-        sources: request.sources,
-        pageImages,
-      },
-      deps,
-    );
+    const deps: ProviderDeps = { env, fetch: request.fetch, signal: request.signal };
+    let raw;
+    try {
+      raw = await adapter.generate(
+        {
+          provider: request.provider,
+          model,
+          seed: request.seed,
+          temperature: 0,
+          prompt: prompt.text,
+          promptVersion: prompt.version,
+          subject: request.subject,
+          sources: request.sources,
+          pageImages,
+        },
+        deps,
+      );
+    } catch (error) {
+      throwIfAborted(request.signal);
+      throw error;
+    }
+    await checkpointAbort(request.signal);
     bank = assertValidBank(
       attachMeta(raw, request, sourceHashes, prompt.version),
       `${request.provider} output`,
     );
+    await checkpointAbort(request.signal);
     if (persist) writeCachedIr(request.repoRoot, cacheKey, bank);
   }
 
@@ -165,6 +191,7 @@ export async function generateSubject(request: GenerateRequest): Promise<Generat
   });
 
   const irPath = path.join(request.subjectDir, BANK_IR_FILE);
+  await checkpointAbort(request.signal);
   const wroteIr = persist;
   let manifestPath: string | null = null;
   if (persist) {

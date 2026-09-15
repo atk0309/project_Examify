@@ -1,11 +1,15 @@
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { extractJsonObject } from '../json';
 import { bankIrSchema, type BankIR } from '../schema';
 import { UNTRUSTED_SOURCE_NOTE, buildOpenAiCompatibleUserContent } from './content';
 import {
+  GenerateAbortedError,
   PROVIDER_TIMEOUT_MS,
   ProviderConfigError,
-  providerTimeoutSignal,
+  isAbortError,
+  providerRequestSignal,
+  throwIfAborted,
+  withProviderSignal,
   type GenerateProvider,
   type ProviderDeps,
   type ProviderEnv,
@@ -70,21 +74,23 @@ async function generateViaHttp(
 ): Promise<BankIR> {
   const fetchFn = deps.fetch ?? fetch;
   const url = new URL('/v1/chat/completions', baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`);
-  const res = await fetchFn(url, {
-    method: 'POST',
-    signal: providerTimeoutSignal(),
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      model: request.model,
-      temperature: 0,
-      seed: request.seed,
-      response_format: { type: 'json_object' },
-      messages: [
-        { role: 'system', content: request.prompt },
-        { role: 'user', content: buildOpenAiCompatibleUserContent(request) },
-      ],
+  const res = await withProviderSignal(deps.signal, (signal) =>
+    fetchFn(url, {
+      method: 'POST',
+      signal,
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: request.model,
+        temperature: 0,
+        seed: request.seed,
+        response_format: { type: 'json_object' },
+        messages: [
+          { role: 'system', content: request.prompt },
+          { role: 'user', content: buildOpenAiCompatibleUserContent(request) },
+        ],
+      }),
     }),
-  });
+  );
   if (!res.ok) {
     throw new Error(`local endpoint returned HTTP ${res.status}`);
   }
@@ -94,12 +100,25 @@ async function generateViaHttp(
   return bankIrSchema.parse(extractJsonObject(text));
 }
 
-function generateViaCmd(request: ProviderRequest, cmdLine: string): BankIR {
+const LOCAL_CMD_MAX_BUFFER = 10 * 1024 * 1024;
+
+function cmdAbortError(userSignal?: AbortSignal): Error {
+  if (userSignal?.aborted) return new GenerateAbortedError();
+  return new Error(`local command timed out after ${PROVIDER_TIMEOUT_MS}ms`);
+}
+
+function generateViaCmd(
+  request: ProviderRequest,
+  cmdLine: string,
+  userSignal?: AbortSignal,
+): Promise<BankIR> {
   const parts = splitCommandLine(cmdLine);
   const cmd = parts[0];
   if (!cmd) {
     throw new ProviderConfigError(`${LOCAL_CMD} is empty`);
   }
+  throwIfAborted(userSignal);
+  const requestSignal = providerRequestSignal(userSignal);
   const payload = JSON.stringify({
     prompt: request.prompt,
     promptVersion: request.promptVersion,
@@ -125,23 +144,68 @@ function generateViaCmd(request: ProviderRequest, cmdLine: string): BankIR {
       dataBase64: page.bytes.toString('base64'),
     })),
   });
-  const result = spawnSync(cmd, parts.slice(1), {
-    input: payload,
-    encoding: 'utf8',
-    maxBuffer: 10 * 1024 * 1024,
-    timeout: PROVIDER_TIMEOUT_MS,
-  });
-  if (result.error) {
-    const code = (result.error as NodeJS.ErrnoException).code;
-    if (code === 'ETIMEDOUT' || result.error.message.includes('ETIMEDOUT')) {
-      throw new Error(`local command timed out after ${PROVIDER_TIMEOUT_MS}ms`);
+
+  return new Promise((resolve, reject) => {
+    let stdout = '';
+    let settled = false;
+    const finish = (error: Error | null, text?: string) => {
+      if (settled) return;
+      settled = true;
+      if (error) {
+        reject(error);
+        return;
+      }
+      try {
+        resolve(bankIrSchema.parse(extractJsonObject(text ?? '')));
+      } catch (parseError) {
+        reject(parseError instanceof Error ? parseError : new Error(String(parseError)));
+      }
+    };
+
+    let child;
+    try {
+      child = spawn(cmd, parts.slice(1), { signal: requestSignal });
+    } catch (error) {
+      if (isAbortError(error) || requestSignal.aborted) {
+        finish(cmdAbortError(userSignal));
+        return;
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      finish(new Error(`local command failed to start: ${message}`));
+      return;
     }
-    throw new Error(`local command failed to start: ${result.error.message}`);
-  }
-  if (result.status !== 0) {
-    throw new Error(`local command exited ${result.status ?? 'null'}`);
-  }
-  return bankIrSchema.parse(extractJsonObject(result.stdout));
+
+    child.stdout?.setEncoding('utf8');
+    child.stdout?.on('data', (chunk: string) => {
+      stdout += chunk;
+      if (Buffer.byteLength(stdout, 'utf8') > LOCAL_CMD_MAX_BUFFER) {
+        child.kill();
+        finish(new Error('local command exceeded maxBuffer'));
+      }
+    });
+    child.stdin?.on('error', () => {
+      // Child may exit before stdin closes (abort / early failure).
+    });
+    child.on('error', (error) => {
+      if (isAbortError(error) || requestSignal.aborted) {
+        finish(cmdAbortError(userSignal));
+        return;
+      }
+      finish(new Error(`local command failed to start: ${error.message}`));
+    });
+    child.on('close', (status) => {
+      if (requestSignal.aborted) {
+        finish(cmdAbortError(userSignal));
+        return;
+      }
+      if (status !== 0) {
+        finish(new Error(`local command exited ${status ?? 'null'}`));
+        return;
+      }
+      finish(null, stdout);
+    });
+    child.stdin?.end(payload);
+  });
 }
 
 export const localProvider: GenerateProvider = {
@@ -153,7 +217,7 @@ export const localProvider: GenerateProvider = {
   generate: async (request, deps) => {
     requireLocalReady(deps.env);
     const cmd = deps.env[LOCAL_CMD]?.trim() ?? '';
-    if (cmd) return generateViaCmd(request, cmd);
+    if (cmd) return generateViaCmd(request, cmd, deps.signal);
     const url = deps.env[LOCAL_URL]?.trim() ?? '';
     return generateViaHttp(request, deps, url);
   },

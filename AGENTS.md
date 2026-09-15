@@ -56,7 +56,9 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   reads `content/generated/` at request time so a production Apply is visible
   without rebuilding. Guide: `docs/content-authoring.md` and
   `tools/examify-ingest/README.md`. Generate writes IR only — still
-  validate → emit --dry-run → emit --apply. It never auto-applies. Cloud
+  validate → emit --dry-run → emit --apply. It never auto-applies.
+  `generateSubject` accepts optional `AbortSignal` (forwarded to provider
+  HTTP/CMD; abort throws and writes no IR). Cloud
   providers fail closed without an env key (generate also reads repo `.env` /
   `.env.local` for unset keys); `--provider test` is the CI
   fixture. OpenAI-compatible generate refuses PDF-only input when no page

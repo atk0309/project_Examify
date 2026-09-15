@@ -2,8 +2,8 @@ import { extractJsonObject } from '../json';
 import { bankIrSchema, type BankIR } from '../schema';
 import { buildOpenAiCompatibleUserContent } from './content';
 import {
-  providerTimeoutSignal,
   readRequiredKey,
+  withProviderSignal,
   type GenerateProvider,
   type ProviderDeps,
   type ProviderRequest,
@@ -15,24 +15,26 @@ const KEY = 'OPENAI_API_KEY';
 async function callOpenAi(request: ProviderRequest, deps: ProviderDeps): Promise<BankIR> {
   const key = readRequiredKey(deps.env, KEY);
   const fetchFn = deps.fetch ?? fetch;
-  const res = await fetchFn(OPENAI_URL, {
-    method: 'POST',
-    signal: providerTimeoutSignal(),
-    headers: {
-      'content-type': 'application/json',
-      authorization: `Bearer ${key}`,
-    },
-    body: JSON.stringify({
-      model: request.model,
-      temperature: 0,
-      seed: request.seed,
-      response_format: { type: 'json_object' },
-      messages: [
-        { role: 'system', content: request.prompt },
-        { role: 'user', content: buildOpenAiCompatibleUserContent(request) },
-      ],
+  const res = await withProviderSignal(deps.signal, (signal) =>
+    fetchFn(OPENAI_URL, {
+      method: 'POST',
+      signal,
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${key}`,
+      },
+      body: JSON.stringify({
+        model: request.model,
+        temperature: 0,
+        seed: request.seed,
+        response_format: { type: 'json_object' },
+        messages: [
+          { role: 'system', content: request.prompt },
+          { role: 'user', content: buildOpenAiCompatibleUserContent(request) },
+        ],
+      }),
     }),
-  });
+  );
   if (!res.ok) {
     throw new Error(`OpenAI returned HTTP ${res.status}`);
   }

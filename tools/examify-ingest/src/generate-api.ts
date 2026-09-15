@@ -32,8 +32,12 @@ export {
 } from './sources';
 export {
   getProvider,
+  GenerateAbortedError,
   PROVIDER_TIMEOUT_MS,
   ProviderConfigError,
   UNTRUSTED_SOURCE_NOTE,
+  isAbortError,
+  providerRequestSignal,
+  throwIfAborted,
   splitCommandLine,
 } from './providers';

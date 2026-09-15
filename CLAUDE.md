@@ -222,7 +222,8 @@ Automated path: author or `pnpm examify-ingest generate` a
 (or use `/onboarding` after first-run bootstrap — AI-step generate is optional,
 then the same directory emit, HITL dry-run before apply, empty tree refused).
 Generate never auto-applies; it writes IR + gitignored `.examify-ingest/`
-run/cache files only. Cloud
+run/cache files only. `generateSubject` accepts optional `AbortSignal` (forwarded
+to provider HTTP/CMD; abort throws and writes no IR). Cloud
 providers fail closed without an env key (generate also fills unset keys from
 repo `.env` / `.env.local`); `--provider test` is the CI
 fixture. OpenAI-compatible generate fails closed when the only sources are
