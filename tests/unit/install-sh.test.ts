@@ -6,8 +6,9 @@ import { describe, expect, it } from 'vitest';
 
 const SCRIPT = path.join(process.cwd(), 'install.sh');
 
-function installEnv(overrides: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+function installEnv(overrides: Record<string, string | undefined> = {}): NodeJS.ProcessEnv {
   return {
+    NODE_ENV: 'test',
     PATH: process.env.PATH,
     HOME: process.env.HOME,
     TMPDIR: process.env.TMPDIR,
@@ -33,7 +34,7 @@ describe('install.sh', () => {
     try {
       execFileSync('bash', [SCRIPT, '--write-env-only'], {
         cwd: dir,
-        env: installEnv({}),
+        env: installEnv(),
         stdio: 'pipe',
       });
       const dest = path.join(dir, '.env');
