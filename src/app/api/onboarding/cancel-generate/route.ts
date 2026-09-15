@@ -16,7 +16,8 @@ export const dynamic = 'force-dynamic';
  * happened. This route is a separate HTTP request and can land in the
  * process-local Set while generateSubject is still running.
  *
- * Provider HTTP abort is still Ingestion's parallel PR.
+ * Recording the token also aborts the in-flight AbortSignal so ingest
+ * provider HTTP/CMD stop; the wizard then discards the preview.
  */
 function isTrustedOrigin(request: Request): boolean {
   const origin = request.headers.get('origin');

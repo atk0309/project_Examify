@@ -236,8 +236,9 @@ Optional `signal?: AbortSignal` is forwarded to Anthropic / OpenAI / local HTTP
 `fetch` and to the local CMD subprocess. Abort/timeout kill the POSIX process
 group (SIGTERM, then SIGKILL); stderr is discarded so a chatty wrapper cannot
 fill the pipe and hang. The test fixture
-honors an already-aborted signal. Wizard cancel may only claim it "stops the
-network call" when it passes this signal through to `generateSubject`. Skipping
-the IR write after the provider returns is not provider abort. Abort after the
+honors an already-aborted signal. Wizard cancel passes this signal through
+`generateOnboardingSubject` so Cancel aborts provider HTTP/CMD and discards
+the preview. Skipping the IR write after the provider returns is not provider
+abort. Abort after the
 provider returns still writes no `bank.ir.json`, IR cache, page-raster cache,
 or run manifest. `--dry-run-ir` still writes nothing durable.

@@ -41,12 +41,12 @@ Surface:
   only and never auto-applies.
   Cancel POSTs `/api/onboarding/cancel-generate` (a Route Handler, not a
   queued Server Action) so the token can land while generate is in flight,
-  then skips the IR write (provider abort is a parallel Ingestion PR); the
-  preview is discarded and prior IR is unchanged. The wizard waits for an
+  then aborts provider HTTP/CMD via AbortSignal and discards the preview
+  (no IR write; prior IR unchanged). The wizard waits for an
   `ok` cancel response before claiming cancelled; a failed POST is an error,
   not a calm cancel. Cancel after that token already wrote IR returns
   `already_committed` (not cancelled). An acknowledged cancel unlocks
-  skip / Back / rail even if the unaborted provider is still pending.
+  skip / Back / rail even if the provider is still unwinding.
   User-initiated cancel is a calm status, not an error toast.
   Generate is gated to wizard catalog subjects (`listOnboardingSubjects`).
   Delete/rename wait on the generate lock. A post-provider catalog
@@ -86,8 +86,8 @@ Surface:
 - **`/api/health`** — lightweight platform healthcheck.
 - **`/api/onboarding/cancel-generate`** — POST; household-admin generate
   cancel. A Route Handler so the token is not queued behind the in-flight
-  generate Server Action. Same-origin + session; does not abort the provider
-  (Ingestion’s parallel PR).
+  generate Server Action. Same-origin + session; aborts the in-flight
+  AbortSignal so provider HTTP/CMD stop, then discards the preview.
 - **`/robots.txt`** — disallow-all (this is a private, allowlisted app).
 
 There is **no blog, no MDX, no admin panel, no public marketing page** — the first screen

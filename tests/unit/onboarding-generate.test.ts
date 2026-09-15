@@ -121,7 +121,10 @@ describe('onboarding generate graph', () => {
     expect(generate).toMatch(/from 'examify-ingest\/generate'/);
     expect(generate).toMatch(/generateSubject/);
     expect(generate).toMatch(/dryRunIr: true/);
-    expect(generate).not.toMatch(/signal: /);
+    expect(generate).toMatch(/signal: controller\.signal/);
+    expect(generate).toMatch(/abortControllers\.get\(token\)\?\.abort\(\)/);
+    expect(generate).toMatch(/GenerateAbortedError/);
+    expect(generate).toMatch(/dropGenerateAbort\(token\)/);
     expect(generate).toMatch(/const MAX_CANCEL_TOKENS = 64/);
     expect(generate).toMatch(/oldest token[\s\S]*evicted \(FIFO\)/);
     expect(generate).not.toMatch(/applyEmit|planEmit|applyOnboardingEmit/);
@@ -391,7 +394,8 @@ describe('generateOnboardingSubject', () => {
     const actual = ingest.generateSubject;
     const spy = vi.spyOn(ingest, 'generateSubject').mockImplementation(async (request) => {
       expect(request.dryRunIr).toBe(true);
-      expect(request).not.toHaveProperty('signal');
+      expect(request.signal).toBeInstanceOf(AbortSignal);
+      expect(request.signal?.aborted).toBe(false);
       const generated = await actual(request);
       requestOnboardingGenerateCancel(token);
       return generated;
@@ -549,6 +553,89 @@ describe('generateOnboardingSubject', () => {
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected cancelled');
     expect(result.reason).toBe('cancelled');
+    expect(readFileSync(irPath, 'utf8')).toBe(prior);
+  });
+
+  it('aborts the in-flight generateSubject signal and does not write IR', async () => {
+    const ingest = await import('examify-ingest/generate');
+    const { generateOnboardingSubject, requestOnboardingGenerateCancel } =
+      await import('@/lib/onboarding-generate');
+    const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
+    const root = tempRoot();
+    seedSubject(root);
+    setOnboardingContentRootForTests(root);
+    const irPath = path.join(root, 'content/subjects/history/bank.ir.json');
+    const prior = readFileSync(irPath, 'utf8');
+    const writeSpy = vi.spyOn(ingest, 'writeFileAtomic');
+    let seenSignal: AbortSignal | undefined;
+    vi.spyOn(ingest, 'generateSubject').mockImplementation(async (request) => {
+      seenSignal = request.signal;
+      expect(request.signal).toBeInstanceOf(AbortSignal);
+      await new Promise<never>((_resolve, reject) => {
+        if (request.signal?.aborted) {
+          reject(new ingest.GenerateAbortedError());
+          return;
+        }
+        request.signal?.addEventListener(
+          'abort',
+          () => {
+            reject(new ingest.GenerateAbortedError());
+          },
+          { once: true },
+        );
+      });
+    });
+
+    const token = 'cancel-token-01';
+    const pending = generateOnboardingSubject({
+      subjectId: 'history',
+      provider: 'test',
+      seed: 0,
+      root,
+      cancelToken: token,
+    });
+    await vi.waitFor(() => {
+      expect(seenSignal).toBeInstanceOf(AbortSignal);
+    });
+    expect(seenSignal?.aborted).toBe(false);
+    expect(requestOnboardingGenerateCancel(token)).toBe(true);
+    expect(seenSignal?.aborted).toBe(true);
+    const result = await pending;
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected cancelled');
+    expect(result.reason).toBe('cancelled');
+    expect(result.message).toBe('Generate cancelled.');
+    expect(writeSpy).not.toHaveBeenCalled();
+    expect(readFileSync(irPath, 'utf8')).toBe(prior);
+  });
+
+  it('maps GenerateAbortedError to cancelled, not invalid', async () => {
+    const ingest = await import('examify-ingest/generate');
+    const { generateOnboardingSubject } = await import('@/lib/onboarding-generate');
+    const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
+    const root = tempRoot();
+    seedSubject(root);
+    setOnboardingContentRootForTests(root);
+    const irPath = path.join(root, 'content/subjects/history/bank.ir.json');
+    const prior = readFileSync(irPath, 'utf8');
+    const writeSpy = vi.spyOn(ingest, 'writeFileAtomic');
+    vi.spyOn(ingest, 'generateSubject').mockRejectedValue(
+      new ingest.GenerateAbortedError('raw abort internals'),
+    );
+
+    const result = await generateOnboardingSubject({
+      subjectId: 'history',
+      provider: 'test',
+      seed: 0,
+      root,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected cancelled');
+    expect(result.reason).toBe('cancelled');
+    expect(result.reason).not.toBe('invalid');
+    expect(result.message).toBe('Generate cancelled.');
+    expect(result.message).not.toMatch(/raw abort|generate aborted/i);
+    expect(writeSpy).not.toHaveBeenCalled();
     expect(readFileSync(irPath, 'utf8')).toBe(prior);
   });
 
