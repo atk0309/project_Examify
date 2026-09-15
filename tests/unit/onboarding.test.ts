@@ -498,6 +498,31 @@ describe('onboarding household gate', () => {
     );
   });
 
+  it('marks finish eligibility on apply and clears it on catalog invalidation', async () => {
+    const { bootstrapHousehold } = await import('@/lib/households');
+    const {
+      getHouseholdOnboarding,
+      invalidateOnboardingEmit,
+      markOnboardingApplied,
+      saveOnboardingState,
+    } = await import('@/lib/onboarding');
+    const host = bootstrapHousehold({ email: 'pat@example.com', householdName: 'Ours' });
+    expect(host.ok).toBe(true);
+    if (!host.ok) throw new Error('bootstrap');
+
+    saveOnboardingState(host.householdId, { dryRunHash: 'abc123' });
+    markOnboardingApplied(host.householdId);
+    let state = getHouseholdOnboarding(host.householdId).state;
+    expect(state.applied).toBe(true);
+    expect(state.dryRunHash).toBeUndefined();
+
+    saveOnboardingState(host.householdId, { dryRunHash: 'stale' });
+    invalidateOnboardingEmit(host.householdId);
+    state = getHouseholdOnboarding(host.householdId).state;
+    expect(state.applied).toBe(false);
+    expect(state.dryRunHash).toBeUndefined();
+  });
+
   it('never auto-starts invited parents or students', async () => {
     const { bootstrapHousehold } = await import('@/lib/households');
     const { adminShouldAutoStartOnboarding, getOnboardingForUser } =
