@@ -153,7 +153,9 @@ function PasswordInviteForm({
       ) : (
         <p className="login-fine">
           {MailIcon.lock}
-          Treat this link like a password — anyone who has it can join if they know the email.
+          {lockedEmail
+            ? 'This link is a secret. Joining requires typing the locked email — that is not mailbox proof.'
+            : 'This is an open invite. Anyone who has this link can join.'}
         </p>
       )}
     </form>

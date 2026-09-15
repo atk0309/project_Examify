@@ -63,3 +63,7 @@ the link is sharing household access.
 - In `magic-link` / `local-otp` modes, accept still sends a mailbox challenge, so
   the invite URL alone is not enough to join. Password mode has no mailbox proof
   at accept time — that is the difference.
+- **Open follow-up:** full mailbox verification on password-mode invite accept is
+  still outstanding (the #58 Major: `emailVerifiedAt` is set without mailbox
+  proof). This section acknowledges the bearer-token risk; it does not close
+  that issue. Do not treat this documentation as a fix for that accept path.

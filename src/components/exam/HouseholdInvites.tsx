@@ -25,12 +25,14 @@ export function HouseholdInvites({
   const [email, setEmail] = useState('');
   const [createdUrl, setCreatedUrl] = useState<string | null>(null);
   const [createdId, setCreatedId] = useState<number | null>(null);
+  const [createdLocked, setCreatedLocked] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
   const onCreate = (formData: FormData) => {
     setError(null);
     setCopied(false);
+    const locked = EMAIL_RE.test(String(formData.get('email') ?? '').trim());
     startTransition(async () => {
       const result = await createInvite(formData);
       if (!result.ok) {
@@ -45,6 +47,7 @@ export function HouseholdInvites({
       }
       setCreatedUrl(result.url);
       setCreatedId(result.id);
+      setCreatedLocked(locked);
       setEmail('');
       router.refresh();
     });
@@ -67,6 +70,7 @@ export function HouseholdInvites({
       if (createdId === inviteId) {
         setCreatedUrl(null);
         setCreatedId(null);
+        setCreatedLocked(false);
         setCopied(false);
       }
       router.refresh();
@@ -113,7 +117,7 @@ export function HouseholdInvites({
       </p>
       <p className="subtitle">
         {authMode === 'password'
-          ? 'Treat the invite link like a password. Anyone who has it can join — locking it to an email is not mailbox proof. Prefer an email lock (required for parents) and never post the URL publicly.'
+          ? 'Treat the invite link as a secret and do not post it publicly. An email lock only matches the address someone types — it is not mailbox proof. An open student link lets anyone with the URL pick an email and join. Prefer locking the address (required for parents).'
           : 'Share the invite link privately. Do not post it publicly.'}
       </p>
 
@@ -180,7 +184,9 @@ export function HouseholdInvites({
           </button>
           <p className="invite-meta">
             {authMode === 'password'
-              ? 'Anyone with this URL can join. Share it only with the person you mean to invite.'
+              ? createdLocked
+                ? 'This link is a secret. Anyone who has it can join if they type the locked email — that is not mailbox proof. Do not post it publicly.'
+                : 'This is an open link: anyone who has it can pick an email and join. Treat it as a secret and do not post it publicly.'
               : 'Share this only with the person you mean to invite.'}
           </p>
         </div>

@@ -225,7 +225,8 @@ These are non-negotiable. Don't "fix" them out.
   to whoever has the URL. Email-lock only matches the typed address; it does not
   prove mailbox ownership (unlike magic-link / local-otp accept). Treat invite URLs
   like passwords; parent invites stay email-locked; do not post links publicly.
-  The create/accept UI surfaces this. See `SECURITY.md`.
+  The create/accept UI surfaces this. Full mailbox verification on password-mode
+  accept remains an open follow-up. See `SECURITY.md`.
 - **No enumeration.** Challenge modes (`magic-link`, `local-otp`): `requestMagicLink`
   always returns the generic `sent` state once Turnstile (when enabled) + rate-limit
   pass; it only issues a link/code when the email is a household member for that
