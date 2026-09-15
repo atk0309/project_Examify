@@ -142,6 +142,43 @@ describe('parseEnv production fail-closed', () => {
     expect(() => parseEnv({ ...prodBase, MAIL_TRANSPORT: 'resend' })).toThrow(
       /Invalid environment variables/,
     );
+    expect(() =>
+      parseEnv({ ...prodBase, MAIL_TRANSPORT: 'resend', RESEND_API_KEY: 'test' }),
+    ).toThrow(/Invalid environment variables/);
+    expect(
+      parseEnv({
+        ...prodBase,
+        MAIL_TRANSPORT: 'resend',
+        RESEND_API_KEY: 're_live_xxx',
+        RESEND_FROM: 'Examify <examify@example.com>',
+      }).MAIL_TRANSPORT,
+    ).toBe('resend');
+  });
+
+  it('does not require SMTP_FROM for resend/outbox when SMTP_HOST is leftover', () => {
+    expect(
+      parseEnv({
+        ...prodBase,
+        MAIL_TRANSPORT: 'resend',
+        RESEND_API_KEY: 're_live_xxx',
+        RESEND_FROM: 'Examify <examify@example.com>',
+        SMTP_HOST: 'smtp.example.com',
+      }).SMTP_FROM,
+    ).toBeUndefined();
+    expect(
+      parseEnv({
+        ...prodBase,
+        MAIL_TRANSPORT: 'outbox',
+        ALLOW_LOCAL_OUTBOX: '1',
+        SMTP_HOST: 'smtp.example.com',
+      }).SMTP_HOST,
+    ).toBe('smtp.example.com');
+  });
+
+  it('requires SMTP_FROM when MAIL_TRANSPORT=auto and SMTP_HOST is set', () => {
+    expect(() =>
+      parseEnv({ ...prodBase, MAIL_TRANSPORT: 'auto', SMTP_HOST: 'smtp.example.com' }),
+    ).toThrow(/Invalid environment variables/);
   });
 
   it('accepts leftover FAMILIES that includes a standalone child (import skips it)', () => {

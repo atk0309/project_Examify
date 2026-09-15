@@ -11,6 +11,8 @@ export type SmtpConfig = {
   user?: string;
   pass?: string;
   from: string;
+  /** Allow AUTH/DATA on a connection that never upgraded to TLS. */
+  allowInsecure?: boolean;
 };
 
 type SmtpSocket = net.Socket | tls.TLSSocket;
@@ -61,33 +63,61 @@ function buildMime(options: {
 
 function connect(config: SmtpConfig): Promise<SmtpSocket> {
   return new Promise((resolve, reject) => {
-    const onError = (error: Error) => reject(error);
-    if (config.secure) {
-      const socket = tls.connect(
-        { host: config.host, port: config.port, servername: config.host },
-        () => {
+    let settled = false;
+    const settle = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      fn();
+    };
+    const socket = config.secure
+      ? tls.connect({ host: config.host, port: config.port, servername: config.host }, () => {
           socket.off('error', onError);
-          resolve(socket);
-        },
-      );
-      socket.setTimeout(SMTP_TIMEOUT_MS);
-      socket.once('error', onError);
-      return;
-    }
-    const socket = net.connect({ host: config.host, port: config.port }, () => {
-      socket.off('error', onError);
-      resolve(socket);
-    });
+          socket.off('timeout', onTimeout);
+          settle(() => resolve(socket));
+        })
+      : net.connect({ host: config.host, port: config.port }, () => {
+          socket.off('error', onError);
+          socket.off('timeout', onTimeout);
+          settle(() => resolve(socket));
+        });
+    const onTimeout = () => {
+      socket.destroy();
+      settle(() => reject(new Error('SMTP connect timeout')));
+    };
+    const onError = (error: Error) => {
+      socket.destroy();
+      settle(() => reject(error));
+    };
     socket.setTimeout(SMTP_TIMEOUT_MS);
+    socket.once('timeout', onTimeout);
     socket.once('error', onError);
   });
 }
 
 function upgradeToTls(socket: SmtpSocket, host: string): Promise<tls.TLSSocket> {
   return new Promise((resolve, reject) => {
-    const upgraded = tls.connect({ socket, servername: host }, () => resolve(upgraded));
+    let settled = false;
+    const settle = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      fn();
+    };
+    const upgraded = tls.connect({ socket, servername: host }, () => {
+      upgraded.off('error', onError);
+      upgraded.off('timeout', onTimeout);
+      settle(() => resolve(upgraded));
+    });
+    const onTimeout = () => {
+      upgraded.destroy();
+      settle(() => reject(new Error('SMTP TLS timeout')));
+    };
+    const onError = (error: Error) => {
+      upgraded.destroy();
+      settle(() => reject(error));
+    };
     upgraded.setTimeout(SMTP_TIMEOUT_MS);
-    upgraded.once('error', reject);
+    upgraded.once('timeout', onTimeout);
+    upgraded.once('error', onError);
   });
 }
 
@@ -195,9 +225,16 @@ export async function sendSmtp(
 
     const ehlo = await session.command(`EHLO examify`, 250);
     const capabilities = ehlo.lines.map((line) => line.toUpperCase());
-    if (!config.secure && capabilities.some((line) => line.startsWith('STARTTLS'))) {
+    let encrypted = config.secure;
+    if (!encrypted && capabilities.some((line) => line.startsWith('STARTTLS'))) {
       await session.startTls(config.host);
+      encrypted = true;
       await session.command(`EHLO examify`, 250);
+    }
+    if (!encrypted && !config.allowInsecure) {
+      throw new Error(
+        'Refusing unencrypted SMTP. Enable STARTTLS or SMTP_SECURE, or set SMTP_ALLOW_INSECURE=1.',
+      );
     }
 
     if (config.user) {

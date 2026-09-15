@@ -9,7 +9,8 @@ import {
 import { requestInviteLink, type RequestInviteLinkState } from '@/actions/requestInviteLink';
 import { verifyLocalOtp, type VerifyLocalOtpState } from '@/actions/verifyLocalOtp';
 import type { AuthMode } from '@/lib/auth-mode';
-import { PASSWORD_MIN_LENGTH } from '@/lib/password-policy';
+import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from '@/lib/password-policy';
+import { ExplicitTurnstile } from './ExplicitTurnstile';
 import { MailIcon, RoleIcon } from './icons';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -92,7 +93,10 @@ function PasswordInviteForm({
   );
   const [email, setEmail] = useState(lockedEmail ?? '');
   const [password, setPassword] = useState('');
-  const valid = EMAIL_RE.test(email.trim()) && password.length >= PASSWORD_MIN_LENGTH;
+  const valid =
+    EMAIL_RE.test(email.trim()) &&
+    password.length >= PASSWORD_MIN_LENGTH &&
+    password.length <= PASSWORD_MAX_LENGTH;
 
   return (
     <form className="screen login" action={formAction} data-testid="invite-form">
@@ -118,6 +122,7 @@ function PasswordInviteForm({
           autoComplete="new-password"
           required
           minLength={PASSWORD_MIN_LENGTH}
+          maxLength={PASSWORD_MAX_LENGTH}
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           data-testid="invite-password-input"
@@ -220,14 +225,7 @@ function ChallengeInviteForm({
           </div>
           <input type="hidden" name="email" value={state.email} />
           <input type="hidden" name="role" value={role} />
-          {siteKey ? (
-            <div
-              className="cf-turnstile"
-              data-sitekey={siteKey}
-              data-theme="auto"
-              data-testid="turnstile"
-            />
-          ) : null}
+          {siteKey ? <ExplicitTurnstile siteKey={siteKey} /> : null}
           <button
             className="btn btn-primary"
             type="submit"

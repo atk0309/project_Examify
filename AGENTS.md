@@ -80,8 +80,11 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   `magic-link`). `install.sh` writes it. Password needs no mail; magic-link /
   local-otp use `MAIL_TRANSPORT` (`auto` / `resend` / `smtp` / `outbox`).
   Production `local-otp` or explicit `outbox` requires `ALLOW_LOCAL_OUTBOX=1`.
-  Household membership remains the privacy boundary; every mode issues the same
-  session shape.
+  SMTP AUTH/DATA requires TLS (STARTTLS or `SMTP_SECURE`) unless
+  `SMTP_ALLOW_INSECURE=1`. `SMTP_FROM` is required only when SMTP is the
+  active transport. Household membership remains the privacy boundary; every
+  mode issues the same session shape. Local OTP locks a challenge after 5
+  well-formed wrong guesses.
 
 ## Workflow expectations
 

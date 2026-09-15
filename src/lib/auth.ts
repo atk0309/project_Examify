@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { getIronSession, type SessionOptions } from 'iron-session';
-import { and, eq, gte, isNull } from 'drizzle-orm';
+import { and, eq, gte, isNull, ne } from 'drizzle-orm';
 import { db, schema } from './db';
 import { env, isProd } from './env';
 import { verifyPasswordOrDummy } from './password';
@@ -112,27 +112,41 @@ export async function issueMagicLink(
 }
 
 const OTP_TTL_MS = TOKEN_TTL_MS;
+/** Well-formed wrong guesses per email+role before the challenge is consumed. */
+export const OTP_GUESS_MAX = 5;
+const OTP_ISSUE_HASH_ATTEMPTS = 8;
 
 function otpBearer(email: string, role: SessionRole, code: string): string {
   return `otp:${email}:${role}:${code}`;
 }
 
-/** Cryptographically random 6-digit code (000000–999999). */
-export function generateOtpCode(): string {
-  return crypto.randomInt(0, 1_000_000).toString().padStart(6, '0');
+function otpGuessBucket(email: string, role: SessionRole): string {
+  return `otp:${email}:${role}`;
 }
 
-/**
- * Issue a local OTP. Previous unused codes for this email+role are marked
- * consumed so only the latest code works. The bearer stored hashed is
- * `otp:{email}:{role}:{code}` so codes do not collide across users.
- */
-export function issueLocalOtp(
-  email: string,
-  role: SessionRole,
-  opts?: { inviteId?: number },
-): { code: string; expiresAt: Date } {
-  const now = Date.now();
+function isUniqueConstraintError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const code = 'code' in error ? String(error.code) : '';
+  const message = 'message' in error ? String(error.message) : '';
+  return code.includes('CONSTRAINT') || /UNIQUE constraint failed/i.test(message);
+}
+
+function countOtpGuessFailures(email: string, role: SessionRole, now: number): number {
+  const windowStart = now - OTP_TTL_MS;
+  return db
+    .select({ id: schema.rateLimitEvents.id })
+    .from(schema.rateLimitEvents)
+    .where(
+      and(
+        eq(schema.rateLimitEvents.ip, otpGuessBucket(email, role)),
+        eq(schema.rateLimitEvents.kind, 'signin'),
+        gte(schema.rateLimitEvents.createdAt, new Date(windowStart)),
+      ),
+    )
+    .all().length;
+}
+
+function consumeOutstandingOtps(email: string, role: SessionRole, now: number): void {
   db.update(schema.magicTokens)
     .set({ consumedAt: new Date(now) })
     .where(
@@ -143,14 +157,85 @@ export function issueLocalOtp(
       ),
     )
     .run();
+}
 
-  const code = generateOtpCode();
-  const tokenHash = sha256(otpBearer(email, role, code));
-  const expiresAt = new Date(now + OTP_TTL_MS);
-  db.insert(schema.magicTokens)
-    .values({ email, role, tokenHash, expiresAt, inviteId: opts?.inviteId })
+function recordOtpGuessFailure(email: string, role: SessionRole, now: number): void {
+  db.insert(schema.rateLimitEvents)
+    .values({
+      ip: otpGuessBucket(email, role),
+      kind: 'signin',
+      createdAt: new Date(now),
+    })
     .run();
-  return { code, expiresAt };
+  if (countOtpGuessFailures(email, role, now) >= OTP_GUESS_MAX) {
+    consumeOutstandingOtps(email, role, now);
+  }
+}
+
+/** Cryptographically random 6-digit code (000000–999999). */
+export function generateOtpCode(): string {
+  return crypto.randomInt(0, 1_000_000).toString().padStart(6, '0');
+}
+
+/**
+ * Issue a local OTP. Previous unused codes for this email+role are marked
+ * consumed so only the latest code works. Insert + revoke run in one
+ * transaction; a unique-hash collision retries, and if every attempt fails
+ * the rollback leaves the previous unused code intact.
+ */
+export function issueLocalOtp(
+  email: string,
+  role: SessionRole,
+  opts?: { inviteId?: number },
+): { code: string; expiresAt: Date } {
+  const now = Date.now();
+  const expiresAt = new Date(now + OTP_TTL_MS);
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < OTP_ISSUE_HASH_ATTEMPTS; attempt++) {
+    const code = generateOtpCode();
+    const tokenHash = sha256(otpBearer(email, role, code));
+    try {
+      // One transaction per attempt: a unique-hash failure rolls back so
+      // the previous unused code stays valid. SQLite cannot retry inserts
+      // after a constraint error in the same transaction.
+      return db.transaction((tx) => {
+        const inserted = tx
+          .insert(schema.magicTokens)
+          .values({ email, role, tokenHash, expiresAt, inviteId: opts?.inviteId })
+          .returning({ id: schema.magicTokens.id })
+          .get();
+        if (!inserted) throw new Error('failed to issue OTP');
+
+        tx.update(schema.magicTokens)
+          .set({ consumedAt: new Date(now) })
+          .where(
+            and(
+              eq(schema.magicTokens.email, email),
+              eq(schema.magicTokens.role, role),
+              isNull(schema.magicTokens.consumedAt),
+              ne(schema.magicTokens.id, inserted.id),
+            ),
+          )
+          .run();
+
+        tx.delete(schema.rateLimitEvents)
+          .where(
+            and(
+              eq(schema.rateLimitEvents.ip, otpGuessBucket(email, role)),
+              eq(schema.rateLimitEvents.kind, 'signin'),
+            ),
+          )
+          .run();
+
+        return { code, expiresAt };
+      });
+    } catch (error) {
+      lastError = error;
+      if (!isUniqueConstraintError(error)) throw error;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('failed to issue OTP');
 }
 
 export function consumeLocalOtp(email: string, role: SessionRole, code: string): ConsumeResult {
@@ -159,7 +244,19 @@ export function consumeLocalOtp(email: string, role: SessionRole, code: string):
     consumeMagicToken(`otp:${email}:${role}:invalid`);
     return { ok: false, reason: 'not-found' };
   }
-  return consumeMagicToken(otpBearer(email, role, trimmed));
+
+  const now = Date.now();
+  if (countOtpGuessFailures(email, role, now) >= OTP_GUESS_MAX) {
+    consumeOutstandingOtps(email, role, now);
+    consumeMagicToken(otpBearer(email, role, trimmed));
+    return { ok: false, reason: 'not-found' };
+  }
+
+  const result = consumeMagicToken(otpBearer(email, role, trimmed));
+  if (!result.ok) {
+    recordOtpGuessFailure(email, role, now);
+  }
+  return result;
 }
 
 /**

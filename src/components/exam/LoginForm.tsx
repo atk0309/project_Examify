@@ -12,6 +12,8 @@ import { requestMagicLink, type RequestMagicLinkState } from '@/actions/requestM
 import { signInWithPassword, type SignInPasswordState } from '@/actions/signInWithPassword';
 import { verifyLocalOtp, type VerifyLocalOtpState } from '@/actions/verifyLocalOtp';
 import type { AuthMode } from '@/lib/auth-mode';
+import { PASSWORD_MAX_LENGTH } from '@/lib/password-policy';
+import { ExplicitTurnstile } from './ExplicitTurnstile';
 import { MailIcon, RoleIcon } from './icons';
 
 type Role = 'student' | 'parent';
@@ -100,7 +102,8 @@ function PasswordLoginForm({ siteKey }: { siteKey?: string }) {
   const [role, setRole] = useState<Role>('student');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const valid = EMAIL_RE.test(email.trim()) && password.length > 0;
+  const valid =
+    EMAIL_RE.test(email.trim()) && password.length > 0 && password.length <= PASSWORD_MAX_LENGTH;
 
   return (
     <form className="screen login" action={formAction} data-testid="signin-form">
@@ -152,6 +155,7 @@ function PasswordLoginForm({ siteKey }: { siteKey?: string }) {
           type="password"
           autoComplete="current-password"
           required
+          maxLength={PASSWORD_MAX_LENGTH}
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           data-testid="password-input"
@@ -256,7 +260,7 @@ function ChallengeLoginForm({
           </div>
           <input type="hidden" name="email" value={state.email} />
           <input type="hidden" name="role" value={role} />
-          <Turnstile siteKey={siteKey} />
+          {siteKey ? <ExplicitTurnstile siteKey={siteKey} /> : null}
           <button
             className="btn btn-primary"
             type="submit"

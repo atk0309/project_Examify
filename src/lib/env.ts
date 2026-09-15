@@ -103,8 +103,9 @@ function buildEnvSchema(isProd: boolean) {
       RESEND_API_KEY: z.preprocess(emptyToUndef, z.string().min(1).optional()),
       RESEND_FROM: z.preprocess(emptyToUndef, z.string().min(1).optional()),
 
-      // User-configured SMTP (magic-link / OTP). Used when MAIL_TRANSPORT is
-      // `smtp`, or `auto` and SMTP_HOST is set. SMTP_FROM is required then.
+      // User-configured SMTP (magic-link / OTP). SMTP_FROM is required when
+      // MAIL_TRANSPORT is `smtp`, or `auto` and SMTP_HOST is set. A leftover
+      // SMTP_HOST is ignored for resend/outbox and does not require FROM.
       SMTP_HOST: z.preprocess(emptyToUndef, z.string().min(1).optional()),
       SMTP_PORT: z.preprocess(emptyToUndef, z.coerce.number().int().min(1).max(65535).optional()),
       SMTP_SECURE: z.preprocess((v) => {
@@ -118,6 +119,15 @@ function buildEnvSchema(isProd: boolean) {
       SMTP_USER: z.preprocess(emptyToUndef, z.string().min(1).optional()),
       SMTP_PASS: z.preprocess(emptyToUndef, z.string().min(1).optional()),
       SMTP_FROM: z.preprocess(emptyToUndef, z.string().min(1).optional()),
+      // Opt-in for AUTH/DATA on a connection that never upgraded to TLS.
+      SMTP_ALLOW_INSECURE: z.preprocess((v) => {
+        if (v === undefined) return undefined;
+        if (typeof v !== 'string') return v;
+        const t = v.trim().toLowerCase();
+        if (t === '1' || t === 'true') return true;
+        if (t === '' || t === '0' || t === 'false') return false;
+        return v;
+      }, z.boolean().optional()),
 
       // Optional override for the local mail outbox directory (writer + test
       // readers share this). Unset keeps the existing defaults.
@@ -199,11 +209,13 @@ function buildEnvSchema(isProd: boolean) {
           path: ['SMTP_HOST'],
         });
       }
-      const smtpActive = data.MAIL_TRANSPORT === 'smtp' || Boolean(data.SMTP_HOST);
+      const smtpActive =
+        data.MAIL_TRANSPORT === 'smtp' ||
+        (data.MAIL_TRANSPORT === 'auto' && Boolean(data.SMTP_HOST));
       if (smtpActive && !data.SMTP_FROM) {
         ctx.addIssue({
           code: 'custom',
-          message: 'SMTP_FROM is required when SMTP is configured.',
+          message: 'SMTP_FROM is required when SMTP is the active mail transport.',
           path: ['SMTP_FROM'],
         });
       }

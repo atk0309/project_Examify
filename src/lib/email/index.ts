@@ -99,6 +99,7 @@ export async function sendEmail(options: {
         user: env.SMTP_USER,
         pass: env.SMTP_PASS,
         from: env.SMTP_FROM,
+        allowInsecure: env.SMTP_ALLOW_INSECURE === true,
       },
       options,
     );

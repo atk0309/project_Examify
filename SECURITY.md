@@ -25,7 +25,12 @@ get an initial response within a week.
   rather than falling back to dev defaults. Resend and Turnstile are optional.
 - Magic-link tokens, local OTPs, and invite tokens are stored hashed, are single-use,
   and expire (15 minutes for links/OTPs, 7 days for invites); sign-in is rate-limited
-  per IP. Passwords are stored as scrypt hashes (`users.password_hash`). Cloudflare
+  per IP. Local OTP also locks a challenge after 5 well-formed wrong 6-digit
+  guesses (recorded in `rate_limit_events` under `otp:{email}:{role}`).
+  Passwords are stored as scrypt hashes (`users.password_hash`); `/setup`
+  hashes only after captcha, rate-limit, and the setup secret pass.
+  SMTP AUTH/DATA is refused on a connection that never upgraded to TLS
+  unless `SMTP_ALLOW_INSECURE=1`. Cloudflare
   Turnstile is verified on the server when keys are set.
 - **Do not write magic-link bearer tokens or OTP codes to disk in production
   unless you opt in.** Unset Resend / `RESEND_API_KEY=test` uses a local outbox

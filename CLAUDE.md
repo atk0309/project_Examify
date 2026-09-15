@@ -54,7 +54,7 @@ grouped weekly Dependabot PRs in `.github/dependabot.yml`.
 
 | Layer       | Choice                                                                                            |
 | ----------- | ------------------------------------------------------------------------------------------------- |
-| Runtime     | Node 22.22.2+ LTS (`engines`, `.nvmrc`), pnpm 10                                                  |
+| Runtime     | Node 22 LTS (`>=22.22.2 <23`, `.nvmrc`), pnpm 10                                                  |
 | Framework   | Next.js 16 (App Router, Turbopack), React 19.2, TypeScript 6 strict                               |
 | Styling     | Tailwind v4 with a CSS-first `@theme` token block, three `data-theme` moods                       |
 | DB          | SQLite on runtime-mounted storage, accessed through Drizzle + better-sqlite3                      |
@@ -226,6 +226,12 @@ These are non-negotiable. Don't "fix" them out.
   `signin` bucket (10/IP/hour by default) for every request, regardless of whether a user
   row exists — a per-state threshold would leak whether an email is a returning/approved
   user even behind the generic "sent" copy. Don't split it back into signup/login.
+  Local OTP also records well-formed wrong 6-digit guesses under a synthetic
+  `ip` of `otp:{email}:{role}` (same table, no migration). After 5 failures the
+  outstanding challenge is consumed. Non-6-digit input does not count.
+- `/setup` (`bootstrapHouseholdAction`) may do the cheap password-policy check
+  early, but `hashPassword` (scrypt) runs only after Turnstile, the sign-in
+  rate-limit, and `SETUP_BOOTSTRAP_SECRET` all pass.
 - Magic-link tokens are stored **hashed** at rest (`sha256`), single-use (a `consumed_at`
   timestamp marks them spent inside the same transaction that resolves the user), and 15
   minutes long. The token carries the **role** so verify can set `session.role` without
@@ -371,11 +377,17 @@ Required in production: `SITE_URL`, `AUTH_SECRET`, `DATABASE_URL`, `ANTHROPIC_AP
 keep working). `password` needs no mail. `local-otp` in production requires
 `ALLOW_LOCAL_OUTBOX=1`. `MAIL_TRANSPORT` is `auto` (SMTP if `SMTP_HOST`, else
 Resend if a real key, else outbox). Explicit `MAIL_TRANSPORT=smtp` needs
-`SMTP_HOST` + `SMTP_FROM`; `resend` needs a real key + `RESEND_FROM`; `outbox`
+`SMTP_HOST` + `SMTP_FROM`; `auto` + `SMTP_HOST` also needs `SMTP_FROM`. A
+leftover `SMTP_HOST` does not fail `resend` / `outbox`. SMTP AUTH/DATA on a
+connection that never upgraded to TLS is refused unless `SMTP_ALLOW_INSECURE=1`.
+`resend` needs a real key + `RESEND_FROM`; `outbox`
 in production needs `ALLOW_LOCAL_OUTBOX=1`. Production with no real mail
 transport does not write bearer tokens to `data/outbox` unless
 `ALLOW_LOCAL_OUTBOX=1`. Turnstile keys are optional (both unset →
 captcha off; exactly one key in production crashes boot).
+The OTP step after a `sent` screen mounts Turnstile with an explicit
+`turnstile.render()` (`ExplicitTurnstile`) because the implicit scanner
+already ran on the first form.
 `ANTHROPIC_API_KEY` still fails closed in prod when missing; the `test` sentinel
 routes the grader to a deterministic stub. See `.env.example` for the canonical list.
 

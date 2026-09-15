@@ -146,6 +146,57 @@ describe('local-otp auth', () => {
     expect(sessionHolder.current.save).not.toHaveBeenCalled();
   });
 
+  it('consumes the challenge after five well-formed wrong guesses', async () => {
+    await seedParent();
+    const { requestMagicLink } = await import('@/actions/requestMagicLink');
+    const { verifyLocalOtp } = await import('@/actions/verifyLocalOtp');
+    const { OTP_GUESS_MAX } = await import('@/lib/auth');
+    await requestMagicLink({ status: 'idle' }, requestForm('pat@example.com'));
+    const code = await latestCode();
+    for (let i = 0; i < OTP_GUESS_MAX; i++) {
+      const guess = String(i).padStart(6, '0');
+      const wrong = guess === code ? '999999' : guess;
+      const state = await verifyLocalOtp({ status: 'idle' }, otpForm('pat@example.com', wrong));
+      expect(state).toEqual({ status: 'error', reason: 'invalid' });
+    }
+    await expect(
+      verifyLocalOtp({ status: 'idle' }, otpForm('pat@example.com', code)),
+    ).resolves.toEqual({ status: 'error', reason: 'invalid' });
+    expect(sessionHolder.current.save).not.toHaveBeenCalled();
+  });
+
+  it('does not count a non-six-digit guess toward the lock', async () => {
+    await seedParent();
+    const { requestMagicLink } = await import('@/actions/requestMagicLink');
+    const { verifyLocalOtp } = await import('@/actions/verifyLocalOtp');
+    const { OTP_GUESS_MAX } = await import('@/lib/auth');
+    await requestMagicLink({ status: 'idle' }, requestForm('pat@example.com'));
+    const code = await latestCode();
+    for (let i = 0; i < OTP_GUESS_MAX; i++) {
+      const state = await verifyLocalOtp({ status: 'idle' }, otpForm('pat@example.com', 'abc'));
+      expect(state).toEqual({ status: 'error', reason: 'invalid' });
+    }
+    await expect(
+      verifyLocalOtp({ status: 'idle' }, otpForm('pat@example.com', code)),
+    ).rejects.toMatchObject({ url: '/' });
+  });
+
+  it('revokes the previous unused code when a new one is issued', async () => {
+    await seedParent();
+    const { requestMagicLink } = await import('@/actions/requestMagicLink');
+    const { verifyLocalOtp } = await import('@/actions/verifyLocalOtp');
+    await requestMagicLink({ status: 'idle' }, requestForm('pat@example.com'));
+    const first = await latestCode();
+    await requestMagicLink({ status: 'idle' }, requestForm('pat@example.com'));
+    const second = await latestCode();
+    expect(second).not.toBe(first);
+    const stale = await verifyLocalOtp({ status: 'idle' }, otpForm('pat@example.com', first));
+    expect(stale).toEqual({ status: 'error', reason: 'invalid' });
+    await expect(
+      verifyLocalOtp({ status: 'idle' }, otpForm('pat@example.com', second)),
+    ).rejects.toMatchObject({ url: '/' });
+  });
+
   it('refuses verify when AUTH_MODE is not local-otp', async () => {
     const { env } = await import('@/lib/env');
     (env as { AUTH_MODE: typeof env.AUTH_MODE }).AUTH_MODE = 'magic-link';

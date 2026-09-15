@@ -50,11 +50,8 @@ export async function bootstrapHouseholdAction(
   if (!parsed.success) return { status: 'error', reason: 'invalid' };
 
   const mode = getAuthMode();
-  let passwordHash: string | undefined;
-  if (mode === 'password') {
-    const password = parsed.data.password ?? '';
-    if (!passwordMeetsPolicy(password)) return { status: 'error', reason: 'invalid' };
-    passwordHash = hashPassword(password);
+  if (mode === 'password' && !passwordMeetsPolicy(parsed.data.password ?? '')) {
+    return { status: 'error', reason: 'invalid' };
   }
 
   const ip = extractClientIp(await headers());
@@ -72,6 +69,10 @@ export async function bootstrapHouseholdAction(
   if (!expected || !constantTimeEqual(submitted, expected)) {
     return { status: 'error', reason: 'forbidden' };
   }
+
+  // scrypt is expensive — only hash after captcha, rate-limit, and the
+  // setup secret have all passed.
+  const passwordHash = mode === 'password' ? hashPassword(parsed.data.password ?? '') : undefined;
 
   const result = bootstrapHousehold({
     email: parsed.data.email,

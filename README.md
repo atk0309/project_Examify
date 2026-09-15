@@ -84,7 +84,7 @@ appears in no dashboard.
 
 | Layer       | Choice                                                                                    |
 | ----------- | ----------------------------------------------------------------------------------------- |
-| Runtime     | Node 22.22.2+ LTS, pnpm 10                                                                |
+| Runtime     | Node 22 LTS (`>=22.22.2 <23`), pnpm 10                                                    |
 | Framework   | Next.js 16 (App Router, Turbopack), React 19.2, TypeScript 6 strict                       |
 | Styling     | Tailwind v4 with a CSS-first `@theme` token system; 3 themes                              |
 | DB          | SQLite (a single file), via Drizzle ORM + better-sqlite3                                  |
@@ -160,7 +160,10 @@ yet, or mail could not be sent.
 | `local-otp`  | 6-digit code (outbox, or emailed if set) | Production: `ALLOW_LOCAL_OUTBOX=1` |
 
 `MAIL_TRANSPORT=auto` picks SMTP when `SMTP_HOST` is set, else Resend when a real
-key is set, else the local outbox. Hosts already on invite-only households (#56)
+key is set, else the local outbox. `SMTP_FROM` is required only when SMTP is the
+active transport. A leftover `SMTP_HOST` does not fail `resend` / `outbox`.
+Plaintext SMTP (no STARTTLS / `SMTP_SECURE`) needs `SMTP_ALLOW_INSECURE=1`.
+Hosts already on invite-only households (#56)
 keep working: unset `AUTH_MODE` is `magic-link`. Run `pnpm db:migrate` for the
 nullable `users.password_hash` column (safe no-op for magic-link-only hosts).
 
