@@ -452,6 +452,7 @@ describe('generateOnboardingSubject', () => {
           { once: true },
         );
       });
+      throw new Error('unreachable');
     });
 
     const token = 'cancel-token-01';

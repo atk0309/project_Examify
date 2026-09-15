@@ -869,8 +869,8 @@ describe('examify-ingest generate', () => {
       seed: 0,
       env: { OPENAI_API_KEY: 'sk-abort-signal-test' },
       signal: controller.signal,
-      fetch: async (_input, init) => {
-        fetchSignal = init?.signal;
+      fetch: async (_input, init): Promise<Response> => {
+        fetchSignal = init?.signal ?? undefined;
         await new Promise<never>((_resolve, reject) => {
           init?.signal?.addEventListener(
             'abort',
@@ -880,6 +880,7 @@ describe('examify-ingest generate', () => {
             { once: true },
           );
         });
+        throw new Error('unreachable');
       },
     });
     await vi.waitFor(() => {

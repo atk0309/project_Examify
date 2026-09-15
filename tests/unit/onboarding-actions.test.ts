@@ -81,6 +81,7 @@ afterEach(async () => {
   setEnvStoreRootForTests(null);
   setInitialEnvironForTests(null);
   resetOnboardingGenerateForTests();
+  vi.restoreAllMocks();
 });
 
 async function signInHost() {
@@ -543,6 +544,7 @@ describe('onboarding actions', () => {
           { once: true },
         );
       });
+      throw new Error('unreachable');
     });
 
     const {
@@ -590,14 +592,15 @@ describe('onboarding actions', () => {
     writeFileSync(path.join(root, 'content/source-pdfs/history/notes.txt'), 'A source note.\n');
 
     const ingest = await import('examify-ingest/generate');
-    const actual = ingest.generateSubject;
+    const { generateSubject: actualGenerateSubject } =
+      await vi.importActual<typeof ingest>('examify-ingest/generate');
     let release!: () => void;
     const blocked = new Promise<void>((resolve) => {
       release = resolve;
     });
     vi.spyOn(ingest, 'generateSubject').mockImplementation(async (request) => {
       await blocked;
-      return actual(request);
+      return actualGenerateSubject(request);
     });
 
     const {
