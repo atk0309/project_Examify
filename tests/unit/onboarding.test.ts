@@ -533,13 +533,12 @@ describe('onboarding upload ceiling', () => {
     const { MAX_SOURCE_PDF_BYTES, ONBOARDING_ACTION_BODY_LIMIT_BYTES } =
       await import('@/lib/onboarding');
     expect(ONBOARDING_ACTION_BODY_LIMIT_BYTES).toBeGreaterThan(MAX_SOURCE_PDF_BYTES);
-    const config = (await import('../../next.config.mjs')).default as {
-      experimental: { serverActions: { bodySizeLimit: number } };
-    };
-    expect(config.experimental.serverActions.bodySizeLimit).toBeGreaterThan(MAX_SOURCE_PDF_BYTES);
-    expect(config.experimental.serverActions.bodySizeLimit).toBeGreaterThanOrEqual(
-      ONBOARDING_ACTION_BODY_LIMIT_BYTES,
-    );
+    const raw = readFileSync(path.join(process.cwd(), 'next.config.mjs'), 'utf8');
+    const match = raw.match(/bodySizeLimit:\s*([0-9_]+)\s*\*\s*1024\s*\*\s*1024/);
+    expect(match).toBeTruthy();
+    const limitBytes = Number(match![1]) * 1024 * 1024;
+    expect(limitBytes).toBeGreaterThan(MAX_SOURCE_PDF_BYTES);
+    expect(limitBytes).toBeGreaterThanOrEqual(ONBOARDING_ACTION_BODY_LIMIT_BYTES);
   });
 });
 

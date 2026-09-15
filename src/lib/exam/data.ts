@@ -525,9 +525,9 @@ export function resolveExamPaper(
   subjectId: string,
   difficulty: DifficultyId,
   ids: readonly string[],
-  questions: QuestionBank = QUESTIONS,
+  questionBank: QuestionBank = QUESTIONS,
 ): Question[] | null {
-  const bank = questions[subjectId]?.[difficulty] ?? [];
+  const bank = questionBank[subjectId]?.[difficulty] ?? [];
   const expectedLength = Math.min(EXAM_CONFIG.length, bank.length);
   if (expectedLength === 0 || ids.length !== expectedLength) return null;
   if (new Set(ids).size !== ids.length) return null;
