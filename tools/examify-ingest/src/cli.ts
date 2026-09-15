@@ -9,6 +9,9 @@ export const USAGE = `Usage:
   examify-ingest emit <subjects-dir|ir.json...> [--dry-run] [--apply] [--replace-sample]
 
 emit is dry-run by default. Writes only with --apply.
+A subjects-directory emit (every path is a directory, typically content/subjects)
+prunes leftover generated subject JSON. Explicit IR files never prune; mixed
+file+directory argv is partial-safe and never prunes.
 `;
 
 export type CliIo = {

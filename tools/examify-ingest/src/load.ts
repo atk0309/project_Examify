@@ -69,22 +69,24 @@ export function resolveIrFiles(inputs: readonly string[], cwd: string): string[]
 }
 
 /**
- * True when at least one emit input is a subjects directory. Directory emits
- * are the authoritative generated catalog (leftover subject JSON may be
- * pruned). Explicit IR file paths stay partial and never delete siblings.
+ * True only when every emit input is a subjects directory (typically
+ * `content/subjects`). That run is the authoritative generated catalog and
+ * leftover subject JSON may be pruned. Any explicit IR file path — including
+ * mixed file+directory argv — stays partial and never deletes siblings.
  */
 export function isAuthoritativeCatalogInput(inputs: readonly string[], cwd: string): boolean {
+  if (inputs.length === 0) return false;
   for (const input of inputs) {
     const abs = path.resolve(cwd, input);
     try {
-      if (statSync(abs).isDirectory()) return true;
+      if (!statSync(abs).isDirectory()) return false;
     } catch (error) {
-      if (isEnoent(error)) continue;
+      if (isEnoent(error)) return false;
       const message = error instanceof Error ? error.message : String(error);
       throw new Error(`cannot stat ${input}: ${message}`, { cause: error });
     }
   }
-  return false;
+  return true;
 }
 
 export function loadIrFiles(paths: readonly string[]): LoadedIrFile[] {

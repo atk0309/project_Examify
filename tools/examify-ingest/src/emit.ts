@@ -204,10 +204,6 @@ export function planEmit(
     pushFile(files, repoRoot, `${GENERATED_DIR}/keys/${id}.json`, stableJson(entry.split.keys));
   }
 
-  if (pruneMissing) {
-    planOrphanDeletes(files, repoRoot, new Set(incoming.map((subject) => subject.id)));
-  }
-
   const publicRegistrar = path.join(repoRoot, 'src/lib/exam/generated-public.ts');
   const keysRegistrar = path.join(repoRoot, 'src/lib/exam/generated-keys.server.ts');
   if (existsSync(publicRegistrar) || existsSync(keysRegistrar)) {
@@ -218,6 +214,10 @@ export function planEmit(
       'src/lib/exam/generated-keys.server.ts',
       renderGeneratedKeys(subjects),
     );
+  }
+
+  if (pruneMissing) {
+    planOrphanDeletes(files, repoRoot, new Set(incoming.map((subject) => subject.id)));
   }
 
   return files;
@@ -233,23 +233,34 @@ export function formatEmitPlan(files: readonly PlannedFile[]): string {
     .join('\n\n');
 }
 
+function applyOne(file: PlannedFile): PlannedFile | null {
+  if (file.delete) {
+    if (file.existing === null) return null;
+    try {
+      unlinkSync(file.absPath);
+    } catch (error) {
+      if (!isEnoent(error)) throw error;
+    }
+    return file;
+  }
+  if (file.existing === file.contents) return null;
+  mkdirSync(path.dirname(file.absPath), { recursive: true });
+  writeFileSync(file.absPath, file.contents, 'utf8');
+  return file;
+}
+
+/**
+ * Apply writes first (catalog, questions/keys, registrars), then unlinks.
+ * Order is independent of `planEmit` so a crash cannot leave registrar
+ * imports pointing at already-deleted JSON.
+ */
 export function applyEmit(files: readonly PlannedFile[]): PlannedFile[] {
   const written: PlannedFile[] = [];
-  for (const file of files) {
-    if (file.delete) {
-      if (file.existing === null) continue;
-      try {
-        unlinkSync(file.absPath);
-      } catch (error) {
-        if (!isEnoent(error)) throw error;
-      }
-      written.push(file);
-      continue;
-    }
-    if (file.existing === file.contents) continue;
-    mkdirSync(path.dirname(file.absPath), { recursive: true });
-    writeFileSync(file.absPath, file.contents, 'utf8');
-    written.push(file);
+  const writes = files.filter((file) => !file.delete);
+  const deletes = files.filter((file) => file.delete === true);
+  for (const file of [...writes, ...deletes]) {
+    const applied = applyOne(file);
+    if (applied) written.push(applied);
   }
   return written;
 }

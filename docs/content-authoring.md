@@ -40,10 +40,11 @@ there is still no PDF extract or LLM generate step.
    `content/generated/keys/<id>.json` (answers, rubrics, provenance). The app
    merges those files onto the sample bank. `--apply` also rewrites
    `src/lib/exam/generated-public.ts` and `src/lib/exam/generated-keys.server.ts`
-   from the resulting catalog. A partial emit (explicit IR file paths) upserts
-   `subjects.json` and does not clobber other generated subjects. Emitting the
-   `content/subjects` directory is authoritative: leftover generated JSON for
-   a subject no longer present in that tree is deleted.
+   from the resulting catalog. A partial emit (any explicit IR file path, or
+   mixed file+directory argv) upserts `subjects.json` and does not clobber
+   other generated subjects. Emitting only subjects directories (typically
+   `content/subjects`) is authoritative: leftover generated JSON for a subject
+   no longer present in that tree is deleted.
 
 Ids that collide with **any** id already in the sample bank (`SAMPLE_QUESTIONS`)
 are refused unless you pass `--replace-sample`. Full IR shape, commands, and the

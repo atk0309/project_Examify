@@ -12,9 +12,10 @@ These files are produced by `examify-ingest emit --apply` from
 Never import `keys/` from client components. The app loads keys through
 `src/lib/exam/generated-keys.server.ts` (`import 'server-only'`).
 
-A partial emit (explicit IR file paths) upserts `subjects.json` by subject
-id and only rewrites this run's `questions/` + `keys/` files. Emitting the
-`content/subjects` directory is the authoritative generated catalog: leftover
+A partial emit (any explicit IR file path, or mixed file+directory argv)
+upserts `subjects.json` by subject id and only rewrites this run's
+`questions/` + `keys/` files. Emitting only subjects directories (typically
+`content/subjects`) is the authoritative generated catalog: leftover
 `questions/<id>.json` / `keys/<id>.json` (and the `subjects.json` row) for an
 id with no matching `bank.ir.json` are deleted. The sample bank is never
 touched.

@@ -24,6 +24,7 @@ import {
   readGeneratedSubjects,
   resolveIrFiles,
   runCli,
+  USAGE,
   splitIr,
   validateIrCollection,
   type BankIR,
@@ -273,6 +274,20 @@ describe('examify-ingest emit plan', () => {
           !file.relPath.includes('answer-keys.server.ts'),
       ),
     ).toBe(true);
+    const firstDelete = planned.findIndex((file) => file.delete);
+    const lastWrite = planned.reduce((index, file, i) => (file.delete ? index : i), -1);
+    expect(firstDelete).toBeGreaterThan(-1);
+    expect(lastWrite).toBeGreaterThan(-1);
+    expect(lastWrite).toBeLessThan(firstDelete);
+    expect(
+      planned.findIndex((file) => file.relPath.endsWith('generated/subjects.json')),
+    ).toBeLessThan(firstDelete);
+    expect(planned.findIndex((file) => file.relPath.endsWith('generated-public.ts'))).toBeLessThan(
+      firstDelete,
+    );
+    expect(
+      planned.findIndex((file) => file.relPath.endsWith('generated-keys.server.ts')),
+    ).toBeLessThan(firstDelete);
 
     applyEmit(planned);
     expect(existsSync(leftover.questionsPath)).toBe(false);
@@ -314,7 +329,7 @@ describe('examify-ingest emit plan', () => {
 });
 
 describe('examify-ingest load + registrars + diffs', () => {
-  it('treats a subjects directory as an authoritative catalog emit', () => {
+  it('treats only an all-directory argv as an authoritative catalog emit', () => {
     const tmp = mkdtempSync(path.join(tmpdir(), 'examify-catalog-flag-'));
     mkdirSync(path.join(tmp, 'content/subjects/biology'), { recursive: true });
     writeFileSync(path.join(tmp, 'content/subjects/biology/bank.ir.json'), '{}');
@@ -325,7 +340,42 @@ describe('examify-ingest load + registrars + diffs', () => {
         ['content/subjects/biology/bank.ir.json', 'content/subjects'],
         tmp,
       ),
-    ).toBe(true);
+    ).toBe(false);
+    expect(isAuthoritativeCatalogInput(['content/subjects', 'content/subjects'], tmp)).toBe(true);
+  });
+
+  it('applyEmit writes catalog and registrars before unlinking leftovers', () => {
+    const tmp = mkdtempSync(path.join(tmpdir(), 'examify-apply-order-'));
+    const questionsPath = path.join(tmp, 'content/generated/questions/chemistry.json');
+    const registrarPath = path.join(tmp, 'src/lib/exam/generated-public.ts');
+    mkdirSync(path.dirname(questionsPath), { recursive: true });
+    mkdirSync(path.dirname(registrarPath), { recursive: true });
+    writeFileSync(questionsPath, '{}\n');
+    writeFileSync(registrarPath, 'export {}\n');
+
+    const applied = applyEmit([
+      {
+        relPath: 'content/generated/questions/chemistry.json',
+        absPath: questionsPath,
+        contents: '',
+        existing: '{}\n',
+        delete: true,
+      },
+      {
+        relPath: 'src/lib/exam/generated-public.ts',
+        absPath: registrarPath,
+        contents: 'export const GENERATED_QUESTIONS = {};\n',
+        existing: 'export {}\n',
+      },
+    ]);
+
+    expect(applied.map((file) => Boolean(file.delete))).toEqual([false, true]);
+    expect(applied.map((file) => file.relPath)).toEqual([
+      'src/lib/exam/generated-public.ts',
+      'content/generated/questions/chemistry.json',
+    ]);
+    expect(existsSync(questionsPath)).toBe(false);
+    expect(readFileSync(registrarPath, 'utf8')).toBe('export const GENERATED_QUESTIONS = {};\n');
   });
 
   it('skips missing optional bank.ir.json but surfaces other stat errors', () => {
@@ -390,6 +440,11 @@ describe('examify-ingest CLI', () => {
     expect('error' in apply).toBe(false);
     if ('error' in apply) return;
     expect(apply.apply).toBe(true);
+  });
+
+  it('USAGE mentions whole-tree prune and partial-safe file argv', () => {
+    expect(USAGE).toContain('prunes leftover generated subject JSON');
+    expect(USAGE).toContain('mixed');
   });
 
   it('validate succeeds on content/subjects', () => {
@@ -459,6 +514,35 @@ describe('examify-ingest CLI', () => {
     expect(readFileSync(leftover.keysPath, 'utf8')).toBe(leftover.keysBefore);
   });
 
+  it('CLI mixed directory + file argv does not prune leftover subjects', () => {
+    const tmp = mkdtempSync(path.join(tmpdir(), 'examify-cli-mixed-'));
+    writeFileSync(path.join(tmp, 'package.json'), JSON.stringify({ name: 'project-examify' }));
+    mkdirSync(path.join(tmp, 'content/subjects/biology'), { recursive: true });
+    writeFileSync(
+      path.join(tmp, 'content/subjects/biology/bank.ir.json'),
+      readFileSync(path.join(repoRoot, 'content/subjects/biology/bank.ir.json')),
+    );
+    const leftover = writeLeftoverChemistry(path.join(tmp, 'content/generated'));
+
+    const code = runCli(
+      ['emit', 'content/subjects', 'content/subjects/biology/bank.ir.json', '--apply'],
+      {
+        cwd: tmp,
+        stdout: { write: () => undefined },
+        stderr: { write: () => undefined },
+      },
+    );
+    expect(code).toBe(0);
+    const subjects = JSON.parse(
+      readFileSync(path.join(tmp, 'content/generated/subjects.json'), 'utf8'),
+    ) as { id: string }[];
+    expect(subjects.map((subject) => subject.id)).toEqual(['chemistry', 'biology']);
+    expect(existsSync(leftover.questionsPath)).toBe(true);
+    expect(existsSync(leftover.keysPath)).toBe(true);
+    expect(readFileSync(leftover.questionsPath, 'utf8')).toBe(leftover.questionsBefore);
+    expect(readFileSync(leftover.keysPath, 'utf8')).toBe(leftover.keysBefore);
+  });
+
   it('CLI whole-tree emit dry-run lists leftover deletes; --apply removes them', () => {
     const tmp = mkdtempSync(path.join(tmpdir(), 'examify-cli-prune-'));
     writeFileSync(path.join(tmp, 'package.json'), JSON.stringify({ name: 'project-examify' }));
@@ -495,6 +579,9 @@ describe('examify-ingest CLI', () => {
     const applyOut = applyChunks.join('');
     expect(applyOut).toContain('deleted content/generated/questions/chemistry.json');
     expect(applyOut).toContain('deleted content/generated/keys/chemistry.json');
+    expect(applyOut.indexOf('updated src/lib/exam/generated-public.ts')).toBeLessThan(
+      applyOut.indexOf('deleted content/generated/questions/chemistry.json'),
+    );
     expect(existsSync(leftover.questionsPath)).toBe(false);
     expect(existsSync(leftover.keysPath)).toBe(false);
     const subjects = JSON.parse(

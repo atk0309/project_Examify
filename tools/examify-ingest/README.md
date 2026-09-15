@@ -48,18 +48,20 @@ hand-authored sample bank (`SAMPLE_QUESTIONS`). Additive subjects are the
 default; do not clobber sample ids unless you intend to replace them and update
 any unit tests that reference them.
 
-`emit` **merges** `content/generated/subjects.json` by subject id when you pass
-explicit IR file paths (a partial emit): this run upserts its subjects and
-leaves other generated subjects (and their `questions/` + `keys/` files) in
-place.
+`emit` **merges** `content/generated/subjects.json` by subject id when any
+input is an explicit IR file path (a partial emit): this run upserts its
+subjects and leaves other generated subjects (and their `questions/` +
+`keys/` files) in place. Mixed file+directory argv is also partial-safe and
+never prunes.
 
-When you emit a **subjects directory** (typically `content/subjects`), that
-tree is the authoritative generated catalog. Any leftover
-`questions/<id>.json` / `keys/<id>.json` — and the matching `subjects.json`
-row — for an id with no `bank.ir.json` in this run is planned for delete.
-Dry-run lists those deletes; `--apply` removes the files and rewrites the
-registrars. The hand-authored sample bank in `src/lib/exam/data.ts` and
-`answer-keys.server.ts` is never touched.
+When **every** emit path is a **subjects directory** (typically just
+`content/subjects`), that tree is the authoritative generated catalog. Any
+leftover `questions/<id>.json` / `keys/<id>.json` — and the matching
+`subjects.json` row — for an id with no `bank.ir.json` in this run is
+planned for delete. Dry-run lists those deletes; `--apply` writes the
+catalog and registrars first, then removes leftover files. The hand-authored
+sample bank in `src/lib/exam/data.ts` and `answer-keys.server.ts` is never
+touched.
 
 When `src/lib/exam/generated-public.ts` and `generated-keys.server.ts` already
 exist, `--apply` rewrites those registrars from the resulting catalog.

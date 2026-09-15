@@ -188,11 +188,13 @@ Automated path (Phase 0, no PDF extract / no LLM generate): author
 `emit` is dry-run by default; `--apply` writes `content/generated/` (public
 subjects/questions + server-only keys). The app merges those files onto the
 sample bank. Any id already in the sample bank is refused unless
-`--replace-sample`. A partial emit merges `subjects.json` by id and leaves
-other generated subject files in place. A whole-tree emit of `content/subjects`
-is authoritative for generated subjects: leftover `questions/<id>.json` /
+`--replace-sample`. A partial emit (explicit IR files or mixed file+directory
+argv) merges `subjects.json` by id and leaves other generated subject files in
+place. A whole-tree emit of subjects directories only (`content/subjects`) is
+authoritative for generated subjects: leftover `questions/<id>.json` /
 `keys/<id>.json` (and the `subjects.json` row) for an id with no IR in that
-tree are deleted. The sample bank is never touched.
+tree are deleted. `--apply` rewrites catalog and registrars before unlinking
+leftovers. The sample bank is never touched.
 
 ## Styling / theming
 
