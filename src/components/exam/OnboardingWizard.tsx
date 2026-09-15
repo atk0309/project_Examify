@@ -262,6 +262,7 @@ export function OnboardingWizard({
                   <button
                     type="button"
                     className="wizard-rail-btn"
+                    aria-current={index === stepIndex ? 'step' : undefined}
                     disabled={!clickable || pending}
                     onClick={() => go(entry.id)}
                   >
@@ -885,6 +886,12 @@ function SubjectsStep({
                 }}
                 data-testid="wizard-subject-id"
               />
+              {label.trim().length > 0 && id.trim().length === 0 ? (
+                <p className="login-fine" data-testid="wizard-subject-id-hint">
+                  Could not suggest an id from that label. Type a kebab-case id (a-z, digits,
+                  hyphens).
+                </p>
+              ) : null}
             </div>
             <div className="field">
               <label className="field-label" htmlFor="wizard-subject-icon">
@@ -971,15 +978,14 @@ function FilesStep({
       </p>
       <div className="wizard-files-layout">
         {snapshot.subjects.length > 1 ? (
-          <div className="wizard-files-nav" role="tablist" aria-label="Subjects">
+          <div className="wizard-files-nav" aria-label="Subjects">
             {snapshot.subjects.map((subject) => {
               const selected = subject.id === focused.id;
               return (
                 <button
                   key={subject.id}
                   type="button"
-                  role="tab"
-                  aria-selected={selected}
+                  aria-pressed={selected}
                   className={'wizard-file-tab' + (selected ? ' selected' : '')}
                   onClick={() => setFocusId(subject.id)}
                 >
