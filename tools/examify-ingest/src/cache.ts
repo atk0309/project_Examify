@@ -21,6 +21,15 @@ export function pagesCacheDir(repoRoot: string, pdfSha256: string): string {
   return path.join(ingestStateDir(repoRoot), 'cache', 'pages', pdfSha256);
 }
 
+/**
+ * Stable hash of the ordered page-image set (path + page + content hash).
+ * Different rasters or a later pdftoppm run must not share a hashes-only
+ * cache entry.
+ */
+export function hashPageImageSet(pageImageHashes: readonly string[]): string {
+  return sha256Bytes(stableJson([...pageImageHashes]));
+}
+
 export function buildCacheKey(input: {
   promptVersion: string;
   promptHash: string;
@@ -32,6 +41,7 @@ export function buildCacheKey(input: {
   pageImageHashes: readonly string[];
   pageRasterProfile: string;
 }): string {
+  const pageImageHashes = [...input.pageImageHashes];
   return sha256Bytes(
     stableJson({
       promptVersion: input.promptVersion,
@@ -41,7 +51,8 @@ export function buildCacheKey(input: {
       seed: input.seed,
       sourceHashes: sortRecord(input.sourceHashes),
       subject: input.subject,
-      pageImageHashes: [...input.pageImageHashes],
+      pageImageHashes,
+      pageImageSetHash: hashPageImageSet(pageImageHashes),
       pageRasterProfile: input.pageRasterProfile,
     }),
   );
