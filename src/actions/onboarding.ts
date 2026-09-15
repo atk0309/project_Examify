@@ -1,0 +1,270 @@
+'use server';
+
+import { redirect } from 'next/navigation';
+import { z } from 'zod';
+import { getSession } from '@/lib/auth';
+import {
+  addOnboardingSubject,
+  adminCanOpenOnboarding,
+  applyOnboardingEmit,
+  attachSourcePdf,
+  clearOnboardingDryRun,
+  completeOnboarding,
+  deleteOnboardingSubject,
+  detachSourcePdf,
+  getOnboardingForUser,
+  getOnboardingSnapshot,
+  getHouseholdOnboarding,
+  isOnboardingAiMode,
+  MAX_SOURCE_PDF_BYTES,
+  previewOnboardingEmit,
+  publicDryRun,
+  renameOnboardingSubject,
+  saveOnboardingState,
+  skipOnboarding,
+  SUBJECT_LABEL_MAX,
+  validateOnboardingIr,
+} from '@/lib/onboarding';
+import {
+  SUBJECT_ICON_OPTIONS,
+  type OnboardingDryRun,
+  type OnboardingSnapshot,
+} from '@/lib/onboarding-types';
+
+export type OnboardingActionError = {
+  ok: false;
+  reason:
+    | 'forbidden'
+    | 'invalid'
+    | 'invalid_id'
+    | 'invalid_type'
+    | 'duplicate'
+    | 'missing'
+    | 'too_large'
+    | 'disk'
+    | 'empty_catalog'
+    | 'dry_run_required'
+    | 'stale_preview'
+    | 'already_complete';
+  message?: string;
+  issues?: { file: string; message: string }[];
+};
+
+async function requireOnboardingAdmin(): Promise<
+  { ok: true; householdId: number } | OnboardingActionError
+> {
+  const session = await getSession();
+  if (!session.userId || session.role !== 'parent') {
+    return { ok: false, reason: 'forbidden' };
+  }
+  const info = getOnboardingForUser(session.userId);
+  if (!adminCanOpenOnboarding({ role: info.role, onboardingComplete: info.complete })) {
+    return { ok: false, reason: info.complete ? 'already_complete' : 'forbidden' };
+  }
+  if (info.householdId == null) return { ok: false, reason: 'forbidden' };
+  return { ok: true, householdId: info.householdId };
+}
+
+function snapshot(householdId: number): OnboardingSnapshot {
+  return getOnboardingSnapshot(householdId);
+}
+
+const addSchema = z.object({
+  id: z.string().trim().toLowerCase().min(1).max(SUBJECT_LABEL_MAX),
+  label: z.string().trim().min(1).max(SUBJECT_LABEL_MAX),
+  icon: z.enum(SUBJECT_ICON_OPTIONS),
+});
+
+export async function addOnboardingSubjectAction(
+  formData: FormData,
+): Promise<{ ok: true; snapshot: OnboardingSnapshot } | OnboardingActionError> {
+  const gate = await requireOnboardingAdmin();
+  if (!gate.ok) return gate;
+  const parsed = addSchema.safeParse({
+    id: formData.get('id'),
+    label: formData.get('label'),
+    icon: formData.get('icon'),
+  });
+  if (!parsed.success) return { ok: false, reason: 'invalid' };
+  const result = addOnboardingSubject(parsed.data);
+  if (!result.ok) return { ok: false, reason: result.reason };
+  clearOnboardingDryRun(gate.householdId);
+  return { ok: true, snapshot: snapshot(gate.householdId) };
+}
+
+export async function renameOnboardingSubjectAction(
+  formData: FormData,
+): Promise<{ ok: true; snapshot: OnboardingSnapshot } | OnboardingActionError> {
+  const gate = await requireOnboardingAdmin();
+  if (!gate.ok) return gate;
+  const parsed = addSchema
+    .extend({ nextId: z.string().trim().toLowerCase().optional() })
+    .safeParse({
+      id: formData.get('id'),
+      nextId: formData.get('nextId') || undefined,
+      label: formData.get('label'),
+      icon: formData.get('icon'),
+    });
+  if (!parsed.success) return { ok: false, reason: 'invalid' };
+  const result = renameOnboardingSubject(parsed.data);
+  if (!result.ok) return { ok: false, reason: result.reason };
+  clearOnboardingDryRun(gate.householdId);
+  return { ok: true, snapshot: snapshot(gate.householdId) };
+}
+
+export async function deleteOnboardingSubjectAction(
+  formData: FormData,
+): Promise<{ ok: true; snapshot: OnboardingSnapshot } | OnboardingActionError> {
+  const gate = await requireOnboardingAdmin();
+  if (!gate.ok) return gate;
+  const id = typeof formData.get('id') === 'string' ? formData.get('id') : '';
+  const result = deleteOnboardingSubject(String(id));
+  if (!result.ok) return { ok: false, reason: result.reason };
+  clearOnboardingDryRun(gate.householdId);
+  return { ok: true, snapshot: snapshot(gate.householdId) };
+}
+
+export async function attachOnboardingPdfAction(
+  formData: FormData,
+): Promise<{ ok: true; snapshot: OnboardingSnapshot } | OnboardingActionError> {
+  const gate = await requireOnboardingAdmin();
+  if (!gate.ok) return gate;
+  const subjectId = formData.get('subjectId');
+  const file = formData.get('file');
+  if (typeof subjectId !== 'string' || !(file instanceof File)) {
+    return { ok: false, reason: 'invalid' };
+  }
+  if (file.size > MAX_SOURCE_PDF_BYTES) return { ok: false, reason: 'too_large' };
+  const bytes = Buffer.from(await file.arrayBuffer());
+  const result = attachSourcePdf({ subjectId, filename: file.name, bytes });
+  if (!result.ok) return { ok: false, reason: result.reason };
+  return { ok: true, snapshot: snapshot(gate.householdId) };
+}
+
+export async function detachOnboardingPdfAction(
+  formData: FormData,
+): Promise<{ ok: true; snapshot: OnboardingSnapshot } | OnboardingActionError> {
+  const gate = await requireOnboardingAdmin();
+  if (!gate.ok) return gate;
+  const subjectId = formData.get('subjectId');
+  const filename = formData.get('filename');
+  if (typeof subjectId !== 'string' || typeof filename !== 'string') {
+    return { ok: false, reason: 'invalid' };
+  }
+  const result = detachSourcePdf({ subjectId, filename });
+  if (!result.ok) return { ok: false, reason: result.reason };
+  return { ok: true, snapshot: snapshot(gate.householdId) };
+}
+
+export async function setOnboardingAiModeAction(
+  formData: FormData,
+): Promise<{ ok: true; snapshot: OnboardingSnapshot } | OnboardingActionError> {
+  const gate = await requireOnboardingAdmin();
+  if (!gate.ok) return gate;
+  const mode = formData.get('aiMode');
+  if (typeof mode !== 'string' || !isOnboardingAiMode(mode)) {
+    return { ok: false, reason: 'invalid' };
+  }
+  saveOnboardingState(gate.householdId, { aiMode: mode });
+  return { ok: true, snapshot: snapshot(gate.householdId) };
+}
+
+export async function setReplaceSampleAction(
+  formData: FormData,
+): Promise<{ ok: true; snapshot: OnboardingSnapshot } | OnboardingActionError> {
+  const gate = await requireOnboardingAdmin();
+  if (!gate.ok) return gate;
+  const enabled = formData.get('replaceSample') === '1';
+  saveOnboardingState(gate.householdId, { replaceSample: enabled });
+  clearOnboardingDryRun(gate.householdId);
+  return { ok: true, snapshot: snapshot(gate.householdId) };
+}
+
+export async function validateOnboardingAction(): Promise<
+  { ok: true; snapshot: OnboardingSnapshot } | OnboardingActionError
+> {
+  const gate = await requireOnboardingAdmin();
+  if (!gate.ok) return gate;
+  const result = validateOnboardingIr();
+  if (!result.ok) {
+    return { ok: false, reason: 'invalid', issues: result.issues };
+  }
+  return { ok: true, snapshot: snapshot(gate.householdId) };
+}
+
+export async function previewOnboardingEmitAction(): Promise<
+  { ok: true; snapshot: OnboardingSnapshot; dryRun: OnboardingDryRun } | OnboardingActionError
+> {
+  const gate = await requireOnboardingAdmin();
+  if (!gate.ok) return gate;
+  const replaceSample = getHouseholdOnboarding(gate.householdId).state.replaceSample === true;
+  const preview = previewOnboardingEmit(replaceSample);
+  if (!preview.ok) {
+    clearOnboardingDryRun(gate.householdId);
+    return {
+      ok: false,
+      reason: preview.reason,
+      message: preview.message,
+      issues: preview.issues,
+    };
+  }
+  saveOnboardingState(gate.householdId, { dryRunHash: preview.dryRun.hash });
+  return {
+    ok: true,
+    snapshot: snapshot(gate.householdId),
+    dryRun: publicDryRun(preview),
+  };
+}
+
+export async function applyOnboardingEmitAction(): Promise<
+  | {
+      ok: true;
+      snapshot: OnboardingSnapshot;
+      written: number;
+      questionCount: number;
+      subjectCount: number;
+    }
+  | OnboardingActionError
+> {
+  const gate = await requireOnboardingAdmin();
+  if (!gate.ok) return gate;
+  const state = getHouseholdOnboarding(gate.householdId).state;
+  if (!state.dryRunHash) return { ok: false, reason: 'dry_run_required' };
+  const replaceSample = state.replaceSample === true;
+  const preview = previewOnboardingEmit(replaceSample);
+  if (!preview.ok) {
+    return {
+      ok: false,
+      reason: preview.reason,
+      message: preview.message,
+      issues: preview.issues,
+    };
+  }
+  if (preview.dryRun.hash !== state.dryRunHash) return { ok: false, reason: 'stale_preview' };
+  const applied = applyOnboardingEmit({ replaceSample });
+  if (!applied.ok) {
+    return { ok: false, reason: applied.reason, message: applied.message, issues: applied.issues };
+  }
+  clearOnboardingDryRun(gate.householdId);
+  return {
+    ok: true,
+    snapshot: snapshot(gate.householdId),
+    written: applied.written,
+    questionCount: applied.questionCount,
+    subjectCount: applied.subjectCount,
+  };
+}
+
+export async function skipOnboardingAction(): Promise<OnboardingActionError | void> {
+  const gate = await requireOnboardingAdmin();
+  if (!gate.ok) return gate;
+  skipOnboarding(gate.householdId);
+  redirect('/');
+}
+
+export async function finishOnboardingAction(): Promise<OnboardingActionError | void> {
+  const gate = await requireOnboardingAdmin();
+  if (!gate.ok) return gate;
+  completeOnboarding(gate.householdId);
+  redirect('/');
+}

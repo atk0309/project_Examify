@@ -7,6 +7,7 @@
    against a selected student — plus the entry into "student mode".
    ========================================================================== */
 import { useState, useTransition } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { setStudentMode } from '@/actions/toggleStudentMode';
 import { signOut } from '@/actions/signOut';
@@ -35,6 +36,7 @@ export function ParentDashboard({
   members = [],
   canInvite = false,
   authMode,
+  needsOnboarding = false,
 }: {
   students: ChildSnapshot[];
   ownProgress: ProgressData;
@@ -43,6 +45,7 @@ export function ParentDashboard({
   members?: HouseholdMemberView[];
   canInvite?: boolean;
   authMode: AuthMode;
+  needsOnboarding?: boolean;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -89,6 +92,15 @@ export function ParentDashboard({
             >
               Are you smarter than your kid? {UIcon.arrow}
             </button>
+            {needsOnboarding ? (
+              <Link
+                href="/onboarding"
+                className="onboarding-chip"
+                data-testid="finish-content-setup"
+              >
+                Finish content setup
+              </Link>
+            ) : null}
           </div>
 
           {canInvite ? (

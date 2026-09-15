@@ -22,19 +22,12 @@ test('first-run bootstrap creates the admin without Turnstile', async ({ page })
   await page.getByTestId('setup-email-input').fill('host@example.com');
   await page.getByTestId('setup-secret-input').fill('e2e-setup-bootstrap-secret');
   await page.getByTestId('setup-submit').click();
-  await expect(page).toHaveURL(/\/setup\/wizard/);
-  await expect(page.getByTestId('setup-wizard')).toBeVisible();
-  await page.getByTestId('wizard-subject-id').fill('history');
-  await page.getByTestId('wizard-subject-label').fill('History');
-  await page.getByTestId('wizard-subject-icon').selectOption('geography');
-  await page.getByTestId('wizard-add-subject-submit').click();
-  await expect(page.getByTestId('wizard-delete-subject-history')).toBeVisible();
-  await page.getByTestId('wizard-delete-subject-history').click();
-  await expect(page.getByTestId('wizard-delete-subject-history')).toHaveCount(0);
+  await expect(page).toHaveURL(/\/onboarding/);
+  await expect(page.getByTestId('onboarding-wizard')).toBeVisible();
+  await expect(page.getByTestId('wizard-welcome')).toBeVisible();
   await page.getByTestId('wizard-skip').click();
-  await expect(page.getByTestId('wizard-ready')).toBeVisible();
-  await page.getByTestId('wizard-finish').click();
   await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByTestId('finish-content-setup')).toBeVisible();
   await expect(page.getByTestId('household-invites')).toBeVisible();
 });
 

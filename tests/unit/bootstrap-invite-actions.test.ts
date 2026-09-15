@@ -77,7 +77,7 @@ describe('bootstrapHouseholdAction', () => {
   it('creates the first admin and establishes a parent session', async () => {
     const { bootstrapHouseholdAction } = await import('@/actions/bootstrapHousehold');
     await expect(bootstrapHouseholdAction({ status: 'idle' }, setupForm())).rejects.toMatchObject({
-      url: '/setup/wizard',
+      url: '/onboarding',
     });
     expect(sessionHolder.current.userId).toBeTypeOf('number');
     expect(sessionHolder.current.role).toBe('parent');
@@ -113,7 +113,7 @@ describe('bootstrapHouseholdAction', () => {
     const data = setupForm();
     data.set('password', 'admin-password');
     await expect(bootstrapHouseholdAction({ status: 'idle' }, data)).rejects.toMatchObject({
-      url: '/setup/wizard',
+      url: '/onboarding',
     });
     (env as { AUTH_MODE: typeof env.AUTH_MODE }).AUTH_MODE = 'magic-link';
   });

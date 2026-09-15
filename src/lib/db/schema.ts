@@ -1,6 +1,6 @@
 import { sql } from 'drizzle-orm';
 import { integer, sqliteTable, text, index, uniqueIndex } from 'drizzle-orm/sqlite-core';
-import type { SetupWizardPersistedState } from '@/lib/setup-wizard-types';
+import type { OnboardingState } from '@/lib/onboarding-types';
 
 /**
  * Signed-in people. Who may sign in — and which household they belong to —
@@ -87,15 +87,12 @@ export const households = sqliteTable('households', {
     .notNull()
     .default(sql`(unixepoch() * 1000)`),
   /**
-   * Set when the first-run setup wizard is finished or skipped. Null means a
-   * newly bootstrapped household still needs the post-`/setup` wizard.
-   * Existing households are backfilled on migrate so upgrades are not forced
-   * through the wizard.
+   * First-run content onboarding. False after `/setup` until the admin
+   * finishes `/onboarding`. Skip leaves this false and shows a dashboard
+   * chip. Existing households are backfilled complete on migrate.
    */
-  setupWizardCompletedAt: integer('setup_wizard_completed_at', { mode: 'timestamp_ms' }),
-  setupWizardState: text('setup_wizard_state', {
-    mode: 'json',
-  }).$type<SetupWizardPersistedState | null>(),
+  onboardingComplete: integer('onboarding_complete', { mode: 'boolean' }).notNull().default(false),
+  onboardingState: text('onboarding_state', { mode: 'json' }).$type<OnboardingState | null>(),
 });
 
 export type Household = typeof households.$inferSelect;

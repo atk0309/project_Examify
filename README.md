@@ -33,9 +33,10 @@ no env-JSON allowlist to hand-edit.
 
 1. **`/setup`** (first run) or **`/signin`** — on a fresh install, the first visitor
    creates the household and becomes admin (and sets a password when `AUTH_MODE=password`).
-   After bootstrap, a short **`/setup/wizard`** lets the parent add subjects, attach
-   local study files, choose how generation should work, and emit BankIR through
-   `examify-ingest` (dry-run first; an empty catalog is refused). After that, pick a
+   After bootstrap, **`/onboarding`** lets the household admin add subjects, attach
+   local study PDFs, choose how a later generate step should talk to a model, and
+   emit BankIR through `examify-ingest` (validate + dry-run HITL, then apply; an
+   empty catalog is refused). Skip keeps the sample bank. After that, pick a
    role (Student / Parent) and sign in with the configured mode. New people join via
    an invite link (`/invite/…`), not env JSON.
 2. **Dashboard** — a grid of subjects, each with a soft duotone icon and question count.

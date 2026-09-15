@@ -55,7 +55,14 @@ test('the home route redirects unauthenticated visitors to /signin', async ({ pa
   await expect(page).toHaveURL(/\/signin$/);
 });
 
-test('the setup wizard redirects unauthenticated visitors to /signin', async ({ page }) => {
+test('content onboarding redirects unauthenticated visitors to /signin', async ({ page }) => {
+  await page.goto('/onboarding');
+  await expect(page).toHaveURL(/\/signin$/);
+});
+
+test('the leftover setup wizard path redirects unauthenticated visitors to /signin', async ({
+  page,
+}) => {
   await page.goto('/setup/wizard');
   await expect(page).toHaveURL(/\/signin$/);
 });

@@ -445,15 +445,16 @@
           "autoincrement": false,
           "default": "(unixepoch() * 1000)"
         },
-        "setup_wizard_completed_at": {
-          "name": "setup_wizard_completed_at",
+        "onboarding_complete": {
+          "name": "onboarding_complete",
           "type": "integer",
           "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
         },
-        "setup_wizard_state": {
-          "name": "setup_wizard_state",
+        "onboarding_state": {
+          "name": "onboarding_state",
           "type": "text",
           "primaryKey": false,
           "notNull": false,

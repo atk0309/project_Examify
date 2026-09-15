@@ -7,10 +7,10 @@ import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionData } from '@/lib/auth';
-import { EMPTY_CATALOG_EMIT_MESSAGE } from '@/lib/setup-wizard-types';
+import { EMPTY_AUTHORITATIVE_EMIT } from '@/lib/onboarding-types';
 
 const TMP = path.join(process.cwd(), 'tests', '.tmp');
-const DB_PATH = path.join(TMP, `setup-wizard-actions-${process.pid}.db`);
+const DB_PATH = path.join(TMP, `onboarding-actions-${process.pid}.db`);
 Reflect.set(process.env, 'DATABASE_URL', `file:${DB_PATH}`);
 delete process.env.FAMILIES;
 
@@ -34,7 +34,7 @@ vi.mock('next/navigation', () => ({
 }));
 
 function tempRoot(): string {
-  const root = mkdtempSync(path.join(tmpdir(), 'examify-wizard-act-'));
+  const root = mkdtempSync(path.join(tmpdir(), 'examify-onboarding-act-'));
   writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'project-examify' }));
   fs.mkdirSync(path.join(root, 'content/subjects'), { recursive: true });
   fs.mkdirSync(path.join(root, 'src/lib/exam'), { recursive: true });
@@ -64,13 +64,13 @@ beforeEach(async () => {
   db.delete(schema.users).run();
   resetLegacyImportLatch();
   sessionHolder.current = { save: vi.fn(async () => {}) };
-  const { setWizardContentRootForTests } = await import('@/lib/setup-wizard');
-  setWizardContentRootForTests(null);
+  const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
+  setOnboardingContentRootForTests(null);
 });
 
 afterEach(async () => {
-  const { setWizardContentRootForTests } = await import('@/lib/setup-wizard');
-  setWizardContentRootForTests(null);
+  const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
+  setOnboardingContentRootForTests(null);
 });
 
 async function signInHost() {
@@ -84,45 +84,46 @@ async function signInHost() {
   return host;
 }
 
-describe('setup wizard actions', () => {
-  it('refuses mutations without a parent session', async () => {
-    const { addWizardSubjectAction, applyWizardEmitAction } = await import('@/actions/setupWizard');
+describe('onboarding actions', () => {
+  it('refuses mutations without an admin session', async () => {
+    const { addOnboardingSubjectAction, applyOnboardingEmitAction } =
+      await import('@/actions/onboarding');
     const data = new FormData();
     data.set('id', 'history');
     data.set('label', 'History');
     data.set('icon', 'geography');
-    expect(await addWizardSubjectAction(data)).toEqual({ ok: false, reason: 'forbidden' });
-    expect(await applyWizardEmitAction()).toEqual({ ok: false, reason: 'forbidden' });
+    expect(await addOnboardingSubjectAction(data)).toEqual({ ok: false, reason: 'forbidden' });
+    expect(await applyOnboardingEmitAction()).toEqual({ ok: false, reason: 'forbidden' });
   });
 
   it('refuses apply before a dry-run preview', async () => {
     const root = tempRoot();
-    const { setWizardContentRootForTests } = await import('@/lib/setup-wizard');
-    setWizardContentRootForTests(root);
+    const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
+    setOnboardingContentRootForTests(root);
     await signInHost();
-    const { applyWizardEmitAction } = await import('@/actions/setupWizard');
-    expect(await applyWizardEmitAction()).toEqual({ ok: false, reason: 'dry_run_required' });
+    const { applyOnboardingEmitAction } = await import('@/actions/onboarding');
+    expect(await applyOnboardingEmitAction()).toEqual({ ok: false, reason: 'dry_run_required' });
   });
 
-  it('refuses an empty catalog emit from the wizard with the CLI copy', async () => {
+  it('refuses an empty catalog emit with the CLI copy', async () => {
     const root = tempRoot();
-    const { setWizardContentRootForTests } = await import('@/lib/setup-wizard');
-    setWizardContentRootForTests(root);
+    const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
+    setOnboardingContentRootForTests(root);
     await signInHost();
-    const { previewWizardEmitAction, applyWizardEmitAction } =
-      await import('@/actions/setupWizard');
-    const preview = await previewWizardEmitAction();
+    const { previewOnboardingEmitAction, applyOnboardingEmitAction } =
+      await import('@/actions/onboarding');
+    const preview = await previewOnboardingEmitAction();
     expect(preview.ok).toBe(false);
     if (preview.ok) throw new Error('expected empty refuse');
     expect(preview.reason).toBe('empty_catalog');
-    expect(preview.message).toBe(EMPTY_CATALOG_EMIT_MESSAGE);
-    expect(await applyWizardEmitAction()).toEqual({ ok: false, reason: 'dry_run_required' });
+    expect(preview.message).toBe(EMPTY_AUTHORITATIVE_EMIT);
+    expect(await applyOnboardingEmitAction()).toEqual({ ok: false, reason: 'dry_run_required' });
   });
 
   it('applies emit only after a matching dry-run', async () => {
     const root = tempRoot();
-    const { setWizardContentRootForTests } = await import('@/lib/setup-wizard');
-    setWizardContentRootForTests(root);
+    const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
+    setOnboardingContentRootForTests(root);
     await signInHost();
     fs.mkdirSync(path.join(root, 'content/subjects/history'), { recursive: true });
     writeFileSync(
@@ -146,21 +147,36 @@ describe('setup wizard actions', () => {
         },
       }),
     );
-    const { previewWizardEmitAction, applyWizardEmitAction } =
-      await import('@/actions/setupWizard');
-    const preview = await previewWizardEmitAction();
+    const { previewOnboardingEmitAction, applyOnboardingEmitAction } =
+      await import('@/actions/onboarding');
+    const preview = await previewOnboardingEmitAction();
     expect(preview.ok).toBe(true);
     if (!preview.ok) throw new Error('expected dry-run');
-    expect(JSON.stringify(preview.files)).not.toContain('A fixture question?');
-    const applied = await applyWizardEmitAction();
+    expect(JSON.stringify(preview.dryRun)).not.toContain('A fixture question?');
+    expect(JSON.stringify(preview.dryRun)).not.toContain('"answer"');
+    const applied = await applyOnboardingEmitAction();
     expect(applied.ok).toBe(true);
     expect(fs.existsSync(path.join(root, 'content/generated/questions/history.json'))).toBe(true);
     expect(fs.existsSync(path.join(root, 'content/generated/keys/history.json'))).toBe(true);
   });
 
-  it('does not let a student open the write path', async () => {
+  it('does not let an invited parent or student open the write path', async () => {
     const host = await signInHost();
     const { db, schema } = await import('@/lib/db');
+    const parent = db
+      .insert(schema.users)
+      .values({ email: 'other@example.com', emailVerifiedAt: new Date() })
+      .returning()
+      .get()!;
+    db.insert(schema.householdMembers)
+      .values({ householdId: host.householdId, userId: parent.id, role: 'parent' })
+      .run();
+    sessionHolder.current.userId = parent.id;
+    sessionHolder.current.role = 'parent';
+    sessionHolder.current.email = 'other@example.com';
+    const { previewOnboardingEmitAction } = await import('@/actions/onboarding');
+    expect(await previewOnboardingEmitAction()).toEqual({ ok: false, reason: 'forbidden' });
+
     const kid = db
       .insert(schema.users)
       .values({ email: 'kid@example.com', emailVerifiedAt: new Date() })
@@ -172,7 +188,6 @@ describe('setup wizard actions', () => {
     sessionHolder.current.userId = kid.id;
     sessionHolder.current.role = 'student';
     sessionHolder.current.email = 'kid@example.com';
-    const { previewWizardEmitAction } = await import('@/actions/setupWizard');
-    expect(await previewWizardEmitAction()).toEqual({ ok: false, reason: 'forbidden' });
+    expect(await previewOnboardingEmitAction()).toEqual({ ok: false, reason: 'forbidden' });
   });
 });

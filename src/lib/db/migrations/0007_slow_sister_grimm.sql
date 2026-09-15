@@ -1,3 +1,3 @@
-ALTER TABLE `households` ADD `setup_wizard_completed_at` integer;--> statement-breakpoint
-ALTER TABLE `households` ADD `setup_wizard_state` text;--> statement-breakpoint
-UPDATE `households` SET `setup_wizard_completed_at` = `created_at` WHERE `setup_wizard_completed_at` IS NULL;
+ALTER TABLE `households` ADD `onboarding_complete` integer DEFAULT 0 NOT NULL;--> statement-breakpoint
+ALTER TABLE `households` ADD `onboarding_state` text;--> statement-breakpoint
+UPDATE `households` SET `onboarding_complete` = 1;

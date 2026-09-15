@@ -104,7 +104,7 @@ export function importLegacyFamiliesIfNeeded(): {
       const name = `Family of ${labelFromEmail(family.child)}`;
       const household = tx
         .insert(schema.households)
-        .values({ name, setupWizardCompletedAt: new Date() })
+        .values({ name, onboardingComplete: true })
         .returning()
         .get();
       if (!household) throw new Error('failed to create household');

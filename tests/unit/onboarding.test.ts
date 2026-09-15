@@ -1,0 +1,370 @@
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import Database from 'better-sqlite3';
+import { drizzle } from 'drizzle-orm/better-sqlite3';
+import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { collectQuestionIds, FIXTURE_IDS } from 'examify-ingest';
+import { SAMPLE_QUESTIONS } from '@/lib/exam/data';
+import { EMPTY_AUTHORITATIVE_EMIT } from '@/lib/onboarding-types';
+
+const TMP = path.join(process.cwd(), 'tests', '.tmp');
+const DB_PATH = path.join(TMP, `onboarding-${process.pid}.db`);
+Reflect.set(process.env, 'DATABASE_URL', `file:${DB_PATH}`);
+delete process.env.FAMILIES;
+
+function fixtureIr(id: string, label: string, questionId = `${id}-easy-1`) {
+  return {
+    version: 1,
+    subject: { id, label, icon: 'geography', l: 0.6, c: 0.08, h: 40 },
+    difficulties: {
+      easy: [
+        {
+          id: questionId,
+          type: 'mcq',
+          q: 'A fixture question?',
+          choices: ['A', 'B', 'C', 'D'],
+          answer: 1,
+          provenance: { pdf: 'hand-authored', locator: 'unit' },
+        },
+      ],
+      medium: [],
+      hard: [],
+    },
+  };
+}
+
+function seedGenerated(root: string, id = 'chemistry') {
+  const generated = path.join(root, 'content/generated');
+  mkdirSync(path.join(generated, 'questions'), { recursive: true });
+  mkdirSync(path.join(generated, 'keys'), { recursive: true });
+  const subjects = JSON.stringify(
+    [{ id, label: 'Chemistry', icon: 'chemistry', l: 0.6, c: 0.1, h: 30 }],
+    null,
+    2,
+  );
+  const questions = JSON.stringify({ easy: [], medium: [], hard: [] }, null, 2);
+  const keys = JSON.stringify(
+    {
+      [`${id}-easy-1`]: {
+        type: 'mcq',
+        answer: 0,
+        provenance: { pdf: 'secret.pdf', locator: 'do-not-leak' },
+      },
+    },
+    null,
+    2,
+  );
+  writeFileSync(path.join(generated, 'subjects.json'), subjects);
+  writeFileSync(path.join(generated, 'questions', `${id}.json`), questions);
+  writeFileSync(path.join(generated, 'keys', `${id}.json`), keys);
+  return {
+    subjectsPath: path.join(generated, 'subjects.json'),
+    questionsPath: path.join(generated, 'questions', `${id}.json`),
+    keysPath: path.join(generated, 'keys', `${id}.json`),
+    subjects,
+    questions,
+    keys,
+  };
+}
+
+function tempRoot(): string {
+  const root = mkdtempSync(path.join(tmpdir(), 'examify-onboarding-'));
+  writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'project-examify' }));
+  mkdirSync(path.join(root, 'content/subjects'), { recursive: true });
+  mkdirSync(path.join(root, 'src/lib/exam'), { recursive: true });
+  return root;
+}
+
+beforeAll(() => {
+  mkdirSync(TMP, { recursive: true });
+  if (existsSync(DB_PATH)) {
+    const fs = require('node:fs') as typeof import('node:fs');
+    fs.unlinkSync(DB_PATH);
+  }
+  const sqlite = new Database(DB_PATH);
+  sqlite.pragma('journal_mode = WAL');
+  migrate(drizzle(sqlite), {
+    migrationsFolder: path.join(process.cwd(), 'src', 'lib', 'db', 'migrations'),
+  });
+  sqlite.close();
+});
+
+afterAll(() => {
+  const fs = require('node:fs') as typeof import('node:fs');
+  if (fs.existsSync(DB_PATH)) fs.unlinkSync(DB_PATH);
+});
+
+beforeEach(async () => {
+  const { db, schema } = await import('@/lib/db');
+  const { resetLegacyImportLatch } = await import('@/lib/households');
+  db.delete(schema.householdMembers).run();
+  db.delete(schema.households).run();
+  db.delete(schema.users).run();
+  resetLegacyImportLatch();
+});
+
+afterEach(async () => {
+  const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
+  setOnboardingContentRootForTests(null);
+});
+
+describe('onboarding catalog emit', () => {
+  it('refuses an empty subjects tree and does not wipe generated files', async () => {
+    const { previewOnboardingEmit, applyOnboardingEmit, setOnboardingContentRootForTests } =
+      await import('@/lib/onboarding');
+    const root = tempRoot();
+    mkdirSync(path.join(root, 'content/subjects/history'), { recursive: true });
+    const leftover = seedGenerated(root);
+    setOnboardingContentRootForTests(root);
+
+    const preview = previewOnboardingEmit(false, root);
+    expect(preview.ok).toBe(false);
+    if (preview.ok) throw new Error('expected refuse');
+    expect(preview.reason).toBe('empty_catalog');
+    expect(preview.message).toBe(EMPTY_AUTHORITATIVE_EMIT);
+    expect(preview.message).toMatch(/will not wipe generated content/);
+
+    const applied = applyOnboardingEmit({ replaceSample: false }, root);
+    expect(applied.ok).toBe(false);
+    expect(readFileSync(leftover.subjectsPath, 'utf8')).toBe(leftover.subjects);
+    expect(readFileSync(leftover.questionsPath, 'utf8')).toBe(leftover.questions);
+    expect(readFileSync(leftover.keysPath, 'utf8')).toBe(leftover.keys);
+  });
+
+  it('dry-run plan is paths only and never includes key contents', async () => {
+    const { previewOnboardingEmit, setOnboardingContentRootForTests } =
+      await import('@/lib/onboarding');
+    const root = tempRoot();
+    mkdirSync(path.join(root, 'content/subjects/history'), { recursive: true });
+    writeFileSync(
+      path.join(root, 'content/subjects/history/bank.ir.json'),
+      JSON.stringify(fixtureIr('history', 'History')),
+    );
+    seedGenerated(root);
+    setOnboardingContentRootForTests(root);
+
+    const preview = previewOnboardingEmit(false, root);
+    expect(preview.ok).toBe(true);
+    if (!preview.ok) throw new Error('expected preview');
+    const serialized = JSON.stringify(preview.dryRun);
+    expect(serialized).not.toContain('do-not-leak');
+    expect(serialized).not.toContain('secret.pdf');
+    expect(serialized).not.toContain('"answer"');
+    expect(serialized).not.toContain('A fixture question?');
+    expect(preview.dryRun.plan.some((file) => file.path.endsWith('keys/history.json'))).toBe(true);
+    expect(preview.dryRun.plan.every((file) => file.path && file.action)).toBe(true);
+    expect(preview.dryRun.questionCount).toBe(1);
+  });
+
+  it('surfaces every colliding SAMPLE_QUESTIONS id, not only ingest fixtures', async () => {
+    const { previewOnboardingEmit, setOnboardingContentRootForTests } =
+      await import('@/lib/onboarding');
+    const allSampleIds = collectQuestionIds(SAMPLE_QUESTIONS);
+    const nonFixture = allSampleIds.find((id) => !(FIXTURE_IDS as readonly string[]).includes(id));
+    expect(nonFixture).toBeTruthy();
+    expect(allSampleIds.length).toBeGreaterThan(FIXTURE_IDS.length);
+
+    const root = tempRoot();
+    mkdirSync(path.join(root, 'content/subjects/maths'), { recursive: true });
+    writeFileSync(
+      path.join(root, 'content/subjects/maths/bank.ir.json'),
+      JSON.stringify(fixtureIr('maths', 'Maths', nonFixture)),
+    );
+    setOnboardingContentRootForTests(root);
+
+    const blocked = previewOnboardingEmit(false, root);
+    expect(blocked.ok).toBe(false);
+    if (blocked.ok) throw new Error('expected collision');
+    expect(JSON.stringify(blocked.issues)).toContain(nonFixture);
+
+    const allowed = previewOnboardingEmit(true, root);
+    expect(allowed.ok).toBe(true);
+    if (!allowed.ok) throw new Error('expected replace-sample preview');
+    expect(allowed.dryRun.collisions).toContain(nonFixture);
+    expect(allowed.dryRun.replaceSample).toBe(true);
+  });
+});
+
+describe('onboarding subjects and files', () => {
+  it('adds, renames, and deletes a subject, then prunes leftover generated JSON', async () => {
+    const {
+      addOnboardingSubject,
+      deleteOnboardingSubject,
+      listOnboardingSubjects,
+      renameOnboardingSubject,
+      setOnboardingContentRootForTests,
+    } = await import('@/lib/onboarding');
+    const root = tempRoot();
+    setOnboardingContentRootForTests(root);
+
+    const added = addOnboardingSubject({ id: 'History', label: 'History', icon: 'unknown' }, root);
+    expect(added.ok).toBe(true);
+    if (!added.ok) throw new Error('add');
+    expect(added.subject.icon).toBe('maths');
+    expect(listOnboardingSubjects(root).map((row) => row.id)).toEqual(['history']);
+    expect(existsSync(path.join(root, 'content/subjects/history/bank.ir.json'))).toBe(true);
+
+    const renamed = renameOnboardingSubject(
+      { id: 'history', nextId: 'world-history', label: 'World History', icon: 'geography' },
+      root,
+    );
+    expect(renamed.ok).toBe(true);
+    expect(listOnboardingSubjects(root).map((row) => row.id)).toEqual(['world-history']);
+
+    const leftover = seedGenerated(root, 'world-history');
+    mkdirSync(path.join(root, 'content/subjects/civics'), { recursive: true });
+    writeFileSync(
+      path.join(root, 'content/subjects/civics/bank.ir.json'),
+      JSON.stringify(fixtureIr('civics', 'Civics')),
+    );
+
+    expect(deleteOnboardingSubject('world-history', root)).toEqual({ ok: true, pruned: true });
+    expect(listOnboardingSubjects(root).map((row) => row.id)).toEqual(['civics']);
+    expect(existsSync(leftover.questionsPath)).toBe(false);
+    expect(existsSync(leftover.keysPath)).toBe(false);
+  });
+
+  it('attaches PDFs under source-pdfs only and refuses IR / oversized files', async () => {
+    const { addOnboardingSubject, attachSourcePdf, setOnboardingContentRootForTests } =
+      await import('@/lib/onboarding');
+    const root = tempRoot();
+    setOnboardingContentRootForTests(root);
+    expect(
+      addOnboardingSubject({ id: 'history', label: 'History', icon: 'geography' }, root).ok,
+    ).toBe(true);
+
+    const pdf = attachSourcePdf(
+      { subjectId: 'history', filename: 'notes.pdf', bytes: Buffer.from('%PDF-1.4 fixture') },
+      root,
+    );
+    expect(pdf).toEqual({ ok: true, filename: 'notes.pdf' });
+    expect(existsSync(path.join(root, 'content/source-pdfs/history/notes.pdf'))).toBe(true);
+    expect(existsSync(path.join(root, 'content/subjects/history/notes.pdf'))).toBe(false);
+    expect(existsSync(path.join(root, 'content/generated/notes.pdf'))).toBe(false);
+
+    expect(
+      attachSourcePdf(
+        {
+          subjectId: 'history',
+          filename: 'bank.ir.json',
+          bytes: Buffer.from(JSON.stringify(fixtureIr('history', 'History'))),
+        },
+        root,
+      ),
+    ).toEqual({ ok: false, reason: 'invalid_type' });
+
+    expect(
+      attachSourcePdf(
+        { subjectId: 'history', filename: 'huge.pdf', bytes: Buffer.alloc(8 * 1024 * 1024 + 1) },
+        root,
+      ),
+    ).toEqual({ ok: false, reason: 'too_large' });
+  });
+
+  it('delete of the last IR subject refuses wipe and leaves generated files', async () => {
+    const { deleteOnboardingSubject, setOnboardingContentRootForTests } =
+      await import('@/lib/onboarding');
+    const root = tempRoot();
+    setOnboardingContentRootForTests(root);
+    mkdirSync(path.join(root, 'content/subjects/history'), { recursive: true });
+    writeFileSync(
+      path.join(root, 'content/subjects/history/bank.ir.json'),
+      JSON.stringify(fixtureIr('history', 'History')),
+    );
+    const leftover = seedGenerated(root, 'history');
+    expect(deleteOnboardingSubject('history', root)).toEqual({ ok: true, pruned: false });
+    expect(readFileSync(leftover.keysPath, 'utf8')).toBe(leftover.keys);
+  });
+});
+
+describe('onboarding household gate', () => {
+  it('auto-starts only for the admin until skip or complete', async () => {
+    const { bootstrapHousehold } = await import('@/lib/households');
+    const {
+      adminNeedsOnboardingChip,
+      adminShouldAutoStartOnboarding,
+      completeOnboarding,
+      getOnboardingForUser,
+      skipOnboarding,
+    } = await import('@/lib/onboarding');
+    const host = bootstrapHousehold({ email: 'pat@example.com', householdName: 'Ours' });
+    expect(host.ok).toBe(true);
+    if (!host.ok) throw new Error('bootstrap');
+
+    let info = getOnboardingForUser(host.userId);
+    expect(info.role).toBe('admin');
+    expect(info.complete).toBe(false);
+    expect(
+      adminShouldAutoStartOnboarding({
+        role: info.role,
+        onboardingComplete: info.complete,
+        state: info.state,
+      }),
+    ).toBe(true);
+
+    skipOnboarding(host.householdId);
+    info = getOnboardingForUser(host.userId);
+    expect(info.complete).toBe(false);
+    expect(
+      adminShouldAutoStartOnboarding({
+        role: info.role,
+        onboardingComplete: info.complete,
+        state: info.state,
+      }),
+    ).toBe(false);
+    expect(adminNeedsOnboardingChip({ role: info.role, onboardingComplete: info.complete })).toBe(
+      true,
+    );
+
+    completeOnboarding(host.householdId);
+    info = getOnboardingForUser(host.userId);
+    expect(info.complete).toBe(true);
+    expect(adminNeedsOnboardingChip({ role: info.role, onboardingComplete: info.complete })).toBe(
+      false,
+    );
+  });
+
+  it('never auto-starts invited parents or students', async () => {
+    const { bootstrapHousehold } = await import('@/lib/households');
+    const { adminShouldAutoStartOnboarding, getOnboardingForUser } =
+      await import('@/lib/onboarding');
+    const { db, schema } = await import('@/lib/db');
+    const host = bootstrapHousehold({ email: 'pat@example.com', householdName: 'Ours' });
+    if (!host.ok) throw new Error('bootstrap');
+    const parent = db
+      .insert(schema.users)
+      .values({ email: 'other@example.com', emailVerifiedAt: new Date() })
+      .returning()
+      .get()!;
+    db.insert(schema.householdMembers)
+      .values({ householdId: host.householdId, userId: parent.id, role: 'parent' })
+      .run();
+    const kid = db
+      .insert(schema.users)
+      .values({ email: 'kid@example.com', emailVerifiedAt: new Date() })
+      .returning()
+      .get()!;
+    db.insert(schema.householdMembers)
+      .values({ householdId: host.householdId, userId: kid.id, role: 'student' })
+      .run();
+
+    const parentInfo = getOnboardingForUser(parent.id);
+    expect(
+      adminShouldAutoStartOnboarding({
+        role: parentInfo.role,
+        onboardingComplete: parentInfo.complete,
+        state: parentInfo.state,
+      }),
+    ).toBe(false);
+    const kidInfo = getOnboardingForUser(kid.id);
+    expect(
+      adminShouldAutoStartOnboarding({
+        role: kidInfo.role,
+        onboardingComplete: kidInfo.complete,
+        state: kidInfo.state,
+      }),
+    ).toBe(false);
+  });
+});

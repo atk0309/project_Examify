@@ -13,7 +13,11 @@ import {
   listPendingInvites,
 } from '@/lib/households';
 import { getProgressForUser, getScoreHistory, resolveChildren } from '@/lib/progress';
-import { parentNeedsSetupWizard } from '@/lib/setup-wizard';
+import {
+  adminNeedsOnboardingChip,
+  adminShouldAutoStartOnboarding,
+  getOnboardingForUser,
+} from '@/lib/onboarding';
 import { resolveExamPaper } from '@/lib/exam/data';
 import type { HouseholdMemberView } from '@/lib/household-types';
 
@@ -47,8 +51,15 @@ export default async function HomePage() {
   }
 
   if (session.role === 'parent') {
-    if (parentNeedsSetupWizard(session.userId)) {
-      redirect('/setup/wizard');
+    const onboarding = getOnboardingForUser(session.userId);
+    if (
+      adminShouldAutoStartOnboarding({
+        role: onboarding.role,
+        onboardingComplete: onboarding.complete,
+        state: onboarding.state,
+      })
+    ) {
+      redirect('/onboarding');
     }
     const ownProgress = getProgressForUser(session.userId);
 
@@ -101,6 +112,10 @@ export default async function HomePage() {
         members={members}
         canInvite={canInvite(session.userId)}
         authMode={getAuthMode()}
+        needsOnboarding={adminNeedsOnboardingChip({
+          role: onboarding.role,
+          onboardingComplete: onboarding.complete,
+        })}
       />
     );
   }

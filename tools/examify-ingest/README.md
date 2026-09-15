@@ -6,8 +6,8 @@ merges onto the hand-authored sample bank.
 
 It does **not** extract PDFs or call an LLM (those are later phases). You
 author `bank.ir.json` by hand (or generate it offline) and run the CLI. The
-first-run `/setup/wizard` calls this same directory emit (dry-run, then apply)
-and never passes `--replace-sample`.
+first-run `/onboarding` wizard calls this same directory emit (validate, dry-run,
+then apply). `--replace-sample` is off unless the admin enables the advanced toggle.
 
 ## Install
 
