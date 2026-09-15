@@ -25,10 +25,19 @@ const PRIMARY_ENV_FILE = '.env';
 const MAX_SECRET_CHARS = 256;
 
 let envStoreRootOverride: string | null = null;
+/** Tests only — Docker / systemd / parent exec environ. `null` = real `/proc`. */
+let initialEnvironOverride: Record<string, string | undefined> | null = null;
+let cachedInitialEnviron: Record<string, string> | null = null;
 
 /** Tests only — point `.env` writes at a temp tree. */
 export function setEnvStoreRootForTests(root: string | null): void {
   envStoreRootOverride = root;
+  if (root === null) initialEnvironOverride = null;
+}
+
+/** Tests only — simulate a host-injected exec environment. */
+export function setInitialEnvironForTests(env: Record<string, string | undefined> | null): void {
+  initialEnvironOverride = env;
 }
 
 export function getEnvStoreRoot(): string {
@@ -239,15 +248,52 @@ function readStoreFileSecret(root: string, key: string): string | undefined {
 }
 
 /**
- * True when `process.env` has a usable value that is not the file-store value.
- * Docker / systemd / parent-process injects win after restart (`mergeRepoEnvFiles`
- * leaves existing env alone), so a `.env` write would not persist.
+ * Initial exec environment (Linux `/proc/self/environ`). Next.js / dotenv
+ * copies `.env` into `process.env` after start; Docker / systemd / a parent
+ * shell put the key in the exec environ. Only allowlisted keys are kept.
+ */
+function readInitialProcessEnviron(): Record<string, string> {
+  if (cachedInitialEnviron) return cachedInitialEnviron;
+  const out: Record<string, string> = {};
+  try {
+    const raw = readFileSync('/proc/self/environ', 'utf8');
+    for (const entry of raw.split('\0')) {
+      const eq = entry.indexOf('=');
+      if (eq <= 0) continue;
+      const name = entry.slice(0, eq);
+      if (!isEnvStoreKey(name)) continue;
+      out[name] = entry.slice(eq + 1);
+    }
+  } catch {
+    // Non-Linux or unreadable — no exec-environ evidence.
+  }
+  cachedInitialEnviron = out;
+  return out;
+}
+
+function resolveInitialEnviron(
+  explicit?: Record<string, string | undefined>,
+): Record<string, string | undefined> {
+  if (explicit) return explicit;
+  if (initialEnvironOverride) return initialEnvironOverride;
+  // Temp-root tests must not inherit the runner's real exec environ.
+  if (envStoreRootOverride !== null) return {};
+  return readInitialProcessEnviron();
+}
+
+/**
+ * True when a host (Docker / systemd / parent process) owns the key.
+ * Provenance is the process exec environment, not live-vs-file equality —
+ * a matching `.env` value is still host-managed if the key was injected
+ * at start (`mergeRepoEnvFiles` leaves existing env alone on restart).
  */
 export function envStoreSecretHostManaged(
   key: EnvStoreKey,
   root = getEnvStoreRoot(),
   env: Record<string, string | undefined> = process.env,
+  initialEnv?: Record<string, string | undefined>,
 ): boolean {
+  if (isUsableEnvSecret(resolveInitialEnviron(initialEnv)[key]?.trim())) return true;
   const live = env[key]?.trim() ?? '';
   if (!isUsableEnvSecret(live)) return false;
   const stored = readStoreFileSecret(root, key)?.trim() ?? '';

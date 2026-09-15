@@ -33,8 +33,8 @@ Surface:
   (optional `examify-ingest generate` after files + mode; OpenAI mode can
   set / rotate / clear `OPENAI_API_KEY` in the same repo-root `.env` as
   `install.sh` and `examify-ingest generate` (shared `findRepoRoot`, never
-  `process.cwd()`), never echoed; a host-injected key is not rotatable
-  in the wizard) → validate → Review
+  `process.cwd()`), never echoed; a host-injected key (exec environ,
+  not live-vs-file equality) is not rotatable in the wizard) → validate → Review
   (dry-run HITL) → apply → ready. The wizard is one stage at a time: desktop
   (≥900px) uses a left step rail + stage + sticky footer; mobile uses compact
   “Step N of M · Label” progress and a sticky bottom bar. Generate writes BankIR

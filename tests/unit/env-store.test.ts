@@ -12,8 +12,9 @@ function tempRoot(): string {
 const SECRET = 'sk-openai-unit-test-key-never-echo';
 
 afterEach(async () => {
-  const { setEnvStoreRootForTests } = await import('@/lib/env-store');
+  const { setEnvStoreRootForTests, setInitialEnvironForTests } = await import('@/lib/env-store');
   setEnvStoreRootForTests(null);
+  setInitialEnvironForTests(null);
 });
 
 describe('env-store', () => {
@@ -162,9 +163,14 @@ describe('env-store', () => {
   });
 
   it('treats a live process.env value that differs from the file store as host-managed', async () => {
-    const { envStoreSecretHostManaged, setEnvStoreSecret, clearEnvStoreSecret } =
-      await import('@/lib/env-store');
+    const {
+      envStoreSecretHostManaged,
+      setEnvStoreRootForTests,
+      setEnvStoreSecret,
+      clearEnvStoreSecret,
+    } = await import('@/lib/env-store');
     const root = tempRoot();
+    setEnvStoreRootForTests(root);
     const injected = 'sk-host-injected-never-echo';
     const attempted = 'sk-wizard-would-not-persist';
     writeFileSync(path.join(root, '.env'), `OPENAI_API_KEY=${SECRET}\nOTHER=keep\n`);
@@ -208,9 +214,58 @@ describe('env-store', () => {
     }
   });
 
-  it('is not host-managed when the live value matches the file store', async () => {
-    const { envStoreSecretHostManaged, setEnvStoreSecret } = await import('@/lib/env-store');
+  it('is host-managed when the exec environ has the key even if .env matches', async () => {
+    const {
+      envStoreSecretHostManaged,
+      setEnvStoreRootForTests,
+      setInitialEnvironForTests,
+      setEnvStoreSecret,
+      clearEnvStoreSecret,
+    } = await import('@/lib/env-store');
     const root = tempRoot();
+    setEnvStoreRootForTests(root);
+    setInitialEnvironForTests({ OPENAI_API_KEY: SECRET });
+    writeFileSync(path.join(root, '.env'), `OPENAI_API_KEY=${SECRET}\nOTHER=keep\n`);
+    const previous = process.env.OPENAI_API_KEY;
+    process.env.OPENAI_API_KEY = SECRET;
+    const attempted = 'sk-wizard-matching-would-not-persist';
+    try {
+      expect(envStoreSecretHostManaged('OPENAI_API_KEY', root)).toBe(true);
+      expect(
+        envStoreSecretHostManaged(
+          'OPENAI_API_KEY',
+          root,
+          { OPENAI_API_KEY: SECRET },
+          {
+            OPENAI_API_KEY: SECRET,
+          },
+        ),
+      ).toBe(true);
+
+      const set = setEnvStoreSecret('OPENAI_API_KEY', attempted, root);
+      expect(set).toEqual({ ok: false, reason: 'host_managed' });
+      expect(JSON.stringify(set)).not.toContain(SECRET);
+      expect(JSON.stringify(set)).not.toContain(attempted);
+
+      const cleared = clearEnvStoreSecret('OPENAI_API_KEY', root);
+      expect(cleared).toEqual({ ok: false, reason: 'host_managed' });
+      expect(JSON.stringify(cleared)).not.toContain(SECRET);
+
+      expect(readFileSync(path.join(root, '.env'), 'utf8')).toBe(
+        `OPENAI_API_KEY=${SECRET}\nOTHER=keep\n`,
+      );
+      expect(process.env.OPENAI_API_KEY).toBe(SECRET);
+    } finally {
+      if (previous === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = previous;
+    }
+  });
+
+  it('is not host-managed when the live value matches the file store and exec environ is empty', async () => {
+    const { envStoreSecretHostManaged, setEnvStoreRootForTests, setEnvStoreSecret } =
+      await import('@/lib/env-store');
+    const root = tempRoot();
+    setEnvStoreRootForTests(root);
     const rotated = 'sk-openai-file-matched-rotate';
     writeFileSync(path.join(root, '.env'), `OPENAI_API_KEY=${SECRET}\n`);
     const previous = process.env.OPENAI_API_KEY;

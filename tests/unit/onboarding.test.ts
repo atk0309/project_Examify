@@ -107,9 +107,10 @@ beforeEach(async () => {
 
 afterEach(async () => {
   const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
-  const { setEnvStoreRootForTests } = await import('@/lib/env-store');
+  const { setEnvStoreRootForTests, setInitialEnvironForTests } = await import('@/lib/env-store');
   setOnboardingContentRootForTests(null);
   setEnvStoreRootForTests(null);
+  setInitialEnvironForTests(null);
 });
 
 describe('onboarding catalog emit', () => {
@@ -594,7 +595,7 @@ describe('onboarding household gate', () => {
   it('exposes AI configured flags including OpenAI env detection', async () => {
     const { bootstrapHousehold } = await import('@/lib/households');
     const { getOnboardingSnapshot } = await import('@/lib/onboarding');
-    const { setEnvStoreRootForTests } = await import('@/lib/env-store');
+    const { setEnvStoreRootForTests, setInitialEnvironForTests } = await import('@/lib/env-store');
     const host = bootstrapHousehold({ email: 'pat@example.com', householdName: 'Ours' });
     expect(host.ok).toBe(true);
     if (!host.ok) throw new Error('bootstrap');
@@ -625,6 +626,10 @@ describe('onboarding household gate', () => {
       const matched = getOnboardingSnapshot(host.householdId);
       expect(matched.openaiConfigured).toBe(true);
       expect(matched.openaiHostManaged).toBe(false);
+      setInitialEnvironForTests({ OPENAI_API_KEY: 'sk-test-not-a-sentinel' });
+      const execOwned = getOnboardingSnapshot(host.householdId);
+      expect(execOwned.openaiConfigured).toBe(true);
+      expect(execOwned.openaiHostManaged).toBe(true);
     } finally {
       if (previous === undefined) delete process.env.OPENAI_API_KEY;
       else process.env.OPENAI_API_KEY = previous;

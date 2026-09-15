@@ -71,7 +71,8 @@ string, win). Repo root is the `package.json` name `project-examify` walk
 (`findRepoRoot`), not `process.cwd()`, so a generate from a subdirectory
 still reads the `.env` the wizard / `install.sh` wrote. `/onboarding` and
 `install.sh` write `OPENAI_API_KEY` into that same store. Host-injected
-keys win after restart and are not rotatable from the wizard. A matching
+keys (process exec environ) win after restart and are not rotatable from
+the wizard even when `.env` happens to match. A matching
 `cacheKey` reuses the cached
 IR with no network and does not require the key. The app's
 `ANTHROPIC_API_KEY=test` sentinel is refused on a miss — use `--provider test`

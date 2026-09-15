@@ -76,9 +76,10 @@ beforeEach(async () => {
 afterEach(async () => {
   const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
   const { resetOnboardingGenerateForTests } = await import('@/lib/onboarding-generate');
-  const { setEnvStoreRootForTests } = await import('@/lib/env-store');
+  const { setEnvStoreRootForTests, setInitialEnvironForTests } = await import('@/lib/env-store');
   setOnboardingContentRootForTests(null);
   setEnvStoreRootForTests(null);
+  setInitialEnvironForTests(null);
   resetOnboardingGenerateForTests();
 });
 
@@ -828,6 +829,43 @@ describe('onboarding actions', () => {
         `ANTHROPIC_API_KEY=test\nOPENAI_API_KEY=${fileSecret}\n`,
       );
       expect(process.env.OPENAI_API_KEY).toBe(injected);
+    } finally {
+      if (previous === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = previous;
+    }
+  });
+
+  it('refuses set / clear when exec environ owns the key even if .env matches', async () => {
+    const { setEnvStoreRootForTests, setInitialEnvironForTests } = await import('@/lib/env-store');
+    const root = tempRoot();
+    setEnvStoreRootForTests(root);
+    const secret = 'sk-matching-host-and-file-never-echo';
+    const attempted = 'sk-wizard-matching-attempt-never-echo';
+    writeFileSync(path.join(root, '.env'), `ANTHROPIC_API_KEY=test\nOPENAI_API_KEY=${secret}\n`);
+    setInitialEnvironForTests({ OPENAI_API_KEY: secret });
+    await signInHost();
+    const previous = process.env.OPENAI_API_KEY;
+    process.env.OPENAI_API_KEY = secret;
+    try {
+      const { setOnboardingOpenAiKeyAction } = await import('@/actions/onboarding');
+      const set = new FormData();
+      set.set('intent', 'set');
+      set.set('openaiApiKey', attempted);
+      const written = await setOnboardingOpenAiKeyAction(set);
+      expect(written).toEqual({ ok: false, reason: 'host_managed' });
+      expect(JSON.stringify(written)).not.toContain(secret);
+      expect(JSON.stringify(written)).not.toContain(attempted);
+
+      const clear = new FormData();
+      clear.set('intent', 'clear');
+      const cleared = await setOnboardingOpenAiKeyAction(clear);
+      expect(cleared).toEqual({ ok: false, reason: 'host_managed' });
+      expect(JSON.stringify(cleared)).not.toContain(secret);
+
+      expect(readFileSync(path.join(root, '.env'), 'utf8')).toBe(
+        `ANTHROPIC_API_KEY=test\nOPENAI_API_KEY=${secret}\n`,
+      );
+      expect(process.env.OPENAI_API_KEY).toBe(secret);
     } finally {
       if (previous === undefined) delete process.env.OPENAI_API_KEY;
       else process.env.OPENAI_API_KEY = previous;

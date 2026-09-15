@@ -36,7 +36,7 @@ no env-JSON allowlist to hand-edit.
    After bootstrap, **`/onboarding`** lets the household admin add subjects, attach
    local study PDFs, choose an AI mode (OpenAI keys write the same repo-root `.env`
    as `install.sh` / `examify-ingest generate`; host-injected keys stay
-   host-managed), optionally generate BankIR from those
+   host-managed via the process exec environment), optionally generate BankIR from those
    files, and emit through `examify-ingest` (validate + Review / dry-run HITL, then apply;
    desktop uses a step rail, mobile a compact progress bar; one stage at a time;
    generate never auto-applies; cancel discards an in-flight preview and does

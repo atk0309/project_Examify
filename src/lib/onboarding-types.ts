@@ -108,8 +108,8 @@ export type OnboardingSnapshot = {
   anthropicConfigured: boolean;
   openaiConfigured: boolean;
   /**
-   * Live process value is not the `.env` / `.env.local` value — Docker /
-   * systemd / parent env will win after restart. Wizard write/clear refused.
+   * Host (Docker / systemd / parent exec environ) owns the key — a matching
+   * `.env` value is not enough. Wizard write/clear refused.
    */
   openaiHostManaged: boolean;
   localAgentConfigured: boolean;
