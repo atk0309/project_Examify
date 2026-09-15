@@ -44,11 +44,22 @@ const STEPS = [
   { id: 'files', label: 'Files' },
   { id: 'ai', label: 'AI setup' },
   { id: 'validate', label: 'Validate' },
-  { id: 'dry-run', label: 'Dry-run' },
+  { id: 'dry-run', label: 'Review' },
   { id: 'apply', label: 'Apply' },
   { id: 'ready', label: 'Ready' },
 ] as const;
 type StepId = (typeof STEPS)[number]['id'];
+
+const STAGE_HELP: Record<StepId, string> = {
+  welcome: '',
+  subjects: 'Add the subjects you want in the practice bank. One is enough to continue.',
+  files: 'Keep study PDFs on this host. They never enter the question bank.',
+  ai: 'Choose how generate talks to a model, then optionally draft BankIR from local files.',
+  validate: 'Check BankIR before anything is written to the generated bank.',
+  'dry-run': 'Preview the emit plan, including planned deletes. Apply is the only write.',
+  apply: 'Confirm the reviewed plan. An empty catalog is refused.',
+  ready: 'The sample bank stays available either way.',
+};
 
 const AI_COPY: Record<OnboardingAiMode, { title: string; body: string }> = {
   cloud: {
@@ -72,6 +83,17 @@ const AI_COPY: Record<OnboardingAiMode, { title: string; body: string }> = {
     body: 'Deterministic fixture provider. No cloud key. Hand-authored BankIR can still skip generate.',
   },
 };
+
+function suggestSubjectId(label: string): string {
+  return label
+    .trim()
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40);
+}
 
 function errorCopy(error: OnboardingActionError): string {
   switch (error.reason) {
@@ -116,6 +138,20 @@ function errorCopy(error: OnboardingActionError): string {
   }
 }
 
+function modeConfigured(mode: OnboardingAiMode, snapshot: OnboardingSnapshot): boolean {
+  switch (mode) {
+    case 'cloud':
+      return snapshot.anthropicConfigured;
+    case 'cloud-openai':
+      return snapshot.openaiConfigured;
+    case 'local-agent':
+    case 'local-cli':
+      return snapshot.localAgentConfigured;
+    case 'skip-stub':
+      return true;
+  }
+}
+
 export function OnboardingWizard({
   snapshot: initial,
   pendingInvites,
@@ -151,6 +187,8 @@ export function OnboardingWizard({
   const [pending, startTransition] = useTransition();
 
   const stepIndex = STEPS.findIndex((entry) => entry.id === step);
+  const current = STEPS[stepIndex]!;
+  const wideStage = step === 'dry-run';
 
   const run = (task: () => Promise<void>) => {
     startTransition(async () => {
@@ -182,377 +220,433 @@ export function OnboardingWizard({
     setStep(next);
   };
 
+  const skip = () =>
+    run(async () => {
+      const result = await skipOnboardingAction();
+      if (result) applyResult(result);
+    });
+
   return (
-    <div className="screen wizard" data-testid="onboarding-wizard">
-      <header className="topbar">
-        <span className="topbar-spacer" />
-        <span className="topbar-label">Content setup</span>
-        <span className="topbar-spacer" />
+    <div className="screen wizard wizard-shell" data-testid="onboarding-wizard">
+      <header className="wizard-topbar">
+        <p className="wizard-brand">
+          Examify <span aria-hidden>·</span> Content setup
+        </p>
+        {step !== 'welcome' && step !== 'ready' ? (
+          <details className="wizard-skip-menu">
+            <summary>Skip</summary>
+            <button
+              type="button"
+              className="btn btn-quiet"
+              disabled={pending || generateBusy}
+              data-testid="wizard-skip"
+              onClick={skip}
+            >
+              Skip to dashboard
+            </button>
+          </details>
+        ) : (
+          <span className="wizard-topbar-slot" />
+        )}
       </header>
 
-      {step !== 'welcome' ? (
-        <div className="hero">
-          <p className="eyebrow">
-            Step {stepIndex} of {STEPS.length - 1}
-          </p>
-          <h1 className="display-title">{STEPS[stepIndex]!.label}</h1>
-          <ol className="wizard-steps" aria-label="Setup steps">
-            {STEPS.filter((entry) => entry.id !== 'welcome').map((entry, index) => (
-              <li
-                key={entry.id}
-                className={index + 1 === stepIndex ? 'active' : index + 1 < stepIndex ? 'done' : ''}
-              >
-                {entry.label}
-              </li>
-            ))}
+      <div className="wizard-body">
+        <nav className="wizard-rail" aria-label="Setup steps" data-testid="wizard-rail">
+          <ol className="wizard-rail-list">
+            {STEPS.map((entry, index) => {
+              const state =
+                index < stepIndex ? 'done' : index === stepIndex ? 'active' : 'upcoming';
+              const clickable = index <= stepIndex && entry.id !== step;
+              return (
+                <li key={entry.id} className={`wizard-rail-item ${state}`}>
+                  <button
+                    type="button"
+                    className="wizard-rail-btn"
+                    disabled={!clickable || pending}
+                    onClick={() => go(entry.id)}
+                  >
+                    <span className="wizard-rail-index" aria-hidden>
+                      {state === 'done' ? UIcon.check : index + 1}
+                    </span>
+                    <span className="wizard-rail-label">{entry.label}</span>
+                  </button>
+                </li>
+              );
+            })}
           </ol>
-        </div>
-      ) : null}
+        </nav>
 
-      {step === 'welcome' ? <WelcomeStep /> : null}
+        <div className="wizard-column">
+          {step !== 'welcome' ? (
+            <div className="wizard-progress" data-testid="wizard-progress">
+              <p className="wizard-progress-label">
+                Step {stepIndex + 1} of {STEPS.length} <span aria-hidden>·</span> {current.label}
+              </p>
+              <div
+                className="wizard-progress-track"
+                role="progressbar"
+                aria-valuemin={1}
+                aria-valuemax={STEPS.length}
+                aria-valuenow={stepIndex + 1}
+                aria-label={`${current.label}, step ${stepIndex + 1} of ${STEPS.length}`}
+              >
+                <span
+                  className="wizard-progress-fill"
+                  style={{ width: `${((stepIndex + 1) / STEPS.length) * 100}%` }}
+                />
+              </div>
+            </div>
+          ) : null}
 
-      {step === 'subjects' ? (
-        <SubjectsStep
-          snapshot={snapshot}
-          pending={pending}
-          onAdd={(data) =>
-            run(async () => {
-              if (applyResult(await addOnboardingSubjectAction(data))) {
-                setDryRun(null);
-                setValidated(false);
-              }
-            })
-          }
-          onRename={(data) =>
-            run(async () => {
-              if (applyResult(await renameOnboardingSubjectAction(data))) {
-                setDryRun(null);
-                setValidated(false);
-              }
-            })
-          }
-          onDelete={(data) =>
-            run(async () => {
-              if (applyResult(await deleteOnboardingSubjectAction(data))) {
-                setDryRun(null);
-                setValidated(false);
-              }
-            })
-          }
-        />
-      ) : null}
+          <div
+            className={'wizard-stage' + (wideStage ? ' wizard-stage-wide' : '')}
+            data-testid="wizard-stage"
+          >
+            {step !== 'welcome' ? (
+              <div className="wizard-stage-head">
+                <h1 className="display-title">{current.label}</h1>
+                <p className="wizard-help">{STAGE_HELP[step]}</p>
+              </div>
+            ) : null}
 
-      {step === 'files' ? (
-        <FilesStep
-          snapshot={snapshot}
-          pending={pending}
-          onAttach={(data) =>
-            run(async () => {
-              applyResult(await attachOnboardingPdfAction(data));
-            })
-          }
-          onDetach={(data) =>
-            run(async () => {
-              applyResult(await detachOnboardingPdfAction(data));
-            })
-          }
-        />
-      ) : null}
+            {step === 'welcome' ? <WelcomeStep /> : null}
 
-      {step === 'ai' ? (
-        <AiStep
-          snapshot={snapshot}
-          pending={pending}
-          generateBusy={generateBusy}
-          generateSeed={generateSeed}
-          generateRuns={generateRuns}
-          activeGenerateId={activeGenerateId}
-          irReady={irReady}
-          onSeed={setGenerateSeed}
-          onSelect={(mode) =>
-            run(async () => {
-              const data = new FormData();
-              data.set('aiMode', mode);
-              applyResult(await setOnboardingAiModeAction(data));
-            })
-          }
-          onCancel={() => {
-            generateCancelRef.current = true;
-            const token = generateCancelTokenRef.current;
-            if (!token) return;
-            const data = new FormData();
-            data.set('cancelToken', token);
-            void cancelOnboardingGenerateAction(data);
-          }}
-          onGoValidate={() => go('validate')}
-          onGenerate={(subjectIds) =>
-            run(async () => {
-              const token = crypto.randomUUID();
-              generateCancelTokenRef.current = token;
-              generateCancelRef.current = false;
-              setGenerateBusy(true);
-              let wroteAny = false;
-              try {
-                for (const subjectId of subjectIds) {
-                  if (generateCancelRef.current) break;
-                  setActiveGenerateId(subjectId);
-                  const data = new FormData();
-                  data.set('subjectId', subjectId);
-                  data.set('seed', String(generateSeed));
-                  data.set('cancelToken', token);
-                  const result = await generateOnboardingSubjectAction(data);
-                  if (!result.ok) {
-                    if (result.reason === 'cancelled' || generateCancelRef.current) break;
-                    applyResult(result);
-                    return;
-                  }
-                  setSnapshot(result.snapshot);
-                  setGenerateRuns((current) => ({ ...current, [subjectId]: result.result }));
-                  setDryRun(null);
-                  setValidated(false);
-                  wroteAny = wroteAny || result.result.wroteIr;
-                  if (generateCancelRef.current) break;
+            {step === 'subjects' ? (
+              <SubjectsStep
+                snapshot={snapshot}
+                pending={pending}
+                onAdd={(data) =>
+                  run(async () => {
+                    if (applyResult(await addOnboardingSubjectAction(data))) {
+                      setDryRun(null);
+                      setValidated(false);
+                    }
+                  })
                 }
-                // Keep IR-ready for subjects that already finished (including generate-all cancel).
-                if (wroteAny) setIrReady(true);
-              } finally {
-                setActiveGenerateId(null);
-                setGenerateBusy(false);
-              }
-            })
-          }
-        />
-      ) : null}
+                onRename={(data) =>
+                  run(async () => {
+                    if (applyResult(await renameOnboardingSubjectAction(data))) {
+                      setDryRun(null);
+                      setValidated(false);
+                    }
+                  })
+                }
+                onDelete={(data) =>
+                  run(async () => {
+                    if (applyResult(await deleteOnboardingSubjectAction(data))) {
+                      setDryRun(null);
+                      setValidated(false);
+                    }
+                  })
+                }
+              />
+            ) : null}
 
-      {step === 'validate' ? (
-        <ValidateStep
-          snapshot={snapshot}
-          pending={pending}
-          validated={validated}
-          onToggleReplace={(enabled) =>
-            run(async () => {
-              const data = new FormData();
-              data.set('replaceSample', enabled ? '1' : '0');
-              if (applyResult(await setReplaceSampleAction(data))) {
-                setValidated(false);
-                setDryRun(null);
-              }
-            })
-          }
-          onValidate={() =>
-            run(async () => {
-              const result = await validateOnboardingAction();
-              if (applyResult(result)) {
-                setValidated(true);
-                setDryRun(null);
-              } else {
-                setValidated(false);
-              }
-            })
-          }
-        />
-      ) : null}
+            {step === 'files' ? (
+              <FilesStep
+                snapshot={snapshot}
+                pending={pending}
+                onAttach={(data) =>
+                  run(async () => {
+                    applyResult(await attachOnboardingPdfAction(data));
+                  })
+                }
+                onDetach={(data) =>
+                  run(async () => {
+                    applyResult(await detachOnboardingPdfAction(data));
+                  })
+                }
+              />
+            ) : null}
 
-      {step === 'dry-run' ? (
-        <DryRunStep
-          snapshot={snapshot}
-          pending={pending}
-          dryRun={dryRun}
-          onToggleReplace={(enabled) =>
-            run(async () => {
-              const data = new FormData();
-              data.set('replaceSample', enabled ? '1' : '0');
-              if (applyResult(await setReplaceSampleAction(data))) {
-                setValidated(false);
-                setDryRun(null);
-              }
-            })
-          }
-          onPreview={() =>
-            run(async () => {
-              const result = await previewOnboardingEmitAction();
-              if (applyResult(result) && result.ok) {
-                setDryRun(result.dryRun);
-              } else {
-                setDryRun(null);
-              }
-            })
-          }
-        />
-      ) : null}
+            {step === 'ai' ? (
+              <AiStep
+                snapshot={snapshot}
+                pending={pending}
+                generateBusy={generateBusy}
+                generateSeed={generateSeed}
+                generateRuns={generateRuns}
+                activeGenerateId={activeGenerateId}
+                irReady={irReady}
+                onSeed={setGenerateSeed}
+                onSelect={(mode) =>
+                  run(async () => {
+                    const data = new FormData();
+                    data.set('aiMode', mode);
+                    applyResult(await setOnboardingAiModeAction(data));
+                  })
+                }
+                onCancel={() => {
+                  generateCancelRef.current = true;
+                  const token = generateCancelTokenRef.current;
+                  if (!token) return;
+                  const data = new FormData();
+                  data.set('cancelToken', token);
+                  void cancelOnboardingGenerateAction(data);
+                }}
+                onGoValidate={() => go('validate')}
+                onGenerate={(subjectIds) =>
+                  run(async () => {
+                    const token = crypto.randomUUID();
+                    generateCancelTokenRef.current = token;
+                    generateCancelRef.current = false;
+                    setGenerateBusy(true);
+                    let wroteAny = false;
+                    try {
+                      for (const subjectId of subjectIds) {
+                        if (generateCancelRef.current) break;
+                        setActiveGenerateId(subjectId);
+                        const data = new FormData();
+                        data.set('subjectId', subjectId);
+                        data.set('seed', String(generateSeed));
+                        data.set('cancelToken', token);
+                        const result = await generateOnboardingSubjectAction(data);
+                        if (!result.ok) {
+                          if (result.reason === 'cancelled' || generateCancelRef.current) break;
+                          applyResult(result);
+                          return;
+                        }
+                        setSnapshot(result.snapshot);
+                        setGenerateRuns((currentRuns) => ({
+                          ...currentRuns,
+                          [subjectId]: result.result,
+                        }));
+                        setDryRun(null);
+                        setValidated(false);
+                        wroteAny = wroteAny || result.result.wroteIr;
+                        if (generateCancelRef.current) break;
+                      }
+                      // Keep IR-ready for subjects that already finished (including generate-all cancel).
+                      if (wroteAny) setIrReady(true);
+                    } finally {
+                      setActiveGenerateId(null);
+                      setGenerateBusy(false);
+                    }
+                  })
+                }
+              />
+            ) : null}
 
-      {step === 'apply' ? (
-        <ApplyStep
-          pending={pending}
-          applyState={applyState}
-          hasDryRun={Boolean(snapshot.hasDryRun && dryRun)}
-          onApply={() =>
-            run(async () => {
-              setApplyState({ status: 'applying' });
-              const result = await applyOnboardingEmitAction();
-              if (result.ok) {
-                setSnapshot(result.snapshot);
-                setApplyState({
-                  status: 'success',
-                  written: result.written,
-                  questionCount: result.questionCount,
-                  subjectCount: result.subjectCount,
-                });
-              } else {
-                setError(errorCopy(result));
-                setIssues(result.issues ?? []);
-                setApplyState({ status: 'error', message: errorCopy(result) });
-              }
-            })
-          }
-        />
-      ) : null}
+            {step === 'validate' ? (
+              <ValidateStep
+                pending={pending}
+                validated={validated}
+                onValidate={() =>
+                  run(async () => {
+                    const result = await validateOnboardingAction();
+                    if (applyResult(result)) {
+                      setValidated(true);
+                      setDryRun(null);
+                    } else {
+                      setValidated(false);
+                    }
+                  })
+                }
+              />
+            ) : null}
 
-      {step === 'ready' ? (
-        <ReadyStep
-          applyState={applyState}
-          canInvite={canInvite}
-          pendingInvites={pendingInvites}
-          members={members}
-          authMode={authMode}
-        />
-      ) : null}
+            {step === 'dry-run' ? (
+              <DryRunStep
+                snapshot={snapshot}
+                pending={pending}
+                dryRun={dryRun}
+                onToggleReplace={(enabled) =>
+                  run(async () => {
+                    const data = new FormData();
+                    data.set('replaceSample', enabled ? '1' : '0');
+                    if (applyResult(await setReplaceSampleAction(data))) {
+                      setValidated(false);
+                      setDryRun(null);
+                    }
+                  })
+                }
+                onPreview={() =>
+                  run(async () => {
+                    const result = await previewOnboardingEmitAction();
+                    if (applyResult(result) && result.ok) {
+                      setDryRun(result.dryRun);
+                    } else {
+                      setDryRun(null);
+                    }
+                  })
+                }
+              />
+            ) : null}
 
-      {error ? (
-        <p className="login-error" role="alert" data-testid="wizard-error">
-          {error}
-        </p>
-      ) : null}
-      {issues.length > 0 ? (
-        <ul className="wizard-issues" data-testid="wizard-issues">
-          {issues.map((issue) => (
-            <li key={`${issue.file}:${issue.message}`}>
-              {issue.file ? `${issue.file}: ` : ''}
-              {issue.message}
-            </li>
-          ))}
-        </ul>
-      ) : null}
+            {step === 'apply' ? (
+              <ApplyStep
+                pending={pending}
+                applyState={applyState}
+                hasDryRun={Boolean(snapshot.hasDryRun && dryRun)}
+                onApply={() =>
+                  run(async () => {
+                    setApplyState({ status: 'applying' });
+                    const result = await applyOnboardingEmitAction();
+                    if (result.ok) {
+                      setSnapshot(result.snapshot);
+                      setApplyState({
+                        status: 'success',
+                        written: result.written,
+                        questionCount: result.questionCount,
+                        subjectCount: result.subjectCount,
+                      });
+                    } else {
+                      setError(errorCopy(result));
+                      setIssues(result.issues ?? []);
+                      setApplyState({ status: 'error', message: errorCopy(result) });
+                    }
+                  })
+                }
+              />
+            ) : null}
 
-      <div className="action-dock">
-        {step !== 'welcome' && step !== 'ready' ? (
-          <button
-            type="button"
-            className="btn btn-ghost"
-            disabled={pending}
-            data-testid="wizard-back"
-            onClick={() => go(STEPS[stepIndex - 1]!.id)}
-          >
-            Back
-          </button>
-        ) : null}
+            {step === 'ready' ? (
+              <ReadyStep
+                applyState={applyState}
+                canInvite={canInvite}
+                pendingInvites={pendingInvites}
+                members={members}
+                authMode={authMode}
+              />
+            ) : null}
 
-        {step === 'welcome' ? (
-          <button
-            type="button"
-            className="btn btn-primary"
-            disabled={pending}
-            data-testid="wizard-get-started"
-            onClick={() => go('subjects')}
-          >
-            Get started {UIcon.arrow}
-          </button>
-        ) : null}
+            {error ? (
+              <p className="login-error" role="alert" data-testid="wizard-error">
+                {error}
+              </p>
+            ) : null}
+            {issues.length > 0 ? (
+              <ul className="wizard-issues" data-testid="wizard-issues">
+                {issues.map((issue) => (
+                  <li key={`${issue.file}:${issue.message}`}>
+                    {issue.file ? `${issue.file}: ` : ''}
+                    {issue.message}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
 
-        {step === 'subjects' ? (
-          <button
-            type="button"
-            className="btn btn-primary"
-            disabled={pending || snapshot.subjects.length < 1}
-            data-testid="wizard-next"
-            onClick={() => go('files')}
-          >
-            Next
-          </button>
-        ) : null}
+          <footer className="wizard-footer" data-testid="wizard-footer">
+            <div className="wizard-footer-actions">
+              {step !== 'welcome' && step !== 'ready' ? (
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  disabled={pending}
+                  data-testid="wizard-back"
+                  onClick={() => go(STEPS[stepIndex - 1]!.id)}
+                >
+                  Back
+                </button>
+              ) : null}
 
-        {step === 'files' || step === 'ai' ? (
-          <button
-            type="button"
-            className="btn btn-primary"
-            disabled={pending || generateBusy}
-            data-testid="wizard-next"
-            onClick={() => go(STEPS[stepIndex + 1]!.id)}
-          >
-            Next
-          </button>
-        ) : null}
+              {step === 'welcome' ? (
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={pending}
+                  data-testid="wizard-get-started"
+                  onClick={() => go('subjects')}
+                >
+                  Get started {UIcon.arrow}
+                </button>
+              ) : null}
 
-        {step === 'validate' ? (
-          <button
-            type="button"
-            className="btn btn-primary"
-            disabled={pending || !validated}
-            data-testid="wizard-next"
-            onClick={() => go('dry-run')}
-          >
-            Next
-          </button>
-        ) : null}
+              {step === 'subjects' ? (
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={pending || snapshot.subjects.length < 1}
+                  data-testid="wizard-next"
+                  onClick={() => go('files')}
+                >
+                  Next
+                </button>
+              ) : null}
 
-        {step === 'dry-run' ? (
-          <button
-            type="button"
-            className="btn btn-primary"
-            disabled={pending || !dryRun || !snapshot.hasDryRun}
-            data-testid="wizard-to-apply"
-            onClick={() => {
-              setApplyState({ status: 'idle' });
-              go('apply');
-            }}
-          >
-            Apply
-          </button>
-        ) : null}
+              {step === 'files' || step === 'ai' ? (
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={pending || generateBusy}
+                  data-testid="wizard-next"
+                  onClick={() => go(STEPS[stepIndex + 1]!.id)}
+                >
+                  Next
+                </button>
+              ) : null}
 
-        {step === 'apply' && applyState.status === 'success' ? (
-          <button
-            type="button"
-            className="btn btn-primary"
-            disabled={pending}
-            data-testid="wizard-to-ready"
-            onClick={() => go('ready')}
-          >
-            Next
-          </button>
-        ) : null}
+              {step === 'validate' ? (
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={pending || !validated}
+                  data-testid="wizard-next"
+                  onClick={() => go('dry-run')}
+                >
+                  Next
+                </button>
+              ) : null}
 
-        {step === 'ready' ? (
-          <button
-            type="button"
-            className="btn btn-primary"
-            disabled={pending}
-            data-testid="wizard-finish"
-            onClick={() =>
-              run(async () => {
-                const result = await finishOnboardingAction();
-                if (result) applyResult(result);
-              })
-            }
-          >
-            {pending ? 'Opening…' : 'Open dashboard'} {UIcon.arrow}
-          </button>
-        ) : (
-          <button
-            type="button"
-            className="btn btn-quiet"
-            disabled={pending || generateBusy}
-            data-testid="wizard-skip"
-            onClick={() =>
-              run(async () => {
-                const result = await skipOnboardingAction();
-                if (result) applyResult(result);
-              })
-            }
-          >
-            {step === 'welcome' ? 'Use sample bank for now' : 'Skip to dashboard'}
-          </button>
-        )}
+              {step === 'dry-run' ? (
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={pending || !dryRun || !snapshot.hasDryRun}
+                  data-testid="wizard-to-apply"
+                  onClick={() => {
+                    setApplyState({ status: 'idle' });
+                    go('apply');
+                  }}
+                >
+                  Looks good
+                </button>
+              ) : null}
+
+              {step === 'apply' && applyState.status === 'success' ? (
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={pending}
+                  data-testid="wizard-to-ready"
+                  onClick={() => go('ready')}
+                >
+                  Next
+                </button>
+              ) : null}
+
+              {step === 'ready' ? (
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={pending}
+                  data-testid="wizard-finish"
+                  onClick={() =>
+                    run(async () => {
+                      const result = await finishOnboardingAction();
+                      if (result) applyResult(result);
+                    })
+                  }
+                >
+                  {pending ? 'Opening…' : 'Open dashboard'} {UIcon.arrow}
+                </button>
+              ) : null}
+            </div>
+
+            {step === 'welcome' ? (
+              <button
+                type="button"
+                className="btn btn-quiet"
+                disabled={pending}
+                data-testid="wizard-skip"
+                onClick={skip}
+              >
+                Use sample bank for now
+              </button>
+            ) : null}
+          </footer>
+        </div>
       </div>
     </div>
   );
@@ -560,16 +654,52 @@ export function OnboardingWizard({
 
 function WelcomeStep() {
   return (
-    <div className="hero" data-testid="wizard-welcome">
+    <div className="wizard-welcome" data-testid="wizard-welcome">
       <p className="eyebrow">First-run</p>
-      <h1 className="display-title">Set up your content</h1>
-      <p className="subtitle">
-        Add subjects, keep study PDFs local, optionally generate BankIR, then validate and emit
-        through examify-ingest. The sample bank stays usable if you skip.
+      <h1 className="display-title">Set up your family’s content</h1>
+      <p className="wizard-help wizard-help-lead">
+        Add subjects, keep study PDFs on this host, then generate and review BankIR before anything
+        is applied. The sample bank stays usable if you skip.
       </p>
+      <ul className="wizard-benefits">
+        <li>
+          <span className="wizard-benefit-icon" aria-hidden>
+            <SubjectIcon name="maths" size={26} />
+          </span>
+          <span>
+            <strong>Subjects you choose</strong>
+            <span>Build a short family catalog — one subject is enough to start.</span>
+          </span>
+        </li>
+        <li>
+          <span className="wizard-benefit-icon" aria-hidden>
+            {MailIconDoc}
+          </span>
+          <span>
+            <strong>Local study PDFs</strong>
+            <span>Uploads stay on this host. They never ship in the public bank.</span>
+          </span>
+        </li>
+        <li>
+          <span className="wizard-benefit-icon" aria-hidden>
+            {UIcon.check}
+          </span>
+          <span>
+            <strong>Generate, then review</strong>
+            <span>Draft BankIR, validate, and preview the plan before apply.</span>
+          </span>
+        </li>
+      </ul>
     </div>
   );
 }
+
+const MailIconDoc = (
+  <svg viewBox="0 0 24 24" fill="none" aria-hidden>
+    <rect x="5" y="3.5" width="14" height="17" rx="2.4" fill="var(--accent-soft)" />
+    <path d="M8 8h8M8 12h8M8 16h5" stroke="var(--accent)" strokeWidth="1.6" strokeLinecap="round" />
+  </svg>
+);
 
 function SubjectsStep({
   snapshot,
@@ -587,6 +717,8 @@ function SubjectsStep({
   const [id, setId] = useState('');
   const [label, setLabel] = useState('');
   const [icon, setIcon] = useState<SubjectIconOption>('maths');
+  const [idTouched, setIdTouched] = useState(false);
+  const [adding, setAdding] = useState(snapshot.subjects.length === 0);
   const [editing, setEditing] = useState<string | null>(null);
   const [editLabel, setEditLabel] = useState('');
   const [editId, setEditId] = useState('');
@@ -595,179 +727,210 @@ function SubjectsStep({
 
   return (
     <div className="wizard-panel" data-testid="wizard-subjects">
-      <p className="subtitle">
-        Add, rename, or delete generated subjects. Ids are kebab-case and unique.
-      </p>
-      {snapshot.subjects.length === 0 ? (
-        <p className="wizard-empty" data-testid="wizard-subjects-empty">
-          No subjects yet…
-        </p>
-      ) : (
-        <ul className="wizard-list">
-          {snapshot.subjects.map((subject) => (
-            <li key={subject.id} className="wizard-row">
-              <span className="wizard-row-icon" aria-hidden>
-                <SubjectIcon name={subject.icon} size={28} />
-              </span>
-              {editing === subject.id ? (
-                <form
-                  className="wizard-rename"
-                  onSubmit={(event) => {
-                    event.preventDefault();
-                    const data = new FormData();
-                    data.set('id', subject.id);
-                    data.set('nextId', editId.trim());
-                    data.set('label', editLabel.trim());
-                    data.set('icon', editIcon);
-                    onRename(data);
-                    setEditing(null);
-                  }}
-                >
-                  <input
-                    className="text-input"
-                    value={editId}
-                    onChange={(event) => setEditId(event.target.value)}
-                    aria-label="Subject id"
-                    data-testid={`wizard-rename-id-${subject.id}`}
-                  />
-                  <input
-                    className="text-input"
-                    value={editLabel}
-                    onChange={(event) => setEditLabel(event.target.value)}
-                    aria-label="Label"
-                    data-testid={`wizard-rename-label-${subject.id}`}
-                  />
-                  <select
-                    className="text-input"
-                    value={editIcon}
-                    onChange={(event) => setEditIcon(event.target.value as SubjectIconOption)}
-                    aria-label="Icon"
-                  >
-                    {SUBJECT_ICON_OPTIONS.map((option) => (
-                      <option key={option} value={option}>
-                        {option}
-                      </option>
-                    ))}
-                  </select>
-                  <button className="btn btn-ghost" type="submit" disabled={pending}>
-                    Save
-                  </button>
-                </form>
-              ) : (
-                <span>
-                  <strong>{subject.label}</strong>
-                  <span className="invite-meta">{subject.id}</span>
+      <div className="wizard-subjects-layout">
+        {snapshot.subjects.length === 0 ? (
+          <p className="wizard-empty" data-testid="wizard-subjects-empty">
+            No subjects yet. Add one to continue — a label is enough; the id is suggested for you.
+          </p>
+        ) : (
+          <ul className="wizard-list">
+            {snapshot.subjects.map((subject) => (
+              <li key={subject.id} className="wizard-card">
+                <span className="wizard-row-icon" aria-hidden>
+                  <SubjectIcon name={subject.icon} size={28} />
                 </span>
-              )}
-              <button
-                type="button"
-                className="btn btn-ghost"
-                disabled={pending}
-                data-testid={`wizard-rename-subject-${subject.id}`}
-                onClick={() => {
-                  setEditing(subject.id);
-                  setEditId(subject.id);
-                  setEditLabel(subject.label);
-                  setEditIcon(resolveIcon(subject.icon));
-                }}
-              >
-                Rename
-              </button>
-              <button
-                type="button"
-                className="btn btn-ghost invite-revoke"
-                disabled={pending}
-                data-testid={`wizard-delete-subject-${subject.id}`}
-                onClick={() => {
-                  if (
-                    !window.confirm(
-                      `Delete subject “${subject.label}”? This removes its BankIR and study PDFs. This cannot be undone.`,
-                    )
-                  ) {
-                    return;
-                  }
-                  const data = new FormData();
-                  data.set('id', subject.id);
-                  onDelete(data);
-                }}
-              >
-                Delete
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-
-      <form
-        className="wizard-add"
-        data-testid="wizard-add-subject"
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (!canAdd) return;
-          const data = new FormData();
-          data.set('id', id.trim());
-          data.set('label', label.trim());
-          data.set('icon', icon);
-          onAdd(data);
-          setId('');
-          setLabel('');
-        }}
-      >
-        <div className="field">
-          <label className="field-label" htmlFor="wizard-subject-id">
-            Subject id
-          </label>
-          <input
-            id="wizard-subject-id"
-            className="text-input"
-            maxLength={40}
-            placeholder="history"
-            value={id}
-            onChange={(event) => setId(event.target.value)}
-            data-testid="wizard-subject-id"
-          />
-        </div>
-        <div className="field">
-          <label className="field-label" htmlFor="wizard-subject-label">
-            Label
-          </label>
-          <input
-            id="wizard-subject-label"
-            className="text-input"
-            maxLength={40}
-            placeholder="History"
-            value={label}
-            onChange={(event) => setLabel(event.target.value)}
-            data-testid="wizard-subject-label"
-          />
-        </div>
-        <div className="field">
-          <label className="field-label" htmlFor="wizard-subject-icon">
-            Icon
-          </label>
-          <select
-            id="wizard-subject-icon"
-            className="text-input"
-            value={icon}
-            onChange={(event) => setIcon(event.target.value as SubjectIconOption)}
-            data-testid="wizard-subject-icon"
-          >
-            {SUBJECT_ICON_OPTIONS.map((option) => (
-              <option key={option} value={option}>
-                {option}
-              </option>
+                {editing === subject.id ? (
+                  <form
+                    className="wizard-rename"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      const data = new FormData();
+                      data.set('id', subject.id);
+                      data.set('nextId', editId.trim());
+                      data.set('label', editLabel.trim());
+                      data.set('icon', editIcon);
+                      onRename(data);
+                      setEditing(null);
+                    }}
+                  >
+                    <input
+                      className="text-input"
+                      value={editId}
+                      onChange={(event) => setEditId(event.target.value)}
+                      aria-label="Subject id"
+                      data-testid={`wizard-rename-id-${subject.id}`}
+                    />
+                    <input
+                      className="text-input"
+                      value={editLabel}
+                      onChange={(event) => setEditLabel(event.target.value)}
+                      aria-label="Label"
+                      data-testid={`wizard-rename-label-${subject.id}`}
+                    />
+                    <select
+                      className="text-input"
+                      value={editIcon}
+                      onChange={(event) => setEditIcon(event.target.value as SubjectIconOption)}
+                      aria-label="Icon"
+                    >
+                      {SUBJECT_ICON_OPTIONS.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </select>
+                    <button className="btn btn-ghost" type="submit" disabled={pending}>
+                      Save
+                    </button>
+                  </form>
+                ) : (
+                  <span className="wizard-card-copy">
+                    <strong>{subject.label}</strong>
+                    <span className="invite-meta">{subject.id}</span>
+                  </span>
+                )}
+                {editing === subject.id ? null : (
+                  <details className="wizard-card-menu">
+                    <summary aria-label={`Actions for ${subject.label}`}>Actions</summary>
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      disabled={pending}
+                      data-testid={`wizard-rename-subject-${subject.id}`}
+                      onClick={() => {
+                        setEditing(subject.id);
+                        setEditId(subject.id);
+                        setEditLabel(subject.label);
+                        setEditIcon(resolveIcon(subject.icon));
+                      }}
+                    >
+                      Rename
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-ghost invite-revoke"
+                      disabled={pending}
+                      data-testid={`wizard-delete-subject-${subject.id}`}
+                      onClick={() => {
+                        if (
+                          !window.confirm(
+                            `Delete subject “${subject.label}”? This removes its BankIR and study PDFs. This cannot be undone.`,
+                          )
+                        ) {
+                          return;
+                        }
+                        const data = new FormData();
+                        data.set('id', subject.id);
+                        onDelete(data);
+                      }}
+                    >
+                      Delete
+                    </button>
+                  </details>
+                )}
+              </li>
             ))}
-          </select>
-        </div>
-        <button
-          className="btn btn-ghost"
-          type="submit"
-          disabled={pending || !canAdd}
-          data-testid="wizard-add-subject-submit"
-        >
-          {pending ? 'Adding…' : 'Add subject'}
-        </button>
-      </form>
+          </ul>
+        )}
+
+        {adding ? (
+          <form
+            className="wizard-add"
+            data-testid="wizard-add-subject"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (!canAdd) return;
+              const data = new FormData();
+              data.set('id', id.trim());
+              data.set('label', label.trim());
+              data.set('icon', icon);
+              onAdd(data);
+              setId('');
+              setLabel('');
+              setIdTouched(false);
+              if (snapshot.subjects.length > 0) setAdding(false);
+            }}
+          >
+            <div className="field">
+              <label className="field-label" htmlFor="wizard-subject-label">
+                Label
+              </label>
+              <input
+                id="wizard-subject-label"
+                className="text-input"
+                maxLength={40}
+                placeholder="History"
+                value={label}
+                onChange={(event) => {
+                  const next = event.target.value;
+                  setLabel(next);
+                  if (!idTouched) setId(suggestSubjectId(next));
+                }}
+                data-testid="wizard-subject-label"
+              />
+            </div>
+            <div className="field">
+              <label className="field-label" htmlFor="wizard-subject-id">
+                Subject id
+              </label>
+              <input
+                id="wizard-subject-id"
+                className="text-input"
+                maxLength={40}
+                placeholder="history"
+                value={id}
+                onChange={(event) => {
+                  setIdTouched(true);
+                  setId(event.target.value);
+                }}
+                data-testid="wizard-subject-id"
+              />
+            </div>
+            <div className="field">
+              <label className="field-label" htmlFor="wizard-subject-icon">
+                Icon
+              </label>
+              <select
+                id="wizard-subject-icon"
+                className="text-input"
+                value={icon}
+                onChange={(event) => setIcon(event.target.value as SubjectIconOption)}
+                data-testid="wizard-subject-icon"
+              >
+                {SUBJECT_ICON_OPTIONS.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="wizard-add-actions">
+              <button
+                className="btn btn-ghost"
+                type="submit"
+                disabled={pending || !canAdd}
+                data-testid="wizard-add-subject-submit"
+              >
+                {pending ? 'Adding…' : 'Add subject'}
+              </button>
+              {snapshot.subjects.length > 0 ? (
+                <button
+                  type="button"
+                  className="btn btn-quiet"
+                  onClick={() => setAdding(false)}
+                  disabled={pending}
+                >
+                  Cancel
+                </button>
+              ) : null}
+            </div>
+          </form>
+        ) : (
+          <button type="button" className="btn btn-ghost" onClick={() => setAdding(true)}>
+            Add a subject
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -789,7 +952,11 @@ function FilesStep({
   onAttach: (data: FormData) => void;
   onDetach: (data: FormData) => void;
 }) {
-  if (snapshot.subjects.length === 0) {
+  const [focusId, setFocusId] = useState(snapshot.subjects[0]?.id ?? '');
+  const focused =
+    snapshot.subjects.find((subject) => subject.id === focusId) ?? snapshot.subjects[0] ?? null;
+
+  if (snapshot.subjects.length === 0 || !focused) {
     return (
       <p className="wizard-empty" data-testid="wizard-files-empty">
         Add a subject first to attach study PDFs.
@@ -799,19 +966,39 @@ function FilesStep({
 
   return (
     <div className="wizard-panel" data-testid="wizard-files">
-      <p className="subtitle">
-        Uploads land only in content/source-pdfs/&lt;subject&gt;/. PDFs never go under
-        content/subjects/ or content/generated/.
+      <p className="wizard-path-hint">
+        PDFs stay under source-pdfs on this host — never in the bank.
       </p>
-      {snapshot.subjects.map((subject) => (
+      <div className="wizard-files-layout">
+        {snapshot.subjects.length > 1 ? (
+          <div className="wizard-files-nav" role="tablist" aria-label="Subjects">
+            {snapshot.subjects.map((subject) => {
+              const selected = subject.id === focused.id;
+              return (
+                <button
+                  key={subject.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={selected}
+                  className={'wizard-file-tab' + (selected ? ' selected' : '')}
+                  onClick={() => setFocusId(subject.id)}
+                >
+                  {subject.label}
+                  <span className="invite-meta">
+                    {subject.sourceFiles.length} PDF{subject.sourceFiles.length === 1 ? '' : 's'}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
         <SubjectDropzone
-          key={subject.id}
-          subject={subject}
+          subject={focused}
           pending={pending}
           onAttach={onAttach}
           onDetach={onDetach}
         />
-      ))}
+      </div>
     </div>
   );
 }
@@ -858,13 +1045,10 @@ function SubjectDropzone({
       {subject.sourceFiles.length === 0 ? (
         <p className="wizard-empty">No PDFs yet.</p>
       ) : (
-        <ul className="wizard-list">
+        <ul className="wizard-file-chips">
           {subject.sourceFiles.map((name) => (
-            <li key={name} className="wizard-row">
-              <span>
-                <strong>{name}</strong>
-                <span className="invite-meta">Study PDF</span>
-              </span>
+            <li key={name} className="wizard-file-chip">
+              <span>{name}</span>
               <button
                 type="button"
                 className="btn btn-ghost invite-revoke"
@@ -961,14 +1145,10 @@ function AiStep({
 }) {
   const provider = snapshot.aiMode ? providerForOnboardingAiMode(snapshot.aiMode) : null;
   const busy = pending || generateBusy;
+  const hasExistingIr = snapshot.subjects.some((subject) => subject.hasIr);
 
   return (
     <div className="wizard-panel" data-testid="wizard-ai">
-      <p className="subtitle">
-        Choose a provider, then generate BankIR from local sources. Generate writes
-        content/subjects/&lt;id&gt;/bank.ir.json only — never emit or apply. Hand-authored IR can
-        skip this step. Secrets stay in the existing env store — never NEXT_PUBLIC_*.
-      </p>
       <p className="login-fine" data-testid="wizard-ai-store">
         Anthropic {snapshot.anthropicConfigured ? 'configured' : 'not configured'} · OpenAI{' '}
         {snapshot.openaiConfigured ? 'configured' : 'not configured'} · Local{' '}
@@ -977,6 +1157,7 @@ function AiStep({
       <div className="wizard-modes" role="radiogroup" aria-label="AI setup mode">
         {(Object.keys(AI_COPY) as OnboardingAiMode[]).map((mode) => {
           const selected = snapshot.aiMode === mode;
+          const configured = modeConfigured(mode, snapshot);
           return (
             <button
               key={mode}
@@ -988,7 +1169,10 @@ function AiStep({
               data-testid={`wizard-ai-${mode}`}
               onClick={() => onSelect(mode)}
             >
-              <strong>{AI_COPY[mode].title}</strong>
+              <span className="wizard-mode-head">
+                <strong>{AI_COPY[mode].title}</strong>
+                {configured ? <span className="wizard-mode-badge">Configured</span> : null}
+              </span>
               <span>{AI_COPY[mode].body}</span>
             </button>
           );
@@ -997,119 +1181,192 @@ function AiStep({
 
       {provider ? (
         <div className="wizard-generate" data-testid="wizard-generate">
-          <p className="subtitle">Same CLI as the host (HITL after generate):</p>
-          <pre className="wizard-cli" data-testid="wizard-cli-generate">
-            {onboardingGenerateAndEmitCli(provider, generateSeed).join('\n')}
-          </pre>
-          <label className="wizard-advanced">
-            <span>Advanced: seed</span>
-            <input
-              className="text-input"
-              type="number"
-              step={1}
-              value={generateSeed}
-              disabled={busy}
-              aria-label="Generate seed"
-              data-testid="wizard-generate-seed"
-              onChange={(event) => onSeed(Number.parseInt(event.target.value, 10) || 0)}
-            />
-          </label>
-          <div className="wizard-generate-actions">
-            <button
-              type="button"
-              className="btn btn-primary"
-              disabled={busy || onboardingGenerateBatchIds(snapshot.subjects).length < 1}
-              data-testid="wizard-generate-all"
-              onClick={() => onGenerate(onboardingGenerateBatchIds(snapshot.subjects))}
-            >
-              {generateBusy ? 'Generating…' : 'Generate all'}
-            </button>
-            {generateBusy ? (
-              <button
-                type="button"
-                className="btn btn-ghost"
-                data-testid="wizard-generate-cancel"
-                onClick={onCancel}
-              >
-                Cancel
-              </button>
-            ) : null}
-          </div>
-
-          {snapshot.subjects.length === 0 ? (
-            <p className="wizard-empty" data-testid="wizard-generate-empty">
-              Add a subject first. Generate reads local sources only.
-            </p>
+          {hasExistingIr ? (
+            <details className="wizard-details" defaultOpen={false}>
+              <summary>Generate from PDFs</summary>
+              <GeneratePanel
+                snapshot={snapshot}
+                provider={provider}
+                busy={busy}
+                generateBusy={generateBusy}
+                generateSeed={generateSeed}
+                generateRuns={generateRuns}
+                activeGenerateId={activeGenerateId}
+                irReady={irReady}
+                onSeed={onSeed}
+                onGenerate={onGenerate}
+                onCancel={onCancel}
+                onGoValidate={onGoValidate}
+              />
+            </details>
           ) : (
-            <ul className="wizard-list">
-              {snapshot.subjects.map((subject) => {
-                const run = generateRuns[subject.id];
-                const active = activeGenerateId === subject.id;
-                return (
-                  <li key={subject.id} className="wizard-generate-row">
-                    <div className="wizard-row">
-                      <span>
-                        <strong>{subject.label}</strong>
-                        <span className="invite-meta">{subject.id}</span>
-                      </span>
-                      <button
-                        type="button"
-                        className="btn btn-ghost"
-                        disabled={busy || subject.generateSources.length < 1}
-                        data-testid={`wizard-generate-${subject.id}`}
-                        onClick={() => onGenerate([subject.id])}
-                      >
-                        {active ? 'Generating…' : 'Generate BankIR'}
-                      </button>
-                    </div>
-                    {subject.generateSources.length === 0 ? (
-                      <p className="login-fine">No sources found.</p>
-                    ) : (
-                      <ul
-                        className="wizard-issues"
-                        data-testid={`wizard-generate-sources-${subject.id}`}
-                      >
-                        {subject.generateSources.map((rel) => (
-                          <li key={rel}>{rel}</li>
-                        ))}
-                      </ul>
-                    )}
-                    {active ? (
-                      <p
-                        className="login-fine"
-                        data-testid={`wizard-generate-progress-${subject.id}`}
-                      >
-                        {subject.id} · {provider} · seed {generateSeed} ·{' '}
-                        {subject.generateSources.length} source
-                        {subject.generateSources.length === 1 ? '' : 's'} · calling provider…
-                      </p>
-                    ) : null}
-                    {run ? <GenerateRunSummary run={run} /> : null}
-                  </li>
-                );
-              })}
-            </ul>
+            <GeneratePanel
+              snapshot={snapshot}
+              provider={provider}
+              busy={busy}
+              generateBusy={generateBusy}
+              generateSeed={generateSeed}
+              generateRuns={generateRuns}
+              activeGenerateId={activeGenerateId}
+              irReady={irReady}
+              onSeed={onSeed}
+              onGenerate={onGenerate}
+              onCancel={onCancel}
+              onGoValidate={onGoValidate}
+            />
           )}
-
-          {irReady ? (
-            <p className="wizard-callout" data-testid="wizard-ir-ready">
-              IR ready — validate next.{' '}
-              <button
-                type="button"
-                className="btn btn-ghost"
-                data-testid="wizard-generate-to-validate"
-                onClick={onGoValidate}
-              >
-                Validate
-              </button>
-            </p>
-          ) : null}
         </div>
       ) : (
         <p className="wizard-callout" data-testid="wizard-generate-choose-mode">
           Choose a mode to generate BankIR, or continue if you already authored IR by hand.
         </p>
       )}
+    </div>
+  );
+}
+
+function GeneratePanel({
+  snapshot,
+  provider,
+  busy,
+  generateBusy,
+  generateSeed,
+  generateRuns,
+  activeGenerateId,
+  irReady,
+  onSeed,
+  onGenerate,
+  onCancel,
+  onGoValidate,
+}: {
+  snapshot: OnboardingSnapshot;
+  provider: NonNullable<ReturnType<typeof providerForOnboardingAiMode>>;
+  busy: boolean;
+  generateBusy: boolean;
+  generateSeed: number;
+  generateRuns: Record<string, OnboardingGenerateResult>;
+  activeGenerateId: string | null;
+  irReady: boolean;
+  onSeed: (seed: number) => void;
+  onGenerate: (subjectIds: string[]) => void;
+  onCancel: () => void;
+  onGoValidate: () => void;
+}) {
+  return (
+    <div className="wizard-generate-panel">
+      <PowerUserCommands
+        testId="wizard-cli-generate"
+        commands={onboardingGenerateAndEmitCli(provider, generateSeed)}
+      />
+      <details className="wizard-details">
+        <summary>Advanced</summary>
+        <label className="wizard-advanced">
+          <span>Seed</span>
+          <input
+            className="text-input"
+            type="number"
+            step={1}
+            value={generateSeed}
+            disabled={busy}
+            aria-label="Generate seed"
+            data-testid="wizard-generate-seed"
+            onChange={(event) => onSeed(Number.parseInt(event.target.value, 10) || 0)}
+          />
+        </label>
+      </details>
+      <div className="wizard-generate-actions">
+        <button
+          type="button"
+          className="btn btn-primary"
+          disabled={busy || onboardingGenerateBatchIds(snapshot.subjects).length < 1}
+          data-testid="wizard-generate-all"
+          onClick={() => onGenerate(onboardingGenerateBatchIds(snapshot.subjects))}
+        >
+          {generateBusy ? 'Generating…' : 'Generate all'}
+        </button>
+        {generateBusy ? (
+          <button
+            type="button"
+            className="btn btn-ghost"
+            data-testid="wizard-generate-cancel"
+            onClick={onCancel}
+          >
+            Cancel
+          </button>
+        ) : null}
+      </div>
+
+      {snapshot.subjects.length === 0 ? (
+        <p className="wizard-empty" data-testid="wizard-generate-empty">
+          Add a subject first. Generate reads local sources only.
+        </p>
+      ) : (
+        <ul className="wizard-list">
+          {snapshot.subjects.map((subject) => {
+            const run = generateRuns[subject.id];
+            const active = activeGenerateId === subject.id;
+            return (
+              <li key={subject.id} className="wizard-generate-row">
+                <div className="wizard-card">
+                  <span className="wizard-card-copy">
+                    <strong>{subject.label}</strong>
+                    <span className="invite-meta">{subject.id}</span>
+                  </span>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    disabled={busy || subject.generateSources.length < 1}
+                    data-testid={`wizard-generate-${subject.id}`}
+                    onClick={() => onGenerate([subject.id])}
+                  >
+                    {active ? 'Generating…' : 'Generate BankIR'}
+                  </button>
+                </div>
+                {subject.generateSources.length === 0 ? (
+                  <p className="login-fine">No sources found.</p>
+                ) : (
+                  <details className="wizard-details">
+                    <summary>
+                      {subject.generateSources.length} source
+                      {subject.generateSources.length === 1 ? '' : 's'}
+                    </summary>
+                    <ul
+                      className="wizard-issues"
+                      data-testid={`wizard-generate-sources-${subject.id}`}
+                    >
+                      {subject.generateSources.map((rel) => (
+                        <li key={rel}>{rel}</li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
+                {active ? (
+                  <p className="login-fine" data-testid={`wizard-generate-progress-${subject.id}`}>
+                    {subject.id} · {provider} · seed {generateSeed} ·{' '}
+                    {subject.generateSources.length} source
+                    {subject.generateSources.length === 1 ? '' : 's'} · calling provider…
+                  </p>
+                ) : null}
+                {run ? <GenerateRunSummary run={run} /> : null}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      {irReady ? (
+        <p className="wizard-callout" data-testid="wizard-ir-ready">
+          IR ready — continue to validate{' '}
+          <button
+            type="button"
+            className="btn btn-ghost"
+            data-testid="wizard-generate-to-validate"
+            onClick={onGoValidate}
+          >
+            Validate
+          </button>
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -1124,15 +1381,29 @@ function GenerateRunSummary({ run }: { run: OnboardingGenerateResult }) {
         {run.wroteIr ? ` · wrote ${run.irRel}` : ''}
       </p>
       {hashes.length > 0 ? (
-        <ul className="wizard-issues">
-          {hashes.map(([rel, hash]) => (
-            <li key={rel}>
-              {rel} · {hash.slice(0, 12)}
-            </li>
-          ))}
-        </ul>
+        <details className="wizard-details">
+          <summary>Source hashes</summary>
+          <ul className="wizard-issues">
+            {hashes.map(([rel, hash]) => (
+              <li key={rel}>
+                {rel} · {hash.slice(0, 12)}
+              </li>
+            ))}
+          </ul>
+        </details>
       ) : null}
     </div>
+  );
+}
+
+function PowerUserCommands({ commands, testId }: { commands: readonly string[]; testId: string }) {
+  return (
+    <details className="wizard-details">
+      <summary>Power-user commands</summary>
+      <pre className="wizard-cli" data-testid={testId}>
+        {commands.join('\n')}
+      </pre>
+    </details>
   );
 }
 
@@ -1146,49 +1417,37 @@ function ReplaceSampleToggle({
   onToggle: (enabled: boolean) => void;
 }) {
   return (
-    <label className="wizard-advanced">
-      <input
-        type="checkbox"
-        checked={enabled}
-        disabled={pending}
-        data-testid="wizard-replace-sample"
-        onChange={(event) => onToggle(event.target.checked)}
-      />
-      Advanced: allow --replace-sample (overwrite colliding sample-bank ids)
-    </label>
+    <details className="wizard-details">
+      <summary>Advanced</summary>
+      <label className="wizard-advanced">
+        <input
+          type="checkbox"
+          checked={enabled}
+          disabled={pending}
+          data-testid="wizard-replace-sample"
+          onChange={(event) => onToggle(event.target.checked)}
+        />
+        Allow --replace-sample (overwrite colliding sample-bank ids)
+      </label>
+    </details>
   );
 }
 
 function ValidateStep({
-  snapshot,
   pending,
   validated,
-  onToggleReplace,
   onValidate,
 }: {
-  snapshot: OnboardingSnapshot;
   pending: boolean;
   validated: boolean;
-  onToggleReplace: (enabled: boolean) => void;
   onValidate: () => void;
 }) {
   return (
     <div className="wizard-panel" data-testid="wizard-validate">
-      <p className="subtitle">
-        Server-only call to the shared examify-ingest lib, targeting content/subjects. Fix issues
-        and re-run. Power users can use the same CLI:
-      </p>
-      <pre className="wizard-cli" data-testid="wizard-cli">
-        {ONBOARDING_INGEST_CLI.join('\n')}
-      </pre>
-      <ReplaceSampleToggle
-        enabled={snapshot.replaceSample}
-        pending={pending}
-        onToggle={onToggleReplace}
-      />
+      <PowerUserCommands testId="wizard-cli" commands={ONBOARDING_INGEST_CLI} />
       <button
         type="button"
-        className="btn btn-primary"
+        className="btn btn-primary wizard-validate-btn"
         disabled={pending}
         data-testid="wizard-validate"
         onClick={onValidate}
@@ -1196,8 +1455,8 @@ function ValidateStep({
         {pending ? 'Checking…' : validated ? 'Re-run' : 'Validate'}
       </button>
       {validated ? (
-        <p className="login-fine" data-testid="wizard-validate-ok">
-          BankIR is valid. Continue to the dry-run.
+        <p className="wizard-callout" data-testid="wizard-validate-ok">
+          BankIR is valid. Continue to review.
         </p>
       ) : null}
     </div>
@@ -1217,15 +1476,11 @@ function DryRunStep({
   onToggleReplace: (enabled: boolean) => void;
   onPreview: () => void;
 }) {
+  const deletes = dryRun?.plan.filter((entry) => entry.action === 'delete') ?? [];
+
   return (
     <div className="wizard-panel" data-testid="wizard-dry-run">
-      <p className="subtitle">
-        Mandatory HITL preview — the same dry-run as `pnpm examify-ingest emit content/subjects
-        --dry-run`. Includes planned deletes. Apply is the only write. Additive by default.
-      </p>
-      <pre className="wizard-cli" data-testid="wizard-cli-emit">
-        {ONBOARDING_INGEST_CLI.slice(1).join('\n')}
-      </pre>
+      <PowerUserCommands testId="wizard-cli-emit" commands={ONBOARDING_INGEST_CLI.slice(1)} />
       <ReplaceSampleToggle
         enabled={snapshot.replaceSample}
         pending={pending}
@@ -1238,17 +1493,24 @@ function DryRunStep({
         data-testid="wizard-preview"
         onClick={onPreview}
       >
-        {pending ? 'Previewing…' : dryRun ? 'Re-run dry-run' : 'Dry-run preview'}
+        {pending ? 'Previewing…' : dryRun ? 'Re-run review' : 'Review plan'}
       </button>
       {dryRun ? (
         <div data-testid="wizard-dry-run-summary">
-          <p className="login-fine">
-            +{dryRun.questionCount} questions across {dryRun.subjectCount} subject
-            {dryRun.subjectCount === 1 ? '' : 's'}
-            {dryRun.collisions.length > 0
-              ? ` · ${dryRun.collisions.length} sample-id collision${dryRun.collisions.length === 1 ? '' : 's'}`
-              : ''}
-          </p>
+          <div className="wizard-summary-card">
+            <p>
+              <strong>+{dryRun.questionCount}</strong>
+              <span>questions</span>
+            </p>
+            <p>
+              <strong>{dryRun.subjectCount}</strong>
+              <span>subject{dryRun.subjectCount === 1 ? '' : 's'}</span>
+            </p>
+            <p>
+              <strong>{dryRun.collisions.length}</strong>
+              <span>collision{dryRun.collisions.length === 1 ? '' : 's'}</span>
+            </p>
+          </div>
           {dryRun.collisions.length > 0 ? (
             <ul className="wizard-issues" data-testid="wizard-collisions">
               {dryRun.collisions.map((id) => (
@@ -1256,22 +1518,20 @@ function DryRunStep({
               ))}
             </ul>
           ) : null}
-          {dryRun.plan.some((entry) => entry.action === 'delete') ? (
-            <p className="login-fine" data-testid="wizard-planned-deletes">
-              Planned deletes:{' '}
-              {dryRun.plan
-                .filter((entry) => entry.action === 'delete')
-                .map((entry) => entry.path)
-                .join(', ')}
+          {deletes.length > 0 ? (
+            <p className="wizard-callout" data-testid="wizard-planned-deletes">
+              Planned deletes: {deletes.map((entry) => entry.path).join(', ')}
             </p>
           ) : null}
-          <ul className="wizard-plan" data-testid="wizard-plan">
-            {dryRun.plan.map((entry) => (
-              <li key={entry.path}>
-                <span className="wizard-plan-action">{entry.action}</span> {entry.path}
-              </li>
-            ))}
-          </ul>
+          <div className="wizard-scroll-panel">
+            <ul className="wizard-plan" data-testid="wizard-plan">
+              {dryRun.plan.map((entry) => (
+                <li key={entry.path}>
+                  <span className="wizard-plan-action">{entry.action}</span> {entry.path}
+                </li>
+              ))}
+            </ul>
+          </div>
           <pre className="wizard-diff" data-testid="wizard-diff">
             {dryRun.diff}
           </pre>
@@ -1298,10 +1558,6 @@ function ApplyStep({
 }) {
   return (
     <div className="wizard-panel" data-testid="wizard-apply">
-      <p className="subtitle">
-        Apply writes the directory emit of content/subjects only. An empty catalog is refused and
-        will not wipe generated content.
-      </p>
       {applyState.status === 'idle' ? (
         <button
           type="button"
@@ -1319,7 +1575,7 @@ function ApplyStep({
         </p>
       ) : null}
       {applyState.status === 'success' ? (
-        <p className="login-fine" data-testid="wizard-applied">
+        <p className="wizard-callout" data-testid="wizard-applied">
           Applied {applyState.written} file{applyState.written === 1 ? '' : 's'} ·{' '}
           {applyState.questionCount} questions · {applyState.subjectCount} subjects. Keys stayed
           server-only.
@@ -1352,10 +1608,10 @@ function ReadyStep({
   authMode: AuthMode;
 }) {
   return (
-    <div className="wizard-panel" data-testid="wizard-ready">
-      <p className="subtitle">
-        The household is ready. The sample bank stays available either way.
-      </p>
+    <div className="wizard-panel wizard-ready" data-testid="wizard-ready">
+      <div className="wizard-ready-mark" aria-hidden>
+        {UIcon.check}
+      </div>
       {applyState.status === 'success' ? (
         <p className="login-fine" data-testid="wizard-ready-counts">
           {applyState.questionCount} questions across {applyState.subjectCount} generated subject
@@ -1365,7 +1621,10 @@ function ReadyStep({
         <p className="login-fine">You can finish content setup later from the parent dashboard.</p>
       )}
       {canInvite ? (
-        <HouseholdInvites pending={pendingInvites} members={members} authMode={authMode} />
+        <details className="wizard-details wizard-ready-invite">
+          <summary>Invite family</summary>
+          <HouseholdInvites pending={pendingInvites} members={members} authMode={authMode} />
+        </details>
       ) : null}
     </div>
   );

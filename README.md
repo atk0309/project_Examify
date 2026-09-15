@@ -35,7 +35,8 @@ no env-JSON allowlist to hand-edit.
    creates the household and becomes admin (and sets a password when `AUTH_MODE=password`).
    After bootstrap, **`/onboarding`** lets the household admin add subjects, attach
    local study PDFs, choose an AI mode, optionally generate BankIR from those
-   files, and emit through `examify-ingest` (validate + dry-run HITL, then apply;
+   files, and emit through `examify-ingest` (validate + Review / dry-run HITL, then apply;
+   desktop uses a step rail, mobile a compact progress bar; one stage at a time;
    generate never auto-applies; cancel discards an in-flight preview and does
    not replace prior IR; generate is gated to wizard catalog subjects; an empty
    catalog is refused; a changed plan after dry-run is refused). Finish requires

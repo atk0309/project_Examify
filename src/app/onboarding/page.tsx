@@ -58,7 +58,7 @@ export default async function OnboardingPage() {
 
   return (
     <div className="stage">
-      <div className="app-frame">
+      <div className="app-frame app-frame-wizard">
         <OnboardingWizard
           snapshot={getOnboardingSnapshot(info.householdId)}
           pendingInvites={pendingInvites}
