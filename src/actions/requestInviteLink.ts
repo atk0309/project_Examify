@@ -26,10 +26,11 @@ export type RequestInviteLinkState =
     };
 
 /**
- * Accept an invite: issue a magic link that will attach household membership
- * on verify. Invalid invite tokens are reported (the URL is already the
- * secret). Email-lock mismatches still return the generic `sent` copy so
- * locked invites cannot be enumerated.
+ * Accept an invite by issuing the configured passwordless challenge. The
+ * magic link or local OTP attaches household membership when verified.
+ * Invalid invite tokens are reported because the URL is already secret;
+ * email-lock mismatches and delivery failures still return the generic `sent`
+ * state so locked addresses cannot be enumerated.
  */
 export async function requestInviteLink(
   _prev: RequestInviteLinkState,

@@ -20,8 +20,8 @@ export type VerifyLocalOtpState =
   { status: 'idle' } | { status: 'error'; reason: 'invalid' | 'captcha' | 'rate_limited' };
 
 /**
- * Consume a local OTP. Wrong / expired / unused codes all return `invalid`
- * so we do not leak whether a code was issued for this email.
+ * Consume a local OTP. Unknown, expired, and already-used codes all return
+ * `invalid` so we do not leak whether a code was issued for this email.
  */
 export async function verifyLocalOtp(
   _prev: VerifyLocalOtpState,

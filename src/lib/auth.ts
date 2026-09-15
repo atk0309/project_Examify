@@ -239,6 +239,11 @@ export function issueLocalOtp(
   throw lastError instanceof Error ? lastError : new Error('failed to issue OTP');
 }
 
+/**
+ * Consume a six-digit OTP for an email and role. Malformed codes do not count
+ * as guesses; each well-formed failed guess does, and the fifth failure
+ * consumes every outstanding OTP for that email and role.
+ */
 export function consumeLocalOtp(email: string, role: SessionRole, code: string): ConsumeResult {
   const trimmed = code.trim();
   if (!/^\d{6}$/.test(trimmed)) {

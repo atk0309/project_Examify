@@ -208,8 +208,10 @@ function extractEmail(from: string): string {
 }
 
 /**
- * Minimal SMTP client (EHLO, optional STARTTLS, AUTH PLAIN/LOGIN, DATA).
- * Enough for a family self-host; not a full MTA client.
+ * Send one message with a minimal SMTP client. The connection uses implicit
+ * TLS when configured or upgrades with STARTTLS when advertised; plaintext
+ * delivery is refused unless `allowInsecure` is enabled. Connection and
+ * protocol failures are returned as an unsuccessful result.
  */
 export async function sendSmtp(
   config: SmtpConfig,

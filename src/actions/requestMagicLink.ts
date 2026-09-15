@@ -22,6 +22,11 @@ export type RequestMagicLinkState =
   | { status: 'sent'; email: string }
   | { status: 'error'; reason: 'invalid' | 'captcha' | 'rate_limited' | 'send_failed' };
 
+/**
+ * Issue the configured magic-link or local-OTP sign-in challenge. Unknown
+ * addresses, role mismatches, and delivery failures return the same `sent`
+ * state as a successful request so household membership is not disclosed.
+ */
 export async function requestMagicLink(
   _prev: RequestMagicLinkState,
   formData: FormData,

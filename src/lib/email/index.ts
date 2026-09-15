@@ -77,6 +77,11 @@ async function sendViaOutbox(options: {
   }
 }
 
+/**
+ * Send a message through the resolved SMTP, Resend, or local-outbox transport.
+ * The separate local-OTP `code` field is copied only to outbox JSON so the
+ * host can read it; SMTP and Resend receive the rendered message body.
+ */
 export async function sendEmail(options: {
   to: string;
   subject: string;
