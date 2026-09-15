@@ -5,7 +5,8 @@ import { redirect } from 'next/navigation';
 import { getIronSession, type SessionOptions } from 'iron-session';
 import { and, eq, gte, isNull, ne } from 'drizzle-orm';
 import { db, schema } from './db';
-import { env, isProd } from './env';
+import { isOtpShapedBearer, usesMagicLink } from './auth-mode';
+import { env, getAuthMode, isProd } from './env';
 import { verifyPasswordOrDummy } from './password';
 import {
   attachMembershipFromInvite,
@@ -241,18 +242,18 @@ export function issueLocalOtp(
 export function consumeLocalOtp(email: string, role: SessionRole, code: string): ConsumeResult {
   const trimmed = code.trim();
   if (!/^\d{6}$/.test(trimmed)) {
-    consumeMagicToken(`otp:${email}:${role}:invalid`);
+    consumeHashedBearer(`otp:${email}:${role}:invalid`);
     return { ok: false, reason: 'not-found' };
   }
 
   const now = Date.now();
   if (countOtpGuessFailures(email, role, now) >= OTP_GUESS_MAX) {
     consumeOutstandingOtps(email, role, now);
-    consumeMagicToken(otpBearer(email, role, trimmed));
+    consumeHashedBearer(otpBearer(email, role, trimmed));
     return { ok: false, reason: 'not-found' };
   }
 
-  const result = consumeMagicToken(otpBearer(email, role, trimmed));
+  const result = consumeHashedBearer(otpBearer(email, role, trimmed));
   if (!result.ok) {
     recordOtpGuessFailure(email, role, now);
   }
@@ -288,12 +289,25 @@ class ConsumeRollback extends Error {
 }
 
 /**
- * Consume a magic-link token: validate, mark consumed, get-or-create the user.
+ * Magic-link consume path used by `/signin/verify`. Refuses OTP-shaped
+ * bearers (those are `verifyLocalOtp` only) and ignores leftover link
+ * tokens when AUTH_MODE is not magic-link.
+ */
+export function consumeMagicToken(token: string): ConsumeResult {
+  if (!usesMagicLink(getAuthMode()) || isOtpShapedBearer(token)) {
+    sha256(token);
+    return { ok: false, reason: 'not-found' };
+  }
+  return consumeHashedBearer(token);
+}
+
+/**
+ * Consume a hashed bearer: validate, mark consumed, get-or-create the user.
  * All-or-nothing inside a transaction so a partial failure can't issue a
  * session without persisting the user. The role the link was issued for is
  * carried on the token row and returned so the caller can set `session.role`.
  */
-export function consumeMagicToken(token: string): ConsumeResult {
+function consumeHashedBearer(token: string): ConsumeResult {
   const tokenHash = sha256(token);
   const now = Date.now();
 

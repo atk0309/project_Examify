@@ -50,4 +50,40 @@ describe('install.sh', () => {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it('keeps an existing .env in non-interactive mode', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-install-'));
+    try {
+      const dest = path.join(dir, '.env');
+      fs.writeFileSync(dest, 'KEEP_ME=1\nAUTH_MODE=magic-link\n', { mode: 0o600 });
+      execFileSync('bash', [SCRIPT, '--write-env-only'], {
+        cwd: dir,
+        env: installEnv({ AUTH_MODE: 'password' }),
+        stdio: 'pipe',
+      });
+      const envFile = fs.readFileSync(dest, 'utf8');
+      expect(envFile).toContain('KEEP_ME=1');
+      expect(envFile).toContain('AUTH_MODE=magic-link');
+      expect(envFile).not.toContain('AUTH_MODE=password');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('writes secret values literally without expanding shell substitutions', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-install-'));
+    try {
+      const secret = 'install-test-$(whoami)-secret-32chars!!';
+      execFileSync('bash', [SCRIPT, '--write-env-only'], {
+        cwd: dir,
+        env: installEnv({ AUTH_SECRET: secret }),
+        stdio: 'pipe',
+      });
+      const envFile = fs.readFileSync(path.join(dir, '.env'), 'utf8');
+      expect(envFile).toContain(`AUTH_SECRET=${secret}`);
+      expect(envFile).not.toMatch(/AUTH_SECRET=install-test-[a-z0-9]+-secret-32chars!!/);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

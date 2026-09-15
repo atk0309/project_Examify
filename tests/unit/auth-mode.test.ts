@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  isOtpShapedBearer,
   isPasswordAuth,
   parseAuthMode,
   parseMailTransport,
@@ -26,6 +27,13 @@ describe('auth-mode helpers', () => {
     expect(usesEmailChallenge('magic-link')).toBe(true);
     expect(usesEmailChallenge('local-otp')).toBe(true);
     expect(usesEmailChallenge('password')).toBe(false);
+  });
+
+  it('detects local-OTP bearers', () => {
+    expect(isOtpShapedBearer('otp:kid@example.com:student:000000')).toBe(true);
+    expect(isOtpShapedBearer('  otp:x')).toBe(true);
+    expect(isOtpShapedBearer('good-magic-token')).toBe(false);
+    expect(isOtpShapedBearer('')).toBe(false);
   });
 
   it('parses mail transports', () => {

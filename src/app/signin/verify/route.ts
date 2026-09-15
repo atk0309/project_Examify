@@ -1,6 +1,8 @@
 import { redirect } from 'next/navigation';
 import type { NextRequest } from 'next/server';
 import { consumeMagicToken, getRawSession } from '@/lib/auth';
+import { isOtpShapedBearer } from '@/lib/auth-mode';
+import { getAuthMode } from '@/lib/env';
 
 export const dynamic = 'force-dynamic';
 
@@ -10,10 +12,18 @@ export const dynamic = 'force-dynamic';
  * cookie mutation is only legal in a Route Handler / Server Action / middleware
  * — never during a Server Component render. Failures redirect to the sibling
  * error page (`./error`), which renders the human-readable copy.
+ *
+ * Only AUTH_MODE=magic-link may consume here. Local OTP bearers (`otp:…`)
+ * must go through `verifyLocalOtp` (guess lock + rate-limit). Leftover
+ * magic-link tokens are ignored when the host has switched modes.
  */
 export async function GET(request: NextRequest): Promise<void> {
   const token = request.nextUrl.searchParams.get('token') ?? '';
   if (!token) redirect('/signin/verify/error?reason=missing');
+
+  if (getAuthMode() !== 'magic-link' || isOtpShapedBearer(token)) {
+    redirect('/signin/verify/error?reason=not-found');
+  }
 
   const result = consumeMagicToken(token);
   if (!result.ok) {

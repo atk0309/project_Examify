@@ -204,4 +204,32 @@ describe('local-otp auth', () => {
     const state = await verifyLocalOtp({ status: 'idle' }, otpForm('pat@example.com', '123456'));
     expect(state).toEqual({ status: 'error', reason: 'invalid' });
   });
+
+  it('refuses an OTP bearer on the magic-link consume path (verify route)', async () => {
+    await seedParent();
+    const { issueLocalOtp, consumeMagicToken, consumeLocalOtp } = await import('@/lib/auth');
+    const { env } = await import('@/lib/env');
+    const issued = issueLocalOtp('pat@example.com', 'parent');
+    (env as { AUTH_MODE: typeof env.AUTH_MODE }).AUTH_MODE = 'magic-link';
+    expect(consumeMagicToken(`otp:pat@example.com:parent:${issued.code}`)).toEqual({
+      ok: false,
+      reason: 'not-found',
+    });
+    (env as { AUTH_MODE: typeof env.AUTH_MODE }).AUTH_MODE = 'local-otp';
+    expect(consumeLocalOtp('pat@example.com', 'parent', issued.code).ok).toBe(true);
+  });
+
+  it('ignores leftover magic-link tokens when AUTH_MODE is not magic-link', async () => {
+    await seedParent();
+    const { env } = await import('@/lib/env');
+    const { issueMagicLink, consumeMagicToken } = await import('@/lib/auth');
+    (env as { AUTH_MODE: typeof env.AUTH_MODE }).AUTH_MODE = 'magic-link';
+    const { token } = await issueMagicLink('pat@example.com', 'parent');
+    (env as { AUTH_MODE: typeof env.AUTH_MODE }).AUTH_MODE = 'password';
+    expect(consumeMagicToken(token)).toEqual({ ok: false, reason: 'not-found' });
+    (env as { AUTH_MODE: typeof env.AUTH_MODE }).AUTH_MODE = 'local-otp';
+    expect(consumeMagicToken(token)).toEqual({ ok: false, reason: 'not-found' });
+    (env as { AUTH_MODE: typeof env.AUTH_MODE }).AUTH_MODE = 'magic-link';
+    expect(consumeMagicToken(token).ok).toBe(true);
+  });
 });

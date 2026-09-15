@@ -139,6 +139,8 @@ Before merge, ensure these pass in CI:
   verification lives in a **Route Handler** (`src/app/signin/verify/route.ts`), never a
   Server Component page — clicking the email link is a GET that writes the session cookie,
   and cookie mutation is illegal during a render. Failures redirect to `/signin/verify/error`.
+  `/signin/verify` and `consumeMagicToken` only succeed when `AUTH_MODE` is
+  `magic-link`. They refuse `otp:` bearers; local OTP is `verifyLocalOtp` only.
 
 ## PR checklist
 

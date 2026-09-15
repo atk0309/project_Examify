@@ -50,3 +50,12 @@ export function usesLocalOtp(mode: AuthMode): boolean {
 export function usesMagicLink(mode: AuthMode): boolean {
   return mode === 'magic-link';
 }
+
+/**
+ * Local OTP bearers are stored hashed as `otp:{email}:{role}:{code}`.
+ * `/signin/verify` must never accept these — they are only consumed by
+ * `verifyLocalOtp` (with the per-challenge guess lock).
+ */
+export function isOtpShapedBearer(token: string): boolean {
+  return token.trim().startsWith('otp:');
+}

@@ -36,6 +36,10 @@ Surface:
   token, establishes the session, redirects to `/`. It must be a route handler because
   clicking the email link is a GET that **writes** the session cookie, and cookie mutation is
   illegal during a Server Component render (Next.js 16). Failures redirect to its sibling page.
+  **Magic-link only:** the handler and `consumeMagicToken` refuse the consume when
+  `AUTH_MODE !== 'magic-link'`, and they refuse `otp:` bearers (local OTP is
+  `verifyLocalOtp` only, with the 5-guess lock). Leftover magic-link tokens are
+  ignored after a mode switch.
 - **`/signin/verify/error`** — a read-only page that renders the human-readable failure copy
   for an invalid/expired/used/missing token, keyed off a `?reason=` query param.
 - **`/signin/invalidate`** — a **Route Handler** that destroys a stale session cookie
@@ -235,7 +239,10 @@ These are non-negotiable. Don't "fix" them out.
 - Magic-link tokens are stored **hashed** at rest (`sha256`), single-use (a `consumed_at`
   timestamp marks them spent inside the same transaction that resolves the user), and 15
   minutes long. The token carries the **role** so verify can set `session.role` without
-  re-checking env.
+  re-checking env. `/signin/verify` and `consumeMagicToken` only succeed when
+  `AUTH_MODE` is `magic-link`. They refuse `otp:` bearers (those are
+  `verifyLocalOtp` only). After a mode switch, leftover magic-link tokens are
+  ignored, not consumed.
 - Sessions store `{ userId, role, email, studentMode? }` (`role` is `student | parent`).
   `studentMode` is parent-only: when `true`, a parent gets the full `ExamApp` (the "Are you
   smarter than your kid?" flow). It's set by `setStudentMode`

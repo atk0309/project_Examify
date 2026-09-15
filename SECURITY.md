@@ -27,6 +27,8 @@ get an initial response within a week.
   and expire (15 minutes for links/OTPs, 7 days for invites); sign-in is rate-limited
   per IP. Local OTP also locks a challenge after 5 well-formed wrong 6-digit
   guesses (recorded in `rate_limit_events` under `otp:{email}:{role}`).
+  `/signin/verify` is magic-link only and refuses `otp:` bearers so the 1e6
+  OTP space cannot be guessed via GET without the lock.
   Passwords are stored as scrypt hashes (`users.password_hash`); `/setup`
   hashes only after captcha, rate-limit, and the setup secret pass.
   SMTP AUTH/DATA is refused on a connection that never upgraded to TLS
