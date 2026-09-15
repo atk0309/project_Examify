@@ -1182,7 +1182,7 @@ function AiStep({
       {provider ? (
         <div className="wizard-generate" data-testid="wizard-generate">
           {hasExistingIr ? (
-            <details className="wizard-details" defaultOpen={false}>
+            <details className="wizard-details">
               <summary>Generate from PDFs</summary>
               <GeneratePanel
                 snapshot={snapshot}
