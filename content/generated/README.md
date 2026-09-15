@@ -17,8 +17,8 @@ upserts `subjects.json` by subject id and only rewrites this run's
 `questions/` + `keys/` files. Emitting only subjects directories (typically
 `content/subjects`) is the authoritative generated catalog: leftover
 `questions/<id>.json` / `keys/<id>.json` (and the `subjects.json` row) for an
-id with no matching `bank.ir.json` are deleted, including when the last IR
-file is gone. The sample bank is never touched.
+id with no matching `bank.ir.json` are deleted. An empty subjects tree is
+refused and never wipes these files. The sample bank is never touched.
 
 Do not edit these files by hand — change the BankIR source and re-emit.
 See `tools/examify-ingest/README.md`.

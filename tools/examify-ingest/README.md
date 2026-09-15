@@ -58,10 +58,10 @@ When **every** emit path is a **subjects directory** (typically just
 `content/subjects`), that tree is the authoritative generated catalog. Any
 leftover `questions/<id>.json` / `keys/<id>.json` — and the matching
 `subjects.json` row — for an id with no `bank.ir.json` in this run is
-planned for delete. An empty subjects directory (last IR removed) still
-emits and prunes every leftover generated subject. `validate` of an empty
-tree still fails. Dry-run lists those deletes; `--apply` writes the catalog
-and registrars first, then removes leftover files. The hand-authored sample
+planned for delete. An empty subjects directory (no `bank.ir.json`) is
+refused and never wipes generated files. `validate` of an empty tree also
+fails. Dry-run lists planned deletes; `--apply` writes the catalog and
+registrars first, then removes leftover files. The hand-authored sample
 bank in `src/lib/exam/data.ts` and `answer-keys.server.ts` is never touched.
 
 When `src/lib/exam/generated-public.ts` and `generated-keys.server.ts` already

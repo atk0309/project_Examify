@@ -22,9 +22,9 @@ function statOrThrow(absPath: string, label: string): Stats {
 export type ResolveIrOptions = {
   /**
    * When true, a subjects directory with no child `bank.ir.json` files
-   * contributes no paths instead of throwing. Used by authoritative
-   * (all-directory) emit so an empty catalog can still prune leftover
-   * generated JSON.
+   * contributes no paths instead of throwing. Authoritative emit uses this
+   * so it can refuse an empty catalog with a clear error instead of treating
+   * it as a generic resolve failure.
    */
   allowEmptyDirectory?: boolean;
 };

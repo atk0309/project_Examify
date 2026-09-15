@@ -10,7 +10,8 @@ export const USAGE = `Usage:
 
 emit is dry-run by default. Writes only with --apply.
 A subjects-directory emit (every path is a directory, typically content/subjects)
-prunes leftover generated subject JSON, including after the last IR is removed.
+prunes leftover generated subject JSON when the tree still has BankIR. An empty
+subjects directory is refused (fail closed) and never wipes generated files.
 Explicit IR files never prune; mixed file+directory argv is partial-safe and
 never prunes.
 `;
@@ -110,13 +111,17 @@ export function runCli(argv: readonly string[], io: CliIo): number {
     return 1;
   }
 
-  const result =
-    pruneMissing && files.length === 0
-      ? { ok: true as const, banks: [] }
-      : validateIrCollection(files, {
-          replaceSample: parsed.replaceSample,
-          frozenIds: collectQuestionIds(SAMPLE_QUESTIONS),
-        });
+  if (pruneMissing && files.length === 0) {
+    io.stderr.write(
+      'authoritative emit refused: no BankIR files in the subjects tree (will not wipe generated content)\n',
+    );
+    return 1;
+  }
+
+  const result = validateIrCollection(files, {
+    replaceSample: parsed.replaceSample,
+    frozenIds: collectQuestionIds(SAMPLE_QUESTIONS),
+  });
   if (!result.ok) {
     printIssues(io, result.errors);
     io.stderr.write(
