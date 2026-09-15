@@ -1844,9 +1844,15 @@
   .wizard-card-menu summary {
     list-style: none;
     cursor: pointer;
-    font-size: var(--fs-caption);
+    font-size: 1.25rem;
+    line-height: 1;
     color: var(--text-muted);
-    padding: var(--sp-2);
+    padding: var(--sp-2) var(--sp-3);
+    border-radius: var(--r-full);
+  }
+  .wizard-card-menu summary:hover {
+    background: var(--surface-2);
+    color: var(--text);
   }
   .wizard-card-menu summary::-webkit-details-marker {
     display: none;
@@ -1854,10 +1860,24 @@
   .wizard-card-menu[open] {
     z-index: 2;
   }
+  .wizard-card-menu[open] .btn {
+    display: flex;
+  }
   .wizard-card-menu .btn {
-    width: auto;
+    display: none;
+    position: absolute;
+    right: 0;
+    width: max-content;
     min-height: 40px;
     padding: 0 var(--sp-3);
+    background: var(--surface);
+    box-shadow: var(--shadow-md);
+  }
+  .wizard-card-menu .btn:first-of-type {
+    top: calc(100% + 4px);
+  }
+  .wizard-card-menu .btn:last-of-type {
+    top: calc(100% + 48px);
   }
   .wizard-add {
     padding: var(--sp-4);
@@ -2026,7 +2046,6 @@
       margin: var(--sp-6) 0;
       min-height: calc(100dvh - 48px);
       padding: 0;
-      overflow: hidden;
     }
     .wizard-shell {
       min-height: calc(100dvh - 48px);
@@ -2136,11 +2155,14 @@
     .wizard-footer-actions {
       justify-content: space-between;
     }
+    .wizard-footer-actions:not(:has(.btn-ghost)) {
+      justify-content: flex-end;
+    }
     .wizard-footer .btn {
       flex: none;
       min-width: 148px;
     }
-    .wizard-subjects-layout {
+    .wizard-subjects-layout:has(.wizard-add) {
       display: grid;
       grid-template-columns: 1fr 1fr;
       align-items: start;
@@ -2283,8 +2305,9 @@
   .wizard-dropzone {
     display: grid;
     place-items: center;
-    min-height: 160px;
-    padding: var(--sp-4);
+    width: 100%;
+    min-height: 180px;
+    padding: var(--sp-6);
     border: 1.5px dashed var(--border);
     border-radius: var(--r-md);
     background: var(--surface);

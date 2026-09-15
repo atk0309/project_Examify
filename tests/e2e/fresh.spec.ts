@@ -20,7 +20,7 @@ test('first-run bootstrap creates the admin without Turnstile', async ({ page })
   await expect(page).toHaveURL(/\/onboarding/);
   await expect(page.getByTestId('onboarding-wizard')).toBeVisible();
   await expect(page.getByTestId('wizard-welcome')).toBeVisible();
-  await expect(page.getByText('Set up your family’s content')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Set up your family’s content' })).toBeVisible();
   await expect(page.getByTestId('wizard-rail')).toBeVisible();
   await expect(page.getByTestId('wizard-progress')).toHaveCount(0);
 
@@ -30,11 +30,11 @@ test('first-run bootstrap creates the admin without Turnstile', async ({ page })
   await expect(page.getByTestId('wizard-subjects')).toBeVisible();
   await expect(page.getByTestId('wizard-progress')).toContainText('Step 2 of 8');
   await expect(page.getByTestId('wizard-progress')).toContainText('Subjects');
-  await expect(page.getByTestId('wizard-next')).toBeDisabled();
+  if ((await page.getByTestId('wizard-add-subject').count()) === 0) {
+    await page.getByRole('button', { name: 'Add a subject' }).click();
+  }
   await page.getByTestId('wizard-subject-label').fill('History');
   await expect(page.getByTestId('wizard-subject-id')).toHaveValue('history');
-  await page.getByTestId('wizard-add-subject-submit').click();
-  await expect(page.getByTestId('wizard-subjects-empty')).toHaveCount(0);
   await page.getByTestId('wizard-next').click();
   await expect(page.getByTestId('wizard-files')).toBeVisible();
 

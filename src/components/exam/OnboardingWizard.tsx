@@ -791,7 +791,7 @@ function SubjectsStep({
                 )}
                 {editing === subject.id ? null : (
                   <details className="wizard-card-menu">
-                    <summary aria-label={`Actions for ${subject.label}`}>Actions</summary>
+                    <summary aria-label={`Actions for ${subject.label}`}>⋯</summary>
                     <button
                       type="button"
                       className="btn btn-ghost"
@@ -1042,9 +1042,7 @@ function SubjectDropzone({
   return (
     <section className="wizard-subject-files" data-testid={`wizard-files-${subject.id}`}>
       <h2 className="wizard-subhead">{subject.label}</h2>
-      {subject.sourceFiles.length === 0 ? (
-        <p className="wizard-empty">No PDFs yet.</p>
-      ) : (
+      {subject.sourceFiles.length > 0 ? (
         <ul className="wizard-file-chips">
           {subject.sourceFiles.map((name) => (
             <li key={name} className="wizard-file-chip">
@@ -1073,7 +1071,7 @@ function SubjectDropzone({
             </li>
           ))}
         </ul>
-      )}
+      ) : null}
       <label
         className={'wizard-dropzone' + (active ? ' active' : '')}
         data-testid={`wizard-dropzone-${subject.id}`}
@@ -1098,7 +1096,7 @@ function SubjectDropzone({
             event.currentTarget.value = '';
           }}
         />
-        Drop a PDF here, or choose a file
+        {subject.sourceFiles.length === 0 ? 'Drop a PDF here, or choose a file' : 'Add another PDF'}
       </label>
       {status === 'uploading' || pending ? (
         <p className="login-fine" data-testid={`wizard-upload-progress-${subject.id}`}>
