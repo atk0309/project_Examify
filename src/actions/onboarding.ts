@@ -3,25 +3,24 @@
 import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { z } from 'zod';
-import { getSession } from '@/lib/auth';
 import { clearEnvStoreSecret, OPENAI_ENV_KEY, setEnvStoreSecret } from '@/lib/env-store';
 import { extractClientIp } from '@/lib/ip';
 import { checkRateLimit } from '@/lib/rate-limit';
+import { requireOnboardingAdmin } from '@/lib/onboarding-admin';
 import {
   generateOnboardingSubject,
   isOnboardingGenerateCancelToken,
   requestOnboardingGenerateCancel,
+  withOnboardingGenerateLock,
 } from '@/lib/onboarding-generate';
 import {
   addOnboardingSubject,
-  adminCanOpenOnboarding,
   applyOnboardingEmit,
   attachSourcePdf,
   clearOnboardingDryRun,
   completeOnboarding,
   deleteOnboardingSubject,
   detachSourcePdf,
-  getOnboardingForUser,
   getOnboardingSnapshot,
   getHouseholdOnboarding,
   invalidateOnboardingEmit,
@@ -66,26 +65,12 @@ export type OnboardingActionError = {
     | 'missing_local'
     | 'empty_sources'
     | 'cancelled'
+    | 'already_committed'
     | 'rate_limited'
     | 'host_managed';
   message?: string;
   issues?: { file: string; message: string }[];
 };
-
-async function requireOnboardingAdmin(): Promise<
-  { ok: true; householdId: number } | OnboardingActionError
-> {
-  const session = await getSession();
-  if (!session.userId || session.role !== 'parent') {
-    return { ok: false, reason: 'forbidden' };
-  }
-  const info = getOnboardingForUser(session.userId);
-  if (!adminCanOpenOnboarding({ role: info.role, onboardingComplete: info.complete })) {
-    return { ok: false, reason: info.complete ? 'already_complete' : 'forbidden' };
-  }
-  if (info.householdId == null) return { ok: false, reason: 'forbidden' };
-  return { ok: true, householdId: info.householdId };
-}
 
 function snapshot(householdId: number): OnboardingSnapshot {
   return getOnboardingSnapshot(householdId);
@@ -128,10 +113,14 @@ export async function renameOnboardingSubjectAction(
       icon: formData.get('icon'),
     });
   if (!parsed.success) return { ok: false, reason: 'invalid' };
-  const result = renameOnboardingSubject(parsed.data);
-  if (!result.ok) return { ok: false, reason: result.reason };
-  invalidateOnboardingEmit(gate.householdId);
-  return { ok: true, snapshot: snapshot(gate.householdId) };
+  return withOnboardingGenerateLock(async () => {
+    const again = await requireOnboardingAdmin();
+    if (!again.ok) return again;
+    const result = renameOnboardingSubject(parsed.data);
+    if (!result.ok) return { ok: false, reason: result.reason };
+    invalidateOnboardingEmit(again.householdId);
+    return { ok: true, snapshot: snapshot(again.householdId) };
+  });
 }
 
 export async function deleteOnboardingSubjectAction(
@@ -140,10 +129,14 @@ export async function deleteOnboardingSubjectAction(
   const gate = await requireOnboardingAdmin();
   if (!gate.ok) return gate;
   const id = typeof formData.get('id') === 'string' ? formData.get('id') : '';
-  const result = deleteOnboardingSubject(String(id));
-  if (!result.ok) return { ok: false, reason: result.reason };
-  invalidateOnboardingEmit(gate.householdId);
-  return { ok: true, snapshot: snapshot(gate.householdId) };
+  return withOnboardingGenerateLock(async () => {
+    const again = await requireOnboardingAdmin();
+    if (!again.ok) return again;
+    const result = deleteOnboardingSubject(String(id));
+    if (!result.ok) return { ok: false, reason: result.reason };
+    invalidateOnboardingEmit(again.householdId);
+    return { ok: true, snapshot: snapshot(again.householdId) };
+  });
 }
 
 export async function attachOnboardingPdfAction(
@@ -223,6 +216,7 @@ export async function generateOnboardingSubjectAction(
   return { ok: true, snapshot: snapshot(gate.householdId), result: generated.result };
 }
 
+/** Queued behind generate on the same client — wizard uses the route handler. */
 export async function cancelOnboardingGenerateAction(
   formData: FormData,
 ): Promise<{ ok: true } | OnboardingActionError> {
@@ -232,7 +226,9 @@ export async function cancelOnboardingGenerateAction(
   if (typeof token !== 'string' || !isOnboardingGenerateCancelToken(token)) {
     return { ok: false, reason: 'invalid' };
   }
-  requestOnboardingGenerateCancel(token);
+  if (!requestOnboardingGenerateCancel(token)) {
+    return { ok: false, reason: 'already_committed' };
+  }
   return { ok: true };
 }
 

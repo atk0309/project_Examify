@@ -92,7 +92,14 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   in production; captcha is not identity). After bootstrap, `/onboarding` lets the
   household admin add subjects, attach local PDFs, choose an AI mode, optionally
   run `examify-ingest generate` (BankIR only; never emit/apply; cancel
-  discards the in-flight preview and does not replace prior IR; subject
+  POSTs `/api/onboarding/cancel-generate` so the token is not queued
+  behind generate, then skips the IR write — provider abort is a
+  parallel Ingestion PR — and does not replace prior IR; the wizard
+  waits for an `ok` cancel response before claiming cancelled; cancel after
+  IR commit is `already_committed`; an acknowledged cancel unlocks nav while
+  the provider is still pending; cancelled is a
+  calm status, not an error toast; delete/rename wait on the generate
+  lock and re-check the admin gate after the wait; subject
   ids must be in the wizard catalog; OpenAI mode can set / rotate / clear
   `OPENAI_API_KEY` in the same repo-root `.env` as `install.sh` and
   `examify-ingest generate` (shared `findRepoRoot`; never echoed; host-injected
