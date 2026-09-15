@@ -20,6 +20,25 @@ export const ONBOARDING_GENERATE_SEED_DEFAULT = 0;
  */
 export const ONBOARDING_CANCEL_GENERATE_PATH = '/api/onboarding/cancel-generate';
 
+/** True only when the cancel route records the token. Failures must not look cancelled. */
+export async function postOnboardingGenerateCancel(
+  token: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<boolean> {
+  try {
+    const res = await fetchImpl(ONBOARDING_CANCEL_GENERATE_PATH, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ cancelToken: token }),
+    });
+    const body = (await res.json().catch(() => null)) as { ok?: unknown } | null;
+    return res.ok && body?.ok === true;
+  } catch {
+    return false;
+  }
+}
+
 export function providerForOnboardingAiMode(mode: OnboardingAiMode): OnboardingGenerateProvider {
   switch (mode) {
     case 'cloud':

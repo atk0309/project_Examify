@@ -32,7 +32,8 @@ wizard does **not** auto-emit or auto-apply after generate. Cancel POSTs
 `/api/onboarding/cancel-generate` (a Route Handler, not a queued Server
 Action) so the token can land mid-generate, then skips the IR write so
 prior `bank.ir.json` is unchanged (provider abort is a parallel Ingestion
-PR). Delete/rename wait on the generate lock and re-check the admin gate
+PR). The wizard waits for an `ok` cancel response before claiming
+cancelled. Delete/rename wait on the generate lock and re-check the admin gate
 after the wait. Generate is limited to subjects in the wizard catalog. Hand-authored IR
 can skip generate. Apply refuses if the plan hash no longer
 matches the confirmed dry-run. Finish requires that confirmed apply; skip is

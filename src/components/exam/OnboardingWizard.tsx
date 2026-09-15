@@ -22,8 +22,8 @@ import type { AuthMode } from '@/lib/auth-mode';
 import type { HouseholdMemberView, PendingInvite } from '@/lib/household-types';
 import {
   EMPTY_AUTHORITATIVE_EMIT,
-  ONBOARDING_CANCEL_GENERATE_PATH,
   ONBOARDING_GENERATE_SEED_DEFAULT,
+  postOnboardingGenerateCancel,
   ONBOARDING_INGEST_CLI,
   SUBJECT_ICON_OPTIONS,
   onboardingGenerateAndEmitCli,
@@ -190,6 +190,7 @@ export function OnboardingWizard({
   const [activeGenerateId, setActiveGenerateId] = useState<string | null>(null);
   const generateCancelRef = useRef(false);
   const generateCancelTokenRef = useRef<string | null>(null);
+  const generateCancellingRef = useRef(false);
   const [pending, startTransition] = useTransition();
 
   const stepIndex = STEPS.findIndex((entry) => entry.id === step);
@@ -403,19 +404,31 @@ export function OnboardingWizard({
                   }
                 }}
                 onCancel={() => {
-                  generateCancelRef.current = true;
-                  setGenerateNote('Generate cancelled');
-                  setGenerateBusy(false);
-                  setActiveGenerateId(null);
-                  const token = generateCancelTokenRef.current;
-                  if (!token) return;
-                  // Route Handler, not a Server Action — those queue behind generate.
-                  void fetch(ONBOARDING_CANCEL_GENERATE_PATH, {
-                    method: 'POST',
-                    credentials: 'same-origin',
-                    headers: { 'content-type': 'application/json' },
-                    body: JSON.stringify({ cancelToken: token }),
-                  });
+                  void (async () => {
+                    if (generateCancellingRef.current) return;
+                    const token = generateCancelTokenRef.current;
+                    if (!token) {
+                      setError('Could not cancel generate.');
+                      return;
+                    }
+                    generateCancellingRef.current = true;
+                    try {
+                      // Await the concurrent route. Do not claim cancelled until it records the token.
+                      const recorded = await postOnboardingGenerateCancel(token);
+                      if (!recorded) {
+                        setError('Could not cancel generate.');
+                        return;
+                      }
+                      generateCancelRef.current = true;
+                      if (generateCancelTokenRef.current !== token) return;
+                      setError(null);
+                      setGenerateNote('Generate cancelled');
+                      setGenerateBusy(false);
+                      setActiveGenerateId(null);
+                    } finally {
+                      generateCancellingRef.current = false;
+                    }
+                  })();
                 }}
                 onGoValidate={() => go('validate')}
                 onGenerate={(subjectIds) =>

@@ -56,6 +56,26 @@ afterEach(async () => {
 });
 
 describe('onboarding generate mapping', () => {
+  it('does not treat a failed cancel POST as cancelled', async () => {
+    const { postOnboardingGenerateCancel } = await import('@/lib/onboarding-types');
+    const rejected = vi.fn(async () => {
+      throw new Error('network');
+    });
+    expect(await postOnboardingGenerateCancel('cancel-token-01', rejected)).toBe(false);
+
+    const forbidden = vi.fn(
+      async () => new Response(JSON.stringify({ ok: false, reason: 'forbidden' }), { status: 403 }),
+    );
+    expect(await postOnboardingGenerateCancel('cancel-token-01', forbidden)).toBe(false);
+
+    const ok = vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    expect(await postOnboardingGenerateCancel('cancel-token-01', ok)).toBe(true);
+    expect(ok).toHaveBeenCalledWith(
+      '/api/onboarding/cancel-generate',
+      expect.objectContaining({ method: 'POST', credentials: 'same-origin' }),
+    );
+  });
+
   it('maps wizard modes to ingest providers', () => {
     expect(providerForOnboardingAiMode('cloud')).toBe('anthropic');
     expect(providerForOnboardingAiMode('cloud-openai')).toBe('openai');
@@ -131,9 +151,12 @@ describe('onboarding generate graph', () => {
       /if \(result\.reason === 'cancelled' \|\| generateCancelRef\.current\) \{\s*cancelled = true;/,
     );
     expect(wizard).toMatch(
-      /generateCancelRef\.current = true;\s*setGenerateNote\('Generate cancelled'\);\s*setGenerateBusy\(false\)/,
+      /const recorded = await postOnboardingGenerateCancel\(token\);\s*if \(!recorded\) \{\s*setError\('Could not cancel generate\.'\)/,
     );
-    expect(wizard).toMatch(/fetch\(ONBOARDING_CANCEL_GENERATE_PATH/);
+    expect(wizard).toMatch(
+      /generateCancelRef\.current = true;\s*if \(generateCancelTokenRef\.current !== token\) return;\s*setError\(null\);\s*setGenerateNote\('Generate cancelled'\);\s*setGenerateBusy\(false\)/,
+    );
+    expect(wizard).toMatch(/postOnboardingGenerateCancel\(token\)/);
     expect(wizard).not.toMatch(/cancelOnboardingGenerateAction/);
     expect(wizard).toMatch(
       /\} finally \{\s*generateCancelTokenRef\.current = null;\s*generateCancelRef\.current = false;/,

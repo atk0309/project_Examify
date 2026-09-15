@@ -41,7 +41,8 @@ no env-JSON allowlist to hand-edit.
    desktop uses a step rail, mobile a compact progress bar; one stage at a time;
    generate never auto-applies; cancel POSTs `/api/onboarding/cancel-generate`
    (not a queued Server Action) and skips the IR write without replacing
-   prior IR; cancelled is a calm status, not an error toast; generate is
+   prior IR (the wizard waits for an `ok` cancel response before claiming
+   cancelled); cancelled is a calm status, not an error toast; generate is
    gated to wizard catalog subjects; an empty
    catalog is refused; a changed plan after dry-run is refused). Finish requires
    that confirmed apply; skip-without-emit keeps the sample bank.

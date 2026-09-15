@@ -42,8 +42,9 @@ Surface:
   Cancel POSTs `/api/onboarding/cancel-generate` (a Route Handler, not a
   queued Server Action) so the token can land while generate is in flight,
   then skips the IR write (provider abort is a parallel Ingestion PR); the
-  preview is discarded and prior IR is unchanged. User-initiated cancel is
-  a calm status, not an error toast.
+  preview is discarded and prior IR is unchanged. The wizard waits for an
+  `ok` cancel response before claiming cancelled; a failed POST is an error,
+  not a calm cancel. User-initiated cancel is a calm status, not an error toast.
   Generate is gated to wizard catalog subjects (`listOnboardingSubjects`).
   Delete/rename wait on the generate lock. A post-provider catalog
   re-check (#65) refuses a write if the id is gone.
