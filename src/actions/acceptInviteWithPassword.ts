@@ -2,7 +2,7 @@
 
 import { headers } from 'next/headers';
 import { z } from 'zod';
-import { issueLocalOtp } from '@/lib/auth';
+import { invalidateIssuedOtp, issueLocalOtp } from '@/lib/auth';
 import { verifyTurnstile } from '@/lib/captcha';
 import { renderOtpEmail, sendEmail } from '@/lib/email';
 import { canDeliverMailboxProof, getAuthMode, isTurnstileEnabled } from '@/lib/env';
@@ -33,7 +33,8 @@ export type AcceptInvitePasswordState =
  * `completePasswordInvite`. A bad invite URL is `invite_invalid` (the token
  * is already the secret). Email-lock mismatches stay generic `invalid` so a
  * locked address cannot be enumerated. Missing mail transport fails closed
- * (`send_failed`) instead of trusting the invite URL.
+ * (`send_failed`) instead of trusting the invite URL. If `sendEmail` fails
+ * after issue, the unused OTP is invalidated so it cannot be guessed.
  */
 export async function acceptInviteWithPassword(
   _prev: AcceptInvitePasswordState,
@@ -75,7 +76,7 @@ export async function acceptInviteWithPassword(
     return { status: 'error', reason: 'invalid' };
   }
 
-  const { code } = issueLocalOtp(email, invite.role, { inviteId: invite.id });
+  const { id, code } = issueLocalOtp(email, invite.role, { inviteId: invite.id });
   const rendered = renderOtpEmail({ code, email, siteName: siteConfig.name });
   const result = await sendEmail({
     to: email,
@@ -85,6 +86,7 @@ export async function acceptInviteWithPassword(
     code,
   });
   if (!result.ok) {
+    invalidateIssuedOtp(id);
     console.error('[auth] password-invite OTP delivery failed', { error: result.error });
     return { status: 'error', reason: 'send_failed' };
   }
