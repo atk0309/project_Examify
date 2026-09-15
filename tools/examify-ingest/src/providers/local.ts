@@ -1,13 +1,11 @@
-import { spawn } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { extractJsonObject } from '../json';
 import { bankIrSchema, type BankIR } from '../schema';
 import { UNTRUSTED_SOURCE_NOTE, buildOpenAiCompatibleUserContent } from './content';
 import {
   PROVIDER_TIMEOUT_MS,
   ProviderConfigError,
-  abortError,
-  providerRequestSignal,
-  throwIfAborted,
+  providerTimeoutSignal,
   type GenerateProvider,
   type ProviderDeps,
   type ProviderEnv,
@@ -74,7 +72,7 @@ async function generateViaHttp(
   const url = new URL('/v1/chat/completions', baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`);
   const res = await fetchFn(url, {
     method: 'POST',
-    signal: providerRequestSignal(deps.signal),
+    signal: providerTimeoutSignal(),
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
       model: request.model,
@@ -96,19 +94,12 @@ async function generateViaHttp(
   return bankIrSchema.parse(extractJsonObject(text));
 }
 
-const LOCAL_CMD_MAX_BUFFER = 10 * 1024 * 1024;
-
-async function generateViaCmd(
-  request: ProviderRequest,
-  cmdLine: string,
-  signal?: AbortSignal,
-): Promise<BankIR> {
+function generateViaCmd(request: ProviderRequest, cmdLine: string): BankIR {
   const parts = splitCommandLine(cmdLine);
   const cmd = parts[0];
   if (!cmd) {
     throw new ProviderConfigError(`${LOCAL_CMD} is empty`);
   }
-  throwIfAborted(signal);
   const payload = JSON.stringify({
     prompt: request.prompt,
     promptVersion: request.promptVersion,
@@ -134,50 +125,23 @@ async function generateViaCmd(
       dataBase64: page.bytes.toString('base64'),
     })),
   });
-
-  return new Promise((resolve, reject) => {
-    const child = spawn(cmd, parts.slice(1), { stdio: ['pipe', 'pipe', 'pipe'] });
-    let stdout = '';
-    let settled = false;
-    const finish = (error?: Error, bank?: BankIR) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      signal?.removeEventListener('abort', onAbort);
-      if (!child.killed) child.kill('SIGTERM');
-      if (error) reject(error);
-      else resolve(bank!);
-    };
-    const onAbort = () => finish(abortError(signal));
-    const timer = setTimeout(() => {
-      finish(new Error(`local command timed out after ${PROVIDER_TIMEOUT_MS}ms`));
-    }, PROVIDER_TIMEOUT_MS);
-    signal?.addEventListener('abort', onAbort, { once: true });
-
-    child.stdout.setEncoding('utf8');
-    child.stdout.on('data', (chunk: string) => {
-      stdout += chunk;
-      if (stdout.length > LOCAL_CMD_MAX_BUFFER) {
-        finish(new Error('local command exceeded maxBuffer'));
-      }
-    });
-    child.on('error', (error) => {
-      finish(new Error(`local command failed to start: ${error.message}`));
-    });
-    child.on('close', (status) => {
-      if (settled) return;
-      if (status !== 0) {
-        finish(new Error(`local command exited ${status ?? 'null'}`));
-        return;
-      }
-      try {
-        finish(undefined, bankIrSchema.parse(extractJsonObject(stdout)));
-      } catch (error) {
-        finish(error instanceof Error ? error : new Error(String(error)));
-      }
-    });
-    child.stdin.end(payload);
+  const result = spawnSync(cmd, parts.slice(1), {
+    input: payload,
+    encoding: 'utf8',
+    maxBuffer: 10 * 1024 * 1024,
+    timeout: PROVIDER_TIMEOUT_MS,
   });
+  if (result.error) {
+    const code = (result.error as NodeJS.ErrnoException).code;
+    if (code === 'ETIMEDOUT' || result.error.message.includes('ETIMEDOUT')) {
+      throw new Error(`local command timed out after ${PROVIDER_TIMEOUT_MS}ms`);
+    }
+    throw new Error(`local command failed to start: ${result.error.message}`);
+  }
+  if (result.status !== 0) {
+    throw new Error(`local command exited ${result.status ?? 'null'}`);
+  }
+  return bankIrSchema.parse(extractJsonObject(result.stdout));
 }
 
 export const localProvider: GenerateProvider = {
@@ -189,7 +153,7 @@ export const localProvider: GenerateProvider = {
   generate: async (request, deps) => {
     requireLocalReady(deps.env);
     const cmd = deps.env[LOCAL_CMD]?.trim() ?? '';
-    if (cmd) return generateViaCmd(request, cmd, deps.signal);
+    if (cmd) return generateViaCmd(request, cmd);
     const url = deps.env[LOCAL_URL]?.trim() ?? '';
     return generateViaHttp(request, deps, url);
   },

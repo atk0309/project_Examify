@@ -95,7 +95,7 @@ describe('onboarding generate graph', () => {
     expect(generate).toMatch(/from 'examify-ingest\/generate'/);
     expect(generate).toMatch(/generateSubject/);
     expect(generate).toMatch(/dryRunIr: true/);
-    expect(generate).toMatch(/signal: providerSignal/);
+    expect(generate).not.toMatch(/signal: /);
     expect(generate).toMatch(/const MAX_CANCEL_TOKENS = 64/);
     expect(generate).toMatch(/oldest token[\s\S]*evicted \(FIFO\)/);
     expect(generate).not.toMatch(/applyEmit|planEmit|applyOnboardingEmit/);
@@ -128,7 +128,13 @@ describe('onboarding generate graph', () => {
       /if \(result\.reason === 'cancelled'\) \{\s*setGenerateNote\('Generate cancelled'\)/,
     );
     expect(wizard).toMatch(
+      /if \(result\.reason === 'cancelled' \|\| generateCancelRef\.current\) \{\s*cancelled = true;/,
+    );
+    expect(wizard).toMatch(
       /generateCancelRef\.current = true;\s*setGenerateNote\('Generate cancelled'\);\s*setGenerateBusy\(false\)/,
+    );
+    expect(wizard).toMatch(
+      /\} finally \{\s*generateCancelTokenRef\.current = null;\s*generateCancelRef\.current = false;/,
     );
     const welcomeSkipAt = wizard.indexOf('Use sample bank for now');
     expect(welcomeSkipAt).toBeGreaterThan(-1);
@@ -216,9 +222,8 @@ describe('generateOnboardingSubject', () => {
       seed: 0,
       root,
     });
-    expect(generateSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ dryRunIr: true, signal: expect.any(AbortSignal) }),
-    );
+    expect(generateSpy).toHaveBeenCalledWith(expect.objectContaining({ dryRunIr: true }));
+    expect(generateSpy.mock.calls[0]?.[0]).not.toHaveProperty('signal');
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected generate');
     expect(result.result.wroteIr).toBe(true);
@@ -321,7 +326,8 @@ describe('generateOnboardingSubject', () => {
 
   it('discards the preview and leaves prior IR unchanged when cancel wins before commit', async () => {
     const ingest = await import('examify-ingest/generate');
-    const { generateOnboardingSubject } = await import('@/lib/onboarding-generate');
+    const { generateOnboardingSubject, requestOnboardingGenerateCancel } =
+      await import('@/lib/onboarding-generate');
     const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
     const root = tempRoot();
     seedSubject(root);
@@ -347,12 +353,13 @@ describe('generateOnboardingSubject', () => {
     })}\n`;
     writeFileSync(irPath, prior);
 
-    const controller = new AbortController();
+    const token = 'cancel-token-01';
     const actual = ingest.generateSubject;
     const spy = vi.spyOn(ingest, 'generateSubject').mockImplementation(async (request) => {
       expect(request.dryRunIr).toBe(true);
+      expect(request).not.toHaveProperty('signal');
       const generated = await actual(request);
-      controller.abort();
+      requestOnboardingGenerateCancel(token);
       return generated;
     });
 
@@ -361,7 +368,7 @@ describe('generateOnboardingSubject', () => {
       provider: 'test',
       seed: 0,
       root,
-      signal: controller.signal,
+      cancelToken: token,
     });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected cancelled');
@@ -470,7 +477,7 @@ describe('generateOnboardingSubject', () => {
     expect(calls).toBe(2);
   });
 
-  it('aborts in-flight generate and leaves prior IR bytes unchanged', async () => {
+  it('skips the IR write when cancel lands after generate starts and before commit', async () => {
     const ingest = await import('examify-ingest/generate');
     const { generateOnboardingSubject, requestOnboardingGenerateCancel } =
       await import('@/lib/onboarding-generate');
@@ -480,19 +487,15 @@ describe('generateOnboardingSubject', () => {
     setOnboardingContentRootForTests(root);
     const irPath = path.join(root, 'content/subjects/history/bank.ir.json');
     const prior = readFileSync(irPath, 'utf8');
-    let sawSignal: AbortSignal | undefined;
+    const { generateSubject: actualGenerateSubject } =
+      await vi.importActual<typeof ingest>('examify-ingest/generate');
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     vi.spyOn(ingest, 'generateSubject').mockImplementation(async (request) => {
-      sawSignal = request.signal;
-      await new Promise<never>((_resolve, reject) => {
-        request.signal?.addEventListener(
-          'abort',
-          () => {
-            reject(Object.assign(new Error('The operation was aborted'), { name: 'AbortError' }));
-          },
-          { once: true },
-        );
-      });
-      throw new Error('unreachable');
+      await blocked;
+      return actualGenerateSubject(request);
     });
 
     const token = 'cancel-token-01';
@@ -504,14 +507,52 @@ describe('generateOnboardingSubject', () => {
       cancelToken: token,
     });
     await vi.waitFor(() => {
-      expect(sawSignal).toBeDefined();
+      expect(ingest.generateSubject).toHaveBeenCalled();
     });
     requestOnboardingGenerateCancel(token);
+    release();
     const result = await pending;
-    expect(sawSignal?.aborted).toBe(true);
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected cancelled');
     expect(result.reason).toBe('cancelled');
+    expect(readFileSync(irPath, 'utf8')).toBe(prior);
+  });
+
+  it('evicts the oldest cancel token at FIFO cap 64', async () => {
+    const { generateOnboardingSubject, requestOnboardingGenerateCancel } =
+      await import('@/lib/onboarding-generate');
+    const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
+    const root = tempRoot();
+    seedSubject(root);
+    setOnboardingContentRootForTests(root);
+    const irPath = path.join(root, 'content/subjects/history/bank.ir.json');
+    const prior = readFileSync(irPath, 'utf8');
+
+    for (let i = 0; i < 65; i += 1) {
+      requestOnboardingGenerateCancel(`tok-${String(i).padStart(6, '0')}`);
+    }
+
+    const evicted = await generateOnboardingSubject({
+      subjectId: 'history',
+      provider: 'test',
+      seed: 0,
+      root,
+      cancelToken: 'tok-000000',
+    });
+    expect(evicted.ok).toBe(true);
+    if (!evicted.ok) throw new Error('expected evicted token to no longer cancel');
+
+    writeFileSync(irPath, prior);
+    const kept = await generateOnboardingSubject({
+      subjectId: 'history',
+      provider: 'test',
+      seed: 0,
+      root,
+      cancelToken: 'tok-000064',
+    });
+    expect(kept.ok).toBe(false);
+    if (kept.ok) throw new Error('expected newest token to still cancel');
+    expect(kept.reason).toBe('cancelled');
     expect(readFileSync(irPath, 'utf8')).toBe(prior);
   });
 

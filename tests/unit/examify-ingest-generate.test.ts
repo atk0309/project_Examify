@@ -9,7 +9,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_GENERATE_SEED,
   findRepoRoot,
@@ -820,68 +820,6 @@ describe('examify-ingest generate', () => {
     writeFileSync(dest, '{ "stale": true }\n');
     writeFileAtomic(dest, '{ "ok": true }\n');
     expect(readFileSync(dest, 'utf8')).toBe('{ "ok": true }\n');
-  });
-
-  it('aborts provider HTTP when the generate signal is aborted', async () => {
-    const root = examifyRepo();
-    const bank: BankIR = {
-      version: 1,
-      subject: { id: 'plants', label: 'Plants', icon: 'biology', l: 0.58, c: 0.09, h: 142 },
-      difficulties: {
-        easy: [
-          {
-            id: 'plants-easy-1',
-            type: 'mcq',
-            q: 'Aborted?',
-            choices: ['A', 'B', 'C', 'D'],
-            answer: 0,
-            provenance: { pdf: 'notes.txt', locator: 'p1' },
-          },
-        ],
-        medium: [],
-        hard: [],
-      },
-    };
-    const controller = new AbortController();
-    let fetchSignal: AbortSignal | undefined;
-    const pending = generateSubject({
-      repoRoot: root,
-      subject: bank.subject,
-      subjectDir: path.join(root, 'content/subjects/plants'),
-      sources: [
-        {
-          absPath: path.join(root, 'content/source-pdfs/plants/notes.txt'),
-          relPath: 'content/source-pdfs/plants/notes.txt',
-          sha256: 'abc',
-          bytes: Buffer.from('leaves\n'),
-          kind: 'text',
-          mediaType: 'text/plain',
-        },
-      ],
-      provider: 'openai',
-      seed: 0,
-      env: { OPENAI_API_KEY: 'sk-abort-signal-test' },
-      signal: controller.signal,
-      fetch: async (_input, init): Promise<Response> => {
-        fetchSignal = init?.signal ?? undefined;
-        await new Promise<never>((_resolve, reject) => {
-          init?.signal?.addEventListener(
-            'abort',
-            () => {
-              reject(Object.assign(new Error('The operation was aborted'), { name: 'AbortError' }));
-            },
-            { once: true },
-          );
-        });
-        throw new Error('unreachable');
-      },
-    });
-    await vi.waitFor(() => {
-      expect(fetchSignal).toBeDefined();
-    });
-    controller.abort();
-    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
-    expect(fetchSignal?.aborted).toBe(true);
   });
 });
 
