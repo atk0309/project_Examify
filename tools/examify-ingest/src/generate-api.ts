@@ -9,13 +9,7 @@ export {
   type GenerateSubjectResult,
 } from './generate';
 export { runCliAsync } from './generate-cli';
-export {
-  buildCacheKey,
-  hashPageImageSet,
-  ingestStateDir,
-  irCachePath,
-  readCachedIr,
-} from './cache';
+export { buildCacheKey, ingestStateDir, irCachePath, readCachedIr } from './cache';
 export { extractJsonObject } from './json';
 export { PAGE_RASTER_PROFILE, pageImageHashesOf, resolvePageImages } from './pages';
 export { sortRecord } from './hash';

@@ -83,18 +83,18 @@ Every successful (non-dry-run) generate run writes a `RunManifest` under
 `.examify-ingest/runs/` (gitignored): provider, model, promptVersion (`v2`),
 prompt hash, seed, `seedHonored`, temperature `0`, source file hashes,
 cacheKey, timestamp, subject ids, and key presence/name only — never the key
-value. `cacheKey` is a stable hash of promptVersion + prompt hash + provider
-
-- model + seed + source hashes + subject meta + ordered page-image hashes
-  (`path#page=sha256`) + a `pageImageSetHash` of that list + the raster
-  profile (`pdftoppm-png-r150`), so a prompt-text change, a different raster
-  byte set, or a later pdftoppm run cannot replay a hashes-only cache entry.
-  PDF page images, when rasterized with `pdftoppm`, are reused from
-  `.examify-ingest/cache/pages/<pdf-sha256>/` and framed as untrusted data, same
-  as source files. OpenAI-compatible generate (`openai` and local HTTP) cannot
-  inline raw PDF bytes: if the only sources are PDFs and no page images were
-  rasterized, the run fails closed. Provider HTTP/CMD calls use a 180s deadline.
-  Sources must stay under `content/subjects/<id>/` or `content/source-pdfs/<id>`.
+value. `cacheKey` is a stable hash of promptVersion, prompt hash, provider,
+model, seed, source hashes, subject meta, ordered page-image hashes
+(`path#page=sha256`), and the raster profile (`pdftoppm-png-r150`). A
+prompt-text change, a different raster byte set, or a later pdftoppm run
+cannot replay a hashes-only cache entry. The page-image list is the set
+identity — a derived extra field would bust every existing cache key.
+PDF page images, when rasterized with `pdftoppm`, are reused from
+`.examify-ingest/cache/pages/<pdf-sha256>/` and framed as untrusted data, same
+as source files. OpenAI-compatible generate (`openai` and local HTTP) cannot
+inline raw PDF bytes: if the only sources are PDFs and no page images were
+rasterized, the run fails closed. Provider HTTP/CMD calls use a 180s deadline.
+Sources must stay under `content/subjects/<id>/` or `content/source-pdfs/<id>`.
 
 Source blobs are wrapped as `UNTRUSTED SOURCE MATERIAL` with static
 `BEGIN`/`END` markers. Those delimiters stay fixed on prompt v2 on purpose:

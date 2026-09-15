@@ -26,7 +26,6 @@ import {
   PROVIDER_TIMEOUT_MS,
   UNTRUSTED_SOURCE_NOTE,
   buildCacheKey,
-  hashPageImageSet,
   extractJsonObject,
   generateSubject,
   loadGeneratePrompt,
@@ -702,9 +701,6 @@ describe('examify-ingest generate', () => {
     expect(withoutPages).not.toBe(withPages);
     expect(withPages).not.toBe(otherHash);
     expect(withPages).not.toBe(otherPath);
-    expect(hashPageImageSet(['content/source-pdfs/plants/guide.pdf#1=page-sha'])).not.toBe(
-      hashPageImageSet(['content/source-pdfs/plants/guide.pdf#1=other-sha']),
-    );
   });
 
   it('generateSubject does not cache-hit across different page rasters', async () => {
