@@ -50,6 +50,13 @@
       "when": 1789428660438,
       "tag": "0006_natural_maria_hill",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1789462548971,
+      "tag": "0007_slow_sister_grimm",
+      "breakpoints": true
     }
   ]
 }

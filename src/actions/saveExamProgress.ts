@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { getSession } from '@/lib/auth';
 import { saveExamSession, updateExamSession } from '@/lib/exam-session';
 import { resolveExamPaper } from '@/lib/exam/data';
+import { loadLivePublicBank } from '@/lib/exam/live-bank.server';
 
 // The client autosaves the public paper (ordered question ids) + its own answers
 // + where it is. No answer keys are involved — this is just the user's own draft.
@@ -31,7 +32,12 @@ const authorize = async () => {
 };
 
 function isValidSnapshot(input: SaveExamProgressInput): boolean {
-  const questions = resolveExamPaper(input.subject, input.difficulty, input.questionIds);
+  const questions = resolveExamPaper(
+    input.subject,
+    input.difficulty,
+    input.questionIds,
+    loadLivePublicBank().questions,
+  );
   if (questions === null || input.currentIndex >= questions.length) return false;
 
   return questions.every((question, index) => {

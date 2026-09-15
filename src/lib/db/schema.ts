@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
 import { integer, sqliteTable, text, index, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import type { OnboardingState } from '@/lib/onboarding-types';
 
 /**
  * Signed-in people. Who may sign in — and which household they belong to —
@@ -85,6 +86,13 @@ export const households = sqliteTable('households', {
   createdAt: integer('created_at', { mode: 'timestamp_ms' })
     .notNull()
     .default(sql`(unixepoch() * 1000)`),
+  /**
+   * First-run content onboarding. False after `/setup` until the admin
+   * finishes `/onboarding`. Skip leaves this false and shows a dashboard
+   * chip. Existing households are backfilled complete on migrate.
+   */
+  onboardingComplete: integer('onboarding_complete', { mode: 'boolean' }).notNull().default(false),
+  onboardingState: text('onboarding_state', { mode: 'json' }).$type<OnboardingState | null>(),
 });
 
 export type Household = typeof households.$inferSelect;

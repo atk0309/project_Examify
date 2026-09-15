@@ -112,9 +112,13 @@ export function overallAverage(scores: number[]): number {
 /**
  * Roll attempts up per subject. Expects `attempts` newest-first (the order
  * `getProgressForUser` returns), so the first row seen per subject is "last".
- * Summaries are returned in `SUBJECTS` order for stable rendering.
+ * Summaries are returned in `subjects` order (defaults to `SUBJECTS`) for
+ * stable rendering.
  */
-export function summariseAttempts(attempts: AttemptRecord[]): SubjectSummary[] {
+export function summariseAttempts(
+  attempts: AttemptRecord[],
+  subjects: readonly { id: string }[] = SUBJECTS,
+): SubjectSummary[] {
   const groups = new Map<string, AttemptRecord[]>();
   for (const a of attempts) {
     const list = groups.get(a.subject);
@@ -123,7 +127,7 @@ export function summariseAttempts(attempts: AttemptRecord[]): SubjectSummary[] {
   }
 
   const summaries: SubjectSummary[] = [];
-  for (const subject of SUBJECTS) {
+  for (const subject of subjects) {
     const rows = groups.get(subject.id);
     if (!rows || rows.length === 0) continue;
     const scores = rows.map((r) => r.scorePct);

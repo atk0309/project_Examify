@@ -4,10 +4,11 @@ import 'server-only';
    EXAMIFY — ATTEMPT VALIDATION + SCORING (server-only)
    ----------------------------------------------------------------------------
    The score of a finished exam is computed in the browser, so when an attempt
-   is persisted we must NOT trust the client's totals. This re-derives `correct`
+   is persisted we must NOT trust the client's totals.    This re-derives `correct`
    / `scorePct` from the submitted items: each item is resolved by `id` against
-   the public bank (`./data`) for its snapshot, and against the SERVER-ONLY
-   answer keys (`./answer-keys.server`) for the correct index / rubric. MCQ
+   the live public bank (`./live-bank.server`, disk overlay + sample) for its
+   snapshot, and against the SERVER-ONLY live keys for the correct index /
+   rubric. MCQ
    items score by index; free-text items are graded by Claude
    (`@/lib/grading`), all concurrently. Returns `{ ok: false }` (never throws)
    on any inconsistency so callers can map it to a clean error.
@@ -18,11 +19,10 @@ import 'server-only';
    ========================================================================== */
 import type { AttemptItem, FreeAttemptItem } from '@/lib/db/schema';
 import { gradeFreeText } from '@/lib/grading';
-import { keyById } from './answer-keys.server';
-import { DIFFICULTIES, resolveExamPaper, SUBJECTS, type DifficultyId } from './data';
+import { DIFFICULTIES, resolveExamPaper, type DifficultyId } from './data';
+import { loadLiveAnswerKeys, loadLivePublicBank } from './live-bank.server';
 import { isFreePass, type AttemptInput, type ValidateResult } from './attempts';
 
-const SUBJECT_IDS = new Set<string>(SUBJECTS.map((s) => s.id));
 const DIFFICULTY_IDS = new Set<string>(DIFFICULTIES.map((d) => d.id));
 
 /** One resolved item plus whether it counts as correct for the ring/tally. */
@@ -33,7 +33,10 @@ type Slot = { item: AttemptItem; correct: boolean };
  * re-derive its score, grading any free-text items. Never throws.
  */
 export async function scoreAttempt(input: AttemptInput): Promise<ValidateResult> {
-  if (!SUBJECT_IDS.has(input.subject)) return { ok: false, reason: 'invalid_subject' };
+  const bank = loadLivePublicBank();
+  const keys = loadLiveAnswerKeys();
+  const subjectIds = new Set(bank.subjects.map((subject) => subject.id));
+  if (!subjectIds.has(input.subject)) return { ok: false, reason: 'invalid_subject' };
   if (!DIFFICULTY_IDS.has(input.difficulty)) return { ok: false, reason: 'invalid_difficulty' };
   const difficulty = input.difficulty as DifficultyId;
 
@@ -43,6 +46,7 @@ export async function scoreAttempt(input: AttemptInput): Promise<ValidateResult>
     input.subject,
     difficulty,
     items.map((item) => item.id),
+    bank.questions,
   );
   if (paper === null) return { ok: false, reason: 'invalid_items' };
 
@@ -59,7 +63,7 @@ export async function scoreAttempt(input: AttemptInput): Promise<ValidateResult>
   for (let i = 0; i < items.length; i++) {
     const it = items[i]!;
     const q = paper[i]!;
-    const key = keyById(it.id);
+    const key = keys[it.id];
     if (!key) return { ok: false, reason: 'invalid_items' };
 
     if (it.type === 'mcq') {

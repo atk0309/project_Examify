@@ -24,7 +24,18 @@ the build fails if it ever ends up in the client graph. A unit-test guard
 
 You can also author a **BankIR** JSON document and emit the two-file split with
 `examify-ingest` instead of editing TypeScript by hand. This is scaffolding only —
-there is still no PDF extract or LLM generate step.
+there is still no PDF extract or LLM generate step. After first-run `/setup`, the
+admin wizard at `/onboarding` can add subjects, attach local PDFs (under
+`content/source-pdfs/<subject>/` only), and run the same directory emit
+(validate, dry-run HITL with planned deletes, then apply). Apply refuses if the
+plan hash no longer matches the confirmed dry-run. Finish requires that
+confirmed apply; skip is the no-emit exit (sample bank). Deleting a subject
+removes its IR/source dirs; leftover generated JSON is pruned only on the
+confirmed whole-tree apply (#62). An empty subjects tree is refused and never
+wipes generated files. Author `bank.ir.json` on disk (or offline); the files step
+does not write IR. Uploaded PDFs must start with `%PDF`. AI generate-from-files
+is not in this release. `--replace-sample` is off unless the admin enables the
+advanced toggle.
 
 1. Write `content/subjects/<subject-id>/bank.ir.json` (see the biology sample).
 2. From the repo root:
@@ -37,10 +48,13 @@ there is still no PDF extract or LLM generate step.
 
 3. `emit` writes `content/generated/subjects.json`,
    `content/generated/questions/<id>.json` (public fields only), and
-   `content/generated/keys/<id>.json` (answers, rubrics, provenance). The app
-   merges those files onto the sample bank. `--apply` also rewrites
+   `content/generated/keys/<id>.json` (answers, rubrics, provenance). The
+   running app reads those JSON files at request time and merges them onto the
+   sample bank (`src/lib/exam/live-bank.server.ts`), so an onboarding Apply is
+   visible on `/` without a rebuild. `--apply` also rewrites
    `src/lib/exam/generated-public.ts` and `src/lib/exam/generated-keys.server.ts`
-   from the resulting catalog. A partial emit (any explicit IR file path, or
+   as a committed / missing-catalog fallback. Keys stay server-only. A partial
+   emit (any explicit IR file path, or
    mixed file+directory argv) upserts `subjects.json` and does not clobber
    other generated subjects. Emitting only subjects directories (typically
    `content/subjects`) is authoritative: leftover generated JSON for a subject

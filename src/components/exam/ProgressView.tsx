@@ -22,7 +22,6 @@ import {
 } from '@/lib/exam/attempts';
 import { SubjectIcon, UIcon } from './icons';
 
-const SUBJECT_BY_ID = new Map(SUBJECTS.map((s) => [s.id, s]));
 const DIFFICULTY_LABEL = new Map(DIFFICULTIES.map((d) => [d.id as DifficultyId, d.label]));
 
 function formatDate(ms: number): string {
@@ -71,9 +70,15 @@ function SummaryCard({
   );
 }
 
-function AttemptRow({ attempt }: { attempt: AttemptRecord }) {
+function AttemptRow({
+  attempt,
+  subjectsById,
+}: {
+  attempt: AttemptRecord;
+  subjectsById: Map<string, Subject>;
+}) {
   const [open, setOpen] = useState(false);
-  const subject = SUBJECT_BY_ID.get(attempt.subject);
+  const subject = subjectsById.get(attempt.subject);
   const label = subject?.label ?? attempt.subject;
   const diff = DIFFICULTY_LABEL.get(attempt.difficulty) ?? attempt.difficulty;
 
@@ -149,7 +154,16 @@ function AttemptRow({ attempt }: { attempt: AttemptRecord }) {
   );
 }
 
-export function ProgressView({ data, emptyHint }: { data: ProgressData; emptyHint: string }) {
+export function ProgressView({
+  data,
+  emptyHint,
+  subjects = SUBJECTS,
+}: {
+  data: ProgressData;
+  emptyHint: string;
+  subjects?: readonly Subject[];
+}) {
+  const subjectsById = new Map(subjects.map((subject) => [subject.id, subject]));
   if (data.attempts.length === 0) {
     return (
       <div className="progress-empty">
@@ -165,7 +179,7 @@ export function ProgressView({ data, emptyHint }: { data: ProgressData; emptyHin
         <p className="eyebrow">By subject</p>
         <div className="summary-grid">
           {data.subjects.map((s) => {
-            const subject = SUBJECT_BY_ID.get(s.subjectId);
+            const subject = subjectsById.get(s.subjectId);
             if (!subject) return null;
             return <SummaryCard key={s.subjectId} subject={subject} summary={s} />;
           })}
@@ -176,7 +190,7 @@ export function ProgressView({ data, emptyHint }: { data: ProgressData; emptyHin
         <p className="eyebrow">Recent attempts</p>
         <div className="attempt-list">
           {data.attempts.map((a) => (
-            <AttemptRow key={a.id} attempt={a} />
+            <AttemptRow key={a.id} attempt={a} subjectsById={subjectsById} />
           ))}
         </div>
       </section>

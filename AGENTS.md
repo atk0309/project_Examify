@@ -51,7 +51,9 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   (dry-run by default; never clobbers any sample-bank id without
   `--replace-sample`; partial emit (explicit IR files or mixed file+dir argv)
   merges `subjects.json`; a whole-tree emit of subjects directories only
-  (`content/subjects`) deletes leftover generated subject JSON). Guide: `docs/content-authoring.md` and
+  (`content/subjects`) deletes leftover generated subject JSON). The live app
+  reads `content/generated/` at request time so a production Apply is visible
+  without rebuilding. Guide: `docs/content-authoring.md` and
   `tools/examify-ingest/README.md`. PDF extract / LLM generate are not in Phase 0.
 - **Free-text is LLM-graded server-side** (`src/lib/grading/index.ts`,
   `ANTHROPIC_API_KEY`; `test` → deterministic stub). Grading never throws — failures
@@ -77,7 +79,17 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   oldest-first) rather than the 50-capped `getProgressForUser`.
 - Access is invite-only. First-run `/setup` (`bootstrapHousehold`) creates the admin
   when no household exists, and only after `SETUP_BOOTSTRAP_SECRET` matches (required
-  in production; captcha is not identity). Parents/admins mint invite links
+  in production; captcha is not identity). After bootstrap, `/onboarding` lets the
+  household admin add subjects, attach local PDFs, choose an AI mode, and emit
+  BankIR via `examify-ingest` (directory-only, dry-run HITL before apply, empty
+  catalog fail-closed; `--replace-sample` only behind an explicit advanced toggle).
+  Apply re-hashes the current plan and refuses if it differs from the confirmed
+  dry-run (never applies an unconfirmed plan). Finish requires that confirmed
+  apply; skip-without-emit matches Welcome skip (sample bank + dashboard chip).
+  Delete does not write generated files; prune runs on confirmed apply.
+  Invited members never see it.
+  Existing households are migrated as already complete.
+  Parents/admins mint invite links
   (`createInvite`); accept goes through `/invite/[token]` using the configured
   `AUTH_MODE` (password, magic-link verify, or local OTP). In `password` mode the
   invitee must confirm a mailbox OTP before membership / `emailVerifiedAt`

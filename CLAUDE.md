@@ -28,6 +28,18 @@ Surface:
   `ExamApp` themselves; their attempts persist under the parent's own account, never the
   child's.
 - **`/setup`** — first-run household bootstrap (only when no household exists).
+- **`/onboarding`** — post-bootstrap content wizard (household **admin** only, while
+  `onboarding_complete` is false). Welcome → subjects → PDF dropzones → AI setup
+  → validate → dry-run HITL → apply → ready. Finish (“Open dashboard”) requires
+  a confirmed apply of that dry-run; a changed plan is refused (`stale_preview`).
+  Skip-without-emit is Welcome “Use sample bank for now” / later “Skip to
+  dashboard” — same skip semantics, sample bank stays usable, parent-dashboard
+  “Finish content setup” chip remains. Invited students and parents never see
+  it. Directory-only `examify-ingest` emit (dry-run before apply, empty catalog
+  refused). Delete removes IR/source dirs only; prune of leftover generated JSON
+  waits for confirmed directory apply (#62). Not a replacement for `install.sh`
+  auth-mode picking. Existing households are backfilled complete.
+  `/setup/wizard` redirects here.
 - **`/invite/[token]`** — accept a household invite (password, magic-link, or local OTP).
   In `AUTH_MODE=password` the URL is a secret that starts a join; membership and
   `emailVerifiedAt` wait for a mailbox OTP (`completePasswordInvite`). Fail closed
@@ -117,6 +129,8 @@ grouped weekly Dependabot PRs in `.github/dependabot.yml`.
 src/
   app/                  # routes (App Router)
     api/health/         # platform healthcheck
+    setup/              # household bootstrap (page); leftover /setup/wizard → /onboarding
+    onboarding/         # admin-only content wizard (BankIR validate / dry-run / apply)
     signin/             # login (page); magic-link verify (route.ts) + verify/error (page)
     page.tsx            # auth gate -> ExamApp
     layout.tsx          # fonts (Newsreader + Hanken Grotesk via <link>), data-theme
@@ -125,10 +139,11 @@ src/
   actions/              # 'use server' actions (requestMagicLink, signInWithPassword,
                         #   verifyLocalOtp, acceptInviteWithPassword, completePasswordInvite,
                         #   bootstrapHousehold,
+                        #   onboarding (subjects/PDFs/AI mode + ingest validate/dry-run/apply),
                         #   createInvite / revokeInvite / requestInviteLink, signOut,
                         #   recordAttempt, saveExamProgress + discardExamSession)
   components/
-    exam/               # ExamApp (flow), ProgressView, ParentDashboard, LoginForm, icons
+    exam/               # ExamApp (flow), ProgressView, ParentDashboard, OnboardingWizard, LoginForm, icons
     analytics/          # Plausible (opt-in)
   lib/
     exam/data.ts        # SAMPLE + generated SUBJECTS/QUESTIONS + accentCSS + buildExam
@@ -137,6 +152,8 @@ src/
     exam-session.ts     # save/list/clear an in-progress exam for resume (server-only)
     households.ts       # bootstrap, invites, membership, optional FAMILIES import (server-only)
     household-types.ts  # client-safe PendingInvite type
+    onboarding.ts       # first-run subjects/PDFs + examify-ingest emit (server-only)
+    onboarding-types.ts # client-safe wizard snapshot / AI mode types
     families.ts         # leftover FAMILIES JSON parser (optional one-shot import only)
     allowlist.ts        # isAllowedEmail(role,email), derived from household membership
     auth-mode.ts        # AUTH_MODE types + helpers (password / magic-link / local-otp)
@@ -184,10 +201,16 @@ and the vision-first workflow for generating a grounded bank from source PDFs ke
 local-only in the gitignored `content/source-pdfs/`.
 
 Automated path (Phase 0, no PDF extract / no LLM generate): author
-`content/subjects/<id>/bank.ir.json`, then `pnpm examify-ingest validate|emit`.
-`emit` is dry-run by default; `--apply` writes `content/generated/` (public
-subjects/questions + server-only keys). The app merges those files onto the
-sample bank. Any id already in the sample bank is refused unless
+`content/subjects/<id>/bank.ir.json`, then `pnpm examify-ingest validate|emit`
+(or use `/onboarding` after first-run bootstrap — same directory emit, HITL
+dry-run before apply, empty tree refused). `emit` is dry-run by default;
+`--apply` writes `content/generated/` (public
+subjects/questions + server-only keys). The running app reads that JSON at
+request time (`src/lib/exam/live-bank.server.ts`) and merges it onto the
+sample bank, so Apply → dashboard shows new subjects without a rebuild.
+Registrars (`generated-public.ts` / `generated-keys.server.ts`) stay as the
+committed / missing-catalog fallback. Keys stay server-only. Any id already in
+the sample bank is refused unless
 `--replace-sample`. A partial emit (explicit IR files or mixed file+directory
 argv) merges `subjects.json` by id and leaves other generated subject files in
 place. A whole-tree emit of subjects directories only (`content/subjects`) is

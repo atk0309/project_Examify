@@ -17,7 +17,12 @@ test('first-run bootstrap creates the admin without Turnstile', async ({ page })
   await page.getByTestId('setup-email-input').fill('host@example.com');
   await page.getByTestId('setup-secret-input').fill('e2e-setup-bootstrap-secret');
   await page.getByTestId('setup-submit').click();
+  await expect(page).toHaveURL(/\/onboarding/);
+  await expect(page.getByTestId('onboarding-wizard')).toBeVisible();
+  await expect(page.getByTestId('wizard-welcome')).toBeVisible();
+  await page.getByTestId('wizard-skip').click();
   await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByTestId('finish-content-setup')).toBeVisible();
   await expect(page.getByTestId('household-invites')).toBeVisible();
 });
 

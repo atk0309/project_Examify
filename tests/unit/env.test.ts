@@ -107,6 +107,17 @@ describe('parseEnv production fail-closed', () => {
     ).toBeUndefined();
   });
 
+  it('keeps EXAMIFY_LLM_BASE_URL optional and rejects a non-URL', () => {
+    expect(parseEnv(prodBase).EXAMIFY_LLM_BASE_URL).toBeUndefined();
+    expect(
+      parseEnv({ ...prodBase, EXAMIFY_LLM_BASE_URL: 'http://127.0.0.1:11434' })
+        .EXAMIFY_LLM_BASE_URL,
+    ).toBe('http://127.0.0.1:11434');
+    expect(() => parseEnv({ ...prodBase, EXAMIFY_LLM_BASE_URL: 'not-a-url' })).toThrow(
+      /Invalid environment variables/,
+    );
+  });
+
   it('defaults AUTH_MODE to magic-link and accepts password / local-otp', () => {
     expect(parseEnv(prodBase).AUTH_MODE).toBe('magic-link');
     expect(parseEnv({ ...prodBase, AUTH_MODE: 'password' }).AUTH_MODE).toBe('password');

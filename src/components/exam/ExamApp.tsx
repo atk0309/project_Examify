@@ -22,9 +22,11 @@ import {
   buildExam,
   countQuestions,
   DIFFICULTIES,
+  QUESTIONS,
   SUBJECTS,
   type DifficultyId,
   type Question,
+  type QuestionBank,
   type Subject,
 } from '@/lib/exam/data';
 import {
@@ -71,12 +73,14 @@ function SubjectCard({
   subject,
   sat,
   onClick,
+  questionCount,
 }: {
   subject: Subject;
   sat: number;
   onClick: () => void;
+  questionCount: number;
 }) {
-  const count = countQuestions(subject.id);
+  const count = questionCount;
   return (
     <button className="subject-card" style={accentCSS(subject, sat)} onClick={onClick}>
       <span className="icon-chip">
@@ -143,15 +147,17 @@ function Choice({
 function ResumeCard({
   session,
   sat,
+  subjects,
   onResume,
   onDiscard,
 }: {
   session: Resumable;
   sat: number;
+  subjects: readonly Subject[];
   onResume: (s: Resumable) => void;
   onDiscard: (s: Resumable) => void;
 }) {
-  const subject = SUBJECTS.find((s) => s.id === session.subject);
+  const subject = subjects.find((s) => s.id === session.subject);
   if (!subject) return null;
   const diffLabel = DIFFICULTIES.find((d) => d.id === session.difficulty)?.label;
   const at = Math.min(session.currentIndex + 1, session.questions.length);
@@ -187,6 +193,8 @@ function Dashboard({
   roleLabel,
   attemptCount,
   resumables,
+  subjects,
+  questionBank,
   onResume,
   onDiscard,
   onPick,
@@ -196,6 +204,8 @@ function Dashboard({
   roleLabel: string;
   attemptCount: number;
   resumables: Resumable[];
+  subjects: readonly Subject[];
+  questionBank: QuestionBank;
   onResume: (s: Resumable) => void;
   onDiscard: (s: Resumable) => void;
   onPick: (s: Subject) => void;
@@ -233,6 +243,7 @@ function Dashboard({
               key={`${s.subject}::${s.difficulty}`}
               session={s}
               sat={sat}
+              subjects={subjects}
               onResume={onResume}
               onDiscard={onDiscard}
             />
@@ -240,8 +251,14 @@ function Dashboard({
         </div>
       )}
       <div className="subject-grid">
-        {SUBJECTS.map((s) => (
-          <SubjectCard key={s.id} subject={s} sat={sat} onClick={() => onPick(s)} />
+        {subjects.map((s) => (
+          <SubjectCard
+            key={s.id}
+            subject={s}
+            sat={sat}
+            questionCount={countQuestions(s.id, questionBank)}
+            onClick={() => onPick(s)}
+          />
         ))}
       </div>
     </div>
@@ -249,7 +266,15 @@ function Dashboard({
 }
 
 /* -------------------------------- Progress -------------------------------- */
-function ProgressScreen({ progress, onHome }: { progress: ProgressData; onHome: () => void }) {
+function ProgressScreen({
+  progress,
+  subjects,
+  onHome,
+}: {
+  progress: ProgressData;
+  subjects: readonly Subject[];
+  onHome: () => void;
+}) {
   return (
     <div className="screen">
       <TopBar onBack={onHome} onHome={onHome} label="Your progress" />
@@ -262,6 +287,7 @@ function ProgressScreen({ progress, onHome }: { progress: ProgressData; onHome: 
         </div>
         <ProgressView
           data={progress}
+          subjects={subjects}
           emptyHint="No exams yet — finish a mini exam and your scores will show up here."
         />
       </div>
@@ -680,6 +706,8 @@ export function ExamApp({
   studentMode = false,
   initialProgress,
   resumable = [],
+  subjects = SUBJECTS,
+  questionBank = QUESTIONS,
 }: {
   role: SessionRole;
   /** True when a parent is playing as a student — shows the exit affordance. */
@@ -687,6 +715,9 @@ export function ExamApp({
   initialProgress: ProgressData;
   /** Saved in-progress exams (server-fetched) the user can resume. */
   resumable?: Resumable[];
+  /** Live public bank from the `/` RSC. Defaults to the build-time merge. */
+  subjects?: readonly Subject[];
+  questionBank?: QuestionBank;
 }) {
   const router = useRouter();
   const sat = 1; // balanced; the Tweaks panel is not shipped
@@ -763,7 +794,7 @@ export function ExamApp({
   const startExam = (diff: DifficultyId) => {
     if (!subject) return;
     cancelPendingSave();
-    const qs = buildExam(subject.id, diff);
+    const qs = buildExam(subject.id, diff, questionBank);
     const blank: Answer[] = qs.map(() => null);
     setDifficulty(diff);
     setQuestions(qs);
@@ -783,7 +814,7 @@ export function ExamApp({
 
   // Restore a saved draft straight into the exam at the question it left off.
   const resumeSession = (s: Resumable) => {
-    const subj = SUBJECTS.find((x) => x.id === s.subject);
+    const subj = subjects.find((x) => x.id === s.subject);
     if (!subj) return;
     cancelPendingSave();
     setSubject(subj);
@@ -884,7 +915,7 @@ export function ExamApp({
 
   let view;
   if (screen === 'progress') {
-    view = <ProgressScreen progress={progress} onHome={goHome} />;
+    view = <ProgressScreen progress={progress} subjects={subjects} onHome={goHome} />;
   } else if (screen === 'dashboard' || !subject) {
     view = (
       <Dashboard
@@ -892,6 +923,8 @@ export function ExamApp({
         roleLabel={roleLabel}
         attemptCount={progress.attempts.length}
         resumables={resumables}
+        subjects={subjects}
+        questionBank={questionBank}
         onResume={resumeSession}
         onDiscard={discardSession}
         onPick={pickSubject}

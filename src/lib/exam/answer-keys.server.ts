@@ -28,8 +28,10 @@ export type { AnswerKey, FreeKey, McqKey, Provenance } from './answer-key-types'
    original content — the convention this sample bank uses.
 
    SAMPLE_ANSWER_KEYS is the hand-authored sample. ANSWER_KEYS merges it with
-   `content/generated/keys/*.json` via `generated-keys.server.ts` (also
-   `server-only`). Generated keys stay out of the client graph.
+   the build-time registrar (`generated-keys.server.ts`). Scoring uses
+   `live-bank.server.ts`, which prefers `content/generated/keys/*.json` on disk
+   so an onboarding Apply is live without a rebuild. Generated keys stay out of
+   the client graph.
    ========================================================================== */
 
 export const SAMPLE_ANSWER_KEYS: Record<string, AnswerKey> = {

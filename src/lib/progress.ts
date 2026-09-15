@@ -10,6 +10,7 @@ import {
 } from './exam/attempts';
 import { scoreAttempt } from './exam/score.server';
 import type { DifficultyId } from './exam/data';
+import { loadLivePublicBank } from './exam/live-bank.server';
 
 /** Cap on how many attempts a progress view loads. */
 const ATTEMPT_LIMIT = 50;
@@ -71,7 +72,7 @@ export function getProgressForUser(userId: number): ProgressData {
     .all();
 
   const attempts = rows.map(toRecord);
-  return { attempts, subjects: summariseAttempts(attempts) };
+  return { attempts, subjects: summariseAttempts(attempts, loadLivePublicBank().subjects) };
 }
 
 /**
