@@ -89,5 +89,5 @@ export async function bootstrapHouseholdAction(
   session.studentMode = false;
   await session.save();
 
-  redirect('/');
+  redirect('/setup/wizard');
 }

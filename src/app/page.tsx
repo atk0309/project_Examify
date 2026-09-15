@@ -13,6 +13,7 @@ import {
   listPendingInvites,
 } from '@/lib/households';
 import { getProgressForUser, getScoreHistory, resolveChildren } from '@/lib/progress';
+import { parentNeedsSetupWizard } from '@/lib/setup-wizard';
 import { resolveExamPaper } from '@/lib/exam/data';
 import type { HouseholdMemberView } from '@/lib/household-types';
 
@@ -46,6 +47,9 @@ export default async function HomePage() {
   }
 
   if (session.role === 'parent') {
+    if (parentNeedsSetupWizard(session.userId)) {
+      redirect('/setup/wizard');
+    }
     const ownProgress = getProgressForUser(session.userId);
 
     // Student mode: the parent plays the exams themselves with full controls.

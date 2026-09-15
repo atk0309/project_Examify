@@ -161,7 +161,7 @@ export function SetupForm({ siteKey, authMode }: { siteKey?: string; authMode: A
         </p>
       ) : (
         <p className="login-fine">
-          You&rsquo;ll land on the parent dashboard and can invite family next.
+          You&rsquo;ll set up subjects next, then land on the parent dashboard.
         </p>
       )}
     </form>
