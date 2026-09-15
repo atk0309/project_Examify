@@ -146,5 +146,14 @@ export function onboardingGenerateAndEmitCli(
   return [onboardingGenerateCli(provider, seed), ...ONBOARDING_INGEST_CLI];
 }
 
+/** Generate-all targets: skip hand-authored / source-less catalog rows. */
+export function onboardingGenerateBatchIds(
+  subjects: readonly Pick<OnboardingSubject, 'id' | 'generateSources'>[],
+): string[] {
+  return subjects
+    .filter((subject) => subject.generateSources.length > 0)
+    .map((subject) => subject.id);
+}
+
 export const EMPTY_AUTHORITATIVE_EMIT =
   'authoritative emit refused: no BankIR files in the subjects tree (will not wipe generated content)';

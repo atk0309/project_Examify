@@ -1,10 +1,11 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   ONBOARDING_INGEST_CLI,
   onboardingGenerateAndEmitCli,
+  onboardingGenerateBatchIds,
   providerForOnboardingAiMode,
 } from '@/lib/onboarding-types';
 
@@ -60,6 +61,16 @@ describe('onboarding generate mapping', () => {
       'pnpm examify-ingest generate --provider test --seed 0 content/subjects/<id>',
       ...ONBOARDING_INGEST_CLI,
     ]);
+  });
+
+  it('builds generate-all from source-backed subjects only', () => {
+    expect(
+      onboardingGenerateBatchIds([
+        { id: 'biology', generateSources: [] },
+        { id: 'history', generateSources: ['content/source-pdfs/history/notes.txt'] },
+        { id: 'civics', generateSources: [] },
+      ]),
+    ).toEqual(['history']);
   });
 });
 
@@ -268,6 +279,35 @@ describe('generateOnboardingSubject', () => {
     if (result.ok) throw new Error('expected missing catalog member');
     expect(result.reason).toBe('missing');
     expect(existsSync(path.join(root, 'content/subjects/rogue-id/bank.ir.json'))).toBe(false);
+  });
+
+  it('does not resurrect a subject deleted before the IR commit', async () => {
+    const ingest = await import('examify-ingest/generate');
+    const { generateOnboardingSubject } = await import('@/lib/onboarding-generate');
+    const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
+    const root = tempRoot();
+    seedSubject(root);
+    setOnboardingContentRootForTests(root);
+    const subjectDir = path.join(root, 'content/subjects/history');
+    const irPath = path.join(subjectDir, 'bank.ir.json');
+    const actual = ingest.generateSubject;
+    vi.spyOn(ingest, 'generateSubject').mockImplementation(async (request) => {
+      const generated = await actual(request);
+      rmSync(subjectDir, { recursive: true, force: true });
+      return generated;
+    });
+
+    const result = await generateOnboardingSubject({
+      subjectId: 'history',
+      provider: 'test',
+      seed: 0,
+      root,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected missing after delete');
+    expect(result.reason).toBe('missing');
+    expect(existsSync(irPath)).toBe(false);
+    expect(existsSync(subjectDir)).toBe(false);
   });
 
   it('fails closed for local without CMD or BASE_URL', async () => {

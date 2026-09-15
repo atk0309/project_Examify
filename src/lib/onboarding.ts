@@ -54,6 +54,7 @@ export {
   ONBOARDING_INGEST_CLI,
   SUBJECT_ICON_OPTIONS,
   onboardingGenerateAndEmitCli,
+  onboardingGenerateBatchIds,
   onboardingGenerateCli,
   providerForOnboardingAiMode,
 } from '@/lib/onboarding-types';

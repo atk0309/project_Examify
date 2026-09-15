@@ -186,6 +186,11 @@ async function generateOnboardingSubjectUnlocked(input: {
     if (isGenerateCancelled(input.signal, input.cancelToken)) {
       return cancelledResult();
     }
+    // Re-check after the provider returns: delete/rename must not be
+    // resurrected by writeFileAtomic's mkdirSync.
+    if (!listOnboardingSubjects(root).some((row) => row.id === subjectId)) {
+      return { ok: false, reason: 'missing', message: 'Subject is not in the wizard catalog.' };
+    }
     ingestGenerate.writeFileAtomic(generated.irPath, stableJson(generated.bank));
     clearOnboardingGenerateCancel(input.cancelToken);
     return { ok: true, result: publicGenerateResult(subjectId, root, generated, true) };

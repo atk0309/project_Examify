@@ -26,6 +26,7 @@ import {
   ONBOARDING_INGEST_CLI,
   SUBJECT_ICON_OPTIONS,
   onboardingGenerateAndEmitCli,
+  onboardingGenerateBatchIds,
   providerForOnboardingAiMode,
   type OnboardingAiMode,
   type OnboardingDryRun,
@@ -1017,9 +1018,9 @@ function AiStep({
             <button
               type="button"
               className="btn btn-primary"
-              disabled={busy || snapshot.subjects.length < 1}
+              disabled={busy || onboardingGenerateBatchIds(snapshot.subjects).length < 1}
               data-testid="wizard-generate-all"
-              onClick={() => onGenerate(snapshot.subjects.map((subject) => subject.id))}
+              onClick={() => onGenerate(onboardingGenerateBatchIds(snapshot.subjects))}
             >
               {generateBusy ? 'Generating…' : 'Generate all'}
             </button>
@@ -1054,7 +1055,7 @@ function AiStep({
                       <button
                         type="button"
                         className="btn btn-ghost"
-                        disabled={busy}
+                        disabled={busy || subject.generateSources.length < 1}
                         data-testid={`wizard-generate-${subject.id}`}
                         onClick={() => onGenerate([subject.id])}
                       >
