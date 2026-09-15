@@ -325,6 +325,7 @@ function SubjectsStep({
   const [id, setId] = useState('');
   const [label, setLabel] = useState('');
   const [icon, setIcon] = useState<(typeof SUBJECT_ICON_OPTIONS)[number]>('maths');
+  const canAdd = id.trim().length > 0 && label.trim().length > 0;
 
   return (
     <div className="wizard-panel" data-testid="wizard-subjects">
@@ -376,7 +377,11 @@ function SubjectsStep({
         data-testid="wizard-add-subject"
         onSubmit={(event) => {
           event.preventDefault();
-          const data = new FormData(event.currentTarget);
+          if (!canAdd) return;
+          const data = new FormData();
+          data.set('id', id.trim());
+          data.set('label', label.trim());
+          data.set('icon', icon);
           onAdd(data);
           setId('');
           setLabel('');
@@ -390,7 +395,6 @@ function SubjectsStep({
             id="wizard-subject-id"
             name="id"
             className="text-input"
-            required
             maxLength={40}
             placeholder="history"
             value={id}
@@ -406,7 +410,6 @@ function SubjectsStep({
             id="wizard-subject-label"
             name="label"
             className="text-input"
-            required
             maxLength={40}
             placeholder="History"
             value={label}
@@ -438,7 +441,7 @@ function SubjectsStep({
         <button
           className="btn btn-ghost"
           type="submit"
-          disabled={pending}
+          disabled={pending || !canAdd}
           data-testid="wizard-add-subject-submit"
         >
           {pending ? 'Adding…' : 'Add subject'}

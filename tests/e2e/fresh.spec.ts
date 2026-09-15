@@ -4,8 +4,13 @@ import { expect, test } from '@playwright/test';
 
 const OUTBOX =
   process.env.MAIL_OUTBOX_DIR ?? path.join(process.cwd(), 'tests', '.tmp', 'e2e-fresh-outbox');
+const WIZARD_HISTORY_DIR = path.join(process.cwd(), 'content', 'subjects', 'history');
 
 test.describe.configure({ mode: 'serial' });
+
+test.afterAll(async () => {
+  await fs.rm(WIZARD_HISTORY_DIR, { recursive: true, force: true });
+});
 
 test('first-run bootstrap creates the admin without Turnstile', async ({ page }) => {
   await page.goto('/signin');
@@ -19,6 +24,13 @@ test('first-run bootstrap creates the admin without Turnstile', async ({ page })
   await page.getByTestId('setup-submit').click();
   await expect(page).toHaveURL(/\/setup\/wizard/);
   await expect(page.getByTestId('setup-wizard')).toBeVisible();
+  await page.getByTestId('wizard-subject-id').fill('history');
+  await page.getByTestId('wizard-subject-label').fill('History');
+  await page.getByTestId('wizard-subject-icon').selectOption('geography');
+  await page.getByTestId('wizard-add-subject-submit').click();
+  await expect(page.getByTestId('wizard-delete-subject-history')).toBeVisible();
+  await page.getByTestId('wizard-delete-subject-history').click();
+  await expect(page.getByTestId('wizard-delete-subject-history')).toHaveCount(0);
   await page.getByTestId('wizard-skip').click();
   await expect(page.getByTestId('wizard-ready')).toBeVisible();
   await page.getByTestId('wizard-finish').click();
