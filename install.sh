@@ -115,8 +115,12 @@ version_ge() {
   [ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -n1)" = "$2" ]
 }
 
+is_examify_package_json() {
+  [ -f "$1" ] && grep -Eq '"name"[[:space:]]*:[[:space:]]*"project-examify"' "$1"
+}
+
 is_examify_repo() {
-  [ -f package.json ] && grep -q '"name": "project-examify"' package.json
+  is_examify_package_json package.json
 }
 
 # Walk up from $PWD until package.json name is project-examify (same marker
@@ -125,7 +129,7 @@ is_examify_repo() {
 find_examify_root() {
   local dir="$PWD"
   while :; do
-    if [ -f "$dir/package.json" ] && grep -q '"name": "project-examify"' "$dir/package.json"; then
+    if is_examify_package_json "$dir/package.json"; then
       printf '%s\n' "$dir"
       return 0
     fi

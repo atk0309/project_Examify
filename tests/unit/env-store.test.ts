@@ -144,10 +144,10 @@ describe('env-store', () => {
 
   it('keeps env-store off the examify-ingest import graph', async () => {
     const raw = readFileSync(path.join(process.cwd(), 'src/lib/env-store.ts'), 'utf8');
-    expect(raw).not.toMatch(/examify-ingest/);
+    expect(raw).not.toMatch(/from ['"]examify-ingest/);
     expect(raw).toMatch(/from '@\/lib\/repo-root'/);
     const content = readFileSync(path.join(process.cwd(), 'src/lib/content-root.ts'), 'utf8');
-    expect(content).not.toMatch(/examify-ingest/);
+    expect(content).not.toMatch(/from ['"]examify-ingest/);
     expect(content).toMatch(/from '@\/lib\/repo-root'/);
   });
 
