@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "subject": {
+    "id": "biology",
+    "label": "Biology",
+    "icon": "biology",
+    "l": 0.58,
+    "c": 0.09,
+    "h": 142
+  },
+  "difficulties": {
+    "easy": [
+      {
+        "id": "biology-easy-1",
+        "type": "mcq",
+        "q": "Which organelle is known as the powerhouse of the cell?",
+        "choices": ["Nucleus", "Ribosome", "Mitochondrion", "Golgi apparatus"],
+        "answer": 2,
+        "provenance": { "pdf": "hand-authored", "locator": "sample IR v1 · biology/easy" }
+      },
+      {
+        "id": "biology-easy-free-1",
+        "type": "free",
+        "q": "Explain two differences between a plant cell and an animal cell.",
+        "rubric": "Award up to 2 marks. 1 mark: plant cells have a cell wall (animal cells do not). 1 mark: plant cells have chloroplasts (animal cells do not). Accept a large permanent vacuole or a typically more regular shape as a difference. Do not penalise minor spelling slips; note them separately.",
+        "maxScore": 2,
+        "provenance": { "pdf": "hand-authored", "locator": "sample IR v1 · biology/easy" }
+      }
+    ],
+    "medium": [],
+    "hard": []
+  }
+}

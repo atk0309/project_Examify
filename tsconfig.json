@@ -39,6 +39,7 @@
     "*.config.mts",
     "vitest.setup.ts",
     "playwright.config.ts",
+    "tools/examify-ingest/src/**/*.ts",
     ".next/dev/types/**/*.ts"
   ],
   "exclude": ["node_modules", ".next", "out", "build", "playwright-report", "test-results"]

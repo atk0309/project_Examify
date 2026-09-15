@@ -11,18 +11,21 @@
      The correct answer index (mcq) and the rubric/maxScore (free) live in the
      SERVER-ONLY key store `answer-keys.server.ts`, keyed by question `id`, so
      they never ship to the browser.
-   - This is a hand-authored SAMPLE bank (three starter subjects) meant to be
-     replaced with your own content. See `docs/content-authoring.md` for the
-     full authoring guide, including generating questions from your own source
-     PDFs and the `provenance` convention in the key store.
-   - To add a SUBJECT: add to SUBJECTS + a matching key in QUESTIONS + an icon.
-     To add a DIFFICULTY: extend DIFFICULTIES + the matching QUESTIONS keys.
+   - SAMPLE_SUBJECTS / SAMPLE_QUESTIONS are the hand-authored starter bank
+     (three subjects). SUBJECTS / QUESTIONS merge that sample with additive
+     generated JSON from `content/generated/` (see `generated-public.ts` and
+     `tools/examify-ingest`). Generated files never carry answers or rubrics.
+   - To add a SUBJECT by hand: add to SAMPLE_SUBJECTS + SAMPLE_QUESTIONS + an
+     icon. To add via BankIR: author `content/subjects/<id>/bank.ir.json` and
+     emit. To add a DIFFICULTY: extend DIFFICULTIES + the matching bank keys.
    - Every question needs a globally-unique `id` and a matching entry in
      ANSWER_KEYS (`answer-keys.server.ts`). See the bijection guard in
      `tests/unit/answer-keys.test.ts`.
    ========================================================================== */
 
 import type { CSSProperties } from 'react';
+import { GENERATED_QUESTIONS, GENERATED_SUBJECTS } from './generated-public';
+import { generatedReplacesSample, mergeQuestions, mergeSubjects } from './merge-generated';
 
 export type DifficultyId = 'easy' | 'medium' | 'hard';
 
@@ -59,7 +62,7 @@ export const DIFFICULTIES: Difficulty[] = [
 ];
 
 /** Accent colours — palette 0 (muted, sophisticated). OKLCH parts. */
-export const SUBJECTS: Subject[] = [
+export const SAMPLE_SUBJECTS: Subject[] = [
   { id: 'maths', label: 'Maths', icon: 'maths', l: 0.585, c: 0.062, h: 156 },
   {
     id: 'computer-science',
@@ -94,7 +97,7 @@ export function accentCSS(s: Subject, sat = 1): CSSProperties {
    `geography-medium-free-1/2`) are referenced by unit-test fixtures — keep
    them, or update the tests alongside (see docs/content-authoring.md).
    --------------------------------------------------------------------------- */
-export const QUESTIONS: QuestionBank = {
+export const SAMPLE_QUESTIONS: QuestionBank = {
   maths: {
     easy: [
       {
@@ -460,6 +463,13 @@ export const QUESTIONS: QuestionBank = {
     ],
   },
 };
+
+export const SUBJECTS: Subject[] = mergeSubjects(SAMPLE_SUBJECTS, GENERATED_SUBJECTS);
+export const QUESTIONS: QuestionBank = mergeQuestions(
+  SAMPLE_QUESTIONS,
+  GENERATED_QUESTIONS,
+  generatedReplacesSample(GENERATED_QUESTIONS, SAMPLE_QUESTIONS),
+);
 
 export function countQuestions(subjectId: string): number {
   const bank = QUESTIONS[subjectId] ?? {};

@@ -1,5 +1,11 @@
 import 'server-only';
 
+import { GENERATED_KEYS } from './generated-keys.server';
+import { generatedReplacesSampleIds, mergeKeys } from './merge-generated';
+import type { AnswerKey } from './answer-key-types';
+
+export type { AnswerKey, FreeKey, McqKey, Provenance } from './answer-key-types';
+
 /* ============================================================================
    EXAMIFY — SERVER-ONLY ANSWER KEYS
    ----------------------------------------------------------------------------
@@ -20,15 +26,13 @@ import 'server-only';
    `pdf` and the page/section in `locator` when content is derived from your
    own material (see docs/content-authoring.md), or use `'hand-authored'` for
    original content — the convention this sample bank uses.
+
+   SAMPLE_ANSWER_KEYS is the hand-authored sample. ANSWER_KEYS merges it with
+   `content/generated/keys/*.json` via `generated-keys.server.ts` (also
+   `server-only`). Generated keys stay out of the client graph.
    ========================================================================== */
 
-export type Provenance = { pdf: string; locator: string };
-
-export type McqKey = { type: 'mcq'; answer: number; provenance: Provenance };
-export type FreeKey = { type: 'free'; rubric: string; maxScore: number; provenance: Provenance };
-export type AnswerKey = McqKey | FreeKey;
-
-export const ANSWER_KEYS: Record<string, AnswerKey> = {
+export const SAMPLE_ANSWER_KEYS: Record<string, AnswerKey> = {
   // maths
   'maths-easy-1': {
     type: 'mcq',
@@ -330,6 +334,12 @@ export const ANSWER_KEYS: Record<string, AnswerKey> = {
     provenance: { pdf: 'hand-authored', locator: 'sample bank v1 · geography/hard' },
   },
 };
+
+export const ANSWER_KEYS: Record<string, AnswerKey> = mergeKeys(
+  SAMPLE_ANSWER_KEYS,
+  GENERATED_KEYS,
+  generatedReplacesSampleIds(Object.keys(GENERATED_KEYS), Object.keys(SAMPLE_ANSWER_KEYS)),
+);
 
 export function keyById(id: string): AnswerKey | undefined {
   return ANSWER_KEYS[id];

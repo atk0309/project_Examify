@@ -42,11 +42,15 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   ids must be unique, belong to the selected subject + difficulty, and contain exactly
   the number of questions `buildExam()` returns. Draft answers must match each public
   question's type/range. This validation never reads or exposes answer keys.
-- **Content is hand-edited.** The shipped bank is a hand-authored 3-subject sample
-  meant to be replaced with the family's own content (optionally generated from their
-  source PDFs, kept local-only in the gitignored `content/source-pdfs/`); add content
-  as `{ id, type, q, choices? }` in `data.ts` **plus** a matching `ANSWER_KEYS[id]`
-  (with provenance) in `answer-keys.server.ts`. Guide: `docs/content-authoring.md`.
+- **Content is hand-edited or emitted from BankIR.** The shipped bank is a
+  hand-authored 3-subject sample plus additive generated subjects from
+  `content/generated/` (biology is the Phase 0 example). Add content as
+  `{ id, type, q, choices? }` in `data.ts` **plus** a matching `ANSWER_KEYS[id]`
+  (with provenance) in `answer-keys.server.ts`, **or** author
+  `content/subjects/<id>/bank.ir.json` and run `pnpm examify-ingest emit --apply`
+  (dry-run by default; never clobbers any sample-bank id without
+  `--replace-sample`; partial emit merges `subjects.json`). Guide: `docs/content-authoring.md` and
+  `tools/examify-ingest/README.md`. PDF extract / LLM generate are not in Phase 0.
 - **Free-text is LLM-graded server-side** (`src/lib/grading/index.ts`,
   `ANTHROPIC_API_KEY`; `test` → deterministic stub). Grading never throws — failures
   fall to `needs_review`. A free item is "correct" at `PASS_THRESHOLD` (0.6). The UI

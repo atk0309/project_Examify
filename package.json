@@ -32,6 +32,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/lib/db/migrate.ts",
     "db:studio": "drizzle-kit studio",
+    "examify-ingest": "tsx tools/examify-ingest/src/cli.ts",
     "prepare": "husky"
   },
   "dependencies": {
@@ -56,6 +57,7 @@
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@vitejs/plugin-react": "6.1.1",
+    "examify-ingest": "workspace:0.1.0",
     "drizzle-kit": "0.31.10",
     "eslint": "9.39.5",
     "eslint-config-next": "16.3.3",

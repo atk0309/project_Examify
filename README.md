@@ -37,7 +37,7 @@ no env-JSON allowlist to hand-edit.
    New people join via an invite link (`/invite/…`), not env JSON.
 2. **Dashboard** — a grid of subjects, each with a soft duotone icon and question count.
    The repo ships with a small hand-authored sample bank (Maths, Computer Science,
-   Geography) that you're meant to replace with your own content — see
+   Geography) plus an additive Biology example from BankIR — see
    [`docs/content-authoring.md`](docs/content-authoring.md).
 3. **Difficulty** — Easy / Medium / Hard, one line each.
 4. **Exam** — one question per screen, A–D choices or a free-text box, a progress bar. No
@@ -197,9 +197,13 @@ questions. Content lives in two files keyed by a shared, globally-unique questio
 
 `buildExam()` assembles each mini exam from the bank (`EXAM_CONFIG.length` caps the
 paper, `shuffle` randomises order), and a unit-test guard enforces that the two files
-stay in lockstep. The full guide — adding subjects and difficulties, writing rubrics the
-LLM grader marks well, and a workflow for generating a question bank from your own
-study-material PDFs — is in [`docs/content-authoring.md`](docs/content-authoring.md).
+stay in lockstep. You can also author `content/subjects/<id>/bank.ir.json` and emit
+the split with `pnpm examify-ingest emit content/subjects --dry-run` (or
+`--apply` to write `content/generated/`). The full guide — adding subjects and difficulties, writing
+rubrics the LLM grader marks well, the Phase 0 ingest CLI, and a workflow for
+generating a question bank from your own study-material PDFs — is in
+[`docs/content-authoring.md`](docs/content-authoring.md) and
+[`tools/examify-ingest/README.md`](tools/examify-ingest/README.md).
 
 ## Free-text grading
 
@@ -227,18 +231,19 @@ applied at runtime via `accentCSS()`.
 
 ## Commands
 
-| Command            | What it does                                       |
-| ------------------ | -------------------------------------------------- |
-| `pnpm dev`         | Dev server (Turbopack)                             |
-| `pnpm build`       | Production build                                   |
-| `pnpm start`       | Run the production build (`PORT` defaults to 3000) |
-| `pnpm lint`        | ESLint                                             |
-| `pnpm typecheck`   | `tsc --noEmit`                                     |
-| `pnpm format`      | Prettier write                                     |
-| `pnpm test`        | Vitest unit suite                                  |
-| `pnpm test:e2e`    | Playwright e2e (needs `pnpm test:e2e:install`)     |
-| `pnpm db:generate` | Generate a Drizzle migration from schema diffs     |
-| `pnpm db:migrate`  | Apply pending migrations to `DATABASE_URL`         |
+| Command               | What it does                                       |
+| --------------------- | -------------------------------------------------- |
+| `pnpm dev`            | Dev server (Turbopack)                             |
+| `pnpm build`          | Production build                                   |
+| `pnpm start`          | Run the production build (`PORT` defaults to 3000) |
+| `pnpm lint`           | ESLint                                             |
+| `pnpm typecheck`      | `tsc --noEmit`                                     |
+| `pnpm format`         | Prettier write                                     |
+| `pnpm test`           | Vitest unit suite                                  |
+| `pnpm test:e2e`       | Playwright e2e (needs `pnpm test:e2e:install`)     |
+| `pnpm db:generate`    | Generate a Drizzle migration from schema diffs     |
+| `pnpm db:migrate`     | Apply pending migrations to `DATABASE_URL`         |
+| `pnpm examify-ingest` | Validate / emit BankIR (`tools/examify-ingest`)    |
 
 ## Environment
 
