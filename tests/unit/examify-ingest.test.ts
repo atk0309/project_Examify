@@ -390,6 +390,11 @@ describe('examify-ingest load + registrars + diffs', () => {
 
     expect(() => resolveIrFiles(['missing-ir.json'], tmp)).toThrow(/path not found/);
 
+    const emptyTree = mkdtempSync(path.join(tmpdir(), 'examify-empty-tree-'));
+    mkdirSync(path.join(emptyTree, 'leftover-subject'));
+    expect(() => resolveIrFiles([emptyTree], emptyTree)).toThrow(/no \*\/bank\.ir\.json/);
+    expect(resolveIrFiles([emptyTree], emptyTree, { allowEmptyDirectory: true })).toEqual([]);
+
     const blocked = path.join(tmp, 'blocked');
     mkdirSync(blocked);
     writeFileSync(path.join(blocked, 'bank.ir.json'), '{}');
@@ -596,6 +601,71 @@ describe('examify-ingest CLI', () => {
     );
     expect(readFileSync(path.join(tmp, 'src/lib/exam/generated-keys.server.ts'), 'utf8')).toContain(
       'biology',
+    );
+    expect(
+      readFileSync(path.join(tmp, 'src/lib/exam/generated-keys.server.ts'), 'utf8'),
+    ).not.toContain('chemistry');
+  });
+
+  it('CLI mixed empty directory + file argv still fails and does not prune', () => {
+    const tmp = mkdtempSync(path.join(tmpdir(), 'examify-cli-empty-mixed-'));
+    writeFileSync(path.join(tmp, 'package.json'), JSON.stringify({ name: 'project-examify' }));
+    mkdirSync(path.join(tmp, 'content/subjects'), { recursive: true });
+    const leftover = writeLeftoverChemistry(path.join(tmp, 'content/generated'));
+    const irPath = path.join(tmp, 'biology.ir.json');
+    writeFileSync(
+      irPath,
+      readFileSync(path.join(repoRoot, 'content/subjects/biology/bank.ir.json')),
+    );
+
+    const stderr: string[] = [];
+    const code = runCli(['emit', 'content/subjects', irPath, '--apply'], {
+      cwd: tmp,
+      stdout: { write: () => undefined },
+      stderr: { write: (chunk) => void stderr.push(chunk) },
+    });
+    expect(code).toBe(1);
+    expect(stderr.join('')).toMatch(/no \*\/bank\.ir\.json/);
+    expect(existsSync(leftover.questionsPath)).toBe(true);
+    expect(readFileSync(leftover.questionsPath, 'utf8')).toBe(leftover.questionsBefore);
+  });
+
+  it('CLI validate of an empty subjects directory still fails', () => {
+    const tmp = mkdtempSync(path.join(tmpdir(), 'examify-cli-empty-validate-'));
+    writeFileSync(path.join(tmp, 'package.json'), JSON.stringify({ name: 'project-examify' }));
+    mkdirSync(path.join(tmp, 'content/subjects'), { recursive: true });
+    const stderr: string[] = [];
+    const code = runCli(['validate', 'content/subjects'], {
+      cwd: tmp,
+      stdout: { write: () => undefined },
+      stderr: { write: (chunk) => void stderr.push(chunk) },
+    });
+    expect(code).toBe(1);
+    expect(stderr.join('')).toMatch(/no \*\/bank\.ir\.json/);
+  });
+
+  it('CLI emit --apply of an empty subjects directory prunes leftover generated JSON', () => {
+    const tmp = mkdtempSync(path.join(tmpdir(), 'examify-cli-empty-emit-'));
+    writeFileSync(path.join(tmp, 'package.json'), JSON.stringify({ name: 'project-examify' }));
+    mkdirSync(path.join(tmp, 'content/subjects/biology'), { recursive: true });
+    mkdirSync(path.join(tmp, 'src/lib/exam'), { recursive: true });
+    const leftover = writeLeftoverChemistry(path.join(tmp, 'content/generated'));
+    writeFileSync(path.join(tmp, 'src/lib/exam/generated-public.ts'), 'export {}\n');
+    writeFileSync(path.join(tmp, 'src/lib/exam/generated-keys.server.ts'), 'export {}\n');
+
+    const code = runCli(['emit', 'content/subjects', '--apply'], {
+      cwd: tmp,
+      stdout: { write: () => undefined },
+      stderr: { write: () => undefined },
+    });
+    expect(code).toBe(0);
+    expect(existsSync(leftover.questionsPath)).toBe(false);
+    expect(existsSync(leftover.keysPath)).toBe(false);
+    expect(
+      JSON.parse(readFileSync(path.join(tmp, 'content/generated/subjects.json'), 'utf8')),
+    ).toEqual([]);
+    expect(readFileSync(path.join(tmp, 'src/lib/exam/generated-public.ts'), 'utf8')).not.toContain(
+      'chemistry',
     );
     expect(
       readFileSync(path.join(tmp, 'src/lib/exam/generated-keys.server.ts'), 'utf8'),

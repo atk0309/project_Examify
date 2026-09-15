@@ -44,7 +44,8 @@ there is still no PDF extract or LLM generate step.
    mixed file+directory argv) upserts `subjects.json` and does not clobber
    other generated subjects. Emitting only subjects directories (typically
    `content/subjects`) is authoritative: leftover generated JSON for a subject
-   no longer present in that tree is deleted.
+   no longer present in that tree is deleted, including when the last IR file
+   has been removed. `validate` of an empty tree still fails.
 
 Ids that collide with **any** id already in the sample bank (`SAMPLE_QUESTIONS`)
 are refused unless you pass `--replace-sample`. Full IR shape, commands, and the

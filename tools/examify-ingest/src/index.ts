@@ -19,7 +19,13 @@ export {
   type ValidateResult,
   type ValidatedBank,
 } from './validate';
-export { findRepoRoot, isAuthoritativeCatalogInput, loadIrFiles, resolveIrFiles } from './load';
+export {
+  findRepoRoot,
+  isAuthoritativeCatalogInput,
+  loadIrFiles,
+  resolveIrFiles,
+  type ResolveIrOptions,
+} from './load';
 export {
   applyEmit,
   collectGeneratedSubjectIds,

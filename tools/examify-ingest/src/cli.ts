@@ -10,8 +10,9 @@ export const USAGE = `Usage:
 
 emit is dry-run by default. Writes only with --apply.
 A subjects-directory emit (every path is a directory, typically content/subjects)
-prunes leftover generated subject JSON. Explicit IR files never prune; mixed
-file+directory argv is partial-safe and never prunes.
+prunes leftover generated subject JSON, including after the last IR is removed.
+Explicit IR files never prune; mixed file+directory argv is partial-safe and
+never prunes.
 `;
 
 export type CliIo = {
@@ -86,9 +87,22 @@ export function runCli(argv: readonly string[], io: CliIo): number {
     return 0;
   }
 
+  let pruneMissing = false;
+  if (parsed.command === 'emit') {
+    try {
+      pruneMissing = isAuthoritativeCatalogInput(parsed.paths, io.cwd);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      io.stderr.write(`${message}\n`);
+      return 1;
+    }
+  }
+
   let files;
   try {
-    const paths = resolveIrFiles(parsed.paths, io.cwd);
+    const paths = resolveIrFiles(parsed.paths, io.cwd, {
+      allowEmptyDirectory: pruneMissing,
+    });
     files = loadIrFiles(paths);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -96,10 +110,13 @@ export function runCli(argv: readonly string[], io: CliIo): number {
     return 1;
   }
 
-  const result = validateIrCollection(files, {
-    replaceSample: parsed.replaceSample,
-    frozenIds: collectQuestionIds(SAMPLE_QUESTIONS),
-  });
+  const result =
+    pruneMissing && files.length === 0
+      ? { ok: true as const, banks: [] }
+      : validateIrCollection(files, {
+          replaceSample: parsed.replaceSample,
+          frozenIds: collectQuestionIds(SAMPLE_QUESTIONS),
+        });
   if (!result.ok) {
     printIssues(io, result.errors);
     io.stderr.write(
@@ -126,9 +143,7 @@ export function runCli(argv: readonly string[], io: CliIo): number {
 
   let planned;
   try {
-    planned = planEmit(result.banks, repoRoot, {
-      pruneMissing: isAuthoritativeCatalogInput(parsed.paths, io.cwd),
-    });
+    planned = planEmit(result.banks, repoRoot, { pruneMissing });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     io.stderr.write(`${message}\n`);

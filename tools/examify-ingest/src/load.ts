@@ -19,8 +19,22 @@ function statOrThrow(absPath: string, label: string): Stats {
   }
 }
 
+export type ResolveIrOptions = {
+  /**
+   * When true, a subjects directory with no child `bank.ir.json` files
+   * contributes no paths instead of throwing. Used by authoritative
+   * (all-directory) emit so an empty catalog can still prune leftover
+   * generated JSON.
+   */
+  allowEmptyDirectory?: boolean;
+};
+
 /** Resolve a subjects directory (each child folder's bank.ir.json) or explicit IR file paths. */
-export function resolveIrFiles(inputs: readonly string[], cwd: string): string[] {
+export function resolveIrFiles(
+  inputs: readonly string[],
+  cwd: string,
+  options: ResolveIrOptions = {},
+): string[] {
   const resolved: string[] = [];
   const seen = new Set<string>();
 
@@ -51,6 +65,7 @@ export function resolveIrFiles(inputs: readonly string[], cwd: string): string[]
         }
       }
       if (found === 0) {
+        if (options.allowEmptyDirectory) continue;
         throw new Error(`no */bank.ir.json files under ${input}`);
       }
       continue;
