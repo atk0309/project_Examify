@@ -1,9 +1,9 @@
 import { spawnSync } from 'node:child_process';
 import { extractJsonObject } from '../json';
 import { bankIrSchema, type BankIR } from '../schema';
+import { UNTRUSTED_SOURCE_NOTE, buildOpenAiCompatibleUserContent } from './content';
 import {
   ProviderConfigError,
-  userGenerateMessage,
   type GenerateProvider,
   type ProviderDeps,
   type ProviderEnv,
@@ -18,7 +18,7 @@ function requireLocalReady(env: ProviderEnv): void {
   const url = env[LOCAL_URL]?.trim() ?? '';
   if (!cmd && !url) {
     throw new ProviderConfigError(
-      `local provider needs ${LOCAL_CMD} (executable + args) or ${LOCAL_URL} (OpenAI-compatible endpoint); no cloud key required`,
+      `local provider needs ${LOCAL_CMD} (quoted executable + args) or ${LOCAL_URL} (OpenAI-compatible endpoint with multimodal user content); no cloud key required`,
     );
   }
   if (url) {
@@ -28,6 +28,37 @@ function requireLocalReady(env: ProviderEnv): void {
       throw new ProviderConfigError(`${LOCAL_URL} must be an absolute URL`);
     }
   }
+}
+
+/** Split a command line with double/single quotes so paths with spaces stay one argv. */
+export function splitCommandLine(line: string): string[] {
+  const out: string[] = [];
+  let cur = '';
+  let quote: '"' | "'" | null = null;
+  for (const ch of line) {
+    if (quote) {
+      if (ch === quote) quote = null;
+      else cur += ch;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      continue;
+    }
+    if (/\s/.test(ch)) {
+      if (cur) {
+        out.push(cur);
+        cur = '';
+      }
+      continue;
+    }
+    cur += ch;
+  }
+  if (quote) {
+    throw new ProviderConfigError(`unclosed quote in ${LOCAL_CMD}`);
+  }
+  if (cur) out.push(cur);
+  return out;
 }
 
 async function generateViaHttp(
@@ -47,7 +78,7 @@ async function generateViaHttp(
       response_format: { type: 'json_object' },
       messages: [
         { role: 'system', content: request.prompt },
-        { role: 'user', content: userGenerateMessage(request) },
+        { role: 'user', content: buildOpenAiCompatibleUserContent(request) },
       ],
     }),
   });
@@ -61,7 +92,7 @@ async function generateViaHttp(
 }
 
 function generateViaCmd(request: ProviderRequest, cmdLine: string): BankIR {
-  const parts = cmdLine.trim().split(/\s+/);
+  const parts = splitCommandLine(cmdLine);
   const cmd = parts[0];
   if (!cmd) {
     throw new ProviderConfigError(`${LOCAL_CMD} is empty`);
@@ -72,11 +103,23 @@ function generateViaCmd(request: ProviderRequest, cmdLine: string): BankIR {
     subject: request.subject,
     seed: request.seed,
     temperature: 0,
+    untrusted: UNTRUSTED_SOURCE_NOTE,
     sources: request.sources.map((source) => ({
       path: source.relPath,
       sha256: source.sha256,
       kind: source.kind,
+      untrusted: true,
+      mediaType: source.mediaType,
       text: source.kind === 'text' ? source.bytes.toString('utf8') : undefined,
+      dataBase64: source.kind === 'text' ? undefined : source.bytes.toString('base64'),
+    })),
+    pageImages: request.pageImages.map((page) => ({
+      path: page.sourceRelPath,
+      page: page.page,
+      sha256: page.sha256,
+      untrusted: true,
+      mediaType: page.mediaType,
+      dataBase64: page.bytes.toString('base64'),
     })),
   });
   const result = spawnSync(cmd, parts.slice(1), {
@@ -97,6 +140,7 @@ export const localProvider: GenerateProvider = {
   id: 'local',
   defaultModel: 'local',
   keyEnv: null,
+  seedHonored: true,
   requireReady: requireLocalReady,
   generate: async (request, deps) => {
     requireLocalReady(deps.env);

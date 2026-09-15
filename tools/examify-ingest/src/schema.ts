@@ -43,7 +43,7 @@ export type GenerateProviderId = (typeof GENERATE_PROVIDERS)[number];
 
 export const DEFAULT_GENERATE_SEED = 0;
 export const GENERATE_TEMPERATURE = 0;
-export const PROMPT_VERSION = 'v1';
+export const PROMPT_VERSION = 'v2';
 export const INGEST_STATE_DIR = '.examify-ingest';
 
 export const bankIrMetaSchema = z
@@ -71,6 +71,8 @@ export const runManifestSchema = z
     cacheHit: z.boolean(),
     hasApiKey: z.boolean(),
     keyEnv: z.string().nullable(),
+    /** False when the provider API has no seed field (Anthropic Messages). */
+    seedHonored: z.boolean(),
   })
   .strict();
 

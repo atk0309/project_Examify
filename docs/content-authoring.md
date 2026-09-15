@@ -50,10 +50,14 @@ Generate writes IR only. It never silently emits or applies:
    ```
 
    Cloud generate (`--provider anthropic` / `openai`) reads `ANTHROPIC_API_KEY`
-   / `OPENAI_API_KEY` from the environment and fails closed if the key is
-   missing or is the `test` sentinel. `--provider test` is the CI fixture
-   (no network). `--provider local` uses `EXAMIFY_INGEST_LOCAL_CMD` or
-   `EXAMIFY_LLM_BASE_URL`. Run manifests land in gitignored `.examify-ingest/`.
+   / `OPENAI_API_KEY` from the environment and fails closed on a cache miss if
+   the key is missing or is the `test` sentinel. A cache hit returns the prior
+   IR without a network call. `--provider test` is the CI fixture (no
+   network). `--provider local` uses quoted `EXAMIFY_INGEST_LOCAL_CMD` or
+   `EXAMIFY_LLM_BASE_URL` (same multimodal payload as OpenAI — source text and
+   page images, not hashes-only). `--dry-run-ir` writes nothing durable.
+   Sources are framed as untrusted data (`promptVersion` v2); still review IR
+   before emit. Run manifests land in gitignored `.examify-ingest/`.
 
 3. `emit` writes `content/generated/subjects.json`,
    `content/generated/questions/<id>.json` (public fields only), and

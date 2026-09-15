@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { sha256Bytes } from './hash';
 import { SUBJECT_ID_RE, subjectSchema, type BankIrSubject } from './schema';
@@ -132,14 +132,41 @@ export function loadSubjectMeta(subjectDir: string, subjectId: string): BankIrSu
   return defaultSubjectMeta(subjectId);
 }
 
+function resolveReal(absPath: string): string {
+  try {
+    return realpathSync(absPath);
+  } catch {
+    return path.resolve(absPath);
+  }
+}
+
+function posixRel(from: string, to: string): string {
+  return path.relative(from, to).split(path.sep).join('/');
+}
+
+export function isInsideRepo(repoRoot: string, absPath: string): boolean {
+  const rel = posixRel(resolveReal(repoRoot), resolveReal(absPath));
+  return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
+}
+
+export function isAllowedSourceRel(subjectId: string, rel: string): boolean {
+  if (rel.startsWith('..') || path.isAbsolute(rel) || rel.includes('\0')) return false;
+  const subjectPrefix = `${SUBJECTS_REL}/${subjectId}/`;
+  const pdfDirPrefix = `${SOURCE_PDFS_REL}/${subjectId}/`;
+  const pdfFilePrefix = `${SOURCE_PDFS_REL}/${subjectId}.`;
+  if (rel.startsWith(subjectPrefix) || rel.startsWith(pdfDirPrefix)) return true;
+  if (rel.startsWith(pdfFilePrefix) && !rel.slice(pdfFilePrefix.length).includes('/')) return true;
+  return false;
+}
+
 function relFromRoot(repoRoot: string, absPath: string): string {
-  const rel = path.relative(repoRoot, absPath);
-  return rel.startsWith('..') ? absPath : rel.split(path.sep).join('/');
+  return posixRel(resolveReal(repoRoot), resolveReal(absPath));
 }
 
 function addSource(
   collected: Map<string, ResolvedSource>,
   repoRoot: string,
+  subjectId: string,
   absPath: string,
 ): void {
   if (collected.has(absPath)) return;
@@ -154,10 +181,16 @@ function addSource(
     throw error;
   }
   if (!stats.isFile()) return;
+  const relPath = relFromRoot(repoRoot, absPath);
+  if (!isAllowedSourceRel(subjectId, relPath)) {
+    throw new Error(
+      `refusing source outside content/subjects/${subjectId} or content/source-pdfs/${subjectId}: ${relPath}`,
+    );
+  }
   const bytes = readFileSync(absPath);
-  collected.set(absPath, {
-    absPath,
-    relPath: relFromRoot(repoRoot, absPath),
+  collected.set(path.resolve(absPath), {
+    absPath: path.resolve(absPath),
+    relPath,
     sha256: sha256Bytes(bytes),
     bytes,
     kind: sourceKind(name),
@@ -189,8 +222,11 @@ export function resolveSubjectSources(
 ): ResolvedSource[] {
   const collected = new Map<string, ResolvedSource>();
   if (existsSync(subjectDir)) {
+    if (!isInsideRepo(repoRoot, subjectDir)) {
+      throw new Error(`subject directory is outside the repo root: ${subjectDir}`);
+    }
     for (const name of readdirSync(subjectDir).sort()) {
-      addSource(collected, repoRoot, path.join(subjectDir, name));
+      addSource(collected, repoRoot, subjectId, path.join(subjectDir, name));
     }
   }
 
@@ -198,10 +234,10 @@ export function resolveSubjectSources(
   const sourceDir = path.join(sourceRoot, subjectId);
   const nested: string[] = [];
   walkFiles(sourceDir, nested);
-  for (const abs of nested) addSource(collected, repoRoot, abs);
+  for (const abs of nested) addSource(collected, repoRoot, subjectId, abs);
 
   for (const ext of SOURCE_EXT) {
-    addSource(collected, repoRoot, path.join(sourceRoot, `${subjectId}${ext}`));
+    addSource(collected, repoRoot, subjectId, path.join(sourceRoot, `${subjectId}${ext}`));
   }
 
   return [...collected.values()].sort((a, b) => a.relPath.localeCompare(b.relPath));
@@ -233,6 +269,11 @@ function isSubjectDir(absDir: string): boolean {
 function targetFor(repoRoot: string, subjectId: string, subjectDir: string): GenerateTarget {
   if (!SUBJECT_ID_RE.test(subjectId)) {
     throw new Error(`subject id must be kebab-case: ${subjectId}`);
+  }
+  const resolvedDir = path.resolve(subjectDir);
+  const relDir = posixRel(resolveReal(repoRoot), resolvedDir);
+  if (relDir.startsWith('..') || path.isAbsolute(relDir)) {
+    throw new Error(`subject directory is outside the repo root: ${subjectDir}`);
   }
   return {
     subjectId,

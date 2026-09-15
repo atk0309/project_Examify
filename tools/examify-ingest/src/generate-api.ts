@@ -15,10 +15,16 @@ export {
   resolveSubjectSources,
   sourceHashesOf,
   defaultSubjectMeta,
+  isAllowedSourceRel,
   SOURCE_PDFS_REL,
   SUBJECTS_REL,
   BANK_IR_FILE,
   type GenerateTarget,
   type ResolvedSource,
 } from './sources';
-export { getProvider, ProviderConfigError } from './providers';
+export {
+  getProvider,
+  ProviderConfigError,
+  UNTRUSTED_SOURCE_NOTE,
+  splitCommandLine,
+} from './providers';

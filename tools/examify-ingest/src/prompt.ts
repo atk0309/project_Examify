@@ -19,7 +19,7 @@ export function findIngestPackageRoot(repoRoot?: string): string {
   for (const candidate of promptCandidates(repoRoot)) {
     if (existsSync(candidate)) return path.dirname(path.dirname(candidate));
   }
-  throw new Error('could not find examify-ingest prompts/v1/generate-bank.md');
+  throw new Error(`could not find examify-ingest ${PROMPT_REL}`);
 }
 
 export function generatePromptPath(repoRoot?: string): string {

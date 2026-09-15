@@ -2,7 +2,6 @@ import path from 'node:path';
 import { parseArgs, runCli, USAGE, type CliIo, type ParsedCli } from './cli';
 import { NEXT_INGEST_COMMANDS, generateSubject } from './generate';
 import { findRepoRoot } from './load';
-import { getProvider } from './providers';
 import { resolveGenerateTargets } from './sources';
 
 function pathFromRoot(repoRoot: string, absPath: string): string {
@@ -34,13 +33,6 @@ async function runGenerate(parsed: ParsedCli, io: CliIo): Promise<number> {
   }
 
   const env = io.env ?? process.env;
-  try {
-    getProvider(parsed.provider).requireReady(env);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    io.stderr.write(`${message}\n`);
-    return 1;
-  }
 
   try {
     for (const target of targets) {

@@ -48,6 +48,7 @@ export const testProvider: GenerateProvider = {
   id: 'test',
   defaultModel: 'fixture-v1',
   keyEnv: null,
+  seedHonored: true,
   requireReady: () => undefined,
   generate: (request) => Promise.resolve(buildTestBank(request)),
 };

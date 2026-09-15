@@ -57,23 +57,35 @@ file). It reads source files from `content/source-pdfs/<id>/` (and
 subject folder except `bank.ir.json`. `--provider` is required
 (`anthropic` / `openai` / `local` / `test`). Default `--seed` is `0` and is
 recorded in the run manifest. `--dry-run-ir` prints the would-write path and
-still records a gitignored manifest, but does not write `bank.ir.json`.
+writes nothing durable (no IR, cache, manifest, or new page rasters).
 
 Cloud providers fail closed without a real env key (`ANTHROPIC_API_KEY` /
-`OPENAI_API_KEY`). The app's `ANTHROPIC_API_KEY=test` sentinel is refused —
-use `--provider test` for CI (no network, deterministic IR). `local` needs
-`EXAMIFY_INGEST_LOCAL_CMD` (stdin JSON → stdout BankIR) or
-`EXAMIFY_LLM_BASE_URL` (OpenAI-compatible). Temperature is `0` when the
-remote API allows it.
+`OPENAI_API_KEY`) **on a cache miss**. A matching `cacheKey` reuses the cached
+IR with no network and does not require the key. The app's
+`ANTHROPIC_API_KEY=test` sentinel is refused on a miss — use `--provider test`
+for CI. `local` needs `EXAMIFY_INGEST_LOCAL_CMD` (quoted executable + args;
+stdin JSON includes source text/bytes) or `EXAMIFY_LLM_BASE_URL`
+(OpenAI-compatible `/v1/chat/completions` with the same multimodal user
+content as `--provider openai`: fenced text + images / page images).
+Temperature is `0` when the remote API allows it. Anthropic's Messages API
+has no seed field (`seedHonored: false` on the manifest); the seed still
+goes in the user message and `cacheKey`.
 
-Every generate run writes a `RunManifest` under `.examify-ingest/runs/`
-(gitignored): provider, model, promptVersion, prompt hash, seed, temperature
-`0`, source file hashes, cacheKey, timestamp, subject ids, and key
-presence/name only — never the key value. `cacheKey` is a stable hash of
-promptVersion + prompt hash + provider + model + seed + source hashes +
-subject meta. A matching cache reuses the prior IR instead of calling the
-provider. PDF page images, when rasterized with `pdftoppm`, are reused from
-`.examify-ingest/cache/pages/<pdf-sha256>/`.
+Every successful (non-dry-run) generate run writes a `RunManifest` under
+`.examify-ingest/runs/` (gitignored): provider, model, promptVersion (`v2`),
+prompt hash, seed, `seedHonored`, temperature `0`, source file hashes,
+cacheKey, timestamp, subject ids, and key presence/name only — never the key
+value. `cacheKey` is a stable hash of promptVersion + prompt hash + provider
+
+- model + seed + source hashes + subject meta, so a prompt-text change
+  invalidates old cache. PDF page images, when rasterized with `pdftoppm`,
+  are reused from `.examify-ingest/cache/pages/<pdf-sha256>/` and framed as
+  untrusted data, same as source files. Sources must stay under
+  `content/subjects/<id>/` or `content/source-pdfs/<id>`.
+
+Source blobs are wrapped as `UNTRUSTED SOURCE MATERIAL`. That fence makes
+prompt injection harder; it is not sufficient on its own. A human still
+runs validate → emit --dry-run → emit --apply.
 
 `validate` and `emit` accept a subjects directory (scans `*/bank.ir.json`) or
 one or more explicit IR file paths. Generate does not change those commands.

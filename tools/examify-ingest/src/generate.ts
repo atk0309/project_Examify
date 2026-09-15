@@ -43,7 +43,7 @@ export type GenerateSubjectResult = {
   cacheKey: string;
   cacheHit: boolean;
   manifest: RunManifest;
-  manifestPath: string;
+  manifestPath: string | null;
   irPath: string;
   wroteIr: boolean;
 };
@@ -89,7 +89,7 @@ export async function generateSubject(request: GenerateRequest): Promise<Generat
 
   const env = request.env ?? {};
   const adapter = getProvider(request.provider);
-  adapter.requireReady(env);
+  const persist = request.dryRunIr !== true;
 
   const prompt = loadGeneratePrompt();
   const sourceHashes = sourceHashesOf(request.sources);
@@ -117,7 +117,8 @@ export async function generateSubject(request: GenerateRequest): Promise<Generat
   }
 
   if (!bank) {
-    const pageImages = resolvePageImages(request.repoRoot, request.sources);
+    adapter.requireReady(env);
+    const pageImages = resolvePageImages(request.repoRoot, request.sources, { persist });
     const deps: ProviderDeps = { env, fetch: request.fetch };
     const raw = await adapter.generate(
       {
@@ -137,7 +138,7 @@ export async function generateSubject(request: GenerateRequest): Promise<Generat
       attachMeta(raw, request, sourceHashes, prompt.version),
       `${request.provider} output`,
     );
-    writeCachedIr(request.repoRoot, cacheKey, bank);
+    if (persist) writeCachedIr(request.repoRoot, cacheKey, bank);
   }
 
   const now = request.now ?? (() => new Date());
@@ -156,18 +157,14 @@ export async function generateSubject(request: GenerateRequest): Promise<Generat
     cacheHit,
     hasApiKey: adapter.keyEnv ? hasUsableKey(env, adapter.keyEnv) : false,
     keyEnv: adapter.keyEnv,
+    seedHonored: adapter.seedHonored,
   });
 
-  const manifestPath = writeRunManifest(
-    request.repoRoot,
-    cacheKey,
-    timestamp,
-    stableJson(manifest),
-  );
-
   const irPath = path.join(request.subjectDir, BANK_IR_FILE);
-  const wroteIr = request.dryRunIr !== true;
-  if (wroteIr) {
+  const wroteIr = persist;
+  let manifestPath: string | null = null;
+  if (persist) {
+    manifestPath = writeRunManifest(request.repoRoot, cacheKey, timestamp, stableJson(manifest));
     mkdirSync(request.subjectDir, { recursive: true });
     writeFileSync(irPath, stableJson(bank), 'utf8');
   }

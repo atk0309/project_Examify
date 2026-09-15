@@ -1,8 +1,8 @@
 import { extractJsonObject } from '../json';
 import { bankIrSchema, type BankIR } from '../schema';
+import { fenceUntrustedText, untrustedCaption, userGenerateMessage } from './content';
 import {
   readRequiredKey,
-  userGenerateMessage,
   type GenerateProvider,
   type ProviderDeps,
   type ProviderRequest,
@@ -28,9 +28,10 @@ function buildContent(request: ProviderRequest): ContentBlock[] {
     if (source.kind === 'text') {
       content.push({
         type: 'text',
-        text: `Source ${source.relPath}:\n${source.bytes.toString('utf8')}`,
+        text: fenceUntrustedText(source.relPath, source.kind, source.bytes.toString('utf8')),
       });
     } else if (source.kind === 'pdf') {
+      content.push({ type: 'text', text: untrustedCaption(source.relPath, source.kind) });
       content.push({
         type: 'document',
         source: {
@@ -40,6 +41,7 @@ function buildContent(request: ProviderRequest): ContentBlock[] {
         },
       });
     } else if (source.kind === 'image') {
+      content.push({ type: 'text', text: untrustedCaption(source.relPath, source.kind) });
       content.push({
         type: 'image',
         source: {
@@ -51,6 +53,10 @@ function buildContent(request: ProviderRequest): ContentBlock[] {
     }
   }
   for (const page of request.pageImages) {
+    content.push({
+      type: 'text',
+      text: untrustedCaption(page.sourceRelPath, 'page-image', `p${page.page}`),
+    });
     content.push({
       type: 'image',
       source: {
@@ -77,6 +83,7 @@ async function callAnthropic(request: ProviderRequest, deps: ProviderDeps): Prom
       model: request.model,
       max_tokens: 8192,
       temperature: 0,
+      // Messages API has no seed field; seed is in the user message + cacheKey.
       system: request.prompt,
       messages: [{ role: 'user', content: buildContent(request) }],
     }),
@@ -97,6 +104,7 @@ export const anthropicProvider: GenerateProvider = {
   id: 'anthropic',
   defaultModel: 'claude-sonnet-4-6',
   keyEnv: KEY,
+  seedHonored: false,
   requireReady: (env) => {
     readRequiredKey(env, KEY);
   },

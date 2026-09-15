@@ -34,6 +34,8 @@ export type GenerateProvider = {
   id: GenerateProviderId;
   defaultModel: string;
   keyEnv: string | null;
+  /** True when the provider request includes a seed the API will honor. */
+  seedHonored: boolean;
   requireReady: (env: ProviderEnv) => void;
   generate: (request: ProviderRequest, deps: ProviderDeps) => Promise<BankIR>;
 };
@@ -58,24 +60,4 @@ export function readRequiredKey(env: ProviderEnv, name: string): string {
 export function hasUsableKey(env: ProviderEnv, name: string): boolean {
   const value = env[name]?.trim() ?? '';
   return value !== '' && value !== SENTINEL;
-}
-
-export function userGenerateMessage(request: ProviderRequest): string {
-  const sourceList = request.sources
-    .map((source) => `- ${source.relPath} (${source.kind}, sha256=${source.sha256})`)
-    .join('\n');
-  const pages =
-    request.pageImages.length === 0
-      ? 'none (PDF page images were not rasterized; use attached PDFs/text)'
-      : request.pageImages
-          .map((page) => `- ${page.sourceRelPath} p${page.page} (${page.sha256})`)
-          .join('\n');
-  return [
-    `Subject metadata (use exactly): ${JSON.stringify(request.subject)}`,
-    `Seed: ${request.seed}`,
-    `Prompt version: ${request.promptVersion}`,
-    `Sources:\n${sourceList || '(none)'}`,
-    `Cached page images:\n${pages}`,
-    'Return only the BankIR JSON object.',
-  ].join('\n\n');
 }

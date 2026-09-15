@@ -23,18 +23,21 @@ function pdftoppmAvailable(): boolean {
 /**
  * Rasterize a PDF with pdftoppm when available. Reuses
  * `.examify-ingest/cache/pages/<pdf-sha256>/` when a prior run finished.
+ * `persist: false` (dry-run-ir) only reuses existing pages — no new writes.
  */
 export function resolvePageImages(
   repoRoot: string,
   sources: readonly ResolvedSource[],
+  options: { persist?: boolean } = {},
 ): PageImage[] {
+  const persist = options.persist !== false;
   const pages: PageImage[] = [];
   for (const source of sources) {
     if (source.kind !== 'pdf') continue;
     const dir = pagesCacheDir(repoRoot, source.sha256);
     let files = listCachedPageImages(dir);
     if (files.length === 0) {
-      if (!pdftoppmAvailable()) continue;
+      if (!persist || !pdftoppmAvailable()) continue;
       mkdirSync(dir, { recursive: true });
       const prefix = path.join(dir, 'page');
       const result = spawnSync('pdftoppm', ['-png', '-r', '150', source.absPath, prefix], {
