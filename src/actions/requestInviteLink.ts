@@ -75,7 +75,7 @@ export async function requestInviteLink(
       });
       if (!result.ok) {
         invalidateIssuedOtp(id);
-        console.error('[auth] invite local-otp delivery failed', { email, error: result.error });
+        console.error('[auth] invite local-otp delivery failed', { error: result.error });
       }
     } else {
       const { token: magic } = await issueMagicLink(email, invite.role, { inviteId: invite.id });
@@ -88,7 +88,7 @@ export async function requestInviteLink(
         text: rendered.text,
       });
       if (!result.ok) {
-        console.error('[auth] invite magic-link delivery failed', { email, error: result.error });
+        console.error('[auth] invite magic-link delivery failed', { error: result.error });
       }
     }
   }

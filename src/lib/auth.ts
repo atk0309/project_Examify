@@ -256,8 +256,10 @@ export function invalidateIssuedOtp(id: number, now = Date.now()): void {
  * Consumes a local OTP for an email and role. Malformed codes fail without
  * counting as guesses; after five well-formed failures within the OTP lifetime,
  * outstanding codes for that email and role are invalidated.
- * `requireInviteId` refuses a leftover sign-in OTP (no `invite_id`) without
- * creating a user — used by password-invite complete.
+ * `invite-invalid` is not a guess — a leftover sign-in OTP (or a revoked
+ * invite) must not burn the 5-guess lock. Setting a password is invite-bound
+ * inside `consumeHashedBearer` (defense in depth; `requireInviteId` stays
+ * at the complete call site).
  */
 export function consumeLocalOtp(
   email: string,
@@ -279,7 +281,7 @@ export function consumeLocalOtp(
   }
 
   const result = consumeHashedBearer(otpBearer(email, role, trimmed), opts);
-  if (!result.ok) {
+  if (!result.ok && result.reason !== 'invite-invalid') {
     recordOtpGuessFailure(email, role, now);
   }
   return result;
@@ -331,7 +333,8 @@ export function consumeMagicToken(token: string): ConsumeResult {
  * All-or-nothing inside a transaction so a partial failure can't issue a
  * session without persisting the user. The role the link was issued for is
  * carried on the token row and returned so the caller can set `session.role`.
- * `requireInviteId` refuses tokens with no `invite_id` (rollback, unused).
+ * Setting a password (or `requireInviteId`) refuses tokens with no
+ * `invite_id` (rollback, unused) — not only at the call site.
  */
 function consumeHashedBearer(
   token: string,
@@ -368,7 +371,9 @@ function consumeHashedBearer(
 
       // Password-invite complete is invite-bound: a leftover sign-in OTP
       // (no invite_id) must not stamp emailVerifiedAt or set a password.
-      if (opts?.requireInviteId && row.inviteId == null) {
+      // Refuse when a password is being set even if the caller omitted
+      // requireInviteId — that flag stays at the complete call site.
+      if (row.inviteId == null && (passwordHash || opts?.requireInviteId)) {
         throw new ConsumeRollback({ ok: false, reason: 'invite-invalid' });
       }
 

@@ -253,6 +253,49 @@ describe('local-otp auth', () => {
     expect(consumeLocalOtp('pat@example.com', 'parent', issued.code).ok).toBe(true);
   });
 
+  it('refuses consumeLocalOtp with passwordHash when the token has no inviteId', async () => {
+    await seedParent();
+    const { issueLocalOtp, consumeLocalOtp } = await import('@/lib/auth');
+    const issued = issueLocalOtp('pat@example.com', 'parent');
+    expect(
+      consumeLocalOtp('pat@example.com', 'parent', issued.code, {
+        passwordHash: 'scrypt-not-a-real-hash',
+      }),
+    ).toEqual({
+      ok: false,
+      reason: 'invite-invalid',
+    });
+    const { db, schema } = await import('@/lib/db');
+    const user = db
+      .select()
+      .from(schema.users)
+      .all()
+      .find((row) => row.email === 'pat@example.com');
+    expect(user?.passwordHash).toBeFalsy();
+    expect(consumeLocalOtp('pat@example.com', 'parent', issued.code).ok).toBe(true);
+  });
+
+  it('does not record OTP guess failures on invite-invalid', async () => {
+    await seedParent();
+    const { issueLocalOtp, consumeLocalOtp, OTP_GUESS_MAX } = await import('@/lib/auth');
+    const leftover = issueLocalOtp('pat@example.com', 'parent');
+    for (let i = 0; i < OTP_GUESS_MAX; i++) {
+      expect(
+        consumeLocalOtp('pat@example.com', 'parent', leftover.code, {
+          passwordHash: 'scrypt-not-a-real-hash',
+          requireInviteId: true,
+        }),
+      ).toEqual({ ok: false, reason: 'invite-invalid' });
+    }
+    const { db, schema } = await import('@/lib/db');
+    const guesses = db.select().from(schema.rateLimitEvents).all();
+    expect(guesses).toHaveLength(0);
+    const tokens = db.select().from(schema.magicTokens).all();
+    expect(tokens).toHaveLength(1);
+    expect(tokens[0]?.consumedAt).toBeNull();
+    expect(consumeLocalOtp('pat@example.com', 'parent', leftover.code).ok).toBe(true);
+  });
+
   it('refuses an OTP bearer on the magic-link consume path (verify route)', async () => {
     await seedParent();
     const { issueLocalOtp, consumeMagicToken, consumeLocalOtp } = await import('@/lib/auth');

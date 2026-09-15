@@ -235,6 +235,7 @@ describe('requestInviteLink local-otp', () => {
     (env as { AUTH_MODE: typeof env.AUTH_MODE }).AUTH_MODE = 'local-otp';
     const invite = await seedOpenStudentInvite();
     sendEmailMock.mockResolvedValue({ ok: false, error: 'email-not-configured' });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const { requestInviteLink } = await import('@/actions/requestInviteLink');
     const data = new FormData();
     data.set('email', 'alex@example.com');
@@ -253,6 +254,67 @@ describe('requestInviteLink local-otp', () => {
 
     const { consumeLocalOtp } = await import('@/lib/auth');
     expect(consumeLocalOtp('alex@example.com', 'student', code!).ok).toBe(false);
+    errorSpy.mockRestore();
+  });
+
+  it('does not log the email (or other identifiers) when send fails', async () => {
+    const { env } = await import('@/lib/env');
+    (env as { AUTH_MODE: typeof env.AUTH_MODE }).AUTH_MODE = 'local-otp';
+    const invite = await seedOpenStudentInvite();
+    sendEmailMock.mockResolvedValue({ ok: false, error: 'email-not-configured' });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { requestInviteLink } = await import('@/actions/requestInviteLink');
+    const data = new FormData();
+    data.set('email', 'alex@example.com');
+    data.set('inviteToken', invite.token);
+    expect(await requestInviteLink({ status: 'idle' }, data)).toEqual({
+      status: 'sent',
+      email: 'alex@example.com',
+    });
+
+    expect(errorSpy).toHaveBeenCalled();
+    for (const args of errorSpy.mock.calls) {
+      expect(JSON.stringify(args)).not.toContain('alex@example.com');
+      expect(JSON.stringify(args)).not.toMatch(/"email"\s*:/);
+    }
+    const payload = errorSpy.mock.calls.find((args) =>
+      args.some(
+        (arg) => typeof arg === 'string' && arg.includes('invite local-otp delivery failed'),
+      ),
+    );
+    expect(payload?.[1]).toEqual({ error: 'email-not-configured' });
+    errorSpy.mockRestore();
+  });
+});
+
+describe('requestInviteLink magic-link', () => {
+  it('does not log the email (or other identifiers) when send fails', async () => {
+    const { env } = await import('@/lib/env');
+    (env as { AUTH_MODE: typeof env.AUTH_MODE }).AUTH_MODE = 'magic-link';
+    const invite = await seedOpenStudentInvite();
+    sendEmailMock.mockResolvedValue({ ok: false, error: 'email-not-configured' });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { requestInviteLink } = await import('@/actions/requestInviteLink');
+    const data = new FormData();
+    data.set('email', 'alex@example.com');
+    data.set('inviteToken', invite.token);
+    expect(await requestInviteLink({ status: 'idle' }, data)).toEqual({
+      status: 'sent',
+      email: 'alex@example.com',
+    });
+
+    expect(errorSpy).toHaveBeenCalled();
+    for (const args of errorSpy.mock.calls) {
+      expect(JSON.stringify(args)).not.toContain('alex@example.com');
+      expect(JSON.stringify(args)).not.toMatch(/"email"\s*:/);
+    }
+    const payload = errorSpy.mock.calls.find((args) =>
+      args.some(
+        (arg) => typeof arg === 'string' && arg.includes('invite magic-link delivery failed'),
+      ),
+    );
+    expect(payload?.[1]).toEqual({ error: 'email-not-configured' });
+    errorSpy.mockRestore();
   });
 });
 
