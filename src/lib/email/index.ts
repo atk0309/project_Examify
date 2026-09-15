@@ -77,6 +77,10 @@ async function sendViaOutbox(options: {
   }
 }
 
+/**
+ * Sends a message through the resolved SMTP, Resend, or local-outbox
+ * transport. The optional OTP code is persisted only when the outbox is used.
+ */
 export async function sendEmail(options: {
   to: string;
   subject: string;

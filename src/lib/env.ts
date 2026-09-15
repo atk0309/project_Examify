@@ -314,7 +314,10 @@ export function getAuthMode(): AuthMode {
   return env.AUTH_MODE;
 }
 
-/** Resolve how magic-link / OTP messages are sent. */
+/**
+ * Resolves an explicit mail transport or, in auto mode, prefers SMTP, then a
+ * configured Resend account, and finally the local outbox.
+ */
 export function resolveMailTransport(): ResolvedMailTransport {
   if (
     env.MAIL_TRANSPORT === 'resend' ||

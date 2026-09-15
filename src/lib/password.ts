@@ -23,6 +23,10 @@ export function hashPassword(password: string): string {
   return `scrypt$${SCRYPT.N}$${SCRYPT.r}$${SCRYPT.p}$${salt.toString('base64url')}$${derived.toString('base64url')}`;
 }
 
+/**
+ * Verifies a password against the stored scrypt encoding. Malformed hashes and
+ * derivation failures are treated as non-matches.
+ */
 export function verifyPassword(password: string, stored: string): boolean {
   const parts = stored.split('$');
   if (parts.length !== 6 || parts[0] !== 'scrypt') {

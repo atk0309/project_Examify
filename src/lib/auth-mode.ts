@@ -24,6 +24,7 @@ export function parseAuthMode(value: unknown): AuthMode | undefined {
   return undefined;
 }
 
+/** Returns a supported auth mode, defaulting unknown values to magic-link. */
 export function resolveAuthMode(value: unknown): AuthMode {
   return parseAuthMode(value) ?? 'magic-link';
 }

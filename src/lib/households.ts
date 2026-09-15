@@ -206,6 +206,11 @@ export type BootstrapResult =
   | { ok: true; userId: number; email: string; householdId: number }
   | { ok: false; reason: 'already_setup' | 'invalid' };
 
+/**
+ * Creates the first household and its admin, optionally assigning a pre-hashed
+ * password. Returns `already_setup` without changing data once a household
+ * exists.
+ */
 export function bootstrapHousehold(input: {
   email: string;
   householdName: string;

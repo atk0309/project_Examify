@@ -29,7 +29,8 @@ export type BootstrapState =
 /**
  * First-run: create the initial household + admin when none exists.
  * The host is at the keyboard, so we establish the session here (no
- * magic-link round-trip). After a household exists this action fails closed.
+ * magic-link round-trip). Password mode also requires and stores the admin's
+ * password. After a household exists this action fails closed.
  */
 export async function bootstrapHouseholdAction(
   _prev: BootstrapState,
