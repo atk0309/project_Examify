@@ -139,13 +139,15 @@ Who may sign in is stored in SQLite, not env:
 2. **Invite** — from the parent dashboard, create a student invite (open or
    email-locked) or a parent invite (**email-locked**). Share `/invite/<token>`.
    Revoke unused links; remove a member if they should no longer have access.
-   When `AUTH_MODE=password`, that URL is a **secret** (a bearer token).
-   An email lock only matches the typed address — it is not mailbox
-   proof — so anyone who has the link and types the locked email can
-   join. An open student link lets anyone with the URL pick an email
-   and join. Prefer email-lock (already required for parents); never
-   post links publicly. See [`SECURITY.md`](SECURITY.md). Full mailbox
-   verification on password-mode accept remains an open follow-up.
+   When `AUTH_MODE=password`, that URL is a **secret**: it starts a join
+   but does not complete it. The invitee must enter a one-time code sent
+   to their email before membership and `emailVerifiedAt` are set. An
+   email lock only chooses which mailbox we send to (not mailbox proof
+   by itself). An open student link lets anyone with the URL start a
+   join for an email they control. If no mail transport (or allowed
+   outbox) is configured, accept fails closed. Prefer email-lock
+   (already required for parents); never post links publicly. See
+   [`SECURITY.md`](SECURITY.md).
 3. **Accept** — the invitee opens `/invite/<token>` and finishes in the configured
    auth mode (set a password, click a magic link, or enter a local OTP). After
    that they sign in at `/signin` like anyone else.
@@ -160,11 +162,11 @@ yet, or mail could not be sent.
 
 ### Auth modes
 
-| `AUTH_MODE`  | Sign-in                                  | Mail required                      |
-| ------------ | ---------------------------------------- | ---------------------------------- |
-| `password`   | Email + password                         | No                                 |
-| `magic-link` | One-time URL (Resend, SMTP, or outbox)   | Yes, unless outbox opt-in          |
-| `local-otp`  | 6-digit code (outbox, or emailed if set) | Production: `ALLOW_LOCAL_OUTBOX=1` |
+| `AUTH_MODE`  | Sign-in                                  | Mail required                         |
+| ------------ | ---------------------------------------- | ------------------------------------- |
+| `password`   | Email + password                         | Sign-in: no. Invite accept: yes (OTP) |
+| `magic-link` | One-time URL (Resend, SMTP, or outbox)   | Yes, unless outbox opt-in             |
+| `local-otp`  | 6-digit code (outbox, or emailed if set) | Production: `ALLOW_LOCAL_OUTBOX=1`    |
 
 `MAIL_TRANSPORT=auto` picks SMTP when `SMTP_HOST` is set, else Resend when a real
 key is set, else the local outbox. `SMTP_FROM` is required only when SMTP is the

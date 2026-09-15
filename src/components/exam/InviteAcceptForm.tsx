@@ -6,6 +6,10 @@ import {
   acceptInviteWithPassword,
   type AcceptInvitePasswordState,
 } from '@/actions/acceptInviteWithPassword';
+import {
+  completePasswordInvite,
+  type CompletePasswordInviteState,
+} from '@/actions/completePasswordInvite';
 import { requestInviteLink, type RequestInviteLinkState } from '@/actions/requestInviteLink';
 import { verifyLocalOtp, type VerifyLocalOtpState } from '@/actions/verifyLocalOtp';
 import type { AuthMode } from '@/lib/auth-mode';
@@ -27,13 +31,14 @@ const challengeErrorCopy: Record<
 };
 
 const passwordErrorCopy: Record<
-  Exclude<AcceptInvitePasswordState, { status: 'idle' }>['reason'],
+  Exclude<AcceptInvitePasswordState, { status: 'idle' | 'sent' }>['reason'],
   string
 > = {
   invalid: 'Could not join with those details.',
   captcha: 'Verification failed. Please try again.',
   rate_limited: 'Too many attempts from your network. Try again later.',
   invite_invalid: 'This invite is invalid or has expired.',
+  send_failed: 'We could not send a confirmation code. Ask the host to configure mail.',
 };
 
 const otpErrorCopy: Record<Exclude<VerifyLocalOtpState, { status: 'idle' }>['reason'], string> = {
@@ -98,6 +103,17 @@ function PasswordInviteForm({
     password.length >= PASSWORD_MIN_LENGTH &&
     password.length <= PASSWORD_MAX_LENGTH;
 
+  if (state.status === 'sent') {
+    return (
+      <PasswordInviteOtpForm
+        email={state.email}
+        password={password}
+        role={role}
+        siteKey={siteKey}
+      />
+    );
+  }
+
   return (
     <form className="screen login" action={formAction} data-testid="invite-form">
       {siteKey ? (
@@ -108,7 +124,10 @@ function PasswordInviteForm({
           strategy="afterInteractive"
         />
       ) : null}
-      <InviteHeader role={role} subtitle="Choose a password to join this household." />
+      <InviteHeader
+        role={role}
+        subtitle="Choose a password, then confirm a one-time code we send to this email."
+      />
       <EmailField email={email} locked={Boolean(lockedEmail)} onChange={setEmail} />
       <div className="field">
         <label className="field-label" htmlFor="invite-password">
@@ -144,7 +163,7 @@ function PasswordInviteForm({
         disabled={!valid || pending}
         data-testid="invite-submit"
       >
-        {MailIcon.lock} {pending ? 'Joining…' : 'Join household'}
+        {MailIcon.lock} {pending ? 'Sending code…' : 'Send confirmation code'}
       </button>
       {state.status === 'error' ? (
         <p className="login-error" role="alert" data-testid={`invite-error-${state.reason}`}>
@@ -154,8 +173,86 @@ function PasswordInviteForm({
         <p className="login-fine">
           {MailIcon.lock}
           {lockedEmail
-            ? 'This link is a secret. Joining requires typing the locked email — that is not mailbox proof.'
-            : 'This is an open invite. Anyone who has this link can join.'}
+            ? 'This link is a secret. We send a one-time code to the locked email — typing the address is not mailbox proof.'
+            : 'This is an open invite. Anyone who has the link can start a join for an email they control — they still have to prove that mailbox.'}
+        </p>
+      )}
+    </form>
+  );
+}
+
+function PasswordInviteOtpForm({
+  email,
+  password,
+  role,
+  siteKey,
+}: {
+  email: string;
+  password: string;
+  role: 'student' | 'parent';
+  siteKey?: string;
+}) {
+  const [otpState, otpAction, otpPending] = useActionState<CompletePasswordInviteState, FormData>(
+    completePasswordInvite,
+    { status: 'idle' },
+  );
+  const [code, setCode] = useState('');
+
+  return (
+    <form className="screen login" action={otpAction} data-testid="invite-otp-form">
+      {siteKey ? (
+        <Script
+          src="https://challenges.cloudflare.com/turnstile/v0/api.js"
+          async
+          defer
+          strategy="afterInteractive"
+        />
+      ) : null}
+      <div className="sent-state">
+        <span className="sent-icon">{MailIcon.inbox}</span>
+        <h1 className="sent-title">Enter your code</h1>
+        <p className="sent-note">
+          We sent a 6-digit code to <b>{email}</b>. Joining finishes only after you enter it. Check
+          the mail outbox on this host, or your inbox if email is configured.
+        </p>
+      </div>
+      <div className="field">
+        <label className="field-label" htmlFor="invite-password-otp">
+          Confirmation code
+        </label>
+        <input
+          id="invite-password-otp"
+          name="code"
+          className="text-input"
+          inputMode="numeric"
+          autoComplete="one-time-code"
+          required
+          maxLength={6}
+          value={code}
+          onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+          data-testid="otp-input"
+        />
+      </div>
+      <input type="hidden" name="email" value={email} />
+      <input type="hidden" name="role" value={role} />
+      <input type="hidden" name="password" value={password} />
+      {siteKey ? <ExplicitTurnstile siteKey={siteKey} /> : null}
+      <button
+        className="btn btn-primary"
+        type="submit"
+        disabled={code.length !== 6 || otpPending}
+        data-testid="otp-submit"
+      >
+        {MailIcon.lock} {otpPending ? 'Joining…' : 'Join household'}
+      </button>
+      {otpState.status === 'error' ? (
+        <p className="login-error" role="alert" data-testid={`otp-error-${otpState.reason}`}>
+          {otpErrorCopy[otpState.reason]}
+        </p>
+      ) : (
+        <p className="login-fine">
+          {MailIcon.lock}
+          The code proves this mailbox. The invite link alone is not enough.
         </p>
       )}
     </form>

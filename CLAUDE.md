@@ -29,8 +29,9 @@ Surface:
   child's.
 - **`/setup`** — first-run household bootstrap (only when no household exists).
 - **`/invite/[token]`** — accept a household invite (password, magic-link, or local OTP).
-  In `AUTH_MODE=password` the URL is a bearer token (email-lock is not mailbox proof);
-  see `SECURITY.md`.
+  In `AUTH_MODE=password` the URL is a secret that starts a join; membership and
+  `emailVerifiedAt` wait for a mailbox OTP (`completePasswordInvite`). Fail closed
+  if mail cannot be delivered. See `SECURITY.md`.
 - **`/signin`** — sign-in UI for the configured `AUTH_MODE` (password, magic-link, or
   local OTP) with a Student/Parent role control. Redirects to
   `/setup` when the instance has no household yet.
@@ -122,7 +123,8 @@ src/
     globals.css         # Tailwind @theme tokens + component layer
     robots.ts           # disallow-all
   actions/              # 'use server' actions (requestMagicLink, signInWithPassword,
-                        #   verifyLocalOtp, acceptInviteWithPassword, bootstrapHousehold,
+                        #   verifyLocalOtp, acceptInviteWithPassword, completePasswordInvite,
+                        #   bootstrapHousehold,
                         #   createInvite / revokeInvite / requestInviteLink, signOut,
                         #   recordAttempt, saveExamProgress + discardExamSession)
   components/
@@ -221,12 +223,13 @@ These are non-negotiable. Don't "fix" them out.
   it is not required. Set-but-invalid JSON **crashes production boot**. Entries
   with `parents: []` parse (legacy standalone child) but are **skipped** on import
   so we never create an unadministrable household.
-- **Password-mode invite links are bearer tokens.** `/invite/<token>` grants access
-  to whoever has the URL. Email-lock only matches the typed address; it does not
-  prove mailbox ownership (unlike magic-link / local-otp accept). Treat invite URLs
-  like passwords; parent invites stay email-locked; do not post links publicly.
-  The create/accept UI surfaces this. Full mailbox verification on password-mode
-  accept remains an open follow-up. See `SECURITY.md`.
+- **Password-mode invite accept requires mailbox proof.** `/invite/<token>` is a
+  secret that starts a join. `acceptInviteWithPassword` issues a one-time code
+  (local OTP + mail transport); `completePasswordInvite` consumes it, attaches
+  membership, stamps `emailVerifiedAt`, and stores the password hash. Email-lock
+  only chooses which mailbox we send to. Missing mail transport fails closed
+  (`send_failed`) instead of trusting the URL. Parent invites stay email-locked;
+  do not post links publicly. See `SECURITY.md`.
 - **No enumeration.** Challenge modes (`magic-link`, `local-otp`): `requestMagicLink`
   always returns the generic `sent` state once Turnstile (when enabled) + rate-limit
   pass; it only issues a link/code when the email is a household member for that
@@ -405,7 +408,8 @@ placeholder); captcha is not identity. Documented placeholder `AUTH_SECRET` /
 
 Required in production: `SITE_URL`, `AUTH_SECRET`, `DATABASE_URL`, `ANTHROPIC_API_KEY`,
 `SETUP_BOOTSTRAP_SECRET`. `AUTH_MODE` defaults to `magic-link` (existing #56 hosts
-keep working). `password` needs no mail. `local-otp` in production requires
+keep working). `password` sign-in needs no mail; password-mode invite accept
+sends a mailbox OTP and fails closed without a transport. `local-otp` in production requires
 `ALLOW_LOCAL_OUTBOX=1`. `MAIL_TRANSPORT` is `auto` (SMTP if `SMTP_HOST`, else
 Resend if a real key, else outbox). Explicit `MAIL_TRANSPORT=smtp` needs
 `SMTP_HOST` + `SMTP_FROM`; `auto` + `SMTP_HOST` also needs `SMTP_FROM`. A

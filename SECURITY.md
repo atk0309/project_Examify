@@ -48,22 +48,23 @@ get an initial response within a week.
 
 ## Password-mode invite links are secrets
 
-When `AUTH_MODE=password`, `/invite/<token>` URLs are **bearer tokens**. Sharing
-the link is sharing household access.
+When `AUTH_MODE=password`, `/invite/<token>` URLs are still **secrets** (sharing
+the link starts a join), but accept does **not** complete — and does **not**
+stamp `emailVerifiedAt` — until the invitee proves the mailbox.
 
-- **Email-lock is not mailbox verification.** It only requires the joiner to type
-  the locked address; it does not prove they can receive mail there. Anyone who
-  has the URL and knows or guesses the locked email can set a password and join.
-- Open student invites are broader still: anyone with the URL can pick an email
-  and join.
+- **Mailbox proof before join.** Password-mode accept issues a one-time code to
+  the typed address (same local-OTP + mail transport as `AUTH_MODE=local-otp`).
+  Membership and `emailVerifiedAt` are set only when that code is consumed.
+- **Email-lock is not mailbox verification.** It only chooses which address we
+  send the code to. Typing the locked email is not enough.
+- Open student invites let anyone with the URL start a join for an email they
+  control — they still have to prove that mailbox.
+- **Fail closed without mail.** If no SMTP / Resend / allowed outbox can
+  deliver the code, accept returns a clear error instead of trusting the invite
+  URL. Production outbox still needs `ALLOW_LOCAL_OUTBOX=1`.
 - Treat invite links like passwords. Do not post them publicly, in tickets, or
   in chat logs. Revoke unused or leaked links from the parent dashboard.
 - Prefer an email lock on every invite. Parent invites are already required to
   be locked; lock student invites too when you know the address.
-- In `magic-link` / `local-otp` modes, accept still sends a mailbox challenge, so
-  the invite URL alone is not enough to join. Password mode has no mailbox proof
-  at accept time — that is the difference.
-- **Open follow-up:** full mailbox verification on password-mode invite accept is
-  still outstanding (the #58 Major: `emailVerifiedAt` is set without mailbox
-  proof). This section acknowledges the bearer-token risk; it does not close
-  that issue. Do not treat this documentation as a fix for that accept path.
+- In `magic-link` / `local-otp` modes, accept already sent a mailbox challenge.
+  Password sign-in itself still needs no mail; only invite accept does.

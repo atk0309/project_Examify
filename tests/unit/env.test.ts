@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { allowLocalMailOutbox, env, getAuthMode, parseEnv, resolveMailTransport } from '@/lib/env';
+import {
+  allowLocalMailOutbox,
+  canDeliverMailboxProof,
+  env,
+  getAuthMode,
+  parseEnv,
+  resolveMailTransport,
+} from '@/lib/env';
 
 const prodBase: NodeJS.ProcessEnv = {
   NODE_ENV: 'production',
@@ -270,5 +277,14 @@ describe('allowLocalMailOutbox', () => {
     (env as { RESEND_API_KEY?: string }).RESEND_API_KEY = 'test';
     (env as { ALLOW_LOCAL_OUTBOX?: boolean }).ALLOW_LOCAL_OUTBOX = undefined;
     expect(allowLocalMailOutbox()).toBe(true);
+  });
+
+  it('refuses mailbox proof in production without a real transport or outbox opt-in', () => {
+    (env as { NODE_ENV: typeof env.NODE_ENV }).NODE_ENV = 'production';
+    (env as { RESEND_API_KEY?: string }).RESEND_API_KEY = undefined;
+    (env as { ALLOW_LOCAL_OUTBOX?: boolean }).ALLOW_LOCAL_OUTBOX = undefined;
+    expect(canDeliverMailboxProof()).toBe(false);
+    (env as { ALLOW_LOCAL_OUTBOX?: boolean }).ALLOW_LOCAL_OUTBOX = true;
+    expect(canDeliverMailboxProof()).toBe(true);
   });
 });

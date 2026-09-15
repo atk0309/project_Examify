@@ -449,8 +449,18 @@ export type AcceptInvitePasswordResult =
   | { ok: false; reason: 'invite-invalid' | 'not-eligible' };
 
 /**
- * Password-mode invite accept: create/update the user with a password hash,
- * attach membership, and consume the invite in one transaction.
+ * Set a password hash after mailbox proof (OTP consume). Does not stamp
+ * `emailVerifiedAt` — that stays the consume path's job.
+ */
+export function setUserPasswordHash(userId: number, passwordHash: string): void {
+  db.update(schema.users).set({ passwordHash }).where(eq(schema.users.id, userId)).run();
+}
+
+/**
+ * Password-mode invite accept (legacy helper): create/update the user with a
+ * password hash, attach membership, and consume the invite in one transaction.
+ * Does **not** stamp `emailVerifiedAt` — mailbox proof is the OTP consume
+ * path (`completePasswordInvite`). Prefer that action over calling this.
  */
 export function acceptInviteWithPassword(input: {
   inviteToken: string;
@@ -501,7 +511,6 @@ export function acceptInviteWithPassword(input: {
 
       tx.update(schema.users)
         .set({
-          emailVerifiedAt: new Date(now),
           passwordHash: input.passwordHash,
         })
         .where(eq(schema.users.id, user.id))

@@ -1,15 +1,16 @@
 'use server';
 
 import { headers } from 'next/headers';
-import { redirect } from 'next/navigation';
 import { z } from 'zod';
-import { getRawSession } from '@/lib/auth';
+import { issueLocalOtp } from '@/lib/auth';
 import { verifyTurnstile } from '@/lib/captcha';
-import { getAuthMode, isTurnstileEnabled } from '@/lib/env';
-import { acceptInviteWithPassword as acceptInvite } from '@/lib/households';
+import { renderOtpEmail, sendEmail } from '@/lib/email';
+import { canDeliverMailboxProof, getAuthMode, isTurnstileEnabled } from '@/lib/env';
+import { emailMayAcceptInvite, lookupInvite } from '@/lib/households';
 import { extractClientIp } from '@/lib/ip';
-import { hashPassword, passwordMeetsPolicy } from '@/lib/password';
+import { passwordMeetsPolicy } from '@/lib/password';
 import { checkRateLimit } from '@/lib/rate-limit';
+import { siteConfig } from '@/lib/site';
 
 const inputSchema = z.object({
   email: z.string().trim().toLowerCase().email(),
@@ -20,15 +21,19 @@ const inputSchema = z.object({
 
 export type AcceptInvitePasswordState =
   | { status: 'idle' }
+  | { status: 'sent'; email: string }
   | {
       status: 'error';
-      reason: 'invalid' | 'captcha' | 'rate_limited' | 'invite_invalid';
+      reason: 'invalid' | 'captcha' | 'rate_limited' | 'invite_invalid' | 'send_failed';
     };
 
 /**
- * Password-mode invite accept. A bad invite URL is `invite_invalid` (the
- * token is already the secret). Email-lock mismatches and already-members
- * stay generic `invalid` so a locked address cannot be enumerated.
+ * Password-mode invite accept, step 1: validate the invite + password policy
+ * and issue a mailbox OTP. Membership and `emailVerifiedAt` wait for
+ * `completePasswordInvite`. A bad invite URL is `invite_invalid` (the token
+ * is already the secret). Email-lock mismatches stay generic `invalid` so a
+ * locked address cannot be enumerated. Missing mail transport fails closed
+ * (`send_failed`) instead of trusting the invite URL.
  */
 export async function acceptInviteWithPassword(
   _prev: AcceptInvitePasswordState,
@@ -58,24 +63,31 @@ export async function acceptInviteWithPassword(
   const limit = checkRateLimit(ip, 'signin');
   if (!limit.ok) return { status: 'error', reason: 'rate_limited' };
 
-  const result = acceptInvite({
-    inviteToken: parsed.data.inviteToken,
-    email: parsed.data.email,
-    passwordHash: hashPassword(parsed.data.password),
-  });
-  if (!result.ok) {
-    return {
-      status: 'error',
-      reason: result.reason === 'invite-invalid' ? 'invite_invalid' : 'invalid',
-    };
+  const invite = lookupInvite(parsed.data.inviteToken);
+  if (!invite) return { status: 'error', reason: 'invite_invalid' };
+
+  if (!canDeliverMailboxProof()) {
+    return { status: 'error', reason: 'send_failed' };
   }
 
-  const session = await getRawSession();
-  session.userId = result.userId;
-  session.role = result.role;
-  session.email = result.email;
-  session.studentMode = false;
-  await session.save();
+  const { email } = parsed.data;
+  if (!emailMayAcceptInvite(invite, email)) {
+    return { status: 'error', reason: 'invalid' };
+  }
 
-  redirect('/');
+  const { code } = issueLocalOtp(email, invite.role, { inviteId: invite.id });
+  const rendered = renderOtpEmail({ code, email, siteName: siteConfig.name });
+  const result = await sendEmail({
+    to: email,
+    subject: rendered.subject,
+    html: rendered.html,
+    text: rendered.text,
+    code,
+  });
+  if (!result.ok) {
+    console.error('[auth] password-invite OTP delivery failed', { email, error: result.error });
+    return { status: 'error', reason: 'send_failed' };
+  }
+
+  return { status: 'sent', email };
 }

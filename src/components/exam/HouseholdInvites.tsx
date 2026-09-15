@@ -117,7 +117,7 @@ export function HouseholdInvites({
       </p>
       <p className="subtitle">
         {authMode === 'password'
-          ? 'Treat the invite link as a secret and do not post it publicly. An email lock only matches the address someone types — it is not mailbox proof. An open student link lets anyone with the URL pick an email and join. Prefer locking the address (required for parents).'
+          ? 'Treat the invite link as a secret and do not post it publicly. The invitee must enter a one-time code sent to their email before they join. An email lock only chooses which mailbox we send to (required for parents). An open student link lets anyone with the URL start a join for an email they control.'
           : 'Share the invite link privately. Do not post it publicly.'}
       </p>
 
@@ -185,8 +185,8 @@ export function HouseholdInvites({
           <p className="invite-meta">
             {authMode === 'password'
               ? createdLocked
-                ? 'This link is a secret. Anyone who has it can join if they type the locked email — that is not mailbox proof. Do not post it publicly.'
-                : 'This is an open link: anyone who has it can pick an email and join. Treat it as a secret and do not post it publicly.'
+                ? 'This link is a secret. We send a one-time code to the locked email; typing the address is not enough. Do not post it publicly.'
+                : 'This is an open link: anyone who has it can start a join for an email they control — they still have to prove that mailbox. Do not post it publicly.'
               : 'Share this only with the person you mean to invite.'}
           </p>
         </div>
