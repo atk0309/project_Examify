@@ -1,7 +1,7 @@
 import { SAMPLE_QUESTIONS } from '../../../src/lib/exam/data';
 import { applyEmit, formatEmitPlan, planEmit } from './emit';
 import { collectQuestionIds } from './ids';
-import { findRepoRoot, loadIrFiles, resolveIrFiles } from './load';
+import { findRepoRoot, isAuthoritativeCatalogInput, loadIrFiles, resolveIrFiles } from './load';
 import { validateIrCollection } from './validate';
 
 export const USAGE = `Usage:
@@ -123,7 +123,9 @@ export function runCli(argv: readonly string[], io: CliIo): number {
 
   let planned;
   try {
-    planned = planEmit(result.banks, repoRoot);
+    planned = planEmit(result.banks, repoRoot, {
+      pruneMissing: isAuthoritativeCatalogInput(parsed.paths, io.cwd),
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     io.stderr.write(`${message}\n`);
@@ -141,7 +143,7 @@ export function runCli(argv: readonly string[], io: CliIo): number {
     return 0;
   }
   for (const file of written) {
-    const verb = file.existing === null ? 'created' : 'updated';
+    const verb = file.delete ? 'deleted' : file.existing === null ? 'created' : 'updated';
     io.stdout.write(`${verb} ${file.relPath}\n`);
   }
   return 0;

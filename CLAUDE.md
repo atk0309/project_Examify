@@ -189,7 +189,10 @@ Automated path (Phase 0, no PDF extract / no LLM generate): author
 subjects/questions + server-only keys). The app merges those files onto the
 sample bank. Any id already in the sample bank is refused unless
 `--replace-sample`. A partial emit merges `subjects.json` by id and leaves
-other generated subject files in place.
+other generated subject files in place. A whole-tree emit of `content/subjects`
+is authoritative for generated subjects: leftover `questions/<id>.json` /
+`keys/<id>.json` (and the `subjects.json` row) for an id with no IR in that
+tree are deleted. The sample bank is never touched.
 
 ## Styling / theming
 
