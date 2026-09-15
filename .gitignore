@@ -42,3 +42,6 @@ next-env.d.ts
 # source exam PDFs — kept local-only; only the questions authored from them
 # (with provenance) are committed (see docs/content-authoring.md)
 content/source-pdfs/
+
+# examify-ingest generate cache + run manifests (source hashes, never API keys)
+.examify-ingest/

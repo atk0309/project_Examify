@@ -20,31 +20,40 @@ the build fails if it ever ends up in the client graph. A unit-test guard
 (`tests/unit/answer-keys.test.ts`) additionally asserts no question object carries an
 `answer`/`rubric`/`maxScore`/`provenance` property.
 
-## Automated path (Phase 0 ingest)
+## Automated path (Phase 0 emit + Phase 2 generate)
 
-You can also author a **BankIR** JSON document and emit the two-file split with
-`examify-ingest` instead of editing TypeScript by hand. This is scaffolding only —
-there is still no PDF extract or LLM generate step. After first-run `/setup`, the
-admin wizard at `/onboarding` can add subjects, attach local PDFs (under
-`content/source-pdfs/<subject>/` only), and run the same directory emit
-(validate, dry-run HITL with planned deletes, then apply). Apply refuses if the
-plan hash no longer matches the confirmed dry-run. Finish requires that
-confirmed apply; skip is the no-emit exit (sample bank). Deleting a subject
-removes its IR/source dirs; leftover generated JSON is pruned only on the
-confirmed whole-tree apply (#62). An empty subjects tree is refused and never
-wipes generated files. Author `bank.ir.json` on disk (or offline); the files step
-does not write IR. Uploaded PDFs must start with `%PDF`. AI generate-from-files
-is not in this release. `--replace-sample` is off unless the admin enables the
-advanced toggle.
+You can author a **BankIR** JSON document by hand, or generate one from local
+source files, then emit the two-file split with `examify-ingest`. After
+first-run `/setup`, the admin wizard at `/onboarding` can add subjects, attach
+local PDFs (under `content/source-pdfs/<subject>/` only), and run the same
+directory emit (validate, dry-run HITL with planned deletes, then apply). The
+wizard does **not** auto-run generate. Apply refuses if the plan hash no longer
+matches the confirmed dry-run. Finish requires that confirmed apply; skip is
+the no-emit exit (sample bank). Deleting a subject removes its IR/source dirs;
+leftover generated JSON is pruned only on the confirmed whole-tree apply (#62).
+An empty subjects tree is refused and never wipes generated files. Uploaded
+PDFs must start with `%PDF`. `--replace-sample` is off unless the admin enables
+the advanced toggle.
 
-1. Write `content/subjects/<subject-id>/bank.ir.json` (see the biology sample).
+Generate writes IR only. It never silently emits or applies:
+
+1. Drop sources in `content/source-pdfs/<subject-id>/` (gitignored) and/or the
+   subject folder. Optional: author `content/subjects/<id>/bank.ir.json` by
+   hand (see the biology sample) instead of generating.
 2. From the repo root:
 
    ```bash
+   pnpm examify-ingest generate --provider test --seed 0 content/subjects/<id>
    pnpm examify-ingest validate content/subjects
    pnpm examify-ingest emit content/subjects --dry-run
    pnpm examify-ingest emit content/subjects --apply
    ```
+
+   Cloud generate (`--provider anthropic` / `openai`) reads `ANTHROPIC_API_KEY`
+   / `OPENAI_API_KEY` from the environment and fails closed if the key is
+   missing or is the `test` sentinel. `--provider test` is the CI fixture
+   (no network). `--provider local` uses `EXAMIFY_INGEST_LOCAL_CMD` or
+   `EXAMIFY_LLM_BASE_URL`. Run manifests land in gitignored `.examify-ingest/`.
 
 3. `emit` writes `content/generated/subjects.json`,
    `content/generated/questions/<id>.json` (public fields only), and
@@ -181,23 +190,30 @@ Behaviour you can rely on:
 
 ## Generating a bank from your own PDFs
 
-There is no automated parser — this is a documented (AI-assisted) workflow, and it is
-how the original 13-subject deployment was produced from school study guides:
+Phase 2 `examify-ingest generate` can draft BankIR from those files (vision-first
+when `pdftoppm` can rasterize pages; images are cached under
+`.examify-ingest/cache/pages/<pdf-sha256>/`). You still review the IR, then
+`validate` and `emit --dry-run` / `emit --apply`. The original 13-subject
+deployment was produced from school study guides with this same grounding rule.
 
-1. Drop your source PDFs in `content/source-pdfs/`. The directory is **gitignored** —
-   source material often can't be redistributed, so it stays local-only; only the
-   questions you author from it (with `provenance`) get committed.
-2. Ingest **vision-first**: render each page as an image (`pdftoppm -r 200`) and read
-   the images as the primary source of truth — study-guide PDFs are usually heavy on
-   layout, tables, and diagrams that text extraction mangles. Use `pdftotext -layout`
+1. Drop your source PDFs in `content/source-pdfs/<subject-id>/`. The directory is
+   **gitignored** — source material often can't be redistributed, so it stays
+   local-only; only the questions you author or generate from it (with
+   `provenance`) get committed.
+2. Ingest **vision-first**: `generate` reuses cached page images when the PDF
+   hash matches, and otherwise shells out to `pdftoppm` when it is installed.
+   You can still render pages yourself (`pdftoppm -r 200`) and read them as the
+   primary source of truth — study-guide PDFs are usually heavy on layout,
+   tables, and diagrams that text extraction mangles. Use `pdftotext -layout`
    (text-layer PDFs) or `tesseract` OCR (scanned PDFs) as a cross-check.
-3. Author ~10 questions per subject per difficulty, graded **easy = recall**,
-   **medium = apply**, **hard = reason**, with 2–3 free-text items per tier carrying a
-   rubric derived from the source material.
-4. Keep questions grounded: stay close to what the source actually says (a good rule of
-   thumb is ~80% direct grounding, ~20% reasonable application of it), and record each
-   item's `provenance { pdf, locator }` as you go.
-5. Run `pnpm test` — the guards below catch most authoring mistakes immediately.
+3. Author or generate ~10 questions per subject per difficulty, graded
+   **easy = recall**, **medium = apply**, **hard = reason**, with 2–3 free-text
+   items per tier carrying a rubric derived from the source material.
+4. Keep questions grounded: stay close to what the source actually says (a good
+   rule of thumb is ~80% direct grounding, ~20% reasonable application of it),
+   and record each item's `provenance { pdf, locator }` as you go.
+5. Run `pnpm examify-ingest validate` then `pnpm test` — the guards below catch
+   most authoring mistakes immediately. Generate never writes `content/generated/`.
 
 ## Guards & test-coupled ids
 

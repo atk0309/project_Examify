@@ -23,4 +23,5 @@ id with no matching `bank.ir.json` are deleted. An empty subjects tree is
 refused and never wipes these files. The sample bank is never touched.
 
 Do not edit these files by hand — change the BankIR source and re-emit.
+`examify-ingest generate` never writes this directory; only `emit --apply` does.
 See `tools/examify-ingest/README.md`.

@@ -47,14 +47,18 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   `content/generated/` (biology is the Phase 0 example). Add content as
   `{ id, type, q, choices? }` in `data.ts` **plus** a matching `ANSWER_KEYS[id]`
   (with provenance) in `answer-keys.server.ts`, **or** author
-  `content/subjects/<id>/bank.ir.json` and run `pnpm examify-ingest emit --apply`
+  `content/subjects/<id>/bank.ir.json` (by hand or `pnpm examify-ingest generate`)
+  and run `pnpm examify-ingest emit --apply`
   (dry-run by default; never clobbers any sample-bank id without
   `--replace-sample`; partial emit (explicit IR files or mixed file+dir argv)
   merges `subjects.json`; a whole-tree emit of subjects directories only
   (`content/subjects`) deletes leftover generated subject JSON). The live app
   reads `content/generated/` at request time so a production Apply is visible
   without rebuilding. Guide: `docs/content-authoring.md` and
-  `tools/examify-ingest/README.md`. PDF extract / LLM generate are not in Phase 0.
+  `tools/examify-ingest/README.md`. Generate writes IR only — still
+  validate → emit --dry-run → emit --apply. It never auto-applies. Cloud
+  providers fail closed without an env key; `--provider test` is the CI
+  fixture. Run cache/manifests are gitignored under `.examify-ingest/`.
 - **Free-text is LLM-graded server-side** (`src/lib/grading/index.ts`,
   `ANTHROPIC_API_KEY`; `test` → deterministic stub). Grading never throws — failures
   fall to `needs_review`. A free item is "correct" at `PASS_THRESHOLD` (0.6). The UI

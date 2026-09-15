@@ -213,10 +213,12 @@ questions. Content lives in two files keyed by a shared, globally-unique questio
 
 `buildExam()` assembles each mini exam from the bank (`EXAM_CONFIG.length` caps the
 paper, `shuffle` randomises order), and a unit-test guard enforces that the two files
-stay in lockstep. You can also author `content/subjects/<id>/bank.ir.json` and emit
-the split with `pnpm examify-ingest emit content/subjects --dry-run` (or
-`--apply` to write `content/generated/`). The full guide — adding subjects and difficulties, writing
-rubrics the LLM grader marks well, the Phase 0 ingest CLI, and a workflow for
+stay in lockstep. You can also author `content/subjects/<id>/bank.ir.json` (by
+hand or `pnpm examify-ingest generate`) and emit the split with
+`pnpm examify-ingest emit content/subjects --dry-run` (or `--apply` to write
+`content/generated/`). Generate writes IR only — still validate, dry-run, then
+`--apply`. The full guide — adding subjects and difficulties, writing
+rubrics the LLM grader marks well, the ingest CLI, and a workflow for
 generating a question bank from your own study-material PDFs — is in
 [`docs/content-authoring.md`](docs/content-authoring.md) and
 [`tools/examify-ingest/README.md`](tools/examify-ingest/README.md).
@@ -247,19 +249,19 @@ applied at runtime via `accentCSS()`.
 
 ## Commands
 
-| Command               | What it does                                       |
-| --------------------- | -------------------------------------------------- |
-| `pnpm dev`            | Dev server (Turbopack)                             |
-| `pnpm build`          | Production build                                   |
-| `pnpm start`          | Run the production build (`PORT` defaults to 3000) |
-| `pnpm lint`           | ESLint                                             |
-| `pnpm typecheck`      | `tsc --noEmit`                                     |
-| `pnpm format`         | Prettier write                                     |
-| `pnpm test`           | Vitest unit suite                                  |
-| `pnpm test:e2e`       | Playwright e2e (needs `pnpm test:e2e:install`)     |
-| `pnpm db:generate`    | Generate a Drizzle migration from schema diffs     |
-| `pnpm db:migrate`     | Apply pending migrations to `DATABASE_URL`         |
-| `pnpm examify-ingest` | Validate / emit BankIR (`tools/examify-ingest`)    |
+| Command               | What it does                                               |
+| --------------------- | ---------------------------------------------------------- |
+| `pnpm dev`            | Dev server (Turbopack)                                     |
+| `pnpm build`          | Production build                                           |
+| `pnpm start`          | Run the production build (`PORT` defaults to 3000)         |
+| `pnpm lint`           | ESLint                                                     |
+| `pnpm typecheck`      | `tsc --noEmit`                                             |
+| `pnpm format`         | Prettier write                                             |
+| `pnpm test`           | Vitest unit suite                                          |
+| `pnpm test:e2e`       | Playwright e2e (needs `pnpm test:e2e:install`)             |
+| `pnpm db:generate`    | Generate a Drizzle migration from schema diffs             |
+| `pnpm db:migrate`     | Apply pending migrations to `DATABASE_URL`                 |
+| `pnpm examify-ingest` | Generate / validate / emit BankIR (`tools/examify-ingest`) |
 
 ## Environment
 

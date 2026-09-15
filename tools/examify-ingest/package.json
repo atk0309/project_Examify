@@ -2,7 +2,7 @@
   "name": "examify-ingest",
   "version": "0.1.0",
   "private": true,
-  "description": "Phase 0 BankIR validator and public/server-only content emitter for Examify.",
+  "description": "BankIR generate / validate / emit tooling for Examify. Generate writes IR only; emit still requires an explicit --apply.",
   "license": "MIT",
   "type": "module",
   "bin": {

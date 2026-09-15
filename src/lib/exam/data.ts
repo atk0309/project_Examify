@@ -18,8 +18,9 @@
      (`live-bank.server.ts`) so an onboarding Apply is visible without rebuild.
      Generated files never carry answers or rubrics.
    - To add a SUBJECT by hand: add to SAMPLE_SUBJECTS + SAMPLE_QUESTIONS + an
-     icon. To add via BankIR: author `content/subjects/<id>/bank.ir.json` and
-     emit. To add a DIFFICULTY: extend DIFFICULTIES + the matching bank keys.
+     icon. To add via BankIR: author or generate `content/subjects/<id>/bank.ir.json`
+     and emit (generate never auto-applies). To add a DIFFICULTY: extend
+     DIFFICULTIES + the matching bank keys.
    - Every question needs a globally-unique `id` and a matching entry in
      ANSWER_KEYS (`answer-keys.server.ts`). See the bijection guard in
      `tests/unit/answer-keys.test.ts`.

@@ -1,13 +1,23 @@
 # examify-ingest
 
-Phase 0 BankIR tooling for Examify. This package **validates** intermediate
-question-bank JSON and **emits** the split public / server-only files the app
-merges onto the hand-authored sample bank.
+BankIR tooling for Examify. This package can **generate** intermediate
+question-bank JSON from local source files, **validate** it, and **emit** the
+split public / server-only files the app merges onto the hand-authored sample
+bank.
 
-It does **not** extract PDFs or call an LLM (those are later phases). You
-author `bank.ir.json` by hand (or generate it offline) and run the CLI. The
-first-run `/onboarding` wizard calls this same directory emit (validate, dry-run,
-then apply). `--replace-sample` is off unless the admin enables the advanced toggle.
+`generate` writes `content/subjects/<id>/bank.ir.json` only. It never emits or
+applies. Human-in-the-loop is still required:
+
+```bash
+pnpm examify-ingest generate --provider test --seed 0 content/subjects/<id>
+pnpm examify-ingest validate content/subjects
+pnpm examify-ingest emit content/subjects --dry-run
+pnpm examify-ingest emit content/subjects --apply
+```
+
+The first-run `/onboarding` wizard still calls this same directory emit
+(validate, dry-run, then apply). It does not auto-run generate. `--replace-sample`
+is off unless the admin enables the advanced toggle.
 
 ## Install
 
@@ -33,14 +43,40 @@ from the **repo root**.
 ## Commands
 
 ```bash
+pnpm examify-ingest generate --provider test --seed 0 content/subjects
+pnpm examify-ingest generate --provider anthropic --subject biology content/subjects
 pnpm examify-ingest validate content/subjects
 pnpm examify-ingest emit content/subjects --dry-run
 pnpm examify-ingest emit content/subjects --apply
 pnpm examify-ingest emit content/subjects --apply --replace-sample
 ```
 
+`generate` accepts `content/subjects` or `content/subjects/<id>` (not an IR
+file). It reads source files from `content/source-pdfs/<id>/` (and
+`content/source-pdfs/<id>.pdf`) plus any `.pdf`/`.txt`/`.md`/image files in the
+subject folder except `bank.ir.json`. `--provider` is required
+(`anthropic` / `openai` / `local` / `test`). Default `--seed` is `0` and is
+recorded in the run manifest. `--dry-run-ir` prints the would-write path and
+still records a gitignored manifest, but does not write `bank.ir.json`.
+
+Cloud providers fail closed without a real env key (`ANTHROPIC_API_KEY` /
+`OPENAI_API_KEY`). The app's `ANTHROPIC_API_KEY=test` sentinel is refused —
+use `--provider test` for CI (no network, deterministic IR). `local` needs
+`EXAMIFY_INGEST_LOCAL_CMD` (stdin JSON → stdout BankIR) or
+`EXAMIFY_LLM_BASE_URL` (OpenAI-compatible). Temperature is `0` when the
+remote API allows it.
+
+Every generate run writes a `RunManifest` under `.examify-ingest/runs/`
+(gitignored): provider, model, promptVersion, prompt hash, seed, temperature
+`0`, source file hashes, cacheKey, timestamp, subject ids, and key
+presence/name only — never the key value. `cacheKey` is a stable hash of
+promptVersion + prompt hash + provider + model + seed + source hashes +
+subject meta. A matching cache reuses the prior IR instead of calling the
+provider. PDF page images, when rasterized with `pdftoppm`, are reused from
+`.examify-ingest/cache/pages/<pdf-sha256>/`.
+
 `validate` and `emit` accept a subjects directory (scans `*/bank.ir.json`) or
-one or more explicit IR file paths.
+one or more explicit IR file paths. Generate does not change those commands.
 
 `emit` is **dry-run by default**. It prints a diff against the files already on
 disk (or `would create`). Pass `--apply` to write.
@@ -150,5 +186,15 @@ committed biology sample is already registered.
 ## Library
 
 ```ts
-import { splitIr, validateIrCollection, FIXTURE_IDS } from 'examify-ingest';
+import {
+  generateSubject,
+  splitIr,
+  validateIrCollection,
+  FIXTURE_IDS,
+  runManifestSchema,
+} from 'examify-ingest';
 ```
+
+`generateSubject` is the library entry the Setup Wizard can call later. It
+still only writes BankIR (+ gitignored run/cache files). Callers must run
+validate → emit dry-run → emit apply themselves.
