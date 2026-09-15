@@ -16,7 +16,6 @@ import { eq } from 'drizzle-orm';
 import {
   applyEmit,
   collectQuestionIds,
-  findRepoRoot,
   formatFileDiff,
   isAuthoritativeCatalogInput,
   loadIrFiles,
@@ -28,6 +27,7 @@ import {
   type PlannedFile,
   type ValidatedBank,
 } from 'examify-ingest';
+import { getOnboardingContentRoot } from '@/lib/content-root';
 import { db, schema } from '@/lib/db';
 import type { HouseholdRole } from '@/lib/db/schema';
 import { SAMPLE_QUESTIONS, SAMPLE_SUBJECTS } from '@/lib/exam/data';
@@ -53,11 +53,14 @@ export {
   ONBOARDING_INGEST_CLI,
   SUBJECT_ICON_OPTIONS,
 } from '@/lib/onboarding-types';
+export { getOnboardingContentRoot, setOnboardingContentRootForTests } from '@/lib/content-root';
 
 export const SUBJECTS_REL = 'content/subjects';
 export const SOURCE_PDFS_REL = 'content/source-pdfs';
 export const BANK_IR_FILE = 'bank.ir.json';
 export const MAX_SOURCE_PDF_BYTES = 8 * 1024 * 1024;
+/** Server Action multipart ceiling — above {@link MAX_SOURCE_PDF_BYTES} plus form fields. */
+export const ONBOARDING_ACTION_BODY_LIMIT_BYTES = MAX_SOURCE_PDF_BYTES + 2 * 1024 * 1024;
 export const SUBJECT_LABEL_MAX = 40;
 
 const ICON_ACCENTS: Record<SubjectIconOption, { l: number; c: number; h: number }> = {
@@ -77,17 +80,6 @@ const ICON_ACCENTS: Record<SubjectIconOption, { l: number; c: number; h: number 
 };
 
 const FROZEN_SAMPLE_IDS = collectQuestionIds(SAMPLE_QUESTIONS);
-
-let contentRootOverride: string | null = null;
-
-/** Tests only — point subject/PDF/ingest I/O at a temp tree. */
-export function setOnboardingContentRootForTests(root: string | null): void {
-  contentRootOverride = root;
-}
-
-export function getOnboardingContentRoot(): string {
-  return contentRootOverride ?? findRepoRoot(process.cwd());
-}
 
 export function normalizeSubjectId(raw: string): string {
   return raw.trim().toLowerCase();
@@ -479,6 +471,10 @@ export function renameOnboardingSubject(
       icon,
       ...ICON_ACCENTS[icon],
     },
+    difficulties:
+      workingId !== id
+        ? rewriteOnboardingQuestionIds(current.difficulties, id, workingId)
+        : current.difficulties,
   };
   writeFileSync(destIr, `${JSON.stringify(next, null, 2)}\n`, 'utf8');
   return {
@@ -560,7 +556,33 @@ function publicIssueFile(absPath: string | undefined, root: string): string {
   return rel.startsWith('..') ? path.basename(absPath) : rel;
 }
 
+export function rewriteOnboardingQuestionIds(
+  difficulties: unknown,
+  fromId: string,
+  toId: string,
+): unknown {
+  if (!difficulties || typeof difficulties !== 'object' || Array.isArray(difficulties)) {
+    return difficulties;
+  }
+  const prefix = `${fromId}-`;
+  const out: Record<string, unknown> = {};
+  for (const [difficulty, items] of Object.entries(difficulties as Record<string, unknown>)) {
+    if (!Array.isArray(items)) {
+      out[difficulty] = items;
+      continue;
+    }
+    out[difficulty] = items.map((item) => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return item;
+      const rec = item as { id?: unknown };
+      if (typeof rec.id !== 'string' || !rec.id.startsWith(prefix)) return item;
+      return { ...item, id: `${toId}-${rec.id.slice(prefix.length)}` };
+    });
+  }
+  return out;
+}
+
 export function validateOnboardingIr(
+  replaceSample = false,
   root = getOnboardingContentRoot(),
 ): { ok: true } | { ok: false; issues: OnboardingIssue[] } {
   const loaded = loadSubjectsTree(root);
@@ -571,7 +593,7 @@ export function validateOnboardingIr(
     };
   }
   const result = validateIrCollection(loaded.files, {
-    replaceSample: false,
+    replaceSample,
     frozenIds: FROZEN_SAMPLE_IDS,
   });
   if (result.ok) return { ok: true };

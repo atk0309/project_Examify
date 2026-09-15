@@ -263,6 +263,12 @@ describe('onboarding catalog emit', () => {
     if (!allowed.ok) throw new Error('expected replace-sample preview');
     expect(allowed.dryRun.collisions).toContain(nonFixture);
     expect(allowed.dryRun.replaceSample).toBe(true);
+
+    const { validateOnboardingIr } = await import('@/lib/onboarding');
+    const blockedValidate = validateOnboardingIr(false, root);
+    expect(blockedValidate.ok).toBe(false);
+    const allowedValidate = validateOnboardingIr(true, root);
+    expect(allowedValidate.ok).toBe(true);
   });
 });
 
@@ -398,6 +404,77 @@ describe('onboarding subjects and files', () => {
     expect(existsSync(path.join(root, 'content/source-pdfs/world-history/other.pdf'))).toBe(true);
   });
 
+  it('rewrites question ids when renaming a populated subject', async () => {
+    const {
+      renameOnboardingSubject,
+      rewriteOnboardingQuestionIds,
+      setOnboardingContentRootForTests,
+      validateOnboardingIr,
+    } = await import('@/lib/onboarding');
+    const root = tempRoot();
+    setOnboardingContentRootForTests(root);
+    mkdirSync(path.join(root, 'content/subjects/biology'), { recursive: true });
+    writeFileSync(
+      path.join(root, 'content/subjects/biology/bank.ir.json'),
+      JSON.stringify({
+        version: 1,
+        subject: { id: 'biology', label: 'Biology', icon: 'biology', l: 0.58, c: 0.09, h: 142 },
+        difficulties: {
+          easy: [
+            {
+              id: 'biology-easy-1',
+              type: 'mcq',
+              q: 'A populated question?',
+              choices: ['A', 'B', 'C', 'D'],
+              answer: 1,
+              provenance: { pdf: 'hand-authored', locator: 'unit' },
+            },
+            {
+              id: 'biology-easy-free-1',
+              type: 'free',
+              q: 'A populated free item?',
+              rubric: 'Award 1 mark.',
+              maxScore: 1,
+              provenance: { pdf: 'hand-authored', locator: 'unit' },
+            },
+          ],
+          medium: [],
+          hard: [],
+        },
+      }),
+    );
+
+    const rewritten = rewriteOnboardingQuestionIds(
+      {
+        easy: [{ id: 'biology-easy-1' }, { id: 'biology-easy-free-1' }],
+      },
+      'biology',
+      'life-science',
+    );
+    expect(rewritten).toEqual({
+      easy: [{ id: 'life-science-easy-1' }, { id: 'life-science-easy-free-1' }],
+    });
+
+    const renamed = renameOnboardingSubject(
+      { id: 'biology', nextId: 'life-science', label: 'Life Science', icon: 'biology' },
+      root,
+    );
+    expect(renamed.ok).toBe(true);
+    const ir = JSON.parse(
+      readFileSync(path.join(root, 'content/subjects/life-science/bank.ir.json'), 'utf8'),
+    ) as {
+      subject: { id: string };
+      difficulties: { easy: { id: string }[] };
+    };
+    expect(ir.subject.id).toBe('life-science');
+    expect(ir.difficulties.easy.map((item) => item.id)).toEqual([
+      'life-science-easy-1',
+      'life-science-easy-free-1',
+    ]);
+    expect(existsSync(path.join(root, 'content/subjects/biology'))).toBe(false);
+    expect(validateOnboardingIr(false, root)).toEqual({ ok: true });
+  });
+
   it('moves IR and source-pdf dirs together on a successful id rename', async () => {
     const {
       addOnboardingSubject,
@@ -448,6 +525,21 @@ describe('onboarding subjects and files', () => {
     if (preview.ok) throw new Error('expected refuse');
     expect(preview.reason).toBe('empty_catalog');
     expect(preview.message).toMatch(/will not wipe generated content/);
+  });
+});
+
+describe('onboarding upload ceiling', () => {
+  it('keeps the Server Action body limit above the advertised PDF cap', async () => {
+    const { MAX_SOURCE_PDF_BYTES, ONBOARDING_ACTION_BODY_LIMIT_BYTES } =
+      await import('@/lib/onboarding');
+    expect(ONBOARDING_ACTION_BODY_LIMIT_BYTES).toBeGreaterThan(MAX_SOURCE_PDF_BYTES);
+    const config = (await import('../../next.config.mjs')).default as {
+      experimental: { serverActions: { bodySizeLimit: number } };
+    };
+    expect(config.experimental.serverActions.bodySizeLimit).toBeGreaterThan(MAX_SOURCE_PDF_BYTES);
+    expect(config.experimental.serverActions.bodySizeLimit).toBeGreaterThanOrEqual(
+      ONBOARDING_ACTION_BODY_LIMIT_BYTES,
+    );
   });
 });
 

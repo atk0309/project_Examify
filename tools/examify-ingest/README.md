@@ -134,17 +134,18 @@ content/generated/keys/<subjectId>.json
 ```
 
 Public question JSON never includes answers, rubrics, scores, or provenance.
-Keys are server-only: the app imports them from
-`src/lib/exam/generated-keys.server.ts` (`import 'server-only'`). Do not import
-`content/generated/keys/` from client code.
+Keys are server-only. The running app reads `content/generated/` at request
+time (`src/lib/exam/live-bank.server.ts`) and must never pass key objects to
+the client. Do not import `content/generated/keys/` from client code.
 
 Generated files are meant to be committed. Source PDFs stay in the gitignored
 `content/source-pdfs/` directory.
 
 After `emit --apply`, `planEmit` rewrites
 `src/lib/exam/generated-public.ts` and
-`src/lib/exam/generated-keys.server.ts` from the merged catalog. Do not add
-those imports by hand. The committed biology sample is already registered.
+`src/lib/exam/generated-keys.server.ts` from the merged catalog as a
+committed / missing-catalog fallback. Do not add those imports by hand. The
+committed biology sample is already registered.
 
 ## Library
 

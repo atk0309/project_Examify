@@ -11,7 +11,9 @@ const nextConfig = {
   serverExternalPackages: ['better-sqlite3'],
   experimental: {
     serverActions: {
-      bodySizeLimit: '8mb',
+      // Above MAX_SOURCE_PDF_BYTES (8 MiB) so multipart headers + subjectId
+      // still fit and attachSourcePdf can return the typed `too_large` result.
+      bodySizeLimit: 10 * 1024 * 1024,
     },
   },
   // Keep Turbopack resolution and output tracing anchored to this checkout.

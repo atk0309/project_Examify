@@ -162,6 +162,60 @@ describe('onboarding actions', () => {
     expect(applied.ok).toBe(true);
     expect(fs.existsSync(path.join(root, 'content/generated/questions/history.json'))).toBe(true);
     expect(fs.existsSync(path.join(root, 'content/generated/keys/history.json'))).toBe(true);
+
+    const { loadLiveAnswerKeys, loadLivePublicBank } = await import('@/lib/exam/live-bank.server');
+    const { SUBJECTS } = await import('@/lib/exam/data');
+    const live = loadLivePublicBank();
+    expect(live.subjects.some((subject) => subject.id === 'history')).toBe(true);
+    expect(SUBJECTS.some((subject) => subject.id === 'history')).toBe(false);
+    expect(live.questions.history?.easy?.[0]?.id).toBe('history-easy-1');
+    expect(loadLiveAnswerKeys()['history-easy-1']?.type).toBe('mcq');
+  });
+
+  it('validates with the persisted replace-sample setting', async () => {
+    const root = tempRoot();
+    const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
+    setOnboardingContentRootForTests(root);
+    await signInHost();
+    const { collectQuestionIds } = await import('examify-ingest');
+    const { SAMPLE_QUESTIONS } = await import('@/lib/exam/data');
+    const collision = collectQuestionIds(SAMPLE_QUESTIONS).find((id) =>
+      /^maths-easy-\d+$/.test(id),
+    );
+    expect(collision).toBeTruthy();
+    fs.mkdirSync(path.join(root, 'content/subjects/maths'), { recursive: true });
+    writeFileSync(
+      path.join(root, 'content/subjects/maths/bank.ir.json'),
+      JSON.stringify({
+        version: 1,
+        subject: { id: 'maths', label: 'Maths', icon: 'maths', l: 0.585, c: 0.062, h: 156 },
+        difficulties: {
+          easy: [
+            {
+              id: collision,
+              type: 'mcq',
+              q: 'A colliding question?',
+              choices: ['A', 'B', 'C', 'D'],
+              answer: 1,
+              provenance: { pdf: 'hand-authored', locator: 'unit' },
+            },
+          ],
+          medium: [],
+          hard: [],
+        },
+      }),
+    );
+    const { setReplaceSampleAction, validateOnboardingAction } =
+      await import('@/actions/onboarding');
+    const blocked = await validateOnboardingAction();
+    expect(blocked.ok).toBe(false);
+    if (blocked.ok) throw new Error('expected collision');
+    expect(blocked.reason).toBe('invalid');
+
+    const toggle = new FormData();
+    toggle.set('replaceSample', '1');
+    expect((await setReplaceSampleAction(toggle)).ok).toBe(true);
+    expect((await validateOnboardingAction()).ok).toBe(true);
   });
 
   it('does not apply a changed plan after a confirmed dry-run', async () => {

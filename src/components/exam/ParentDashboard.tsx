@@ -13,6 +13,7 @@ import { setStudentMode } from '@/actions/toggleStudentMode';
 import { signOut } from '@/actions/signOut';
 import type { AuthMode } from '@/lib/auth-mode';
 import type { ProgressData } from '@/lib/exam/attempts';
+import { SUBJECTS, type Subject } from '@/lib/exam/data';
 import type { HouseholdMemberView, PendingInvite } from '@/lib/household-types';
 import { ComparisonView } from './ComparisonView';
 import { HouseholdInvites } from './HouseholdInvites';
@@ -37,6 +38,7 @@ export function ParentDashboard({
   canInvite = false,
   authMode,
   needsOnboarding = false,
+  subjects = SUBJECTS,
 }: {
   students: ChildSnapshot[];
   ownProgress: ProgressData;
@@ -46,6 +48,7 @@ export function ParentDashboard({
   canInvite?: boolean;
   authMode: AuthMode;
   needsOnboarding?: boolean;
+  subjects?: readonly Subject[];
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -132,6 +135,7 @@ export function ParentDashboard({
               child={selected.progress}
               youHistory={ownHistory}
               childHistory={selected.history}
+              subjects={subjects}
             />
           ) : null}
 
@@ -139,6 +143,7 @@ export function ParentDashboard({
             <p className="eyebrow">Your attempts</p>
             <ProgressView
               data={ownProgress}
+              subjects={subjects}
               emptyHint="You haven't tried a mini exam yet — tap “Are you smarter…?” above to start."
             />
           </section>
@@ -148,6 +153,7 @@ export function ParentDashboard({
               <p className="eyebrow">Students</p>
               <ProgressView
                 data={{ attempts: [], subjects: [] }}
+                subjects={subjects}
                 emptyHint="No students in this household yet — create an invite above."
               />
             </section>
@@ -157,6 +163,7 @@ export function ParentDashboard({
                 <p className="eyebrow">{child.label}’s attempts</p>
                 <ProgressView
                   data={child.progress}
+                  subjects={subjects}
                   emptyHint={`No exams yet — once ${child.label} finishes a mini exam, it'll show up here.`}
                 />
               </section>

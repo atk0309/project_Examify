@@ -21,6 +21,17 @@ describe('countQuestions', () => {
   it('returns 0 for an unknown subject', () => {
     expect(countQuestions('nope')).toBe(0);
   });
+
+  it('uses an injected question bank when provided', () => {
+    const custom = {
+      demo: {
+        easy: [{ id: 'demo-easy-1', type: 'free' as const, q: 'Runtime?' }],
+      },
+    };
+    expect(countQuestions('demo', custom)).toBe(1);
+    expect(countQuestions('maths', custom)).toBe(0);
+    expect(resolveExamPaper('demo', 'easy', ['demo-easy-1'], custom)?.[0]?.id).toBe('demo-easy-1');
+  });
 });
 
 describe('buildExam', () => {

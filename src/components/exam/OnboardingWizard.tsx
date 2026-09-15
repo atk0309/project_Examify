@@ -247,8 +247,19 @@ export function OnboardingWizard({
 
       {step === 'validate' ? (
         <ValidateStep
+          snapshot={snapshot}
           pending={pending}
           validated={validated}
+          onToggleReplace={(enabled) =>
+            run(async () => {
+              const data = new FormData();
+              data.set('replaceSample', enabled ? '1' : '0');
+              if (applyResult(await setReplaceSampleAction(data))) {
+                setValidated(false);
+                setDryRun(null);
+              }
+            })
+          }
           onValidate={() =>
             run(async () => {
               const result = await validateOnboardingAction();
@@ -273,6 +284,7 @@ export function OnboardingWizard({
               const data = new FormData();
               data.set('replaceSample', enabled ? '1' : '0');
               if (applyResult(await setReplaceSampleAction(data))) {
+                setValidated(false);
                 setDryRun(null);
               }
             })
@@ -588,6 +600,13 @@ function SubjectsStep({
                 disabled={pending}
                 data-testid={`wizard-delete-subject-${subject.id}`}
                 onClick={() => {
+                  if (
+                    !window.confirm(
+                      `Delete subject “${subject.label}”? This removes its BankIR and study PDFs. This cannot be undone.`,
+                    )
+                  ) {
+                    return;
+                  }
                   const data = new FormData();
                   data.set('id', subject.id);
                   onDelete(data);
@@ -773,6 +792,13 @@ function SubjectDropzone({
                 disabled={pending}
                 data-testid={`wizard-detach-${subject.id}-${name}`}
                 onClick={() => {
+                  if (
+                    !window.confirm(
+                      `Remove “${name}” from ${subject.label}? This cannot be undone.`,
+                    )
+                  ) {
+                    return;
+                  }
                   const data = new FormData();
                   data.set('subjectId', subject.id);
                   data.set('filename', name);
@@ -874,13 +900,40 @@ function AiStep({
   );
 }
 
+function ReplaceSampleToggle({
+  enabled,
+  pending,
+  onToggle,
+}: {
+  enabled: boolean;
+  pending: boolean;
+  onToggle: (enabled: boolean) => void;
+}) {
+  return (
+    <label className="wizard-advanced">
+      <input
+        type="checkbox"
+        checked={enabled}
+        disabled={pending}
+        data-testid="wizard-replace-sample"
+        onChange={(event) => onToggle(event.target.checked)}
+      />
+      Advanced: allow --replace-sample (overwrite colliding sample-bank ids)
+    </label>
+  );
+}
+
 function ValidateStep({
+  snapshot,
   pending,
   validated,
+  onToggleReplace,
   onValidate,
 }: {
+  snapshot: OnboardingSnapshot;
   pending: boolean;
   validated: boolean;
+  onToggleReplace: (enabled: boolean) => void;
   onValidate: () => void;
 }) {
   return (
@@ -892,6 +945,11 @@ function ValidateStep({
       <pre className="wizard-cli" data-testid="wizard-cli">
         {ONBOARDING_INGEST_CLI.join('\n')}
       </pre>
+      <ReplaceSampleToggle
+        enabled={snapshot.replaceSample}
+        pending={pending}
+        onToggle={onToggleReplace}
+      />
       <button
         type="button"
         className="btn btn-primary"
@@ -932,16 +990,11 @@ function DryRunStep({
       <pre className="wizard-cli" data-testid="wizard-cli-emit">
         {ONBOARDING_INGEST_CLI.slice(1).join('\n')}
       </pre>
-      <label className="wizard-advanced">
-        <input
-          type="checkbox"
-          checked={snapshot.replaceSample}
-          disabled={pending}
-          data-testid="wizard-replace-sample"
-          onChange={(event) => onToggleReplace(event.target.checked)}
-        />
-        Advanced: allow --replace-sample (overwrite colliding sample-bank ids)
-      </label>
+      <ReplaceSampleToggle
+        enabled={snapshot.replaceSample}
+        pending={pending}
+        onToggle={onToggleReplace}
+      />
       <button
         type="button"
         className="btn btn-ghost"

@@ -12,9 +12,11 @@
      SERVER-ONLY key store `answer-keys.server.ts`, keyed by question `id`, so
      they never ship to the browser.
    - SAMPLE_SUBJECTS / SAMPLE_QUESTIONS are the hand-authored starter bank
-     (three subjects). SUBJECTS / QUESTIONS merge that sample with additive
-     generated JSON from `content/generated/` (see `generated-public.ts` and
-     `tools/examify-ingest`). Generated files never carry answers or rubrics.
+     (three subjects). SUBJECTS / QUESTIONS merge that sample with the
+     build-time registrar (`generated-public.ts`) as a fallback. The live app
+     prefers `content/generated/` JSON read at request time
+     (`live-bank.server.ts`) so an onboarding Apply is visible without rebuild.
+     Generated files never carry answers or rubrics.
    - To add a SUBJECT by hand: add to SAMPLE_SUBJECTS + SAMPLE_QUESTIONS + an
      icon. To add via BankIR: author `content/subjects/<id>/bank.ir.json` and
      emit. To add a DIFFICULTY: extend DIFFICULTIES + the matching bank keys.
@@ -471,8 +473,8 @@ export const QUESTIONS: QuestionBank = mergeQuestions(
   generatedReplacesSample(GENERATED_QUESTIONS, SAMPLE_QUESTIONS),
 );
 
-export function countQuestions(subjectId: string): number {
-  const bank = QUESTIONS[subjectId] ?? {};
+export function countQuestions(subjectId: string, questions: QuestionBank = QUESTIONS): number {
+  const bank = questions[subjectId] ?? {};
   return Object.values(bank).reduce((n, arr) => n + (arr?.length ?? 0), 0);
 }
 
@@ -485,8 +487,9 @@ export function questionById(
   subjectId: string,
   difficulty: DifficultyId,
   id: string,
+  questions: QuestionBank = QUESTIONS,
 ): Question | undefined {
-  const bank = QUESTIONS[subjectId]?.[difficulty] ?? [];
+  const bank = questions[subjectId]?.[difficulty] ?? [];
   return bank.find((q) => q.id === id);
 }
 
@@ -500,8 +503,12 @@ export function shuffle<T>(arr: readonly T[]): T[] {
 }
 
 /** Build a mini exam: pick up to EXAM_CONFIG.length questions for the bank. */
-export function buildExam(subjectId: string, difficulty: DifficultyId): Question[] {
-  const bank = QUESTIONS[subjectId]?.[difficulty] ?? [];
+export function buildExam(
+  subjectId: string,
+  difficulty: DifficultyId,
+  questions: QuestionBank = QUESTIONS,
+): Question[] {
+  const bank = questions[subjectId]?.[difficulty] ?? [];
   const list = EXAM_CONFIG.shuffle ? shuffle(bank) : bank.slice();
   return list.slice(0, Math.min(EXAM_CONFIG.length, list.length));
 }
@@ -518,8 +525,9 @@ export function resolveExamPaper(
   subjectId: string,
   difficulty: DifficultyId,
   ids: readonly string[],
+  questions: QuestionBank = QUESTIONS,
 ): Question[] | null {
-  const bank = QUESTIONS[subjectId]?.[difficulty] ?? [];
+  const bank = questions[subjectId]?.[difficulty] ?? [];
   const expectedLength = Math.min(EXAM_CONFIG.length, bank.length);
   if (expectedLength === 0 || ids.length !== expectedLength) return null;
   if (new Set(ids).size !== ids.length) return null;

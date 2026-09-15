@@ -4,13 +4,8 @@ import { expect, test } from '@playwright/test';
 
 const OUTBOX =
   process.env.MAIL_OUTBOX_DIR ?? path.join(process.cwd(), 'tests', '.tmp', 'e2e-fresh-outbox');
-const WIZARD_HISTORY_DIR = path.join(process.cwd(), 'content', 'subjects', 'history');
 
 test.describe.configure({ mode: 'serial' });
-
-test.afterAll(async () => {
-  await fs.rm(WIZARD_HISTORY_DIR, { recursive: true, force: true });
-});
 
 test('first-run bootstrap creates the admin without Turnstile', async ({ page }) => {
   await page.goto('/signin');

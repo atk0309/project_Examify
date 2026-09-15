@@ -51,7 +51,9 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   (dry-run by default; never clobbers any sample-bank id without
   `--replace-sample`; partial emit (explicit IR files or mixed file+dir argv)
   merges `subjects.json`; a whole-tree emit of subjects directories only
-  (`content/subjects`) deletes leftover generated subject JSON). Guide: `docs/content-authoring.md` and
+  (`content/subjects`) deletes leftover generated subject JSON). The live app
+  reads `content/generated/` at request time so a production Apply is visible
+  without rebuilding. Guide: `docs/content-authoring.md` and
   `tools/examify-ingest/README.md`. PDF extract / LLM generate are not in Phase 0.
 - **Free-text is LLM-graded server-side** (`src/lib/grading/index.ts`,
   `ANTHROPIC_API_KEY`; `test` → deterministic stub). Grading never throws — failures

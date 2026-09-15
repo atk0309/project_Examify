@@ -48,10 +48,13 @@ advanced toggle.
 
 3. `emit` writes `content/generated/subjects.json`,
    `content/generated/questions/<id>.json` (public fields only), and
-   `content/generated/keys/<id>.json` (answers, rubrics, provenance). The app
-   merges those files onto the sample bank. `--apply` also rewrites
+   `content/generated/keys/<id>.json` (answers, rubrics, provenance). The
+   running app reads those JSON files at request time and merges them onto the
+   sample bank (`src/lib/exam/live-bank.server.ts`), so an onboarding Apply is
+   visible on `/` without a rebuild. `--apply` also rewrites
    `src/lib/exam/generated-public.ts` and `src/lib/exam/generated-keys.server.ts`
-   from the resulting catalog. A partial emit (any explicit IR file path, or
+   as a committed / missing-catalog fallback. Keys stay server-only. A partial
+   emit (any explicit IR file path, or
    mixed file+directory argv) upserts `subjects.json` and does not clobber
    other generated subjects. Emitting only subjects directories (typically
    `content/subjects`) is authoritative: leftover generated JSON for a subject

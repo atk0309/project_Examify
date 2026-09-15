@@ -139,6 +139,17 @@ describe('generated keys stay server-only', () => {
       }
     }
   });
+
+  it('never imports live-bank.server from client modules', () => {
+    const files = collectSrcFiles(path.join(repoRoot, 'src'));
+    for (const file of files) {
+      const source = readFileSync(file, 'utf8');
+      if (!source.includes("'use client'")) continue;
+      expect(source, file).not.toMatch(/live-bank\.server/);
+      expect(source, file).not.toMatch(/content\/generated\/keys/);
+      expect(source, file).not.toMatch(/generated-keys\.server/);
+    }
+  });
 });
 
 function collectSrcFiles(dir: string): string[] {

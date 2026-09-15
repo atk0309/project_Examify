@@ -19,6 +19,7 @@ import {
   getOnboardingForUser,
 } from '@/lib/onboarding';
 import { resolveExamPaper } from '@/lib/exam/data';
+import { loadLivePublicBank } from '@/lib/exam/live-bank.server';
 import type { HouseholdMemberView } from '@/lib/household-types';
 
 /**
@@ -28,9 +29,12 @@ import type { HouseholdMemberView } from '@/lib/household-types';
  * the stale row is harmless and gets upserted over on the next start. Read-only —
  * no DB mutation here (illegal during a Server Component render).
  */
-function resumableFor(userId: number): Resumable[] {
+function resumableFor(
+  userId: number,
+  questionBank: ReturnType<typeof loadLivePublicBank>['questions'],
+): Resumable[] {
   return getExamSessions(userId).flatMap((s) => {
-    const questions = resolveExamPaper(s.subject, s.difficulty, s.questionIds);
+    const questions = resolveExamPaper(s.subject, s.difficulty, s.questionIds, questionBank);
     if (questions === null || s.answers.length !== questions.length) return [];
     return [
       {
@@ -49,6 +53,7 @@ export default async function HomePage() {
   if (!session.userId || !session.role) {
     redirect('/signin');
   }
+  const bank = loadLivePublicBank();
 
   if (session.role === 'parent') {
     const onboarding = getOnboardingForUser(session.userId);
@@ -72,7 +77,9 @@ export default async function HomePage() {
           role="parent"
           studentMode
           initialProgress={ownProgress}
-          resumable={resumableFor(session.userId)}
+          resumable={resumableFor(session.userId, bank.questions)}
+          subjects={bank.subjects}
+          questionBank={bank.questions}
         />
       );
     }
@@ -116,6 +123,7 @@ export default async function HomePage() {
           role: onboarding.role,
           onboardingComplete: onboarding.complete,
         })}
+        subjects={bank.subjects}
       />
     );
   }
@@ -125,7 +133,9 @@ export default async function HomePage() {
     <ExamApp
       role={session.role}
       initialProgress={progress}
-      resumable={resumableFor(session.userId)}
+      resumable={resumableFor(session.userId, bank.questions)}
+      subjects={bank.subjects}
+      questionBank={bank.questions}
     />
   );
 }

@@ -9,10 +9,8 @@
    is the *true* first attempt; the per-subject panel is labelled "recent"
    because it composes the 50-capped `ProgressData.subjects`.
    ========================================================================== */
-import { SUBJECTS } from '@/lib/exam/data';
+import { SUBJECTS, type Subject } from '@/lib/exam/data';
 import { overallAverage, type ProgressData, type SubjectSummary } from '@/lib/exam/attempts';
-
-const SUBJECT_BY_ID = new Map(SUBJECTS.map((s) => [s.id, s]));
 
 type Side = {
   label: string;
@@ -57,6 +55,7 @@ export function ComparisonView({
   child,
   youHistory,
   childHistory,
+  subjects: subjectList = SUBJECTS,
 }: {
   youLabel: string;
   childLabel: string;
@@ -64,6 +63,7 @@ export function ComparisonView({
   child: ProgressData; // capped (recent)
   youHistory: number[]; // uncapped, oldest-first scorePct
   childHistory: number[]; // uncapped, oldest-first scorePct
+  subjects?: readonly Subject[];
 }) {
   const youSide = toSide(youLabel, you, youHistory);
   const childSide = toSide(childLabel, child, childHistory);
@@ -72,8 +72,8 @@ export function ComparisonView({
     return null;
   }
 
-  // Subjects either side has attempted, in stable SUBJECTS order.
-  const subjects = SUBJECTS.filter(
+  // Subjects either side has attempted, in stable live-bank order.
+  const subjects = subjectList.filter(
     (s) => youSide.summaries.has(s.id) || childSide.summaries.has(s.id),
   );
 

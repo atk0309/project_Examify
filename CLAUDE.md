@@ -205,8 +205,12 @@ Automated path (Phase 0, no PDF extract / no LLM generate): author
 (or use `/onboarding` after first-run bootstrap — same directory emit, HITL
 dry-run before apply, empty tree refused). `emit` is dry-run by default;
 `--apply` writes `content/generated/` (public
-subjects/questions + server-only keys). The app merges those files onto the
-sample bank. Any id already in the sample bank is refused unless
+subjects/questions + server-only keys). The running app reads that JSON at
+request time (`src/lib/exam/live-bank.server.ts`) and merges it onto the
+sample bank, so Apply → dashboard shows new subjects without a rebuild.
+Registrars (`generated-public.ts` / `generated-keys.server.ts`) stay as the
+committed / missing-catalog fallback. Keys stay server-only. Any id already in
+the sample bank is refused unless
 `--replace-sample`. A partial emit (explicit IR files or mixed file+directory
 argv) merges `subjects.json` by id and leaves other generated subject files in
 place. A whole-tree emit of subjects directories only (`content/subjects`) is

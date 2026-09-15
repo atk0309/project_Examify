@@ -188,7 +188,8 @@ export async function validateOnboardingAction(): Promise<
 > {
   const gate = await requireOnboardingAdmin();
   if (!gate.ok) return gate;
-  const result = validateOnboardingIr();
+  const replaceSample = getHouseholdOnboarding(gate.householdId).state.replaceSample === true;
+  const result = validateOnboardingIr(replaceSample);
   if (!result.ok) {
     return { ok: false, reason: 'invalid', issues: result.issues };
   }
