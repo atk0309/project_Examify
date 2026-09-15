@@ -50,7 +50,7 @@ export function isUsableEnvSecret(value: string | undefined): boolean {
   return trimmed !== '' && trimmed !== 'test';
 }
 
-export type EnvSecretWriteError = { ok: false; reason: 'invalid' | 'disk' };
+export type EnvSecretWriteError = { ok: false; reason: 'invalid' | 'disk' | 'host_managed' };
 export type EnvSecretWriteSuccess = { ok: true };
 
 function isEnoent(error: unknown): boolean {
@@ -164,6 +164,7 @@ export function setEnvStoreSecret(
   root = getEnvStoreRoot(),
 ): EnvSecretWriteSuccess | EnvSecretWriteError {
   if (!isEnvStoreKey(key)) return { ok: false, reason: 'invalid' };
+  if (envStoreSecretHostManaged(key, root)) return { ok: false, reason: 'host_managed' };
   const value = normalizeSecretInput(raw);
   if (!value) return { ok: false, reason: 'invalid' };
   try {
@@ -185,6 +186,7 @@ export function clearEnvStoreSecret(
   root = getEnvStoreRoot(),
 ): EnvSecretWriteSuccess | EnvSecretWriteError {
   if (!isEnvStoreKey(key)) return { ok: false, reason: 'invalid' };
+  if (envStoreSecretHostManaged(key, root)) return { ok: false, reason: 'host_managed' };
   try {
     for (const name of ENV_FILES) {
       upsertEnvFile(envStorePath(root, name), key, null);
@@ -197,14 +199,59 @@ export function clearEnvStoreSecret(
 }
 
 function envFileHasKey(filePath: string, key: string): boolean {
+  return readEnvFileKey(filePath, key) !== undefined;
+}
+
+function parseEnvAssignmentValue(line: string, key: string): string | undefined {
+  if (!isKeyAssignment(line, key)) return undefined;
+  const body = line.trim();
+  const rest = body.startsWith('export ') ? body.slice(7).trim() : body;
+  const eq = rest.indexOf('=');
+  let value = rest.slice(eq + 1).trim();
+  if (
+    (value.startsWith('"') && value.endsWith('"')) ||
+    (value.startsWith("'") && value.endsWith("'"))
+  ) {
+    value = value.slice(1, -1);
+  }
+  return value;
+}
+
+function readEnvFileKey(filePath: string, key: string): string | undefined {
   try {
-    return readFileSync(filePath, 'utf8')
-      .split(/\r?\n/)
-      .some((line) => isKeyAssignment(line, key));
+    for (const line of readFileSync(filePath, 'utf8').split(/\r?\n/)) {
+      const value = parseEnvAssignmentValue(line, key);
+      if (value !== undefined) return value;
+    }
+    return undefined;
   } catch (error) {
-    if (isEnoent(error)) return false;
+    if (isEnoent(error)) return undefined;
     throw error;
   }
+}
+
+/** `.env` then `.env.local` (local wins) — same order as ingest `mergeRepoEnvFiles`. */
+function readStoreFileSecret(root: string, key: string): string | undefined {
+  let value = readEnvFileKey(envStorePath(root, PRIMARY_ENV_FILE), key);
+  const local = readEnvFileKey(envStorePath(root, ENV_FILES[1]), key);
+  if (local !== undefined) value = local;
+  return value;
+}
+
+/**
+ * True when `process.env` has a usable value that is not the file-store value.
+ * Docker / systemd / parent-process injects win after restart (`mergeRepoEnvFiles`
+ * leaves existing env alone), so a `.env` write would not persist.
+ */
+export function envStoreSecretHostManaged(
+  key: EnvStoreKey,
+  root = getEnvStoreRoot(),
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  const live = env[key]?.trim() ?? '';
+  if (!isUsableEnvSecret(live)) return false;
+  const stored = readStoreFileSecret(root, key)?.trim() ?? '';
+  return stored !== live;
 }
 
 export function envStoreSecretConfigured(

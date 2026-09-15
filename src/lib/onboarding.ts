@@ -33,7 +33,7 @@ import { db, schema } from '@/lib/db';
 import type { HouseholdRole } from '@/lib/db/schema';
 import { SAMPLE_QUESTIONS, SAMPLE_SUBJECTS } from '@/lib/exam/data';
 import { env } from '@/lib/env';
-import { envStoreSecretConfigured } from '@/lib/env-store';
+import { envStoreSecretConfigured, envStoreSecretHostManaged } from '@/lib/env-store';
 import { getMembershipForUser } from '@/lib/households';
 import {
   EMPTY_AUTHORITATIVE_EMIT,
@@ -352,6 +352,7 @@ export function completeOnboarding(householdId: number): void {
 function aiFlags(): {
   anthropicConfigured: boolean;
   openaiConfigured: boolean;
+  openaiHostManaged: boolean;
   localAgentConfigured: boolean;
 } {
   return {
@@ -361,6 +362,7 @@ function aiFlags(): {
     // OPENAI_API_KEY is not in env.ts / never NEXT_PUBLIC_*. Wizard + install.sh
     // write the same repo-root `.env` (findRepoRoot) and update process.env.
     openaiConfigured: envStoreSecretConfigured('OPENAI_API_KEY'),
+    openaiHostManaged: envStoreSecretHostManaged('OPENAI_API_KEY'),
     localAgentConfigured: Boolean(
       env.EXAMIFY_LLM_BASE_URL || process.env.EXAMIFY_INGEST_LOCAL_CMD?.trim(),
     ),

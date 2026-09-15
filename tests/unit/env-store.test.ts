@@ -160,4 +160,69 @@ describe('env-store', () => {
     expect(result).toEqual({ ok: false, reason: 'disk' });
     expect(JSON.stringify(result)).not.toContain(SECRET);
   });
+
+  it('treats a live process.env value that differs from the file store as host-managed', async () => {
+    const { envStoreSecretHostManaged, setEnvStoreSecret, clearEnvStoreSecret } =
+      await import('@/lib/env-store');
+    const root = tempRoot();
+    const injected = 'sk-host-injected-never-echo';
+    const attempted = 'sk-wizard-would-not-persist';
+    writeFileSync(path.join(root, '.env'), `OPENAI_API_KEY=${SECRET}\nOTHER=keep\n`);
+    writeFileSync(path.join(root, '.env.local'), `OPENAI_API_KEY=${SECRET}\n`);
+    const previous = process.env.OPENAI_API_KEY;
+    process.env.OPENAI_API_KEY = injected;
+    try {
+      expect(envStoreSecretHostManaged('OPENAI_API_KEY', root)).toBe(true);
+      expect(envStoreSecretHostManaged('OPENAI_API_KEY', root, { OPENAI_API_KEY: injected })).toBe(
+        true,
+      );
+      expect(envStoreSecretHostManaged('OPENAI_API_KEY', root, { OPENAI_API_KEY: SECRET })).toBe(
+        false,
+      );
+      expect(envStoreSecretHostManaged('OPENAI_API_KEY', root, {})).toBe(false);
+      expect(envStoreSecretHostManaged('OPENAI_API_KEY', root, { OPENAI_API_KEY: 'test' })).toBe(
+        false,
+      );
+
+      const set = setEnvStoreSecret('OPENAI_API_KEY', attempted, root);
+      expect(set).toEqual({ ok: false, reason: 'host_managed' });
+      expect(JSON.stringify(set)).not.toContain(injected);
+      expect(JSON.stringify(set)).not.toContain(attempted);
+      expect(JSON.stringify(set)).not.toContain(SECRET);
+
+      const cleared = clearEnvStoreSecret('OPENAI_API_KEY', root);
+      expect(cleared).toEqual({ ok: false, reason: 'host_managed' });
+      expect(JSON.stringify(cleared)).not.toContain(injected);
+      expect(JSON.stringify(cleared)).not.toContain(SECRET);
+
+      expect(readFileSync(path.join(root, '.env'), 'utf8')).toBe(
+        `OPENAI_API_KEY=${SECRET}\nOTHER=keep\n`,
+      );
+      expect(readFileSync(path.join(root, '.env.local'), 'utf8')).toBe(
+        `OPENAI_API_KEY=${SECRET}\n`,
+      );
+      expect(process.env.OPENAI_API_KEY).toBe(injected);
+    } finally {
+      if (previous === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = previous;
+    }
+  });
+
+  it('is not host-managed when the live value matches the file store', async () => {
+    const { envStoreSecretHostManaged, setEnvStoreSecret } = await import('@/lib/env-store');
+    const root = tempRoot();
+    const rotated = 'sk-openai-file-matched-rotate';
+    writeFileSync(path.join(root, '.env'), `OPENAI_API_KEY=${SECRET}\n`);
+    const previous = process.env.OPENAI_API_KEY;
+    process.env.OPENAI_API_KEY = SECRET;
+    try {
+      expect(envStoreSecretHostManaged('OPENAI_API_KEY', root)).toBe(false);
+      expect(setEnvStoreSecret('OPENAI_API_KEY', rotated, root)).toEqual({ ok: true });
+      expect(readFileSync(path.join(root, '.env'), 'utf8')).toContain(`OPENAI_API_KEY=${rotated}`);
+      expect(process.env.OPENAI_API_KEY).toBe(rotated);
+    } finally {
+      if (previous === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = previous;
+    }
+  });
 });

@@ -66,7 +66,8 @@ export type OnboardingActionError = {
     | 'missing_local'
     | 'empty_sources'
     | 'cancelled'
-    | 'rate_limited';
+    | 'rate_limited'
+    | 'host_managed';
   message?: string;
   issues?: { file: string; message: string }[];
 };

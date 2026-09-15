@@ -92,7 +92,8 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   discards the in-flight preview and does not replace prior IR; subject
   ids must be in the wizard catalog; OpenAI mode can set / rotate / clear
   `OPENAI_API_KEY` in the same repo-root `.env` as `install.sh` and
-  `examify-ingest generate` (shared `findRepoRoot`; never echoed); skip / Back / desktop rail lock while
+  `examify-ingest generate` (shared `findRepoRoot`; never echoed; host-injected
+  keys are not rotatable in the wizard); skip / Back / desktop rail lock while
   generate is in flight so Cancel stays reachable), and emit
   BankIR via `examify-ingest` (directory-only, Review / dry-run HITL before apply,
   empty catalog fail-closed; `--replace-sample` only behind an explicit advanced

@@ -563,6 +563,7 @@ describe('onboarding actions', () => {
       expect(written.ok).toBe(true);
       if (!written.ok) throw new Error('expected set');
       expect(written.snapshot.openaiConfigured).toBe(true);
+      expect(written.snapshot.openaiHostManaged).toBe(false);
       expect(JSON.stringify(written)).not.toContain(secret);
       expect(JSON.stringify(written)).not.toMatch(/OPENAI_API_KEY=/);
       expect(readFileSync(path.join(root, '.env'), 'utf8')).toContain(`OPENAI_API_KEY=${secret}`);
@@ -574,6 +575,7 @@ describe('onboarding actions', () => {
       expect(rotatedResult.ok).toBe(true);
       if (!rotatedResult.ok) throw new Error('expected rotate');
       expect(rotatedResult.snapshot.openaiConfigured).toBe(true);
+      expect(rotatedResult.snapshot.openaiHostManaged).toBe(false);
       expect(JSON.stringify(rotatedResult)).not.toContain(rotated);
       expect(readFileSync(path.join(root, '.env'), 'utf8')).toContain(`OPENAI_API_KEY=${rotated}`);
       expect(readFileSync(path.join(root, '.env'), 'utf8')).not.toContain(secret);
@@ -584,6 +586,7 @@ describe('onboarding actions', () => {
       expect(cleared.ok).toBe(true);
       if (!cleared.ok) throw new Error('expected clear');
       expect(cleared.snapshot.openaiConfigured).toBe(false);
+      expect(cleared.snapshot.openaiHostManaged).toBe(false);
       expect(JSON.stringify(cleared)).not.toContain(rotated);
       expect(readFileSync(path.join(root, '.env'), 'utf8')).not.toMatch(/OPENAI_API_KEY=/);
     } finally {
@@ -783,6 +786,48 @@ describe('onboarding actions', () => {
       expect(readFileSync(path.join(root, '.env'), 'utf8')).not.toContain(
         'sk-rate-limit-blocked-never-echo',
       );
+    } finally {
+      if (previous === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = previous;
+    }
+  });
+
+  it('refuses set / clear when OPENAI_API_KEY is host-managed, without echoing or writing', async () => {
+    const { setEnvStoreRootForTests } = await import('@/lib/env-store');
+    const root = tempRoot();
+    setEnvStoreRootForTests(root);
+    const fileSecret = 'sk-file-store-secret-never-echo';
+    const injected = 'sk-host-injected-action-never-echo';
+    const attempted = 'sk-wizard-host-managed-attempt-never-echo';
+    writeFileSync(
+      path.join(root, '.env'),
+      `ANTHROPIC_API_KEY=test\nOPENAI_API_KEY=${fileSecret}\n`,
+    );
+    await signInHost();
+    const previous = process.env.OPENAI_API_KEY;
+    process.env.OPENAI_API_KEY = injected;
+    try {
+      const { setOnboardingOpenAiKeyAction } = await import('@/actions/onboarding');
+      const set = new FormData();
+      set.set('intent', 'set');
+      set.set('openaiApiKey', attempted);
+      const written = await setOnboardingOpenAiKeyAction(set);
+      expect(written).toEqual({ ok: false, reason: 'host_managed' });
+      expect(JSON.stringify(written)).not.toContain(injected);
+      expect(JSON.stringify(written)).not.toContain(attempted);
+      expect(JSON.stringify(written)).not.toContain(fileSecret);
+
+      const clear = new FormData();
+      clear.set('intent', 'clear');
+      const cleared = await setOnboardingOpenAiKeyAction(clear);
+      expect(cleared).toEqual({ ok: false, reason: 'host_managed' });
+      expect(JSON.stringify(cleared)).not.toContain(injected);
+      expect(JSON.stringify(cleared)).not.toContain(fileSecret);
+
+      expect(readFileSync(path.join(root, '.env'), 'utf8')).toBe(
+        `ANTHROPIC_API_KEY=test\nOPENAI_API_KEY=${fileSecret}\n`,
+      );
+      expect(process.env.OPENAI_API_KEY).toBe(injected);
     } finally {
       if (previous === undefined) delete process.env.OPENAI_API_KEY;
       else process.env.OPENAI_API_KEY = previous;

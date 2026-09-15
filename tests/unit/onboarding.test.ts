@@ -107,7 +107,9 @@ beforeEach(async () => {
 
 afterEach(async () => {
   const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
+  const { setEnvStoreRootForTests } = await import('@/lib/env-store');
   setOnboardingContentRootForTests(null);
+  setEnvStoreRootForTests(null);
 });
 
 describe('onboarding catalog emit', () => {
@@ -592,14 +594,20 @@ describe('onboarding household gate', () => {
   it('exposes AI configured flags including OpenAI env detection', async () => {
     const { bootstrapHousehold } = await import('@/lib/households');
     const { getOnboardingSnapshot } = await import('@/lib/onboarding');
+    const { setEnvStoreRootForTests } = await import('@/lib/env-store');
     const host = bootstrapHousehold({ email: 'pat@example.com', householdName: 'Ours' });
     expect(host.ok).toBe(true);
     if (!host.ok) throw new Error('bootstrap');
+    const root = mkdtempSync(path.join(tmpdir(), 'examify-onboarding-openai-'));
+    writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'project-examify' }));
+    writeFileSync(path.join(root, '.env'), 'ANTHROPIC_API_KEY=test\n');
+    setEnvStoreRootForTests(root);
     const previous = process.env.OPENAI_API_KEY;
     delete process.env.OPENAI_API_KEY;
     try {
       const snap = getOnboardingSnapshot(host.householdId);
       expect(snap.openaiConfigured).toBe(false);
+      expect(snap.openaiHostManaged).toBe(false);
       expect(snap.anthropicConfigured).toBe(false);
     } finally {
       if (previous === undefined) delete process.env.OPENAI_API_KEY;
@@ -607,7 +615,16 @@ describe('onboarding household gate', () => {
     }
     process.env.OPENAI_API_KEY = 'sk-test-not-a-sentinel';
     try {
-      expect(getOnboardingSnapshot(host.householdId).openaiConfigured).toBe(true);
+      const injected = getOnboardingSnapshot(host.householdId);
+      expect(injected.openaiConfigured).toBe(true);
+      expect(injected.openaiHostManaged).toBe(true);
+      writeFileSync(
+        path.join(root, '.env'),
+        'ANTHROPIC_API_KEY=test\nOPENAI_API_KEY=sk-test-not-a-sentinel\n',
+      );
+      const matched = getOnboardingSnapshot(host.householdId);
+      expect(matched.openaiConfigured).toBe(true);
+      expect(matched.openaiHostManaged).toBe(false);
     } finally {
       if (previous === undefined) delete process.env.OPENAI_API_KEY;
       else process.env.OPENAI_API_KEY = previous;

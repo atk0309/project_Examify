@@ -136,6 +136,8 @@ function errorCopy(error: OnboardingActionError): string {
       return 'Generate cancelled.';
     case 'rate_limited':
       return 'Too many key updates. Try again in a bit.';
+    case 'host_managed':
+      return 'This key is set by the host environment (Docker, systemd, or a parent process). Change it there — a .env write will not survive restart.';
     default:
       return 'Something went wrong.';
   }
@@ -385,11 +387,16 @@ export function OnboardingWizard({
                     applyResult(await setOnboardingAiModeAction(data));
                   })
                 }
-                onOpenAiKey={(data) =>
-                  run(async () => {
-                    applyResult(await setOnboardingOpenAiKeyAction(data));
-                  })
-                }
+                onOpenAiKey={async (data) => {
+                  try {
+                    const result = await setOnboardingOpenAiKeyAction(data);
+                    return applyResult(result);
+                  } catch (caught) {
+                    if (caught && typeof caught === 'object' && 'digest' in caught) throw caught;
+                    setError('Something went wrong.');
+                    return false;
+                  }
+                }}
                 onCancel={() => {
                   generateCancelRef.current = true;
                   const token = generateCancelTokenRef.current;
@@ -1135,32 +1142,47 @@ function SubjectDropzone({
 
 function OpenAiKeyPanel({
   configured,
+  hostManaged,
   pending,
   onSave,
   onClear,
 }: {
   configured: boolean;
+  hostManaged: boolean;
   pending: boolean;
-  onSave: (key: string) => void;
+  onSave: (key: string) => Promise<boolean>;
   onClear: () => void;
 }) {
   const [rotating, setRotating] = useState(false);
   const [value, setValue] = useState('');
-  const showField = !configured || rotating;
+  const [saving, setSaving] = useState(false);
+  const busy = pending || saving;
+  const showField = !hostManaged && (!configured || rotating);
 
   return (
     <div className="wizard-secret" data-testid="wizard-openai-key">
       <p className="login-fine">
-        Saved on this host in the same .env store as install.sh. The value is never shown again.
+        {hostManaged
+          ? 'OpenAI is set by the host environment (Docker, systemd, or a parent process). Rotate or clear it there — a .env write will not survive restart.'
+          : 'Saved on this host in the same .env store as install.sh. The value is never shown again.'}
       </p>
-      {showField ? (
+      {hostManaged ? null : showField ? (
         <form
           className="wizard-secret-form"
           onSubmit={(event) => {
             event.preventDefault();
-            onSave(value);
-            setValue('');
-            setRotating(false);
+            void (async () => {
+              setSaving(true);
+              try {
+                const ok = await onSave(value);
+                if (ok) {
+                  setValue('');
+                  setRotating(false);
+                }
+              } finally {
+                setSaving(false);
+              }
+            })();
           }}
         >
           <label className="field-label" htmlFor="wizard-openai-key-input">
@@ -1172,7 +1194,7 @@ function OpenAiKeyPanel({
             type="password"
             autoComplete="off"
             value={value}
-            disabled={pending}
+            disabled={busy}
             data-testid="wizard-openai-key-input"
             onChange={(event) => setValue(event.target.value)}
           />
@@ -1180,7 +1202,7 @@ function OpenAiKeyPanel({
             <button
               className="btn btn-primary"
               type="submit"
-              disabled={pending || value.trim().length < 1}
+              disabled={busy || value.trim().length < 1}
               data-testid="wizard-openai-key-save"
             >
               Save key
@@ -1189,7 +1211,7 @@ function OpenAiKeyPanel({
               <button
                 className="btn btn-ghost"
                 type="button"
-                disabled={pending}
+                disabled={busy}
                 data-testid="wizard-openai-key-cancel"
                 onClick={() => {
                   setRotating(false);
@@ -1206,7 +1228,7 @@ function OpenAiKeyPanel({
           <button
             className="btn btn-ghost"
             type="button"
-            disabled={pending}
+            disabled={busy}
             data-testid="wizard-openai-key-rotate"
             onClick={() => setRotating(true)}
           >
@@ -1215,7 +1237,7 @@ function OpenAiKeyPanel({
           <button
             className="btn btn-ghost"
             type="button"
-            disabled={pending}
+            disabled={busy}
             data-testid="wizard-openai-key-clear"
             onClick={() => {
               if (
@@ -1260,7 +1282,7 @@ function AiStep({
   irReady: boolean;
   onSeed: (seed: number) => void;
   onSelect: (mode: OnboardingAiMode) => void;
-  onOpenAiKey: (data: FormData) => void;
+  onOpenAiKey: (data: FormData) => Promise<boolean>;
   onGenerate: (subjectIds: string[]) => void;
   onCancel: () => void;
   onGoValidate: () => void;
@@ -1304,12 +1326,13 @@ function AiStep({
       {snapshot.aiMode === 'cloud-openai' ? (
         <OpenAiKeyPanel
           configured={snapshot.openaiConfigured}
+          hostManaged={snapshot.openaiHostManaged}
           pending={busy}
-          onSave={(key) => {
+          onSave={async (key) => {
             const data = new FormData();
             data.set('intent', 'set');
             data.set('openaiApiKey', key);
-            onOpenAiKey(data);
+            return onOpenAiKey(data);
           }}
           onClear={() => {
             const data = new FormData();
