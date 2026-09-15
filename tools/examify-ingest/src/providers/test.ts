@@ -1,5 +1,5 @@
 import { bankIrSchema, type BankIR } from '../schema';
-import type { GenerateProvider, ProviderRequest } from './types';
+import { throwIfAborted, type GenerateProvider, type ProviderRequest } from './types';
 
 /** Deterministic fixture provider. No network. Same seed + sources → same IR. */
 export function buildTestBank(request: ProviderRequest): BankIR {
@@ -50,5 +50,8 @@ export const testProvider: GenerateProvider = {
   keyEnv: null,
   seedHonored: true,
   requireReady: () => undefined,
-  generate: (request) => Promise.resolve(buildTestBank(request)),
+  generate: (request, deps) => {
+    throwIfAborted(deps.signal);
+    return Promise.resolve(buildTestBank(request));
+  },
 };

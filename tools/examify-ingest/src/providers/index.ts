@@ -6,11 +6,16 @@ import { testProvider } from './test';
 import { ProviderConfigError, type GenerateProvider } from './types';
 
 export {
+  GenerateAbortedError,
   PROVIDER_TIMEOUT_MS,
   ProviderConfigError,
   hasUsableKey,
+  isAbortError,
+  providerRequestSignal,
   providerTimeoutSignal,
   readRequiredKey,
+  throwIfAborted,
+  withProviderSignal,
 } from './types';
 export type { ProviderDeps, ProviderEnv, ProviderRequest } from './types';
 export { UNTRUSTED_SOURCE_NOTE, fenceUntrustedText } from './content';

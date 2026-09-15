@@ -99,7 +99,10 @@ PDF page images, when rasterized with `pdftoppm`, are reused from
 `.examify-ingest/cache/pages/<pdf-sha256>/` and framed as untrusted data, same
 as source files. OpenAI-compatible generate (`openai` and local HTTP) cannot
 inline raw PDF bytes: if the only sources are PDFs and no page images were
-rasterized, the run fails closed. Provider HTTP/CMD calls use a 180s deadline.
+rasterized, the run fails closed. Provider HTTP/CMD calls use a 180s deadline,
+optionally combined with `generateSubject({ signal })` via `AbortSignal.any`.
+Abort throws `GenerateAbortedError` and writes no IR, IR cache, page-raster
+cache, or run manifest.
 Sources must stay under `content/subjects/<id>/` or `content/source-pdfs/<id>`.
 
 Source blobs are wrapped as `UNTRUSTED SOURCE MATERIAL` with static
@@ -228,3 +231,13 @@ import { generateSubject } from 'examify-ingest/generate';
 (`examify-ingest/generate`, not the Phase 0 emit graph). It still only writes
 BankIR (+ gitignored run/cache files). Callers must run validate → emit
 dry-run → emit apply themselves.
+
+Optional `signal?: AbortSignal` is forwarded to Anthropic / OpenAI / local HTTP
+`fetch` and to the local CMD subprocess. Abort/timeout kill the POSIX process
+group (SIGTERM, then SIGKILL); stderr is discarded so a chatty wrapper cannot
+fill the pipe and hang. The test fixture
+honors an already-aborted signal. Wizard cancel may only claim it "stops the
+network call" when it passes this signal through to `generateSubject`. Skipping
+the IR write after the provider returns is not provider abort. Abort after the
+provider returns still writes no `bank.ir.json`, IR cache, page-raster cache,
+or run manifest. `--dry-run-ir` still writes nothing durable.
