@@ -19,14 +19,23 @@ export {
   type ValidateResult,
   type ValidatedBank,
 } from './validate';
-export { findRepoRoot, loadIrFiles, resolveIrFiles } from './load';
+export {
+  findRepoRoot,
+  isAuthoritativeCatalogInput,
+  loadIrFiles,
+  resolveIrFiles,
+  type ResolveIrOptions,
+} from './load';
 export {
   applyEmit,
+  collectGeneratedSubjectIds,
   formatEmitPlan,
   GENERATED_DIR,
   mergeGeneratedSubjects,
   planEmit,
   readGeneratedSubjects,
+  reconcileGeneratedSubjects,
+  type PlanEmitOptions,
   type PlannedFile,
 } from './emit';
 export { formatFileDiff, stableJson } from './diff';

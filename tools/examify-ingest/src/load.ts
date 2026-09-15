@@ -19,8 +19,22 @@ function statOrThrow(absPath: string, label: string): Stats {
   }
 }
 
+export type ResolveIrOptions = {
+  /**
+   * When true, a subjects directory with no child `bank.ir.json` files
+   * contributes no paths instead of throwing. Authoritative emit uses this
+   * so it can refuse an empty catalog with a clear error instead of treating
+   * it as a generic resolve failure.
+   */
+  allowEmptyDirectory?: boolean;
+};
+
 /** Resolve a subjects directory (each child folder's bank.ir.json) or explicit IR file paths. */
-export function resolveIrFiles(inputs: readonly string[], cwd: string): string[] {
+export function resolveIrFiles(
+  inputs: readonly string[],
+  cwd: string,
+  options: ResolveIrOptions = {},
+): string[] {
   const resolved: string[] = [];
   const seen = new Set<string>();
 
@@ -51,6 +65,7 @@ export function resolveIrFiles(inputs: readonly string[], cwd: string): string[]
         }
       }
       if (found === 0) {
+        if (options.allowEmptyDirectory) continue;
         throw new Error(`no */bank.ir.json files under ${input}`);
       }
       continue;
@@ -66,6 +81,27 @@ export function resolveIrFiles(inputs: readonly string[], cwd: string): string[]
   }
 
   return resolved;
+}
+
+/**
+ * True only when every emit input is a subjects directory (typically
+ * `content/subjects`). That run is the authoritative generated catalog and
+ * leftover subject JSON may be pruned. Any explicit IR file path — including
+ * mixed file+directory argv — stays partial and never deletes siblings.
+ */
+export function isAuthoritativeCatalogInput(inputs: readonly string[], cwd: string): boolean {
+  if (inputs.length === 0) return false;
+  for (const input of inputs) {
+    const abs = path.resolve(cwd, input);
+    try {
+      if (!statSync(abs).isDirectory()) return false;
+    } catch (error) {
+      if (isEnoent(error)) return false;
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`cannot stat ${input}: ${message}`, { cause: error });
+    }
+  }
+  return true;
 }
 
 export function loadIrFiles(paths: readonly string[]): LoadedIrFile[] {

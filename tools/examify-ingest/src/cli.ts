@@ -1,7 +1,7 @@
 import { SAMPLE_QUESTIONS } from '../../../src/lib/exam/data';
 import { applyEmit, formatEmitPlan, planEmit } from './emit';
 import { collectQuestionIds } from './ids';
-import { findRepoRoot, loadIrFiles, resolveIrFiles } from './load';
+import { findRepoRoot, isAuthoritativeCatalogInput, loadIrFiles, resolveIrFiles } from './load';
 import { validateIrCollection } from './validate';
 
 export const USAGE = `Usage:
@@ -9,6 +9,11 @@ export const USAGE = `Usage:
   examify-ingest emit <subjects-dir|ir.json...> [--dry-run] [--apply] [--replace-sample]
 
 emit is dry-run by default. Writes only with --apply.
+A subjects-directory emit (every path is a directory, typically content/subjects)
+prunes leftover generated subject JSON when the tree still has BankIR. An empty
+subjects directory is refused (fail closed) and never wipes generated files.
+Explicit IR files never prune; mixed file+directory argv is partial-safe and
+never prunes.
 `;
 
 export type CliIo = {
@@ -83,13 +88,33 @@ export function runCli(argv: readonly string[], io: CliIo): number {
     return 0;
   }
 
+  let pruneMissing = false;
+  if (parsed.command === 'emit') {
+    try {
+      pruneMissing = isAuthoritativeCatalogInput(parsed.paths, io.cwd);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      io.stderr.write(`${message}\n`);
+      return 1;
+    }
+  }
+
   let files;
   try {
-    const paths = resolveIrFiles(parsed.paths, io.cwd);
+    const paths = resolveIrFiles(parsed.paths, io.cwd, {
+      allowEmptyDirectory: pruneMissing,
+    });
     files = loadIrFiles(paths);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     io.stderr.write(`${message}\n`);
+    return 1;
+  }
+
+  if (pruneMissing && files.length === 0) {
+    io.stderr.write(
+      'authoritative emit refused: no BankIR files in the subjects tree (will not wipe generated content)\n',
+    );
     return 1;
   }
 
@@ -123,7 +148,7 @@ export function runCli(argv: readonly string[], io: CliIo): number {
 
   let planned;
   try {
-    planned = planEmit(result.banks, repoRoot);
+    planned = planEmit(result.banks, repoRoot, { pruneMissing });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     io.stderr.write(`${message}\n`);
@@ -141,7 +166,7 @@ export function runCli(argv: readonly string[], io: CliIo): number {
     return 0;
   }
   for (const file of written) {
-    const verb = file.existing === null ? 'created' : 'updated';
+    const verb = file.delete ? 'deleted' : file.existing === null ? 'created' : 'updated';
     io.stdout.write(`${verb} ${file.relPath}\n`);
   }
   return 0;
