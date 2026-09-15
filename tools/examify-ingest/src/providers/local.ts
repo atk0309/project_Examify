@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { extractJsonObject } from '../json';
 import { bankIrSchema, type BankIR } from '../schema';
 import { UNTRUSTED_SOURCE_NOTE, buildOpenAiCompatibleUserContent } from './content';
@@ -101,10 +101,48 @@ async function generateViaHttp(
 }
 
 const LOCAL_CMD_MAX_BUFFER = 10 * 1024 * 1024;
+const LOCAL_CMD_KILL_GRACE_MS = 250;
 
 function cmdAbortError(userSignal?: AbortSignal): Error {
   if (userSignal?.aborted) return new GenerateAbortedError();
   return new Error(`local command timed out after ${PROVIDER_TIMEOUT_MS}ms`);
+}
+
+/** Kill the spawned command and, on POSIX, its process group (descendants). */
+function killLocalCmdTree(child: ChildProcess): ReturnType<typeof setTimeout> | undefined {
+  const pid = child.pid;
+  if (process.platform === 'win32') {
+    if (pid) {
+      spawn('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' });
+    } else {
+      child.kill();
+    }
+    return undefined;
+  }
+  if (pid) {
+    try {
+      process.kill(-pid, 'SIGTERM');
+    } catch {
+      try {
+        child.kill('SIGTERM');
+      } catch {
+        // Already exited.
+      }
+    }
+    return setTimeout(() => {
+      try {
+        process.kill(-pid, 'SIGKILL');
+      } catch {
+        try {
+          child.kill('SIGKILL');
+        } catch {
+          // Already exited.
+        }
+      }
+    }, LOCAL_CMD_KILL_GRACE_MS);
+  }
+  child.kill();
+  return undefined;
 }
 
 function generateViaCmd(
@@ -148,9 +186,15 @@ function generateViaCmd(
   return new Promise((resolve, reject) => {
     let stdout = '';
     let settled = false;
+    let killing = false;
+    let escalate: ReturnType<typeof setTimeout> | undefined;
+    let child: ChildProcess | undefined;
     const finish = (error: Error | null, text?: string) => {
       if (settled) return;
       settled = true;
+      // Keep the SIGKILL timer after we start a tree kill so descendants
+      // that ignore SIGTERM still die after the parent close settles.
+      if (escalate && !killing) clearTimeout(escalate);
       if (error) {
         reject(error);
         return;
@@ -162,9 +206,19 @@ function generateViaCmd(
       }
     };
 
-    let child;
+    const abortChild = () => {
+      if (!child || killing) return;
+      killing = true;
+      escalate = killLocalCmdTree(child);
+    };
+
     try {
-      child = spawn(cmd, parts.slice(1), { signal: requestSignal });
+      // Detached POSIX group so abort/timeout can SIGTERM then SIGKILL descendants.
+      // stderr is ignored so a chatty wrapper cannot fill the pipe and hang (spawnSync drained it).
+      child = spawn(cmd, parts.slice(1), {
+        detached: process.platform !== 'win32',
+        stdio: ['pipe', 'pipe', 'ignore'],
+      });
     } catch (error) {
       if (isAbortError(error) || requestSignal.aborted) {
         finish(cmdAbortError(userSignal));
@@ -175,11 +229,17 @@ function generateViaCmd(
       return;
     }
 
+    if (requestSignal.aborted) {
+      abortChild();
+    } else {
+      requestSignal.addEventListener('abort', abortChild, { once: true });
+    }
+
     child.stdout?.setEncoding('utf8');
     child.stdout?.on('data', (chunk: string) => {
       stdout += chunk;
       if (Buffer.byteLength(stdout, 'utf8') > LOCAL_CMD_MAX_BUFFER) {
-        child.kill();
+        abortChild();
         finish(new Error('local command exceeded maxBuffer'));
       }
     });

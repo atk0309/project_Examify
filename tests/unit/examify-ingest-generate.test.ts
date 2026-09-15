@@ -1125,7 +1125,7 @@ describe('examify-ingest generate abort', () => {
     }
   });
 
-  it('cache hit already aborted does not rewrite IR', async () => {
+  it('already-aborted signal short-circuits before cache reuse', async () => {
     const root = examifyRepo();
     const irPath = path.join(root, 'content/subjects/plants/bank.ir.json');
     const request = {
@@ -1162,7 +1162,7 @@ describe('examify-ingest generate abort', () => {
     expect(existsSync(irPath)).toBe(false);
   });
 
-  it('cache hit abort during reuse still writes no IR', async () => {
+  it('cache hit abort after lookup does not rewrite IR', async () => {
     const root = examifyRepo();
     const irPath = path.join(root, 'content/subjects/plants/bank.ir.json');
     const request = {
@@ -1181,16 +1181,23 @@ describe('examify-ingest generate abort', () => {
     unlinkSync(irPath);
 
     const controller = new AbortController();
-    const pending = generateSubject({
-      ...request,
-      env: {},
-      signal: controller.signal,
-      fetch: async () => {
-        throw new Error('network should not run on cache hit');
-      },
-    });
-    controller.abort();
-    await expect(pending).rejects.toBeInstanceOf(GenerateAbortedError);
+    let fetchCalls = 0;
+    await expect(
+      generateSubject({
+        ...request,
+        env: {},
+        signal: controller.signal,
+        fetch: async () => {
+          fetchCalls += 1;
+          throw new Error('network should not run on cache hit');
+        },
+        now: () => {
+          controller.abort();
+          return new Date('2026-01-01T00:00:00.000Z');
+        },
+      }),
+    ).rejects.toBeInstanceOf(GenerateAbortedError);
+    expect(fetchCalls).toBe(0);
     expect(existsSync(irPath)).toBe(false);
   });
 
@@ -1334,5 +1341,85 @@ process.stdin.on('end', () => {
     expect(result.wroteIr).toBe(true);
     expect(existsSync(result.irPath)).toBe(true);
     expect(result.bank.difficulties.easy[0]?.q).toBe('Abort fixture?');
+  });
+
+  it('local CMD still completes when stderr floods the pipe', async () => {
+    const root = examifyRepo();
+    const script = path.join(root, 'stderr-flood-local-cmd.mjs');
+    writeFileSync(
+      script,
+      `
+process.stderr.write('x'.repeat(256 * 1024));
+let buf = '';
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', (chunk) => {
+  buf += chunk;
+});
+process.stdin.on('end', () => {
+  process.stdout.write(${JSON.stringify(JSON.stringify(abortFixtureBank()))});
+});
+`,
+    );
+    const result = await generateSubject({
+      repoRoot: root,
+      subject: plantsSubject(),
+      subjectDir: path.join(root, 'content/subjects/plants'),
+      sources: resolveSubjectSources(root, 'plants', path.join(root, 'content/subjects/plants')),
+      provider: 'local',
+      seed: 0,
+      env: { EXAMIFY_INGEST_LOCAL_CMD: `node "${script}"` },
+    });
+    expect(result.wroteIr).toBe(true);
+    expect(result.bank.difficulties.easy[0]?.q).toBe('Abort fixture?');
+  });
+
+  it('local CMD abort kills SIGTERM-ignoring descendants', async () => {
+    const root = examifyRepo();
+    const pidPath = path.join(root, 'grandchild.pid');
+    const script = path.join(root, 'tree-local-cmd.mjs');
+    writeFileSync(
+      script,
+      `
+import { spawn } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
+const child = spawn(
+  process.execPath,
+  ['-e', 'process.on("SIGTERM", () => {}); setInterval(() => {}, 1000);'],
+  { stdio: 'ignore' },
+);
+writeFileSync(${JSON.stringify(pidPath)}, String(child.pid));
+process.stdin.resume();
+setInterval(() => {}, 1000);
+`,
+    );
+    const controller = new AbortController();
+    const pending = generateSubject({
+      repoRoot: root,
+      subject: plantsSubject(),
+      subjectDir: path.join(root, 'content/subjects/plants'),
+      sources: resolveSubjectSources(root, 'plants', path.join(root, 'content/subjects/plants')),
+      provider: 'local',
+      seed: 0,
+      env: { EXAMIFY_INGEST_LOCAL_CMD: `node "${script}"` },
+      signal: controller.signal,
+    });
+    const started = Date.now();
+    while (!existsSync(pidPath) && Date.now() - started < 2000) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    expect(existsSync(pidPath)).toBe(true);
+    const grandchildPid = Number(readFileSync(pidPath, 'utf8'));
+    expect(grandchildPid).toBeGreaterThan(0);
+    controller.abort();
+    await expect(pending).rejects.toBeInstanceOf(GenerateAbortedError);
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    let alive = true;
+    try {
+      process.kill(grandchildPid, 0);
+    } catch {
+      alive = false;
+    }
+    expect(alive).toBe(false);
+    expect(existsSync(path.join(root, 'content/subjects/plants/bank.ir.json'))).toBe(false);
   });
 });

@@ -233,7 +233,9 @@ BankIR (+ gitignored run/cache files). Callers must run validate → emit
 dry-run → emit apply themselves.
 
 Optional `signal?: AbortSignal` is forwarded to Anthropic / OpenAI / local HTTP
-`fetch` and to the local CMD subprocess (kill on abort). The test fixture
+`fetch` and to the local CMD subprocess. Abort/timeout kill the POSIX process
+group (SIGTERM, then SIGKILL); stderr is discarded so a chatty wrapper cannot
+fill the pipe and hang. The test fixture
 honors an already-aborted signal. Wizard cancel may only claim it "stops the
 network call" when it passes this signal through to `generateSubject`. Skipping
 the IR write after the provider returns is not provider abort. Abort after the
