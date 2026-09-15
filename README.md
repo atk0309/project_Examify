@@ -154,7 +154,9 @@ Who may sign in is stored in SQLite, not env:
    email lock only chooses which mailbox we send to (not mailbox proof
    by itself). An open student link lets anyone with the URL start a
    join for an email they control. If no mail transport (or allowed
-   outbox) is configured, accept fails closed. Prefer email-lock
+   outbox) is configured, accept fails closed; a failed send after
+   issue also invalidates that unused OTP. Complete refuses a code
+   that is not bound to the invite. Prefer email-lock
    (already required for parents); never post links publicly. See
    [`SECURITY.md`](SECURITY.md).
 3. **Accept** — the invitee opens `/invite/<token>` and finishes in the configured

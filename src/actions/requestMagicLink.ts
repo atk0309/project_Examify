@@ -3,7 +3,7 @@
 import { headers } from 'next/headers';
 import { z } from 'zod';
 import { isAllowedEmail } from '@/lib/allowlist';
-import { issueLocalOtp, issueMagicLink } from '@/lib/auth';
+import { invalidateIssuedOtp, issueLocalOtp, issueMagicLink } from '@/lib/auth';
 import { verifyTurnstile } from '@/lib/captcha';
 import { renderMagicLinkEmail, renderOtpEmail, sendEmail } from '@/lib/email';
 import { env, getAuthMode, isTurnstileEnabled } from '@/lib/env';
@@ -66,7 +66,7 @@ export async function requestMagicLink(
   // state so an attacker can't enumerate which emails are members.
   if (isAllowedEmail(role, email)) {
     if (mode === 'local-otp') {
-      const { code } = issueLocalOtp(email, role);
+      const { id, code } = issueLocalOtp(email, role);
       const rendered = renderOtpEmail({ code, email, siteName: siteConfig.name });
       const result = await sendEmail({
         to: email,
@@ -76,6 +76,7 @@ export async function requestMagicLink(
         code,
       });
       if (!result.ok) {
+        invalidateIssuedOtp(id);
         console.error('[auth] local-otp delivery failed', { email, error: result.error });
       }
     } else {

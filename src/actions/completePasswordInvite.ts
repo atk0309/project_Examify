@@ -24,7 +24,8 @@ export type CompletePasswordInviteState =
 /**
  * Password-mode invite accept, step 2: consume the mailbox OTP and persist
  * the password hash in the same transaction that attaches membership and
- * stamps `emailVerifiedAt`, then establish the session.
+ * stamps `emailVerifiedAt`, then establish the session. The token must
+ * carry `magic_tokens.invite_id` — a leftover sign-in OTP is refused.
  */
 export async function completePasswordInvite(
   _prev: CompletePasswordInviteState,
@@ -58,6 +59,7 @@ export async function completePasswordInvite(
   const passwordHash = hashPassword(parsed.data.password);
   const result = consumeLocalOtp(parsed.data.email, parsed.data.role, parsed.data.code, {
     passwordHash,
+    requireInviteId: true,
   });
   if (!result.ok) return { status: 'error', reason: 'invalid' };
 

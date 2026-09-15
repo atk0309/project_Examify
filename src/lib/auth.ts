@@ -188,7 +188,7 @@ export function issueLocalOtp(
   email: string,
   role: SessionRole,
   opts?: { inviteId?: number },
-): { code: string; expiresAt: Date } {
+): { id: number; code: string; expiresAt: Date } {
   const now = Date.now();
   const expiresAt = new Date(now + OTP_TTL_MS);
   let lastError: unknown;
@@ -229,7 +229,7 @@ export function issueLocalOtp(
           )
           .run();
 
-        return { code, expiresAt };
+        return { id: inserted.id, code, expiresAt };
       });
     } catch (error) {
       lastError = error;
@@ -240,15 +240,32 @@ export function issueLocalOtp(
 }
 
 /**
+ * Mark one issued OTP consumed. Used when `sendEmail` fails after issue so
+ * a code that never reached the mailbox cannot be guessed or retried.
+ * Targets that row only — a concurrent re-issue for the same email+role
+ * must keep its own unused code.
+ */
+export function invalidateIssuedOtp(id: number, now = Date.now()): void {
+  db.update(schema.magicTokens)
+    .set({ consumedAt: new Date(now) })
+    .where(and(eq(schema.magicTokens.id, id), isNull(schema.magicTokens.consumedAt)))
+    .run();
+}
+
+/**
  * Consumes a local OTP for an email and role. Malformed codes fail without
  * counting as guesses; after five well-formed failures within the OTP lifetime,
  * outstanding codes for that email and role are invalidated.
+ * `invite-invalid` is not a guess — a leftover sign-in OTP (or a revoked
+ * invite) must not burn the 5-guess lock. Setting a password is invite-bound
+ * inside `consumeHashedBearer` (defense in depth; `requireInviteId` stays
+ * at the complete call site).
  */
 export function consumeLocalOtp(
   email: string,
   role: SessionRole,
   code: string,
-  opts?: { passwordHash?: string },
+  opts?: { passwordHash?: string; requireInviteId?: boolean },
 ): ConsumeResult {
   const trimmed = code.trim();
   if (!/^\d{6}$/.test(trimmed)) {
@@ -264,7 +281,7 @@ export function consumeLocalOtp(
   }
 
   const result = consumeHashedBearer(otpBearer(email, role, trimmed), opts);
-  if (!result.ok) {
+  if (!result.ok && result.reason !== 'invite-invalid') {
     recordOtpGuessFailure(email, role, now);
   }
   return result;
@@ -316,8 +333,13 @@ export function consumeMagicToken(token: string): ConsumeResult {
  * All-or-nothing inside a transaction so a partial failure can't issue a
  * session without persisting the user. The role the link was issued for is
  * carried on the token row and returned so the caller can set `session.role`.
+ * Setting a password (or `requireInviteId`) refuses tokens with no
+ * `invite_id` (rollback, unused) — not only at the call site.
  */
-function consumeHashedBearer(token: string, opts?: { passwordHash?: string }): ConsumeResult {
+function consumeHashedBearer(
+  token: string,
+  opts?: { passwordHash?: string; requireInviteId?: boolean },
+): ConsumeResult {
   const tokenHash = sha256(token);
   const now = Date.now();
   const passwordHash = opts?.passwordHash;
@@ -345,6 +367,14 @@ function consumeHashedBearer(token: string, opts?: { passwordHash?: string }): C
         if (!anyRow) return { ok: false, reason: 'not-found' as const };
         if (anyRow.consumedAt) return { ok: false, reason: 'used' as const };
         return { ok: false, reason: 'expired' as const };
+      }
+
+      // Password-invite complete is invite-bound: a leftover sign-in OTP
+      // (no invite_id) must not stamp emailVerifiedAt or set a password.
+      // Refuse when a password is being set even if the caller omitted
+      // requireInviteId — that flag stays at the complete call site.
+      if (row.inviteId == null && (passwordHash || opts?.requireInviteId)) {
+        throw new ConsumeRollback({ ok: false, reason: 'invite-invalid' });
       }
 
       tx.update(schema.magicTokens)

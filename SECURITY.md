@@ -63,7 +63,12 @@ stamp `emailVerifiedAt` — until the invitee proves the mailbox.
   control — they still have to prove that mailbox.
 - **Fail closed without mail.** If no SMTP / Resend / allowed outbox can
   deliver the code, accept returns a clear error instead of trusting the invite
-  URL. Production outbox still needs `ALLOW_LOCAL_OUTBOX=1`.
+  URL. If delivery fails after the OTP is issued, that unused code is
+  invalidated. `completePasswordInvite` also refuses a token with no
+  `magic_tokens.invite_id` (and `consumeHashedBearer` refuses a password
+  stamp on a leftover sign-in OTP even if the caller omits `requireInviteId`).
+  An `invite-invalid` consume does not count toward the 5-guess OTP lock.
+  Production outbox still needs `ALLOW_LOCAL_OUTBOX=1`.
 - Treat invite links like passwords. Do not post them publicly, in tickets, or
   in chat logs. Revoke unused or leaked links from the parent dashboard.
 - Prefer an email lock on every invite. Parent invites are already required to
