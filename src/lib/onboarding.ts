@@ -22,6 +22,7 @@ import {
   planEmit,
   publicQuestionIds,
   resolveIrFiles,
+  resolveSubjectSources,
   SUBJECT_ID_RE,
   validateIrCollection,
   type PlannedFile,
@@ -63,9 +64,6 @@ export { getOnboardingContentRoot, setOnboardingContentRootForTests } from '@/li
 export const SUBJECTS_REL = 'content/subjects';
 export const SOURCE_PDFS_REL = 'content/source-pdfs';
 export const BANK_IR_FILE = 'bank.ir.json';
-const SUBJECT_META_FILE = 'subject.json';
-const GENERATE_SOURCE_EXT = new Set(['.pdf', '.png', '.jpg', '.jpeg', '.webp', '.txt', '.md']);
-const SKIP_GENERATE_NAMES = new Set([BANK_IR_FILE, SUBJECT_META_FILE]);
 export const MAX_SOURCE_PDF_BYTES = 8 * 1024 * 1024;
 /** Server Action multipart ceiling — above {@link MAX_SOURCE_PDF_BYTES} plus form fields. */
 export const ONBOARDING_ACTION_BODY_LIMIT_BYTES = MAX_SOURCE_PDF_BYTES + 2 * 1024 * 1024;
@@ -203,67 +201,13 @@ function listPdfNames(subjectId: string, root: string): string[] {
   }
 }
 
-function posixRel(from: string, to: string): string {
-  return path.relative(from, to).split(path.sep).join('/');
-}
-
-function isGenerateSourceName(name: string): boolean {
-  if (SKIP_GENERATE_NAMES.has(name) || name.startsWith('.')) return false;
-  return GENERATE_SOURCE_EXT.has(path.extname(name).toLowerCase());
-}
-
-function walkGenerateSourceFiles(absDir: string, into: string[]): void {
-  let entries;
-  try {
-    entries = readdirSync(absDir, { withFileTypes: true });
-  } catch (error) {
-    if (isEnoent(error)) return;
-    throw error;
-  }
-  for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-    if (entry.name.startsWith('.')) continue;
-    const abs = path.join(absDir, entry.name);
-    if (entry.isDirectory()) walkGenerateSourceFiles(abs, into);
-    else if (entry.isFile() && isGenerateSourceName(entry.name)) into.push(abs);
-  }
-}
-
-/** Rel-paths `examify-ingest generate` would read for this subject. */
+/** Rel-paths `examify-ingest generate` would read — same resolver as generate. */
 export function listOnboardingGenerateSources(
   subjectId: string,
   root = getOnboardingContentRoot(),
 ): string[] {
-  const rels = new Set<string>();
   const subjectDir = path.join(subjectsDir(root), subjectId);
-  try {
-    for (const name of readdirSync(subjectDir).sort()) {
-      const abs = path.join(subjectDir, name);
-      try {
-        if (!statSync(abs).isFile() || !isGenerateSourceName(name)) continue;
-      } catch (error) {
-        if (isEnoent(error)) continue;
-        throw error;
-      }
-      rels.add(posixRel(root, abs));
-    }
-  } catch (error) {
-    if (!isEnoent(error)) throw error;
-  }
-
-  const nested: string[] = [];
-  walkGenerateSourceFiles(path.join(sourcePdfsDir(root), subjectId), nested);
-  for (const abs of nested) rels.add(posixRel(root, abs));
-
-  for (const ext of GENERATE_SOURCE_EXT) {
-    const standalone = path.join(sourcePdfsDir(root), `${subjectId}${ext}`);
-    try {
-      if (statSync(standalone).isFile()) rels.add(posixRel(root, standalone));
-    } catch (error) {
-      if (!isEnoent(error)) throw error;
-    }
-  }
-
-  return [...rels].sort();
+  return resolveSubjectSources(root, subjectId, subjectDir).map((source) => source.relPath);
 }
 
 function isUsableSecret(value: string | undefined): boolean {

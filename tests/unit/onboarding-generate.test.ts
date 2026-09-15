@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -79,6 +87,7 @@ describe('onboarding generate graph', () => {
     const emit = readFileSync(path.join(process.cwd(), 'src/lib/onboarding.ts'), 'utf8');
     expect(emit).not.toMatch(/examify-ingest\/generate/);
     expect(emit).not.toMatch(/generateSubject/);
+    expect(emit).toMatch(/resolveSubjectSources/);
     const generate = readFileSync(
       path.join(process.cwd(), 'src/lib/onboarding-generate.ts'),
       'utf8',
@@ -109,6 +118,20 @@ describe('onboarding generate sources', () => {
       'content/source-pdfs/history/pack.txt',
       'content/subjects/history/notes.md',
     ]);
+  });
+
+  it('refuses preview sources that resolve outside the allowed trees', async () => {
+    const { listOnboardingGenerateSources, setOnboardingContentRootForTests } =
+      await import('@/lib/onboarding');
+    const root = tempRoot();
+    seedSubject(root);
+    writeFileSync(path.join(root, 'outside.txt'), 'not a generate source\n');
+    symlinkSync(
+      path.join(root, 'outside.txt'),
+      path.join(root, 'content/subjects/history/leak.txt'),
+    );
+    setOnboardingContentRootForTests(root);
+    expect(() => listOnboardingGenerateSources('history', root)).toThrow(/refusing source outside/);
   });
 });
 
