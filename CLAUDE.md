@@ -39,12 +39,12 @@ Surface:
   (≥900px) uses a left step rail + stage + sticky footer; mobile uses compact
   “Step N of M · Label” progress and a sticky bottom bar. Generate writes BankIR
   only and never auto-applies.
-  Cancel marks the wizard token and skips the IR write (ingest generate is
-  not aborted); the preview is discarded and prior IR is unchanged.
+  Cancel aborts in-flight provider HTTP via AbortSignal (local CMD via
+  SIGTERM), discards the preview, and does not replace prior IR.
   User-initiated cancel is a calm status, not an error toast. Generate is
   gated to wizard catalog subjects (`listOnboardingSubjects`). Delete/rename
-  wait on the generate lock so a late IR commit cannot recreate a
-  deleted/renamed id.
+  wait on the generate lock. A post-provider catalog re-check (#65) refuses
+  a write if the id is gone.
   While generate is in flight, Welcome “Use sample bank”, later skip, Back,
   and the desktop rail stay locked so Cancel remains reachable.
   Finish (“Open dashboard”) requires

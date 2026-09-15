@@ -2,7 +2,7 @@ import { extractJsonObject } from '../json';
 import { bankIrSchema, type BankIR } from '../schema';
 import { fenceUntrustedText, untrustedCaption, userGenerateMessage } from './content';
 import {
-  providerTimeoutSignal,
+  providerRequestSignal,
   readRequiredKey,
   type GenerateProvider,
   type ProviderDeps,
@@ -75,7 +75,7 @@ async function callAnthropic(request: ProviderRequest, deps: ProviderDeps): Prom
   const fetchFn = deps.fetch ?? fetch;
   const res = await fetchFn(ANTHROPIC_URL, {
     method: 'POST',
-    signal: providerTimeoutSignal(),
+    signal: providerRequestSignal(deps.signal),
     headers: {
       'content-type': 'application/json',
       'x-api-key': key,

@@ -95,7 +95,9 @@ describe('onboarding generate graph', () => {
     expect(generate).toMatch(/from 'examify-ingest\/generate'/);
     expect(generate).toMatch(/generateSubject/);
     expect(generate).toMatch(/dryRunIr: true/);
-    expect(generate).not.toMatch(/signal: /);
+    expect(generate).toMatch(/signal: providerSignal/);
+    expect(generate).toMatch(/const MAX_CANCEL_TOKENS = 64/);
+    expect(generate).toMatch(/oldest token[\s\S]*evicted \(FIFO\)/);
     expect(generate).not.toMatch(/applyEmit|planEmit|applyOnboardingEmit/);
     const wizard = readFileSync(
       path.join(process.cwd(), 'src/components/exam/OnboardingWizard.tsx'),
@@ -128,8 +130,6 @@ describe('onboarding generate graph', () => {
     expect(wizard).toMatch(
       /generateCancelRef\.current = true;\s*setGenerateNote\('Generate cancelled'\);\s*setGenerateBusy\(false\)/,
     );
-    expect(wizard).toMatch(/if \(wroteAny\) setIrReady\(true\)/);
-
     const welcomeSkipAt = wizard.indexOf('Use sample bank for now');
     expect(welcomeSkipAt).toBeGreaterThan(-1);
     const welcomeSkipDisabled = wizard.lastIndexOf('disabled=', welcomeSkipAt);
@@ -139,6 +139,18 @@ describe('onboarding generate graph', () => {
     expect(backAt).toBeGreaterThan(-1);
     const backDisabled = wizard.lastIndexOf('disabled=', backAt);
     expect(wizard.slice(backDisabled, backAt)).toMatch(/disabled=\{navLocked\}/);
+  });
+
+  it('keeps irReady on generate-all cancel after a subject finished', () => {
+    const wizard = readFileSync(
+      path.join(process.cwd(), 'src/components/exam/OnboardingWizard.tsx'),
+      'utf8',
+    );
+    expect(wizard).toMatch(
+      /\/\/ Keep IR-ready for subjects that already finished \(including generate-all cancel\)\./,
+    );
+    expect(wizard).toMatch(/if \(wroteAny\) setIrReady\(true\)/);
+    expect(wizard).toMatch(/if \(cancelled\) setGenerateNote\('Generate cancelled'\)/);
   });
 
   it('keeps dry-run step id and testids while the rail label is Review', () => {
@@ -204,8 +216,9 @@ describe('generateOnboardingSubject', () => {
       seed: 0,
       root,
     });
-    expect(generateSpy).toHaveBeenCalledWith(expect.objectContaining({ dryRunIr: true }));
-    expect(generateSpy.mock.calls[0]?.[0]).not.toHaveProperty('signal');
+    expect(generateSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ dryRunIr: true, signal: expect.any(AbortSignal) }),
+    );
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected generate');
     expect(result.result.wroteIr).toBe(true);
@@ -405,33 +418,59 @@ describe('generateOnboardingSubject', () => {
     expect(existsSync(subjectDir)).toBe(false);
   });
 
-  it('does not resurrect a subject deleted after provider return before write', async () => {
-    const { generateOnboardingSubject, setOnboardingGenerateBeforeCommitForTests } =
-      await import('@/lib/onboarding-generate');
+  it('serializes generate commits on the process-local mutex', async () => {
+    const ingest = await import('examify-ingest/generate');
+    const { generateOnboardingSubject } = await import('@/lib/onboarding-generate');
     const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
     const root = tempRoot();
     seedSubject(root);
     setOnboardingContentRootForTests(root);
-    const subjectDir = path.join(root, 'content/subjects/history');
-    const irPath = path.join(subjectDir, 'bank.ir.json');
-    setOnboardingGenerateBeforeCommitForTests(() => {
-      rmSync(subjectDir, { recursive: true, force: true });
+    const { generateSubject: actualGenerateSubject } =
+      await vi.importActual<typeof ingest>('examify-ingest/generate');
+    let firstInFlight = false;
+    let secondStartedWhileFirstHeld = false;
+    let releaseFirst!: () => void;
+    const firstHold = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let calls = 0;
+    vi.spyOn(ingest, 'generateSubject').mockImplementation(async (request) => {
+      calls += 1;
+      if (calls === 1) {
+        firstInFlight = true;
+        await firstHold;
+        return actualGenerateSubject(request);
+      }
+      if (firstInFlight) secondStartedWhileFirstHeld = true;
+      return actualGenerateSubject(request);
     });
 
-    const result = await generateOnboardingSubject({
+    const first = generateOnboardingSubject({
       subjectId: 'history',
       provider: 'test',
       seed: 0,
       root,
     });
-    expect(result.ok).toBe(false);
-    if (result.ok) throw new Error('expected missing after delete-before-write');
-    expect(result.reason).toBe('missing');
-    expect(existsSync(irPath)).toBe(false);
-    expect(existsSync(subjectDir)).toBe(false);
+    await vi.waitFor(() => {
+      expect(firstInFlight).toBe(true);
+    });
+    const second = generateOnboardingSubject({
+      subjectId: 'history',
+      provider: 'test',
+      seed: 1,
+      root,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(secondStartedWhileFirstHeld).toBe(false);
+    expect(calls).toBe(1);
+    firstInFlight = false;
+    releaseFirst();
+    expect((await first).ok).toBe(true);
+    expect((await second).ok).toBe(true);
+    expect(calls).toBe(2);
   });
 
-  it('skips the IR write when cancel lands while generateSubject is in flight', async () => {
+  it('aborts in-flight generate and leaves prior IR bytes unchanged', async () => {
     const ingest = await import('examify-ingest/generate');
     const { generateOnboardingSubject, requestOnboardingGenerateCancel } =
       await import('@/lib/onboarding-generate');
@@ -441,15 +480,19 @@ describe('generateOnboardingSubject', () => {
     setOnboardingContentRootForTests(root);
     const irPath = path.join(root, 'content/subjects/history/bank.ir.json');
     const prior = readFileSync(irPath, 'utf8');
-    const { generateSubject: actualGenerateSubject } =
-      await vi.importActual<typeof ingest>('examify-ingest/generate');
-    let release!: () => void;
-    const blocked = new Promise<void>((resolve) => {
-      release = resolve;
-    });
+    let sawSignal: AbortSignal | undefined;
     vi.spyOn(ingest, 'generateSubject').mockImplementation(async (request) => {
-      await blocked;
-      return actualGenerateSubject(request);
+      sawSignal = request.signal;
+      await new Promise<never>((_resolve, reject) => {
+        request.signal?.addEventListener(
+          'abort',
+          () => {
+            reject(Object.assign(new Error('The operation was aborted'), { name: 'AbortError' }));
+          },
+          { once: true },
+        );
+      });
+      throw new Error('unreachable');
     });
 
     const token = 'cancel-token-01';
@@ -461,11 +504,11 @@ describe('generateOnboardingSubject', () => {
       cancelToken: token,
     });
     await vi.waitFor(() => {
-      expect(ingest.generateSubject).toHaveBeenCalled();
+      expect(sawSignal).toBeDefined();
     });
     requestOnboardingGenerateCancel(token);
-    release();
     const result = await pending;
+    expect(sawSignal?.aborted).toBe(true);
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected cancelled');
     expect(result.reason).toBe('cancelled');

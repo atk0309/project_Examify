@@ -515,7 +515,7 @@ describe('onboarding actions', () => {
     expect(await cancelOnboardingGenerateAction(cancel)).toEqual({ ok: true });
   });
 
-  it('returns cancelled and skips IR write when cancel lands during generateSubject', async () => {
+  it('returns cancelled and leaves prior IR unchanged when cancel aborts in-flight generate', async () => {
     const root = tempRoot();
     const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
     setOnboardingContentRootForTests(root);
@@ -532,15 +532,19 @@ describe('onboarding actions', () => {
     writeFileSync(path.join(root, 'content/source-pdfs/history/notes.txt'), 'A source note.\n');
 
     const ingest = await import('examify-ingest/generate');
-    const { generateSubject: actualGenerateSubject } =
-      await vi.importActual<typeof ingest>('examify-ingest/generate');
-    let release!: () => void;
-    const blocked = new Promise<void>((resolve) => {
-      release = resolve;
-    });
+    let sawSignal: AbortSignal | undefined;
     vi.spyOn(ingest, 'generateSubject').mockImplementation(async (request) => {
-      await blocked;
-      return actualGenerateSubject(request);
+      sawSignal = request.signal;
+      await new Promise<never>((_resolve, reject) => {
+        request.signal?.addEventListener(
+          'abort',
+          () => {
+            reject(Object.assign(new Error('The operation was aborted'), { name: 'AbortError' }));
+          },
+          { once: true },
+        );
+      });
+      throw new Error('unreachable');
     });
 
     const {
@@ -558,13 +562,13 @@ describe('onboarding actions', () => {
     generate.set('cancelToken', token);
     const pending = generateOnboardingSubjectAction(generate);
     await vi.waitFor(() => {
-      expect(ingest.generateSubject).toHaveBeenCalled();
+      expect(sawSignal).toBeDefined();
     });
     const cancel = new FormData();
     cancel.set('cancelToken', token);
     expect(await cancelOnboardingGenerateAction(cancel)).toEqual({ ok: true });
-    release();
     expect(await pending).toEqual({ ok: false, reason: 'cancelled' });
+    expect(sawSignal?.aborted).toBe(true);
     expect(fs.readFileSync(irPath, 'utf8')).toBe(prior);
   });
 

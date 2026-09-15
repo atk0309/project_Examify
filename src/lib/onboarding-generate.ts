@@ -1,7 +1,5 @@
 import 'server-only';
 
-import { randomBytes } from 'node:crypto';
-import { existsSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import * as ingestGenerate from 'examify-ingest/generate';
 import { getOnboardingContentRoot } from '@/lib/content-root';
@@ -32,12 +30,20 @@ export type GenerateOnboardingSuccess = {
 };
 
 const CANCEL_TOKEN_RE = /^[A-Za-z0-9_-]{8,64}$/;
+/**
+ * Process-local cancel tokens (insertion-order Set). At 65 the oldest token
+ * is evicted (FIFO). Generate is single-flight in this process, so 64 is
+ * leftover-token headroom after settle — not a concurrent-tab budget. A
+ * second tab shares this Set only if it hits the same Node process; 64
+ * in-flight cancel tokens would already imply a stuck process, so we do
+ * not raise the cap.
+ */
 const cancelledTokens = new Set<string>();
+const abortControllers = new Map<string, AbortController>();
 const MAX_CANCEL_TOKENS = 64;
 
 /** Single-flight: one onboarding generate commits at a time in this process. */
 let generateChain: Promise<unknown> = Promise.resolve();
-let beforeIrCommitForTests: (() => void) | undefined;
 
 export function isOnboardingGenerateCancelToken(token: string): boolean {
   return CANCEL_TOKEN_RE.test(token);
@@ -46,24 +52,28 @@ export function isOnboardingGenerateCancelToken(token: string): boolean {
 export function requestOnboardingGenerateCancel(token: string): void {
   if (!isOnboardingGenerateCancelToken(token)) return;
   cancelledTokens.add(token);
+  abortControllers.get(token)?.abort();
   if (cancelledTokens.size > MAX_CANCEL_TOKENS) {
     const first = cancelledTokens.values().next().value;
-    if (first) cancelledTokens.delete(first);
+    if (first) {
+      cancelledTokens.delete(first);
+      abortControllers.get(first)?.abort();
+      abortControllers.delete(first);
+    }
   }
 }
 
 export function clearOnboardingGenerateCancel(token: string | undefined): void {
-  if (token) cancelledTokens.delete(token);
-}
-
-export function setOnboardingGenerateBeforeCommitForTests(fn?: () => void): void {
-  beforeIrCommitForTests = fn;
+  if (!token) return;
+  cancelledTokens.delete(token);
+  abortControllers.delete(token);
 }
 
 export function resetOnboardingGenerateForTests(): void {
   cancelledTokens.clear();
+  for (const controller of abortControllers.values()) controller.abort();
+  abortControllers.clear();
   generateChain = Promise.resolve();
-  beforeIrCommitForTests = undefined;
 }
 
 function isGenerateCancelled(signal?: AbortSignal, token?: string): boolean {
@@ -74,7 +84,7 @@ function cancelledResult(): GenerateOnboardingError {
   return { ok: false, reason: 'cancelled', message: 'Generate cancelled.' };
 }
 
-/** Serialize generate commit with delete/rename so a late write cannot resurrect an id. */
+/** Serialize generate commit with delete/rename so they cannot interleave the IR write. */
 export function withOnboardingGenerateLock<T>(task: () => Promise<T>): Promise<T> {
   const run = generateChain.then(task, task);
   generateChain = run.then(
@@ -90,43 +100,6 @@ function posixRel(from: string, to: string): string {
 
 function stableJson(value: unknown): string {
   return `${JSON.stringify(value, null, 2)}\n`;
-}
-
-function isMissingPathError(error: unknown): boolean {
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    'code' in error &&
-    (error as { code?: string }).code === 'ENOENT'
-  );
-}
-
-/**
- * Atomic IR write that never mkdir-creates a missing subject dir.
- * Ingest `writeFileAtomic` mkdirSyncs and would resurrect a deleted id.
- */
-function writeIrIfSubjectDirExists(irPath: string, body: string): void {
-  const dir = path.dirname(irPath);
-  if (!existsSync(dir)) {
-    const error = new Error(`ENOENT: no such directory '${dir}'`);
-    (error as NodeJS.ErrnoException).code = 'ENOENT';
-    throw error;
-  }
-  const tmp = path.join(
-    dir,
-    `.${path.basename(irPath)}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`,
-  );
-  try {
-    writeFileSync(tmp, body, 'utf8');
-    renameSync(tmp, irPath);
-  } catch (error) {
-    try {
-      unlinkSync(tmp);
-    } catch {
-      // Temp may already be gone if rename succeeded then a later step failed.
-    }
-    throw error;
-  }
 }
 
 function mapGenerateError(error: unknown): GenerateOnboardingError {
@@ -166,16 +139,12 @@ function publicGenerateResult(
   };
 }
 
-function catalogHasSubject(root: string, subjectId: string): boolean {
-  return listOnboardingSubjects(root).some((row) => row.id === subjectId);
-}
-
 /**
  * Draft BankIR for one wizard subject via `examify-ingest/generate`.
  * Preview uses ingest `dryRunIr` so `generateSubject` does not write
  * `bank.ir.json`. The wizard path commits that file only if the
- * cancel token / AbortSignal is still clear. Never emit / apply.
- * Cancel is wizard-side only — ingest generate/providers are not aborted.
+ * AbortSignal / cancel token is still clear. Never emit / apply.
+ * Cancel aborts in-flight provider HTTP via `GenerateRequest.signal`.
  * The returned payload is public progress metadata (no answers / keys / IR).
  */
 export async function generateOnboardingSubject(input: {
@@ -203,27 +172,35 @@ async function generateOnboardingSubjectUnlocked(input: {
   }
 
   const root = input.root ?? getOnboardingContentRoot();
-  if (!catalogHasSubject(root, subjectId)) {
+  if (!listOnboardingSubjects(root).some((row) => row.id === subjectId)) {
     return { ok: false, reason: 'missing', message: 'Subject is not in the wizard catalog.' };
   }
 
-  if (isGenerateCancelled(input.signal, input.cancelToken)) {
-    return cancelledResult();
-  }
-
-  const subjectInput = path.join(SUBJECTS_REL, subjectId);
-  let target;
-  try {
-    const targets = ingestGenerate.resolveGenerateTargets([subjectInput], root, root, subjectId);
-    target = targets[0];
-  } catch (error) {
-    return mapGenerateError(error);
-  }
-  if (!target) {
-    return { ok: false, reason: 'missing', message: 'Subject is not in the wizard catalog.' };
-  }
+  const controller = new AbortController();
+  if (input.cancelToken) abortControllers.set(input.cancelToken, controller);
+  const userSignal = input.signal;
+  const providerSignal = userSignal
+    ? AbortSignal.any([userSignal, controller.signal])
+    : controller.signal;
 
   try {
+    if (isGenerateCancelled(userSignal, input.cancelToken)) {
+      controller.abort();
+      return cancelledResult();
+    }
+
+    const subjectInput = path.join(SUBJECTS_REL, subjectId);
+    let target;
+    try {
+      const targets = ingestGenerate.resolveGenerateTargets([subjectInput], root, root, subjectId);
+      target = targets[0];
+    } catch (error) {
+      return mapGenerateError(error);
+    }
+    if (!target) {
+      return { ok: false, reason: 'missing', message: 'Subject is not in the wizard catalog.' };
+    }
+
     const generated = await ingestGenerate.generateSubject({
       repoRoot: root,
       subject: target.subject,
@@ -232,34 +209,25 @@ async function generateOnboardingSubjectUnlocked(input: {
       provider: input.provider,
       seed: input.seed,
       env: ingestGenerate.mergeRepoEnvFiles(root, process.env),
-      // Ingest has no cancel hook — preview only; caller owns the IR write.
+      signal: providerSignal,
       dryRunIr: true,
     });
-    if (isGenerateCancelled(input.signal, input.cancelToken)) {
+    if (isGenerateCancelled(userSignal, input.cancelToken) || controller.signal.aborted) {
       return cancelledResult();
     }
-    // Re-check after the provider returns: delete/rename must not be
-    // resurrected by a mkdir-creating write.
-    if (!catalogHasSubject(root, subjectId) || !existsSync(target.subjectDir)) {
+    // #65: re-check after the provider returns so a delete/rename during
+    // generateSubject is not resurrected by writeFileAtomic's mkdirSync.
+    if (!listOnboardingSubjects(root).some((row) => row.id === subjectId)) {
       return { ok: false, reason: 'missing', message: 'Subject is not in the wizard catalog.' };
     }
-    beforeIrCommitForTests?.();
-    if (!catalogHasSubject(root, subjectId) || !existsSync(target.subjectDir)) {
-      return { ok: false, reason: 'missing', message: 'Subject is not in the wizard catalog.' };
-    }
-    writeIrIfSubjectDirExists(generated.irPath, stableJson(generated.bank));
-    if (!catalogHasSubject(root, subjectId)) {
-      return { ok: false, reason: 'missing', message: 'Subject is not in the wizard catalog.' };
-    }
-    clearOnboardingGenerateCancel(input.cancelToken);
+    ingestGenerate.writeFileAtomic(generated.irPath, stableJson(generated.bank));
     return { ok: true, result: publicGenerateResult(subjectId, root, generated, true) };
   } catch (error) {
-    if (isGenerateCancelled(input.signal, input.cancelToken)) {
+    if (isGenerateCancelled(userSignal, input.cancelToken) || controller.signal.aborted) {
       return cancelledResult();
     }
-    if (isMissingPathError(error) || !catalogHasSubject(root, subjectId)) {
-      return { ok: false, reason: 'missing', message: 'Subject is not in the wizard catalog.' };
-    }
     return mapGenerateError(error);
+  } finally {
+    clearOnboardingGenerateCancel(input.cancelToken);
   }
 }
