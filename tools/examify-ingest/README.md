@@ -61,6 +61,8 @@ recorded in the run manifest. `--dry-run-ir` prints the would-write path and
 writes nothing durable (no IR, cache, or manifest). It still rasterizes missing
 PDF pages into a temp directory when `pdftoppm` is available so the preview
 matches a persist run; it does not populate `.examify-ingest/cache/pages/`.
+The locked generate prompt is `prompts/v2/generate-bank.md`. The unused v1
+draft was removed so a stale untrusted-source framing cannot be loaded.
 
 Cloud providers fail closed without a real env key (`ANTHROPIC_API_KEY` /
 `OPENAI_API_KEY`) **on a cache miss**. The generate CLI fills unset keys from
@@ -74,7 +76,8 @@ keys win after restart and are not rotatable from the wizard. A matching
 IR with no network and does not require the key. The app's
 `ANTHROPIC_API_KEY=test` sentinel is refused on a miss — use `--provider test`
 for CI. `local` needs `EXAMIFY_INGEST_LOCAL_CMD` (quoted executable + args;
-stdin JSON includes source text/bytes) or `EXAMIFY_LLM_BASE_URL`
+stdin JSON includes full source text / `dataBase64` bytes plus page-image
+bytes — never hashes-only) or `EXAMIFY_LLM_BASE_URL`
 (OpenAI-compatible `/v1/chat/completions` with the same multimodal user
 content as `--provider openai`: fenced text + images / page images).
 Temperature is `0` when the remote API allows it. Anthropic's Messages API
@@ -85,21 +88,25 @@ Every successful (non-dry-run) generate run writes a `RunManifest` under
 `.examify-ingest/runs/` (gitignored): provider, model, promptVersion (`v2`),
 prompt hash, seed, `seedHonored`, temperature `0`, source file hashes,
 cacheKey, timestamp, subject ids, and key presence/name only — never the key
-value. `cacheKey` is a stable hash of promptVersion + prompt hash + provider
+value. `cacheKey` is a stable hash of promptVersion, prompt hash, provider,
+model, seed, source hashes, subject meta, ordered page-image hashes
+(`path#page=sha256`), and the raster profile (`pdftoppm-png-r150`). A
+prompt-text change, a different raster byte set, or a later pdftoppm run
+cannot replay a hashes-only cache entry. The page-image list is the set
+identity — a derived extra field would bust every existing cache key.
+PDF page images, when rasterized with `pdftoppm`, are reused from
+`.examify-ingest/cache/pages/<pdf-sha256>/` and framed as untrusted data, same
+as source files. OpenAI-compatible generate (`openai` and local HTTP) cannot
+inline raw PDF bytes: if the only sources are PDFs and no page images were
+rasterized, the run fails closed. Provider HTTP/CMD calls use a 180s deadline.
+Sources must stay under `content/subjects/<id>/` or `content/source-pdfs/<id>`.
 
-- model + seed + source hashes + subject meta + ordered page-image hashes +
-  the raster profile (`pdftoppm-png-r150`), so a prompt-text change or a later
-  rasterized run cannot replay a hashes-only cache entry. PDF page images, when
-  rasterized with `pdftoppm`, are reused from
-  `.examify-ingest/cache/pages/<pdf-sha256>/` and framed as untrusted data, same
-  as source files. OpenAI-compatible generate (`openai` and local HTTP) cannot
-  inline raw PDF bytes: if the only sources are PDFs and no page images were
-  rasterized, the run fails closed. Provider HTTP/CMD calls use a 180s deadline.
-  Sources must stay under `content/subjects/<id>/` or `content/source-pdfs/<id>`.
-
-Source blobs are wrapped as `UNTRUSTED SOURCE MATERIAL`. That fence makes
-prompt injection harder; it is not sufficient on its own. A human still
-runs validate → emit --dry-run → emit --apply.
+Source blobs are wrapped as `UNTRUSTED SOURCE MATERIAL` with static
+`BEGIN`/`END` markers. Those delimiters stay fixed on prompt v2 on purpose:
+a per-run nonce would bust every `cacheKey` and would not stop a hostile PDF
+from emitting the same label. The fence is a model-facing reminder, not a
+capability boundary. A human still runs validate → emit --dry-run →
+emit --apply.
 
 `validate` and `emit` accept a subjects directory (scans `*/bank.ir.json`) or
 one or more explicit IR file paths. Generate does not change those commands.

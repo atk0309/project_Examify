@@ -3,6 +3,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -501,6 +502,98 @@ describe('examify-ingest generate', () => {
     expect(result.manifest.provider).toBe('local');
   });
 
+  it('local CMD stdin includes full source text/bytes, not hashes-only', async () => {
+    const root = examifyRepo();
+    const bank: BankIR = {
+      version: 1,
+      subject: { id: 'plants', label: 'Plants', icon: 'biology', l: 0.58, c: 0.09, h: 142 },
+      difficulties: {
+        easy: [
+          {
+            id: 'plants-easy-1',
+            type: 'mcq',
+            q: 'What do chloroplasts make?',
+            choices: ['Sugar', 'Stone', 'Iron', 'Salt'],
+            answer: 0,
+            provenance: { pdf: 'notes.txt', locator: 'p1' },
+          },
+        ],
+        medium: [],
+        hard: [],
+      },
+    };
+    const pngBytes = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+      'base64',
+    );
+    const pngPath = path.join(root, 'content/source-pdfs/plants/leaf.png');
+    writeFileSync(pngPath, pngBytes);
+    const pdfPath = path.join(root, 'content/source-pdfs/plants/guide.pdf');
+    writeFileSync(pdfPath, '%PDF-1.4 fixture\n');
+    const sources = resolveSubjectSources(
+      root,
+      'plants',
+      path.join(root, 'content/subjects/plants'),
+    );
+    resolvePageImages(root, sources, {
+      persist: true,
+      rasterize: (_pdf, prefix) => {
+        writeFileSync(`${prefix}-1.png`, 'fake-page-png');
+        return true;
+      },
+    });
+
+    const capturePath = path.join(root, 'local-cmd-stdin.json');
+    const scriptPath = path.join(root, 'local-cmd-echo.mjs');
+    writeFileSync(
+      scriptPath,
+      [
+        'import { readFileSync, writeFileSync } from "node:fs";',
+        'writeFileSync(process.argv[2], readFileSync(0, "utf8"));',
+        `process.stdout.write(${JSON.stringify(JSON.stringify(bank))});`,
+        '',
+      ].join('\n'),
+    );
+
+    const result = await generateSubject({
+      repoRoot: root,
+      subject: bank.subject,
+      subjectDir: path.join(root, 'content/subjects/plants'),
+      sources,
+      provider: 'local',
+      seed: 0,
+      env: {
+        EXAMIFY_INGEST_LOCAL_CMD: `"${process.execPath}" "${scriptPath}" "${capturePath}"`,
+      },
+    });
+
+    expect(result.wroteIr).toBe(true);
+    expect(result.manifest.provider).toBe('local');
+    const payload = JSON.parse(readFileSync(capturePath, 'utf8')) as {
+      sources: {
+        path: string;
+        sha256: string;
+        kind: string;
+        text?: string;
+        dataBase64?: string;
+      }[];
+      pageImages: { path: string; sha256: string; dataBase64?: string }[];
+    };
+    const textSource = payload.sources.find((source) => source.kind === 'text');
+    const imageSource = payload.sources.find((source) => source.kind === 'image');
+    const pdfSource = payload.sources.find((source) => source.kind === 'pdf');
+    expect(textSource?.text).toContain('Chloroplasts make sugar');
+    expect(textSource?.dataBase64).toBeUndefined();
+    expect(imageSource?.dataBase64).toBe(pngBytes.toString('base64'));
+    expect(imageSource?.text).toBeUndefined();
+    expect(pdfSource?.dataBase64).toBe(Buffer.from('%PDF-1.4 fixture\n').toString('base64'));
+    expect(payload.pageImages).toHaveLength(1);
+    expect(payload.pageImages[0]?.dataBase64).toBe(Buffer.from('fake-page-png').toString('base64'));
+    const blob = JSON.stringify(payload);
+    expect(blob).toContain('Chloroplasts make sugar');
+    expect(blob).toContain(UNTRUSTED_SOURCE_NOTE);
+  });
+
   it('cache hit returns IR without a live cloud key or network', async () => {
     const root = examifyRepo();
     const secret = 'sk-ant-cache-hit-secret';
@@ -598,7 +691,87 @@ describe('examify-ingest generate', () => {
       ...base,
       pageImageHashes: ['content/source-pdfs/plants/guide.pdf#1=page-sha'],
     });
+    const otherHash = buildCacheKey({
+      ...base,
+      pageImageHashes: ['content/source-pdfs/plants/guide.pdf#1=other-sha'],
+    });
+    const otherPath = buildCacheKey({
+      ...base,
+      pageImageHashes: ['content/source-pdfs/plants/other.pdf#1=page-sha'],
+    });
     expect(withoutPages).not.toBe(withPages);
+    expect(withPages).not.toBe(otherHash);
+    expect(withPages).not.toBe(otherPath);
+  });
+
+  it('generateSubject does not cache-hit across different page rasters', async () => {
+    const root = examifyRepo();
+    const pdfPath = path.join(root, 'content/source-pdfs/plants/guide.pdf');
+    writeFileSync(pdfPath, '%PDF-1.4 fixture\n');
+    const subject = {
+      id: 'plants',
+      label: 'Plants',
+      icon: 'biology',
+      l: 0.58,
+      c: 0.09,
+      h: 142,
+    };
+    const sources = resolveSubjectSources(
+      root,
+      'plants',
+      path.join(root, 'content/subjects/plants'),
+    );
+    resolvePageImages(root, sources, {
+      persist: true,
+      rasterize: (_pdf, prefix) => {
+        writeFileSync(`${prefix}-1.png`, 'raster-a');
+        return true;
+      },
+    });
+
+    const first = await generateSubject({
+      repoRoot: root,
+      subject,
+      subjectDir: path.join(root, 'content/subjects/plants'),
+      sources,
+      provider: 'test',
+      seed: 0,
+      env: {},
+    });
+    expect(first.cacheHit).toBe(false);
+
+    const pagesRoot = path.join(root, '.examify-ingest/cache/pages');
+    const pngs = readdirSync(pagesRoot).flatMap((pdfSha) =>
+      readdirSync(path.join(pagesRoot, pdfSha))
+        .filter((name) => /^page-\d+\.png$/.test(name))
+        .map((name) => path.join(pagesRoot, pdfSha, name)),
+    );
+    expect(pngs).toHaveLength(1);
+    writeFileSync(pngs[0]!, 'raster-b');
+
+    const second = await generateSubject({
+      repoRoot: root,
+      subject,
+      subjectDir: path.join(root, 'content/subjects/plants'),
+      sources,
+      provider: 'test',
+      seed: 0,
+      env: {},
+    });
+    expect(second.cacheKey).not.toBe(first.cacheKey);
+    expect(second.cacheHit).toBe(false);
+
+    const third = await generateSubject({
+      repoRoot: root,
+      subject,
+      subjectDir: path.join(root, 'content/subjects/plants'),
+      sources,
+      provider: 'test',
+      seed: 0,
+      env: {},
+    });
+    expect(third.cacheKey).toBe(second.cacheKey);
+    expect(third.cacheHit).toBe(true);
   });
 
   it('--dry-run-ir rasterizes pages into temp storage and does not persist them', () => {

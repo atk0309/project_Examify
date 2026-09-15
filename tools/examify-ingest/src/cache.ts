@@ -21,6 +21,12 @@ export function pagesCacheDir(repoRoot: string, pdfSha256: string): string {
   return path.join(ingestStateDir(repoRoot), 'cache', 'pages', pdfSha256);
 }
 
+/**
+ * Page-image identity is the ordered `path#page=sha256` list already in
+ * this object. Do not add a derived set-hash field: that would change
+ * every cacheKey (including no-page runs) and miss existing
+ * `.examify-ingest/cache/ir` entries.
+ */
 export function buildCacheKey(input: {
   promptVersion: string;
   promptHash: string;
