@@ -208,7 +208,24 @@ describe('generateOnboardingSubject', () => {
     seedSubject(root);
     setOnboardingContentRootForTests(root);
     const irPath = path.join(root, 'content/subjects/history/bank.ir.json');
-    const prior = 'PRIOR_IR_BYTES_MUST_NOT_CHANGE\n';
+    const prior = `${JSON.stringify({
+      version: 1,
+      subject: { id: 'history', label: 'History', icon: 'geography', l: 0.6, c: 0.08, h: 40 },
+      difficulties: {
+        easy: [
+          {
+            id: 'history-easy-prior',
+            type: 'mcq',
+            q: 'Prior IR that cancel must keep?',
+            choices: ['A', 'B', 'C', 'D'],
+            answer: 0,
+            provenance: { pdf: 'hand-authored', locator: 'unit' },
+          },
+        ],
+        medium: [],
+        hard: [],
+      },
+    })}\n`;
     writeFileSync(irPath, prior);
 
     const controller = new AbortController();
