@@ -204,7 +204,7 @@ describe('onboarding actions', () => {
           easy: [
             {
               ...confirmed.difficulties.easy[0],
-              id: 'history-easy-unconfirmed',
+              id: 'history-easy-2',
               q: 'An unconfirmed question?',
             },
           ],
@@ -231,7 +231,7 @@ describe('onboarding actions', () => {
     const skipped = getHouseholdOnboarding(host.householdId);
     expect(skipped.complete).toBe(false);
     expect(skipped.state.skipped).toBe(true);
-    expect(skipped.state.applied).toBeUndefined();
+    expect(skipped.state.applied).toBe(false);
   });
 
   it('finishes only after a confirmed apply', async () => {

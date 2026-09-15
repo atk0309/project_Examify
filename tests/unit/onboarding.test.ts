@@ -223,7 +223,7 @@ describe('onboarding catalog emit', () => {
 
     writeFileSync(
       path.join(root, 'content/subjects/history/bank.ir.json'),
-      JSON.stringify(fixtureIr('history', 'History', 'history-easy-changed')),
+      JSON.stringify(fixtureIr('history', 'History', 'history-easy-2')),
     );
 
     const applied = applyOnboardingEmit(
