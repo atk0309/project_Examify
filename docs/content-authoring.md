@@ -24,7 +24,12 @@ the build fails if it ever ends up in the client graph. A unit-test guard
 
 You can also author a **BankIR** JSON document and emit the two-file split with
 `examify-ingest` instead of editing TypeScript by hand. This is scaffolding only —
-there is still no PDF extract or LLM generate step.
+there is still no PDF extract or LLM generate step. After first-run `/setup`, the
+parent wizard at `/setup/wizard` can add subjects, attach local PDFs (under
+`content/source-pdfs/`), upload `bank.ir.json`, and run the same directory emit
+(dry-run, then apply). An empty subjects tree is refused and never wipes generated
+files. AI generate-from-files is not in this release — use the CLI or hand-authored
+BankIR. The wizard never enables `--replace-sample`.
 
 1. Write `content/subjects/<subject-id>/bank.ir.json` (see the biology sample).
 2. From the repo root:

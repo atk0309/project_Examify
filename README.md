@@ -33,8 +33,11 @@ no env-JSON allowlist to hand-edit.
 
 1. **`/setup`** (first run) or **`/signin`** — on a fresh install, the first visitor
    creates the household and becomes admin (and sets a password when `AUTH_MODE=password`).
-   After that, pick a role (Student / Parent) and sign in with the configured mode.
-   New people join via an invite link (`/invite/…`), not env JSON.
+   After bootstrap, a short **`/setup/wizard`** lets the parent add subjects, attach
+   local study files, choose how generation should work, and emit BankIR through
+   `examify-ingest` (dry-run first; an empty catalog is refused). After that, pick a
+   role (Student / Parent) and sign in with the configured mode. New people join via
+   an invite link (`/invite/…`), not env JSON.
 2. **Dashboard** — a grid of subjects, each with a soft duotone icon and question count.
    The repo ships with a small hand-authored sample bank (Maths, Computer Science,
    Geography) plus an additive Biology example from BankIR — see

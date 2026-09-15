@@ -5,7 +5,9 @@ question-bank JSON and **emits** the split public / server-only files the app
 merges onto the hand-authored sample bank.
 
 It does **not** extract PDFs or call an LLM (those are later phases). You
-author `bank.ir.json` by hand (or generate it offline) and run the CLI.
+author `bank.ir.json` by hand (or generate it offline) and run the CLI. The
+first-run `/setup/wizard` calls this same directory emit (dry-run, then apply)
+and never passes `--replace-sample`.
 
 ## Install
 

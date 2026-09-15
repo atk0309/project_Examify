@@ -56,8 +56,10 @@ if (!empty) {
   const student = insertUser.run('student@example.com', now, now);
   const parent = insertUser.run('parent@example.com', now, now);
   const household = sqlite
-    .prepare('INSERT INTO households (name, created_at) VALUES (?, ?)')
-    .run('Example family', now);
+    .prepare(
+      'INSERT INTO households (name, created_at, setup_wizard_completed_at) VALUES (?, ?, ?)',
+    )
+    .run('Example family', now, now);
   const insertMember = sqlite.prepare(
     'INSERT INTO household_members (household_id, user_id, role, created_at) VALUES (?, ?, ?, ?)',
   );

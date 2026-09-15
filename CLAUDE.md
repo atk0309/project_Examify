@@ -28,6 +28,11 @@ Surface:
   `ExamApp` themselves; their attempts persist under the parent's own account, never the
   child's.
 - **`/setup`** — first-run household bootstrap (only when no household exists).
+- **`/setup/wizard`** — post-bootstrap first-run wizard (parent/admin only, while
+  `setup_wizard_completed_at` is null). Add/delete generated subjects, attach local
+  PDFs or `bank.ir.json`, pick an AI setup mode, then emit via `examify-ingest`
+  (directory-only, dry-run before apply, empty catalog refused). Not a replacement
+  for `install.sh` auth-mode picking. Existing households are backfilled complete.
 - **`/invite/[token]`** — accept a household invite (password, magic-link, or local OTP).
   In `AUTH_MODE=password` the URL is a secret that starts a join; membership and
   `emailVerifiedAt` wait for a mailbox OTP (`completePasswordInvite`). Fail closed
@@ -117,6 +122,7 @@ grouped weekly Dependabot PRs in `.github/dependabot.yml`.
 src/
   app/                  # routes (App Router)
     api/health/         # platform healthcheck
+    setup/              # household bootstrap (page) + post-bootstrap wizard
     signin/             # login (page); magic-link verify (route.ts) + verify/error (page)
     page.tsx            # auth gate -> ExamApp
     layout.tsx          # fonts (Newsreader + Hanken Grotesk via <link>), data-theme
@@ -125,10 +131,11 @@ src/
   actions/              # 'use server' actions (requestMagicLink, signInWithPassword,
                         #   verifyLocalOtp, acceptInviteWithPassword, completePasswordInvite,
                         #   bootstrapHousehold,
+                        #   setupWizard (subjects/files/AI mode + ingest dry-run/apply),
                         #   createInvite / revokeInvite / requestInviteLink, signOut,
                         #   recordAttempt, saveExamProgress + discardExamSession)
   components/
-    exam/               # ExamApp (flow), ProgressView, ParentDashboard, LoginForm, icons
+    exam/               # ExamApp (flow), ProgressView, ParentDashboard, SetupWizard, LoginForm, icons
     analytics/          # Plausible (opt-in)
   lib/
     exam/data.ts        # SAMPLE + generated SUBJECTS/QUESTIONS + accentCSS + buildExam
@@ -137,6 +144,8 @@ src/
     exam-session.ts     # save/list/clear an in-progress exam for resume (server-only)
     households.ts       # bootstrap, invites, membership, optional FAMILIES import (server-only)
     household-types.ts  # client-safe PendingInvite type
+    setup-wizard.ts     # first-run subjects/files + examify-ingest emit (server-only)
+    setup-wizard-types.ts # client-safe wizard snapshot / AI mode types
     families.ts         # leftover FAMILIES JSON parser (optional one-shot import only)
     allowlist.ts        # isAllowedEmail(role,email), derived from household membership
     auth-mode.ts        # AUTH_MODE types + helpers (password / magic-link / local-otp)
@@ -184,8 +193,10 @@ and the vision-first workflow for generating a grounded bank from source PDFs ke
 local-only in the gitignored `content/source-pdfs/`.
 
 Automated path (Phase 0, no PDF extract / no LLM generate): author
-`content/subjects/<id>/bank.ir.json`, then `pnpm examify-ingest validate|emit`.
-`emit` is dry-run by default; `--apply` writes `content/generated/` (public
+`content/subjects/<id>/bank.ir.json`, then `pnpm examify-ingest validate|emit`
+(or use `/setup/wizard` after first-run bootstrap — same directory emit, HITL
+dry-run before apply, empty tree refused). `emit` is dry-run by default;
+`--apply` writes `content/generated/` (public
 subjects/questions + server-only keys). The app merges those files onto the
 sample bank. Any id already in the sample bank is refused unless
 `--replace-sample`. A partial emit (explicit IR files or mixed file+directory

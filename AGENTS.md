@@ -77,7 +77,11 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   oldest-first) rather than the 50-capped `getProgressForUser`.
 - Access is invite-only. First-run `/setup` (`bootstrapHousehold`) creates the admin
   when no household exists, and only after `SETUP_BOOTSTRAP_SECRET` matches (required
-  in production; captcha is not identity). Parents/admins mint invite links
+  in production; captcha is not identity). After bootstrap, `/setup/wizard` lets the
+  parent add subjects, attach local files, choose an AI mode, and emit BankIR via
+  `examify-ingest` (directory-only, dry-run before apply, empty catalog fail-closed;
+  no `--replace-sample`). Existing households are migrated as already complete.
+  Parents/admins mint invite links
   (`createInvite`); accept goes through `/invite/[token]` using the configured
   `AUTH_MODE` (password, magic-link verify, or local OTP). In `password` mode the
   invitee must confirm a mailbox OTP before membership / `emailVerifiedAt`
