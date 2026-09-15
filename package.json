@@ -32,7 +32,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/lib/db/migrate.ts",
     "db:studio": "drizzle-kit studio",
-    "examify-ingest": "tsx tools/examify-ingest/src/cli.ts",
+    "examify-ingest": "tsx tools/examify-ingest/src/main.ts",
     "prepare": "husky"
   },
   "dependencies": {

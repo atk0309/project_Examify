@@ -88,22 +88,22 @@ grouped weekly Dependabot PRs in `.github/dependabot.yml`.
 
 ## Commands cheat-sheet
 
-| Command               | What it does                                          |
-| --------------------- | ----------------------------------------------------- |
-| `pnpm dev`            | Next.js dev server with Turbopack                     |
-| `pnpm build`          | Production build                                      |
-| `pnpm start`          | Run the production build (`PORT` defaults to 3000)    |
-| `pnpm lint`           | ESLint flat-config across the repo                    |
-| `pnpm format`         | Prettier write                                        |
-| `pnpm format:check`   | Prettier dry-run (CI guard)                           |
-| `pnpm typecheck`      | `tsc --noEmit`                                        |
-| `pnpm test`           | Vitest unit suite                                     |
-| `pnpm test:e2e`       | Playwright e2e (`pnpm build` then both suites)        |
-| `pnpm db:generate`    | Generate a new Drizzle migration from schema diffs    |
-| `pnpm db:migrate`     | Apply pending migrations to `DATABASE_URL`            |
-| `pnpm db:studio`      | Drizzle Studio against the local DB                   |
-| `pnpm examify-ingest` | Validate / emit BankIR (`tools/examify-ingest`)       |
-| `./install.sh`        | Interactive self-host install (env + migrate + build) |
+| Command               | What it does                                               |
+| --------------------- | ---------------------------------------------------------- |
+| `pnpm dev`            | Next.js dev server with Turbopack                          |
+| `pnpm build`          | Production build                                           |
+| `pnpm start`          | Run the production build (`PORT` defaults to 3000)         |
+| `pnpm lint`           | ESLint flat-config across the repo                         |
+| `pnpm format`         | Prettier write                                             |
+| `pnpm format:check`   | Prettier dry-run (CI guard)                                |
+| `pnpm typecheck`      | `tsc --noEmit`                                             |
+| `pnpm test`           | Vitest unit suite                                          |
+| `pnpm test:e2e`       | Playwright e2e (`pnpm build` then both suites)             |
+| `pnpm db:generate`    | Generate a new Drizzle migration from schema diffs         |
+| `pnpm db:migrate`     | Apply pending migrations to `DATABASE_URL`                 |
+| `pnpm db:studio`      | Drizzle Studio against the local DB                        |
+| `pnpm examify-ingest` | Generate / validate / emit BankIR (`tools/examify-ingest`) |
+| `./install.sh`        | Interactive self-host install (env + migrate + build)      |
 
 ## Branch + PR rules
 
@@ -164,7 +164,7 @@ tests/
   e2e/                  # playwright specs (setup-db.ts runs pre-Playwright)
   stubs/                # vitest-only stubs (e.g. server-only no-op)
 tools/
-  examify-ingest/       # Phase 0 BankIR validate + emit (no PDF/LLM)
+  examify-ingest/       # BankIR generate + validate + emit (generate writes IR only)
 content/
   subjects/             # BankIR sources (*/bank.ir.json)
   generated/            # public subjects/questions + server-only keys (committed)
@@ -195,15 +195,21 @@ keyed by a shared, globally-unique question `id` — **never** put an `answer` o
 The shipped bank is a **hand-authored sample** (Maths, Computer Science, Geography —
 5 MCQ + 1–2 free-text per difficulty) plus an additive **Biology** example emitted
 from `content/subjects/biology/bank.ir.json`. `docs/content-authoring.md` is the
-full guide: question/key formats, rubric style, the Phase 0 `examify-ingest` path,
-adding subjects (all 13 original duotone icons remain in `icons.tsx`, reusable),
-and the vision-first workflow for generating a grounded bank from source PDFs kept
-local-only in the gitignored `content/source-pdfs/`.
+full guide: question/key formats, rubric style, the `examify-ingest` generate →
+validate → emit path, adding subjects (all 13 original duotone icons remain in
+`icons.tsx`, reusable), and the vision-first workflow for generating a grounded
+bank from source PDFs kept local-only in the gitignored `content/source-pdfs/`.
 
-Automated path (Phase 0, no PDF extract / no LLM generate): author
-`content/subjects/<id>/bank.ir.json`, then `pnpm examify-ingest validate|emit`
+Automated path: author or `pnpm examify-ingest generate` a
+`content/subjects/<id>/bank.ir.json`, then `pnpm examify-ingest validate`,
+`emit --dry-run`, and only afterward `emit --apply`
 (or use `/onboarding` after first-run bootstrap — same directory emit, HITL
-dry-run before apply, empty tree refused). `emit` is dry-run by default;
+dry-run before apply, empty tree refused). Generate never auto-applies; it
+writes IR + gitignored `.examify-ingest/` run/cache files only. Cloud
+providers fail closed without an env key (generate also fills unset keys from
+repo `.env` / `.env.local`); `--provider test` is the CI
+fixture. OpenAI-compatible generate fails closed when the only sources are
+PDFs and no page images were rasterized. `emit` is dry-run by default;
 `--apply` writes `content/generated/` (public
 subjects/questions + server-only keys). The running app reads that JSON at
 request time (`src/lib/exam/live-bank.server.ts`) and merges it onto the

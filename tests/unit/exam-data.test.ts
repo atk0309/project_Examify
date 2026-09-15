@@ -3,6 +3,7 @@ import {
   accentCSS,
   buildExam,
   countQuestions,
+  difficultiesWithQuestions,
   EXAM_CONFIG,
   QUESTIONS,
   resolveExamPaper,
@@ -20,6 +21,17 @@ describe('countQuestions', () => {
 
   it('returns 0 for an unknown subject', () => {
     expect(countQuestions('nope')).toBe(0);
+  });
+
+  it('lists only difficulties that have questions', () => {
+    const custom = {
+      demo: {
+        easy: [{ id: 'demo-easy-1', type: 'free' as const, q: 'Runtime?' }],
+        medium: [],
+      },
+    };
+    expect(difficultiesWithQuestions('demo', custom)).toEqual(['easy']);
+    expect(difficultiesWithQuestions('nope', custom)).toEqual([]);
   });
 
   it('uses an injected question bank when provided', () => {

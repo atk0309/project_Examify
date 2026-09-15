@@ -38,6 +38,14 @@ export const subjectSchema = z.object({
   h: z.number(),
 });
 
+export const GENERATE_PROVIDERS = ['anthropic', 'openai', 'local', 'test'] as const;
+export type GenerateProviderId = (typeof GENERATE_PROVIDERS)[number];
+
+export const DEFAULT_GENERATE_SEED = 0;
+export const GENERATE_TEMPERATURE = 0;
+export const PROMPT_VERSION = 'v2';
+export const INGEST_STATE_DIR = '.examify-ingest';
+
 export const bankIrMetaSchema = z
   .object({
     promptVersion: z.string().optional(),
@@ -46,6 +54,29 @@ export const bankIrMetaSchema = z
     sourceHashes: z.record(z.string(), z.string()).optional(),
   })
   .strict();
+
+/** Per-subject generate run record. Never stores API key values. */
+export const runManifestSchema = z
+  .object({
+    provider: z.enum(GENERATE_PROVIDERS),
+    model: z.string().min(1),
+    promptVersion: z.string().min(1),
+    promptHash: z.string().min(1),
+    seed: z.number().int(),
+    temperature: z.literal(0),
+    sourceHashes: z.record(z.string(), z.string()),
+    cacheKey: z.string().min(1),
+    timestamp: z.string().min(1),
+    subjectIds: z.array(z.string().min(1)).min(1),
+    cacheHit: z.boolean(),
+    hasApiKey: z.boolean(),
+    keyEnv: z.string().nullable(),
+    /** False when the provider API has no seed field (Anthropic Messages). */
+    seedHonored: z.boolean(),
+  })
+  .strict();
+
+export type RunManifest = z.infer<typeof runManifestSchema>;
 
 export const bankIrSchema = z
   .object({

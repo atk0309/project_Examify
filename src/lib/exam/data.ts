@@ -18,8 +18,9 @@
      (`live-bank.server.ts`) so an onboarding Apply is visible without rebuild.
      Generated files never carry answers or rubrics.
    - To add a SUBJECT by hand: add to SAMPLE_SUBJECTS + SAMPLE_QUESTIONS + an
-     icon. To add via BankIR: author `content/subjects/<id>/bank.ir.json` and
-     emit. To add a DIFFICULTY: extend DIFFICULTIES + the matching bank keys.
+     icon. To add via BankIR: author or generate `content/subjects/<id>/bank.ir.json`
+     and emit (generate never auto-applies). To add a DIFFICULTY: extend
+     DIFFICULTIES + the matching bank keys.
    - Every question needs a globally-unique `id` and a matching entry in
      ANSWER_KEYS (`answer-keys.server.ts`). See the bijection guard in
      `tests/unit/answer-keys.test.ts`.
@@ -476,6 +477,16 @@ export const QUESTIONS: QuestionBank = mergeQuestions(
 export function countQuestions(subjectId: string, questions: QuestionBank = QUESTIONS): number {
   const bank = questions[subjectId] ?? {};
   return Object.values(bank).reduce((n, arr) => n + (arr?.length ?? 0), 0);
+}
+
+/** Difficulties that actually have questions — empty tiers are not offered. */
+export function difficultiesWithQuestions(
+  subjectId: string,
+  questions: QuestionBank = QUESTIONS,
+): DifficultyId[] {
+  return DIFFICULTIES.map((d) => d.id).filter(
+    (id) => (questions[subjectId]?.[id]?.length ?? 0) > 0,
+  );
 }
 
 /**

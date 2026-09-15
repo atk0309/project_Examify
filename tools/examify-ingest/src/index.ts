@@ -2,14 +2,22 @@ export { FIXTURE_IDS, FIXTURE_ID_SET, type FixtureId } from './fixtures';
 export { collectQuestionIds } from './ids';
 export {
   bankIrSchema,
+  runManifestSchema,
   DIFFICULTIES,
   SUBJECT_ID_RE,
+  GENERATE_PROVIDERS,
+  DEFAULT_GENERATE_SEED,
+  GENERATE_TEMPERATURE,
+  PROMPT_VERSION,
+  INGEST_STATE_DIR,
   type AnswerKey,
   type BankIR,
   type BankIrItem,
   type DifficultyId,
+  type GenerateProviderId,
   type PublicQuestion,
   type PublicQuestionBank,
+  type RunManifest,
   type SplitIr,
 } from './schema';
 export { publicQuestionIds, splitIr } from './split';
