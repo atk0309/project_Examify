@@ -2,10 +2,10 @@
 
 import { headers } from 'next/headers';
 import { z } from 'zod';
-import { issueMagicLink } from '@/lib/auth';
+import { issueLocalOtp, issueMagicLink } from '@/lib/auth';
 import { verifyTurnstile } from '@/lib/captcha';
-import { renderMagicLinkEmail, sendEmail } from '@/lib/email';
-import { env, isTurnstileEnabled } from '@/lib/env';
+import { renderMagicLinkEmail, renderOtpEmail, sendEmail } from '@/lib/email';
+import { env, getAuthMode, isTurnstileEnabled } from '@/lib/env';
 import { emailMayAcceptInvite, lookupInvite } from '@/lib/households';
 import { extractClientIp } from '@/lib/ip';
 import { checkRateLimit } from '@/lib/rate-limit';
@@ -26,10 +26,10 @@ export type RequestInviteLinkState =
     };
 
 /**
- * Accept an invite: issue a magic link that will attach household membership
- * on verify. Invalid invite tokens are reported (the URL is already the
- * secret). Email-lock mismatches still return the generic `sent` copy so
- * locked invites cannot be enumerated.
+ * Issues the configured magic-link or local-OTP challenge for an eligible
+ * invite. Verification attaches the new household membership. Invalid invite
+ * tokens are reported because the URL is already secret; email-lock mismatches
+ * still return `sent` so locked addresses cannot be enumerated.
  */
 export async function requestInviteLink(
   _prev: RequestInviteLinkState,
@@ -58,19 +58,37 @@ export async function requestInviteLink(
   const invite = lookupInvite(parsed.data.inviteToken);
   if (!invite) return { status: 'error', reason: 'invite_invalid' };
 
+  const mode = getAuthMode();
+  if (mode === 'password') return { status: 'error', reason: 'invalid' };
+
   const { email } = parsed.data;
   if (emailMayAcceptInvite(invite, email)) {
-    const { token: magic } = await issueMagicLink(email, invite.role, { inviteId: invite.id });
-    const url = `${env.SITE_URL}/signin/verify?token=${encodeURIComponent(magic)}`;
-    const rendered = renderMagicLinkEmail({ url, email, siteName: siteConfig.name });
-    const result = await sendEmail({
-      to: email,
-      subject: rendered.subject,
-      html: rendered.html,
-      text: rendered.text,
-    });
-    if (!result.ok) {
-      console.error('[auth] invite magic-link delivery failed', { email, error: result.error });
+    if (mode === 'local-otp') {
+      const { code } = issueLocalOtp(email, invite.role, { inviteId: invite.id });
+      const rendered = renderOtpEmail({ code, email, siteName: siteConfig.name });
+      const result = await sendEmail({
+        to: email,
+        subject: rendered.subject,
+        html: rendered.html,
+        text: rendered.text,
+        code,
+      });
+      if (!result.ok) {
+        console.error('[auth] invite local-otp delivery failed', { email, error: result.error });
+      }
+    } else {
+      const { token: magic } = await issueMagicLink(email, invite.role, { inviteId: invite.id });
+      const url = `${env.SITE_URL}/signin/verify?token=${encodeURIComponent(magic)}`;
+      const rendered = renderMagicLinkEmail({ url, email, siteName: siteConfig.name });
+      const result = await sendEmail({
+        to: email,
+        subject: rendered.subject,
+        html: rendered.html,
+        text: rendered.text,
+      });
+      if (!result.ok) {
+        console.error('[auth] invite magic-link delivery failed', { email, error: result.error });
+      }
     }
   }
 

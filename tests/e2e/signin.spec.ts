@@ -102,6 +102,12 @@ test('signin rate-limits requests per IP', async ({ page }) => {
   await expect(page.getByTestId('signin-error-rate_limited')).toBeVisible();
 });
 
+test('OTP-shaped token on /signin/verify is rejected', async ({ page }) => {
+  await page.goto('/signin/verify?token=otp:student@example.com:student:000000');
+  await expect(page).toHaveURL(/\/signin\/verify\/error/);
+  await expect(page.getByText('Sign-in link invalid')).toBeVisible();
+});
+
 test('signin rejects empty Turnstile token', async ({ page }) => {
   await page.goto('/signin');
   await page.getByTestId('signin-form').waitFor();

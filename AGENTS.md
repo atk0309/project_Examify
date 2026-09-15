@@ -15,7 +15,7 @@ This file applies to the entire repository.
 
 ## Mission
 
-Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developable with GitHub PRs and CI while remaining portable across Node 22.22.2+ hosts, preserving the security and operational invariants documented in `CLAUDE.md`.
+Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developable with GitHub PRs and CI while remaining portable across Node 22 LTS hosts (`>=22.22.2 <23`), preserving the security and operational invariants documented in `CLAUDE.md`.
 
 ## Progress + roles (current behaviour)
 
@@ -72,10 +72,19 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
 - Access is invite-only. First-run `/setup` (`bootstrapHousehold`) creates the admin
   when no household exists, and only after `SETUP_BOOTSTRAP_SECRET` matches (required
   in production; captcha is not identity). Parents/admins mint invite links
-  (`createInvite`); accept goes through `/invite/[token]` + magic-link verify
-  (membership attaches in the same transaction). Do not bring back a required
-  `FAMILIES` env allowlist. A leftover `FAMILIES` JSON is imported once if the DB
-  has no households. Production boot fails if `FAMILIES` is set and invalid.
+  (`createInvite`); accept goes through `/invite/[token]` using the configured
+  `AUTH_MODE` (password, magic-link verify, or local OTP). Do not bring back a
+  required `FAMILIES` env allowlist. A leftover `FAMILIES` JSON is imported once
+  if the DB has no households. Production boot fails if `FAMILIES` is set and invalid.
+- **Auth mode** is `AUTH_MODE` (`password` | `magic-link` | `local-otp`, default
+  `magic-link`). `install.sh` writes it. Password needs no mail; magic-link /
+  local-otp use `MAIL_TRANSPORT` (`auto` / `resend` / `smtp` / `outbox`).
+  Production `local-otp` or explicit `outbox` requires `ALLOW_LOCAL_OUTBOX=1`.
+  SMTP AUTH/DATA requires TLS (STARTTLS or `SMTP_SECURE`) unless
+  `SMTP_ALLOW_INSECURE=1`. `SMTP_FROM` is required only when SMTP is the
+  active transport. Household membership remains the privacy boundary; every
+  mode issues the same session shape. Local OTP locks a challenge after 5
+  well-formed wrong guesses.
 
 ## Workflow expectations
 
@@ -117,8 +126,10 @@ Before merge, ensure these pass in CI:
 - Preserve rate-limit boundaries and per-kind separation.
 - Keep sign-in role-gated by household membership (student = student member,
   parent = parent or admin member), derived via `isAllowedEmail`; never leak
-  whether an email is a member (no enumeration), including when mail delivery
-  fails (same public `sent` response; log server-side).
+  whether an email is a member (no enumeration). Challenge modes keep the
+  generic `sent` response (including when mail delivery fails; log server-side).
+  Password mode uses a generic `invalid` for unknown email / wrong password /
+  wrong role.
 - Re-check household membership on every `getSession()` load; a removed member
   is redirected to `/signin/invalidate` so the sealed cookie is actually
   cleared (RSC cannot persist `session.destroy()`). Invite revoke sets
@@ -128,6 +139,8 @@ Before merge, ensure these pass in CI:
   verification lives in a **Route Handler** (`src/app/signin/verify/route.ts`), never a
   Server Component page — clicking the email link is a GET that writes the session cookie,
   and cookie mutation is illegal during a render. Failures redirect to `/signin/verify/error`.
+  `/signin/verify` and `consumeMagicToken` only succeed when `AUTH_MODE` is
+  `magic-link`. They refuse `otp:` bearers; local OTP is `verifyLocalOtp` only.
 
 ## PR checklist
 

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { allowLocalMailOutbox, env, parseEnv } from '@/lib/env';
+import { allowLocalMailOutbox, env, getAuthMode, parseEnv, resolveMailTransport } from '@/lib/env';
 
 const prodBase: NodeJS.ProcessEnv = {
   NODE_ENV: 'production',
@@ -100,6 +100,87 @@ describe('parseEnv production fail-closed', () => {
     ).toBeUndefined();
   });
 
+  it('defaults AUTH_MODE to magic-link and accepts password / local-otp', () => {
+    expect(parseEnv(prodBase).AUTH_MODE).toBe('magic-link');
+    expect(parseEnv({ ...prodBase, AUTH_MODE: 'password' }).AUTH_MODE).toBe('password');
+    expect(
+      parseEnv({
+        ...prodBase,
+        AUTH_MODE: 'local-otp',
+        ALLOW_LOCAL_OUTBOX: '1',
+      }).AUTH_MODE,
+    ).toBe('local-otp');
+  });
+
+  it('requires ALLOW_LOCAL_OUTBOX for local-otp or explicit outbox in production', () => {
+    expect(() => parseEnv({ ...prodBase, AUTH_MODE: 'local-otp' })).toThrow(
+      /Invalid environment variables/,
+    );
+    expect(() => parseEnv({ ...prodBase, MAIL_TRANSPORT: 'outbox' })).toThrow(
+      /Invalid environment variables/,
+    );
+  });
+
+  it('requires SMTP_HOST and SMTP_FROM when MAIL_TRANSPORT=smtp', () => {
+    expect(() => parseEnv({ ...prodBase, MAIL_TRANSPORT: 'smtp' })).toThrow(
+      /Invalid environment variables/,
+    );
+    expect(() =>
+      parseEnv({ ...prodBase, MAIL_TRANSPORT: 'smtp', SMTP_HOST: 'smtp.example.com' }),
+    ).toThrow(/Invalid environment variables/);
+    expect(
+      parseEnv({
+        ...prodBase,
+        MAIL_TRANSPORT: 'smtp',
+        SMTP_HOST: 'smtp.example.com',
+        SMTP_FROM: 'Examify <examify@example.com>',
+      }).SMTP_HOST,
+    ).toBe('smtp.example.com');
+  });
+
+  it('requires a real Resend key when MAIL_TRANSPORT=resend', () => {
+    expect(() => parseEnv({ ...prodBase, MAIL_TRANSPORT: 'resend' })).toThrow(
+      /Invalid environment variables/,
+    );
+    expect(() =>
+      parseEnv({ ...prodBase, MAIL_TRANSPORT: 'resend', RESEND_API_KEY: 'test' }),
+    ).toThrow(/Invalid environment variables/);
+    expect(
+      parseEnv({
+        ...prodBase,
+        MAIL_TRANSPORT: 'resend',
+        RESEND_API_KEY: 're_live_xxx',
+        RESEND_FROM: 'Examify <examify@example.com>',
+      }).MAIL_TRANSPORT,
+    ).toBe('resend');
+  });
+
+  it('does not require SMTP_FROM for resend/outbox when SMTP_HOST is leftover', () => {
+    expect(
+      parseEnv({
+        ...prodBase,
+        MAIL_TRANSPORT: 'resend',
+        RESEND_API_KEY: 're_live_xxx',
+        RESEND_FROM: 'Examify <examify@example.com>',
+        SMTP_HOST: 'smtp.example.com',
+      }).SMTP_FROM,
+    ).toBeUndefined();
+    expect(
+      parseEnv({
+        ...prodBase,
+        MAIL_TRANSPORT: 'outbox',
+        ALLOW_LOCAL_OUTBOX: '1',
+        SMTP_HOST: 'smtp.example.com',
+      }).SMTP_HOST,
+    ).toBe('smtp.example.com');
+  });
+
+  it('requires SMTP_FROM when MAIL_TRANSPORT=auto and SMTP_HOST is set', () => {
+    expect(() =>
+      parseEnv({ ...prodBase, MAIL_TRANSPORT: 'auto', SMTP_HOST: 'smtp.example.com' }),
+    ).toThrow(/Invalid environment variables/);
+  });
+
   it('accepts leftover FAMILIES that includes a standalone child (import skips it)', () => {
     expect(() =>
       parseEnv({
@@ -110,6 +191,40 @@ describe('parseEnv production fail-closed', () => {
         ]),
       }),
     ).not.toThrow();
+  });
+});
+
+describe('getAuthMode + resolveMailTransport', () => {
+  const original = {
+    AUTH_MODE: env.AUTH_MODE,
+    MAIL_TRANSPORT: env.MAIL_TRANSPORT,
+    SMTP_HOST: env.SMTP_HOST,
+    RESEND_API_KEY: env.RESEND_API_KEY,
+  };
+  afterEach(() => {
+    (env as { AUTH_MODE: typeof env.AUTH_MODE }).AUTH_MODE = original.AUTH_MODE;
+    (env as { MAIL_TRANSPORT: typeof env.MAIL_TRANSPORT }).MAIL_TRANSPORT = original.MAIL_TRANSPORT;
+    (env as { SMTP_HOST?: string }).SMTP_HOST = original.SMTP_HOST;
+    (env as { RESEND_API_KEY?: string }).RESEND_API_KEY = original.RESEND_API_KEY;
+  });
+
+  it('reads AUTH_MODE from the parsed env singleton', () => {
+    (env as { AUTH_MODE: typeof env.AUTH_MODE }).AUTH_MODE = 'password';
+    expect(getAuthMode()).toBe('password');
+  });
+
+  it('auto-picks SMTP, then Resend, then outbox', () => {
+    (env as { MAIL_TRANSPORT: typeof env.MAIL_TRANSPORT }).MAIL_TRANSPORT = 'auto';
+    (env as { SMTP_HOST?: string }).SMTP_HOST = 'smtp.example.com';
+    (env as { RESEND_API_KEY?: string }).RESEND_API_KEY = undefined;
+    expect(resolveMailTransport()).toBe('smtp');
+
+    (env as { SMTP_HOST?: string }).SMTP_HOST = undefined;
+    (env as { RESEND_API_KEY?: string }).RESEND_API_KEY = 're_live';
+    expect(resolveMailTransport()).toBe('resend');
+
+    (env as { RESEND_API_KEY?: string }).RESEND_API_KEY = 'test';
+    expect(resolveMailTransport()).toBe('outbox');
   });
 });
 

@@ -103,6 +103,21 @@ describe('bootstrapHouseholdAction', () => {
     expect(hasAnyHousehold()).toBe(false);
   });
 
+  it('requires a password when AUTH_MODE is password', async () => {
+    const { env } = await import('@/lib/env');
+    (env as { AUTH_MODE: typeof env.AUTH_MODE }).AUTH_MODE = 'password';
+    const { bootstrapHouseholdAction } = await import('@/actions/bootstrapHousehold');
+    const missing = await bootstrapHouseholdAction({ status: 'idle' }, setupForm());
+    expect(missing).toEqual({ status: 'error', reason: 'invalid' });
+
+    const data = setupForm();
+    data.set('password', 'admin-password');
+    await expect(bootstrapHouseholdAction({ status: 'idle' }, data)).rejects.toMatchObject({
+      url: '/',
+    });
+    (env as { AUTH_MODE: typeof env.AUTH_MODE }).AUTH_MODE = 'magic-link';
+  });
+
   it('rejects a second setup', async () => {
     const { bootstrapHousehold } = await import('@/lib/households');
     bootstrapHousehold({ email: 'a@example.com', householdName: 'One' });
