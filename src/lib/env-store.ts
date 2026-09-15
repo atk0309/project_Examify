@@ -281,11 +281,16 @@ function resolveInitialEnviron(
   return readInitialProcessEnviron();
 }
 
+/** True when the exec environ assigned the key — including `''` / `test`. */
+function execEnvironAssignsKey(env: Record<string, string | undefined>, key: string): boolean {
+  return Object.hasOwn(env, key);
+}
+
 /**
  * True when a host (Docker / systemd / parent process) owns the key.
- * Provenance is the process exec environment, not live-vs-file equality —
- * a matching `.env` value is still host-managed if the key was injected
- * at start (`mergeRepoEnvFiles` leaves existing env alone on restart).
+ * Provenance is the process exec environment, not live-vs-file equality
+ * and not “usable?” — an injected `''` or `test` still wins after restart
+ * (`mergeRepoEnvFiles` leaves existing env alone, including empty).
  */
 export function envStoreSecretHostManaged(
   key: EnvStoreKey,
@@ -293,7 +298,7 @@ export function envStoreSecretHostManaged(
   env: Record<string, string | undefined> = process.env,
   initialEnv?: Record<string, string | undefined>,
 ): boolean {
-  if (isUsableEnvSecret(resolveInitialEnviron(initialEnv)[key]?.trim())) return true;
+  if (execEnvironAssignsKey(resolveInitialEnviron(initialEnv), key)) return true;
   const live = env[key]?.trim() ?? '';
   if (!isUsableEnvSecret(live)) return false;
   const stored = readStoreFileSecret(root, key)?.trim() ?? '';

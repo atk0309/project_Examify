@@ -261,6 +261,43 @@ describe('env-store', () => {
     }
   });
 
+  it('is host-managed when exec environ assigns the key as empty or test', async () => {
+    const {
+      envStoreSecretHostManaged,
+      setEnvStoreRootForTests,
+      setInitialEnvironForTests,
+      setEnvStoreSecret,
+      clearEnvStoreSecret,
+    } = await import('@/lib/env-store');
+    const root = tempRoot();
+    setEnvStoreRootForTests(root);
+    writeFileSync(path.join(root, '.env'), 'OTHER=keep\n');
+    const previous = process.env.OPENAI_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    const attempted = 'sk-wizard-empty-inject-would-not-persist';
+    try {
+      for (const injected of ['', 'test'] as const) {
+        setInitialEnvironForTests({ OPENAI_API_KEY: injected });
+        expect(envStoreSecretHostManaged('OPENAI_API_KEY', root)).toBe(true);
+        expect(
+          envStoreSecretHostManaged('OPENAI_API_KEY', root, {}, { OPENAI_API_KEY: injected }),
+        ).toBe(true);
+
+        const set = setEnvStoreSecret('OPENAI_API_KEY', attempted, root);
+        expect(set).toEqual({ ok: false, reason: 'host_managed' });
+        expect(JSON.stringify(set)).not.toContain(attempted);
+
+        const cleared = clearEnvStoreSecret('OPENAI_API_KEY', root);
+        expect(cleared).toEqual({ ok: false, reason: 'host_managed' });
+        expect(readFileSync(path.join(root, '.env'), 'utf8')).toBe('OTHER=keep\n');
+        expect(process.env.OPENAI_API_KEY).toBeUndefined();
+      }
+    } finally {
+      if (previous === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = previous;
+    }
+  });
+
   it('is not host-managed when the live value matches the file store and exec environ is empty', async () => {
     const { envStoreSecretHostManaged, setEnvStoreRootForTests, setEnvStoreSecret } =
       await import('@/lib/env-store');

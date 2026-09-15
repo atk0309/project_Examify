@@ -630,6 +630,10 @@ describe('onboarding household gate', () => {
       const execOwned = getOnboardingSnapshot(host.householdId);
       expect(execOwned.openaiConfigured).toBe(true);
       expect(execOwned.openaiHostManaged).toBe(true);
+      setInitialEnvironForTests({ OPENAI_API_KEY: '' });
+      expect(getOnboardingSnapshot(host.householdId).openaiHostManaged).toBe(true);
+      setInitialEnvironForTests({ OPENAI_API_KEY: 'test' });
+      expect(getOnboardingSnapshot(host.householdId).openaiHostManaged).toBe(true);
     } finally {
       if (previous === undefined) delete process.env.OPENAI_API_KEY;
       else process.env.OPENAI_API_KEY = previous;
