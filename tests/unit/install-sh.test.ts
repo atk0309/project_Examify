@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -29,27 +29,75 @@ describe('install.sh', () => {
     execFileSync('bash', ['-n', SCRIPT], { stdio: 'pipe' });
   });
 
-  it('writes a password-mode .env in write-env-only mode', () => {
+  it('writes a password-mode .env with a local-outbox invite path', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-install-'));
     try {
-      execFileSync('bash', [SCRIPT, '--write-env-only'], {
+      const result = spawnSync('bash', [SCRIPT, '--write-env-only'], {
         cwd: dir,
         env: installEnv(),
-        stdio: 'pipe',
+        encoding: 'utf8',
       });
+      expect(result.status).toBe(0);
+      expect(result.stderr).toContain('MAIL_TRANSPORT=outbox');
+      expect(result.stderr).toContain('ALLOW_LOCAL_OUTBOX=1');
+      expect(result.stderr).toContain('mailbox proof');
       const dest = path.join(dir, '.env');
       const envFile = fs.readFileSync(dest, 'utf8');
       expect(envFile).toContain('AUTH_MODE=password');
+      expect(envFile).toContain('MAIL_TRANSPORT=outbox');
+      expect(envFile).toContain('ALLOW_LOCAL_OUTBOX=1');
       expect(envFile).toContain('SITE_URL=https://examify.example.com');
       expect(envFile).toContain('SETUP_BOOTSTRAP_SECRET=install-test-setup-secret');
       expect(envFile).not.toContain('RESEND_API_KEY=');
       expect(envFile).not.toContain('SMTP_HOST=');
-      expect(envFile).not.toContain('ALLOW_LOCAL_OUTBOX=');
       expect(envFile).not.toContain('OPENAI_API_KEY=');
       expect(fs.statSync(dest).mode & 0o777).toBe(0o600);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it('keeps SMTP mail when password-mode already has a delivery path', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-install-'));
+    try {
+      execFileSync('bash', [SCRIPT, '--write-env-only'], {
+        cwd: dir,
+        env: installEnv({
+          MAIL_TRANSPORT: 'smtp',
+          SMTP_HOST: 'smtp.example.com',
+          SMTP_FROM: 'Examify <you@example.com>',
+        }),
+        stdio: 'pipe',
+      });
+      const envFile = fs.readFileSync(path.join(dir, '.env'), 'utf8');
+      expect(envFile).toContain('AUTH_MODE=password');
+      expect(envFile).toContain('MAIL_TRANSPORT=smtp');
+      expect(envFile).toContain('SMTP_HOST=smtp.example.com');
+      expect(envFile).not.toContain('ALLOW_LOCAL_OUTBOX=');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('prints --help without reading $0 (curl | bash -s -- --help)', () => {
+    const script = fs.readFileSync(SCRIPT);
+    const result = spawnSync('bash', ['-s', '--', '--help'], {
+      input: script,
+      encoding: 'utf8',
+    });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('Examify installer');
+    expect(result.stdout).toContain('bash -s -- --help');
+    expect(result.stdout).toContain('pdftoppm');
+    expect(result.stderr).not.toMatch(/sed:/);
+    expect(result.stdout).not.toMatch(/sed:/);
+  });
+
+  it('prints --help when invoked as ./install.sh --help', () => {
+    const result = spawnSync('bash', [SCRIPT, '--help'], { encoding: 'utf8' });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('--write-env-only');
+    expect(result.stdout).toContain('mailbox proof');
   });
 
   it('writes .env at the examify repo root when invoked from a subdirectory', () => {
@@ -74,6 +122,23 @@ describe('install.sh', () => {
       );
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('does not force an outbox for magic-link when mail is unset', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-install-'));
+    try {
+      execFileSync('bash', [SCRIPT, '--write-env-only'], {
+        cwd: dir,
+        env: installEnv({ AUTH_MODE: 'magic-link' }),
+        stdio: 'pipe',
+      });
+      const envFile = fs.readFileSync(path.join(dir, '.env'), 'utf8');
+      expect(envFile).toContain('AUTH_MODE=magic-link');
+      expect(envFile).toContain('MAIL_TRANSPORT=auto');
+      expect(envFile).not.toContain('ALLOW_LOCAL_OUTBOX=');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
     }
   });
 
