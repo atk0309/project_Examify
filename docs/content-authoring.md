@@ -45,15 +45,31 @@ An empty subjects tree is refused and never wipes generated files. Uploaded
 PDFs must start with `%PDF`. `--replace-sample` is off unless the admin enables
 the advanced toggle.
 
-Generate writes IR only. It never silently emits or applies:
+Generate writes IR only. It never silently emits or applies. Existing
+`bank.ir.json` is not overwritten unless you pass `--force` (dry-run says
+**would overwrite**). Sample-bank ids fail at generate unless
+`--replace-sample`.
+
+**Hand-authored biology** (`content/subjects/biology/bank.ir.json`) has no
+source file. Skip generate; validate / emit only. Generate needs a source
+file first.
 
 1. Drop sources in `content/source-pdfs/<subject-id>/` (gitignored) and/or the
    subject folder. Optional: author `content/subjects/<id>/bank.ir.json` by
-   hand (see the biology sample) instead of generating.
-2. From the repo root:
+   hand (see the biology sample) instead of generating. A committed generate
+   fixture lives at `content/subjects/demo/notes.txt`.
+2. From the repo root (fresh-clone generate fixture):
 
    ```bash
-   pnpm examify-ingest generate --provider test --seed 0 content/subjects/<id>
+   pnpm examify-ingest generate --provider test --seed 0 content/subjects/demo
+   pnpm examify-ingest validate content/subjects
+   pnpm examify-ingest emit content/subjects --dry-run
+   pnpm examify-ingest emit content/subjects --apply
+   ```
+
+   Biology (skip generate):
+
+   ```bash
    pnpm examify-ingest validate content/subjects
    pnpm examify-ingest emit content/subjects --dry-run
    pnpm examify-ingest emit content/subjects --apply
@@ -73,7 +89,9 @@ Generate writes IR only. It never silently emits or applies:
    network). `--provider local` uses quoted `EXAMIFY_INGEST_LOCAL_CMD` (stdin
    JSON includes full source text/bytes, not hashes-only) or
    `EXAMIFY_LLM_BASE_URL` (same multimodal payload as OpenAI — source text and
-   page images, not hashes-only). `--dry-run-ir` writes nothing durable.
+   page images, not hashes-only). `--dry-run-ir` writes nothing durable;
+   when IR already exists it says **would overwrite**. Persist over existing
+   IR requires `--force`.
    Sources are framed as untrusted data (`promptVersion` v2) with static
    `UNTRUSTED SOURCE MATERIAL` fences; still review IR before emit. Run
    manifests land in gitignored `.examify-ingest/`.

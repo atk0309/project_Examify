@@ -21,6 +21,7 @@ export { sortRecord } from './hash';
 export { writeFileAtomic } from './write-atomic';
 export { mergeRepoEnvFiles, parseEnvFile } from './repo-env';
 export { loadGeneratePrompt, findIngestPackageRoot, generatePromptPath } from './prompt';
+export { sampleBankFrozenIds } from './frozen-ids';
 export {
   resolveGenerateTargets,
   resolveSubjectSources,

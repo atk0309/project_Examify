@@ -46,9 +46,17 @@ async function runGenerate(parsed: ParsedCli, io: CliIo): Promise<number> {
         model: parsed.model ?? undefined,
         seed: parsed.seed,
         dryRunIr: parsed.dryRunIr,
+        force: parsed.force,
+        replaceSample: parsed.replaceSample,
         env,
       });
-      const verb = result.wroteIr ? 'wrote' : 'would write';
+      const verb = result.wroteIr
+        ? result.irExisted
+          ? 'overwrote'
+          : 'wrote'
+        : result.irExisted
+          ? 'would overwrite'
+          : 'would write';
       const cache = result.cacheHit ? 'cache hit' : 'generated';
       io.stdout.write(
         `${verb} ${pathFromRoot(repoRoot, result.irPath)} (${target.subjectId}, ${cache}, cacheKey=${result.cacheKey})\n`,

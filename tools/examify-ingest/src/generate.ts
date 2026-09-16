@@ -1,6 +1,8 @@
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { buildCacheKey, readCachedIr, writeCachedIr, writeRunManifest } from './cache';
 import { stableJson } from './diff';
+import { sampleBankFrozenIds } from './frozen-ids';
 import {
   PAGE_RASTER_PROFILE,
   pageImageHashesOf,
@@ -48,6 +50,12 @@ export type GenerateRequest = {
   env?: ProviderEnv;
   fetch?: typeof fetch;
   now?: () => Date;
+  /** Overwrite an existing `bank.ir.json`. Required for persist when the file exists. */
+  force?: boolean;
+  /** Allow generated ids that collide with the sample bank (same set as validate/emit). */
+  replaceSample?: boolean;
+  /** Override the frozen sample-bank id set. Defaults to `sampleBankFrozenIds()`. */
+  frozenIds?: Iterable<string>;
   /** Test seam — same hook as `resolvePageImages`. Durable page cache waits for abort. */
   rasterize?: (pdfAbsPath: string, prefix: string) => boolean;
   /**
@@ -65,6 +73,7 @@ export type GenerateSubjectResult = {
   manifestPath: string | null;
   irPath: string;
   wroteIr: boolean;
+  irExisted: boolean;
 };
 
 function attachMeta(
@@ -99,6 +108,22 @@ function assertValidBank(bank: BankIR, label: string): BankIR {
   return parsed.data;
 }
 
+function pathFromRoot(repoRoot: string, absPath: string): string {
+  return path.relative(repoRoot, absPath).split(path.sep).join('/') || absPath;
+}
+
+function assertNotFrozenSampleIds(bank: BankIR, label: string, request: GenerateRequest): void {
+  const result = validateIrCollection([{ path: label, data: bank }], {
+    replaceSample: request.replaceSample === true,
+    frozenIds: request.frozenIds ?? sampleBankFrozenIds(),
+  });
+  if (!result.ok) {
+    throw new Error(
+      `${label} failed sample-bank freeze: ${result.errors.map((error) => error.message).join('; ')}`,
+    );
+  }
+}
+
 async function checkpointAbort(signal?: AbortSignal): Promise<void> {
   if (signal) await Promise.resolve();
   throwIfAborted(signal);
@@ -115,6 +140,13 @@ export async function generateSubject(request: GenerateRequest): Promise<Generat
   const env = request.env ?? {};
   const adapter = getProvider(request.provider);
   const persist = request.dryRunIr !== true;
+  const irPath = path.join(request.subjectDir, BANK_IR_FILE);
+  const irExisted = existsSync(irPath);
+  if (irExisted && persist && request.force !== true) {
+    throw new Error(
+      `refusing to overwrite existing ${pathFromRoot(request.repoRoot, irPath)}; pass --force to replace it`,
+    );
+  }
 
   const prompt = loadGeneratePrompt();
   const sourceHashes = sourceHashesOf(request.sources);
@@ -204,8 +236,8 @@ export async function generateSubject(request: GenerateRequest): Promise<Generat
     seedHonored: adapter.seedHonored,
   });
 
-  const irPath = path.join(request.subjectDir, BANK_IR_FILE);
   await checkpointAbort(request.signal);
+  assertNotFrozenSampleIds(bank, pathFromRoot(request.repoRoot, irPath), request);
   const wroteIr = persist;
   let manifestPath: string | null = null;
   if (persist) {
@@ -215,7 +247,7 @@ export async function generateSubject(request: GenerateRequest): Promise<Generat
     writeFileAtomic(irPath, stableJson(bank));
   }
 
-  return { bank, cacheKey, cacheHit, manifest, manifestPath, irPath, wroteIr };
+  return { bank, cacheKey, cacheHit, manifest, manifestPath, irPath, wroteIr, irExisted };
 }
 
 /**

@@ -17,6 +17,7 @@ import {
   collectGeneratedSubjectIds,
   collectQuestionIds,
   FIXTURE_IDS,
+  sampleBankFrozenIds,
   formatFileDiff,
   isAuthoritativeCatalogInput,
   parseArgs,
@@ -136,6 +137,10 @@ describe('examify-ingest schema + split', () => {
     expect(split.keys['biology-easy-free-1']).toMatchObject({ type: 'free', maxScore: 2 });
     expect(Object.keys(split.questions.easy![0]!).sort()).toEqual(['choices', 'id', 'q', 'type']);
     expect(Object.keys(split.questions.easy![1]!).sort()).toEqual(['id', 'q', 'type']);
+  });
+
+  it('sampleBankFrozenIds is the same set validate/emit freeze', () => {
+    expect(sampleBankFrozenIds()).toEqual(SAMPLE_IDS);
   });
 
   it('refuses any sample-bank id unless --replace-sample', () => {

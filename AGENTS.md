@@ -57,6 +57,10 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   without rebuilding. Guide: `docs/content-authoring.md` and
   `tools/examify-ingest/README.md`. Generate writes IR only — still
   validate → emit --dry-run → emit --apply. It never auto-applies.
+  Hand-authored biology has no source file (skip generate; validate/emit only).
+  Fresh-clone generate: `content/subjects/demo/notes.txt`. Existing
+  `bank.ir.json` requires `--force` (dry-run says **would overwrite**).
+  Frozen sample-bank ids fail at generate unless `--replace-sample`.
   `generateSubject` accepts optional `AbortSignal` (forwarded to provider
   HTTP/CMD; abort throws and writes no IR, IR cache, page-raster cache, or
   run manifest). Cloud

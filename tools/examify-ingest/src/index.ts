@@ -1,5 +1,6 @@
 export { FIXTURE_IDS, FIXTURE_ID_SET, type FixtureId } from './fixtures';
 export { collectQuestionIds } from './ids';
+export { sampleBankFrozenIds } from './frozen-ids';
 export {
   bankIrSchema,
   runManifestSchema,

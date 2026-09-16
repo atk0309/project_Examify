@@ -6,10 +6,24 @@ split public / server-only files the app merges onto the hand-authored sample
 bank.
 
 `generate` writes `content/subjects/<id>/bank.ir.json` only. It never emits or
-applies. Human-in-the-loop is still required:
+applies. Human-in-the-loop is still required.
+
+**Hand-authored biology** (`content/subjects/biology/bank.ir.json`) has no
+source file. Skip generate; validate / emit only. Generate needs a source
+file first.
+
+Fresh-clone generate fixture (committed `content/subjects/demo/notes.txt`):
 
 ```bash
-pnpm examify-ingest generate --provider test --seed 0 content/subjects/<id>
+pnpm examify-ingest generate --provider test --seed 0 content/subjects/demo
+pnpm examify-ingest validate content/subjects
+pnpm examify-ingest emit content/subjects --dry-run
+pnpm examify-ingest emit content/subjects --apply
+```
+
+Biology (skip generate):
+
+```bash
 pnpm examify-ingest validate content/subjects
 pnpm examify-ingest emit content/subjects --dry-run
 pnpm examify-ingest emit content/subjects --apply
@@ -44,8 +58,9 @@ from the **repo root**.
 ## Commands
 
 ```bash
-pnpm examify-ingest generate --provider test --seed 0 content/subjects
-pnpm examify-ingest generate --provider anthropic --subject biology content/subjects
+pnpm examify-ingest generate --provider test --seed 0 content/subjects/demo
+pnpm examify-ingest generate --provider test --seed 0 content/subjects/demo --dry-run-ir
+pnpm examify-ingest generate --provider test --seed 0 content/subjects/demo --force
 pnpm examify-ingest validate content/subjects
 pnpm examify-ingest emit content/subjects --dry-run
 pnpm examify-ingest emit content/subjects --apply
@@ -57,8 +72,20 @@ file). It reads source files from `content/source-pdfs/<id>/` and standalone
 `content/source-pdfs/<id>.{pdf,png,jpg,jpeg,webp,txt,md}` plus any of those
 extensions in the subject folder except `bank.ir.json`. `--provider` is required
 (`anthropic` / `openai` / `local` / `test`). Default `--seed` is `0` and is
-recorded in the run manifest. `--dry-run-ir` prints the would-write path and
-writes nothing durable (no IR, cache, or manifest). It still rasterizes missing
+recorded in the run manifest. A tree generate of `content/subjects` still needs
+a source file per subject — biology is hand-authored and has none, so target
+`content/subjects/demo` (or add sources) instead of claiming biology generate
+works on a fresh clone.
+
+`--dry-run-ir` prints the would-write path and writes nothing durable (no IR,
+cache, or manifest). If `bank.ir.json` already exists, dry-run says
+**would overwrite**. Persist over existing IR requires `--force`; without it
+generate fails closed (non-zero, no write). Sample-bank ids (`SAMPLE_QUESTIONS`,
+the same frozen set as validate/emit) fail closed **before** the IR write
+unless `--replace-sample`. `--provider test` on a sample subject such as
+`maths` would emit `maths-easy-1` and is refused without that flag.
+
+It still rasterizes missing
 PDF pages into a temp directory when `pdftoppm` is available so the preview
 matches a persist run; it does not populate `.examify-ingest/cache/pages/`.
 The locked generate prompt is `prompts/v2/generate-bank.md`. The unused v1
