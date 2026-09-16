@@ -188,7 +188,7 @@ describe('onboarding generate graph', () => {
     // Grader + Configured badge stay twins: live process.env / env-store, never
     // the boot-frozen env.ts snapshot (clear must fail closed, not restub).
     expect(grading).not.toMatch(/from ['"]@\/lib\/env['"]/);
-    expect(grading).not.toMatch(/env\.ANTHROPIC_API_KEY/);
+    expect(grading).not.toMatch(/(?<!process\.)env\.ANTHROPIC_API_KEY/);
     expect(grading).toMatch(/process\.env\.ANTHROPIC_API_KEY/);
     expect(grading).toMatch(/envStoreSecretConfigured\('ANTHROPIC_API_KEY'\)/);
   });
