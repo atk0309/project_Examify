@@ -486,8 +486,10 @@ Required in production: `SITE_URL`, `AUTH_SECRET`, `DATABASE_URL`, `ANTHROPIC_AP
 keep working). `password` sign-in needs no mail; password-mode invite accept
 sends a mailbox OTP and fails closed without a transport. Interactive /
 default `install.sh` (`AUTH_MODE=password`) prompts for mail or enables a
-local outbox (`ALLOW_LOCAL_OUTBOX=1`) so kid invites are not stranded —
-it does not skip mailbox proof. `local-otp` in production requires
+local outbox (`ALLOW_LOCAL_OUTBOX=1`) when it **writes** `.env` so kid
+invites are not stranded — it does not skip mailbox proof. A kept
+password-mode `.env` with no mail path is refused (no false “enabled
+outbox” claim). `local-otp` in production requires
 `ALLOW_LOCAL_OUTBOX=1`. `MAIL_TRANSPORT` is `auto` (SMTP if `SMTP_HOST`, else
 Resend if a real key, else outbox). Explicit `MAIL_TRANSPORT=smtp` needs
 `SMTP_HOST` + `SMTP_FROM`; `auto` + `SMTP_HOST` also needs `SMTP_FROM`. A

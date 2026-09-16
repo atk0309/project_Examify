@@ -13,10 +13,13 @@
 # Non-interactive (CI / automation):
 #   EXAMIFY_NONINTERACTIVE=1 SITE_URL=https://exam.example.com ./install.sh
 #   Existing .env is never overwritten in non-interactive mode. Remove it first
-#   to regenerate.
+#   to regenerate. A kept password-mode .env with no SMTP / Resend / allowed
+#   outbox is refused (invite accept would fail closed; this run does not
+#   claim to enable an outbox).
 #   Default AUTH_MODE=password enables a local outbox so invite-accept OTP
-#   (mailbox proof) can be read from data/outbox. Set SMTP_* / RESEND_* to
-#   use real mail instead. Invite accept never skips that OTP.
+#   (mailbox proof) can be read from data/outbox — only when this run writes
+#   .env. Set SMTP_* / RESEND_* to use real mail instead. Invite accept never
+#   skips that OTP.
 #
 # Flags:
 #   --write-env-only   write .env and exit (used by tests)
@@ -41,10 +44,13 @@ Piped help (do not use `bash --help` — that is bash's own flag):
 Non-interactive (CI / automation):
   EXAMIFY_NONINTERACTIVE=1 SITE_URL=https://exam.example.com ./install.sh
   Existing .env is never overwritten in non-interactive mode. Remove it first
-  to regenerate.
+  to regenerate. A kept password-mode .env with no SMTP / Resend / allowed
+  outbox is refused (invite accept would fail closed; this run does not
+  claim to enable an outbox).
   Default AUTH_MODE=password enables a local outbox so invite-accept OTP
-  (mailbox proof) can be read from data/outbox. Set SMTP_* / RESEND_* to
-  use real mail instead. Invite accept never skips that OTP.
+  (mailbox proof) can be read from data/outbox — only when this run writes
+  .env. Set SMTP_* / RESEND_* to use real mail instead. Invite accept never
+  skips that OTP.
 
 Flags:
   --write-env-only   write .env and exit (used by tests)
@@ -64,6 +70,7 @@ MAX_NODE_MAJOR=23
 WRITE_ENV_ONLY=0
 SKIP_BUILD=0
 NONINTERACTIVE="${EXAMIFY_NONINTERACTIVE:-0}"
+ENABLED_PASSWORD_OUTBOX=0
 
 for arg in "$@"; do
   case "$arg" in
@@ -138,8 +145,65 @@ has_invite_mail_path() {
   return 1
 }
 
-# Dogfood / default password: do not leave MAIL_TRANSPORT=auto with no
-# delivery (that strands kid invites). Enable a local outbox and say so.
+# Last KEY=VALUE in a dotenv file. Does not eval / expand. Empty if missing.
+env_file_get() {
+  local file="$1"
+  local key="$2"
+  local line="" body="" value=""
+  [ -f "$file" ] || return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    body="${line#"${line%%[![:space:]]*}"}"
+    [ -z "$body" ] && continue
+    [ "${body#\#}" != "$body" ] && continue
+    if [ "${body#export }" != "$body" ]; then
+      body="${body#export }"
+      body="${body#"${body%%[![:space:]]*}"}"
+    fi
+    case "$body" in
+      "${key}="*)
+        value="${body#"${key}="}"
+        value="${value#"${value%%[![:space:]]*}"}"
+        value="${value%"${value##*[![:space:]]}"}"
+        if [ "${#value}" -ge 2 ]; then
+          case "$value" in
+            \"*\") value="${value#\"}"; value="${value%\"}" ;;
+            \'*\') value="${value#\'}"; value="${value%\'}" ;;
+          esac
+        fi
+        ;;
+    esac
+  done < "$file"
+  printf '%s' "$value"
+}
+
+env_file_has_invite_mail_path() {
+  local file="$1"
+  local allow transport smtp_host smtp_from resend_key resend_from
+  allow="$(env_file_get "$file" ALLOW_LOCAL_OUTBOX)"
+  transport="$(env_file_get "$file" MAIL_TRANSPORT)"
+  transport="${transport:-auto}"
+  if [ "$allow" = "1" ]; then
+    return 0
+  fi
+  smtp_host="$(env_file_get "$file" SMTP_HOST)"
+  smtp_from="$(env_file_get "$file" SMTP_FROM)"
+  if [ -n "$smtp_host" ] && [ -n "$smtp_from" ]; then
+    case "$transport" in
+      smtp|auto) return 0 ;;
+    esac
+  fi
+  resend_key="$(env_file_get "$file" RESEND_API_KEY)"
+  resend_from="$(env_file_get "$file" RESEND_FROM)"
+  if [ -n "$resend_key" ] && [ "$resend_key" != "test" ] && [ -n "$resend_from" ]; then
+    case "$transport" in
+      resend|auto) return 0 ;;
+    esac
+  fi
+  return 1
+}
+
+# Prepare in-memory outbox for a write. Do not claim enable here — keep/write
+# happens later, and a kept file must not be described as enabled.
 ensure_password_invite_mail() {
   if [ "$AUTH_MODE" != "password" ]; then
     return 0
@@ -149,10 +213,23 @@ ensure_password_invite_mail() {
   fi
   MAIL_TRANSPORT="outbox"
   ALLOW_LOCAL_OUTBOX=1
+  ENABLED_PASSWORD_OUTBOX=1
+}
+
+claim_password_outbox_enable() {
   echo "Password sign-in needs no mail. Invite accept still requires mailbox proof (OTP)." >&2
   echo "No SMTP / Resend is configured. Enabling MAIL_TRANSPORT=outbox and ALLOW_LOCAL_OUTBOX=1" >&2
   echo "so kid invite codes land in data/outbox (treat that directory as secret)." >&2
   echo "To use real mail, set SMTP_HOST+SMTP_FROM or RESEND_API_KEY+RESEND_FROM and re-run." >&2
+}
+
+# Kept file was not written. Do not claim enable. Password without a delivery
+# path would strand kid invites — refuse instead of warning and ignoring.
+refuse_kept_password_without_mail() {
+  echo "Keeping existing .env, but it is AUTH_MODE=password with no SMTP / Resend / allowed outbox." >&2
+  echo "Invite accept still requires mailbox proof and will fail closed. This run did not enable an outbox." >&2
+  echo "Add SMTP_* or RESEND_* (or MAIL_TRANSPORT=outbox and ALLOW_LOCAL_OUTBOX=1), or remove .env and re-run." >&2
+  exit 1
 }
 
 confirm() {
@@ -470,6 +547,15 @@ if [ "$WROTE_ENV" = "1" ] && [ "$NONINTERACTIVE" != "1" ]; then
   if [ "$GENERATED_SETUP_SECRET" = "1" ]; then
     echo "Generated SETUP_BOOTSTRAP_SECRET (you will type this at /setup)."
     echo "  ${SETUP_BOOTSTRAP_SECRET}"
+  fi
+fi
+
+if [ "$WROTE_ENV" = "1" ] && [ "$ENABLED_PASSWORD_OUTBOX" = "1" ]; then
+  claim_password_outbox_enable
+elif [ "$KEPT_EXISTING_ENV" = "1" ]; then
+  kept_mode="$(env_file_get .env AUTH_MODE)"
+  if [ "$kept_mode" = "password" ] && ! env_file_has_invite_mail_path .env; then
+    refuse_kept_password_without_mail
   fi
 fi
 

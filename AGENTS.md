@@ -132,7 +132,8 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   `magic-link`). `install.sh` writes it. Password sign-in needs no mail;
   password-mode invite accept still sends a mailbox OTP (never skipped).
   Interactive / default `install.sh` prompts for mail or enables a local
-  outbox so kid invites are not stranded. Magic-link /
+  outbox when it writes `.env` so kid invites are not stranded. A kept
+  password-mode `.env` with no mail path is refused. Magic-link /
   local-otp use `MAIL_TRANSPORT` (`auto` / `resend` / `smtp` / `outbox`).
   `pnpm db:migrate` fills `DATABASE_URL` from the repo-root `.env` /
   `.env.local` via `findRepoRoot` (same walk as env-store / ingest).
