@@ -461,6 +461,8 @@ describe('examify-ingest CLI', () => {
     expect(USAGE).toMatch(/notes\/text|\.txt\/\.md/);
     expect(USAGE).toContain('subject folder');
     expect(USAGE).toContain('PDF');
+    expect(USAGE).toMatch(/Corrupt \/[\s\S]*--force/);
+    expect(USAGE).toContain('zero-item');
   });
 
   it('docs happy path is validate/emit with content/subjects, not bare argv', () => {
