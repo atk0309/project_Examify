@@ -154,7 +154,8 @@ Who may sign in is stored in SQLite, not env:
    enter the deployment `SETUP_BOOTSTRAP_SECRET` (required in production). Your email
    is the required admin account id in every `AUTH_MODE` (including password). No
    email round-trip; you are at the keyboard. The form stays submittable after
-   browser autofill and shows field errors instead of a silent disabled button.
+   browser autofill, keeps those DOM values if Turnstile remounts, and shows
+   field errors (cleared on input) instead of a silent disabled button.
 2. **Invite** — from the parent dashboard, create a student invite (open or
    email-locked) or a parent invite (**email-locked**). Share `/invite/<token>`.
    Revoke unused links; remove a member if they should no longer have access.

@@ -1,17 +1,20 @@
 'use client';
 
 import Script from 'next/script';
-import { useActionState, useRef, useState, type FormEvent } from 'react';
+import { useActionState, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
 import { bootstrapHouseholdAction, type BootstrapState } from '@/actions/bootstrapHousehold';
 import type { AuthMode } from '@/lib/auth-mode';
 import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from '@/lib/password-policy';
 import {
   hasSetupFieldErrors,
+  isFieldMappedBootstrapReason,
   readSetupFields,
   SETUP_HOUSEHOLD_NAME_MAX,
   setupFieldErrorsFromServer,
   type SetupFieldErrors,
+  type SetupFormFields,
   validateSetupFields,
+  writeSetupFields,
 } from '@/lib/setup-form';
 
 const errorCopy: Record<Exclude<BootstrapState, { status: 'idle' }>['reason'], string> = {
@@ -46,29 +49,35 @@ export function SetupForm({ siteKey, authMode }: { siteKey?: string; authMode: A
     { status: 'idle' },
   );
   const formRef = useRef<HTMLFormElement>(null);
-  const [householdName, setHouseholdName] = useState('Our family');
-  const [setupSecret, setSetupSecret] = useState('');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const lastFieldsRef = useRef<SetupFormFields | null>(null);
+  const dispatchIdRef = useRef(0);
+  const appliedIdRef = useRef(0);
   const [attempted, setAttempted] = useState(false);
-  const [fieldErrors, setFieldErrors] = useState<SetupFieldErrors>({});
+  const [localErrors, setLocalErrors] = useState<SetupFieldErrors>({});
+  const [hideServerFields, setHideServerFields] = useState(false);
 
-  const errors: SetupFieldErrors = {
-    ...(state.status === 'error' ? setupFieldErrorsFromServer(state.reason) : {}),
-    ...fieldErrors,
+  useLayoutEffect(() => {
+    if (pending) return;
+    if (dispatchIdRef.current === appliedIdRef.current) return;
+    appliedIdRef.current = dispatchIdRef.current;
+    const form = formRef.current;
+    const fields = lastFieldsRef.current;
+    if (form && fields) writeSetupFields(form, fields);
+  }, [pending, state]);
+
+  const fieldErrors: SetupFieldErrors = {
+    ...(state.status === 'error' && !pending && !hideServerFields
+      ? setupFieldErrorsFromServer(state.reason, authMode)
+      : {}),
+    ...localErrors,
   };
-
-  function applyFields(fields: ReturnType<typeof readSetupFields>) {
-    setHouseholdName(fields.householdName);
-    setSetupSecret(fields.setupSecret);
-    setEmail(fields.email);
-    setPassword(fields.password);
-  }
 
   function refreshErrorsFromDom(form: HTMLFormElement) {
     const fields = readSetupFields(new FormData(form));
-    applyFields(fields);
-    if (attempted) setFieldErrors(validateSetupFields(fields, authMode));
+    lastFieldsRef.current = fields;
+    if (!attempted) return;
+    setHideServerFields(true);
+    setLocalErrors(validateSetupFields(fields, authMode));
   }
 
   function onFieldInput(event: FormEvent<HTMLInputElement>) {
@@ -78,18 +87,21 @@ export function SetupForm({ siteKey, authMode }: { siteKey?: string; authMode: A
 
   function submit(formData: FormData) {
     const fields = readSetupFields(formData);
-    applyFields(fields);
+    lastFieldsRef.current = fields;
     const nextErrors = validateSetupFields(fields, authMode);
     setAttempted(true);
-    setFieldErrors(nextErrors);
+    setHideServerFields(false);
+    setLocalErrors(nextErrors);
     if (hasSetupFieldErrors(nextErrors)) return;
+    dispatchIdRef.current += 1;
     formAction(formData);
   }
 
-  const emailInvalid = Boolean(errors.email);
-  const nameInvalid = Boolean(errors.householdName);
-  const secretInvalid = Boolean(errors.setupSecret);
-  const passwordInvalid = Boolean(errors.password);
+  const emailInvalid = Boolean(fieldErrors.email);
+  const nameInvalid = Boolean(fieldErrors.householdName);
+  const secretInvalid = Boolean(fieldErrors.setupSecret);
+  const passwordInvalid = Boolean(fieldErrors.password);
+  const showFormBanner = state.status === 'error' && !isFieldMappedBootstrapReason(state.reason);
 
   return (
     <form
@@ -130,13 +142,13 @@ export function SetupForm({ siteKey, authMode }: { siteKey?: string; authMode: A
           type="text"
           required
           maxLength={SETUP_HOUSEHOLD_NAME_MAX}
-          value={householdName}
+          defaultValue="Our family"
           onInput={onFieldInput}
           aria-invalid={nameInvalid || undefined}
           aria-describedby={nameInvalid ? 'setup-household-error' : undefined}
           data-testid="household-name-input"
         />
-        <FieldError id="setup-household-error" message={errors.householdName} />
+        <FieldError id="setup-household-error" message={fieldErrors.householdName} />
       </div>
 
       <div className="field">
@@ -150,13 +162,12 @@ export function SetupForm({ siteKey, authMode }: { siteKey?: string; authMode: A
           type="password"
           autoComplete="off"
           required
-          value={setupSecret}
           onInput={onFieldInput}
           aria-invalid={secretInvalid || undefined}
           aria-describedby={secretInvalid ? 'setup-secret-error' : undefined}
           data-testid="setup-secret-input"
         />
-        <FieldError id="setup-secret-error" message={errors.setupSecret} />
+        <FieldError id="setup-secret-error" message={fieldErrors.setupSecret} />
       </div>
 
       <div className="field">
@@ -172,7 +183,6 @@ export function SetupForm({ siteKey, authMode }: { siteKey?: string; authMode: A
           autoComplete="email"
           required
           placeholder="you@example.com"
-          value={email}
           onInput={onFieldInput}
           aria-invalid={emailInvalid || undefined}
           aria-describedby={emailInvalid ? 'setup-email-error' : undefined}
@@ -183,7 +193,7 @@ export function SetupForm({ siteKey, authMode }: { siteKey?: string; authMode: A
             Required. This email is the admin account id, not optional.
           </p>
         ) : null}
-        <FieldError id="setup-email-error" message={errors.email} />
+        <FieldError id="setup-email-error" message={fieldErrors.email} />
       </div>
 
       {authMode === 'password' ? (
@@ -200,14 +210,15 @@ export function SetupForm({ siteKey, authMode }: { siteKey?: string; authMode: A
             required
             minLength={PASSWORD_MIN_LENGTH}
             maxLength={PASSWORD_MAX_LENGTH}
-            value={password}
             onInput={onFieldInput}
             aria-invalid={passwordInvalid || undefined}
             aria-describedby={passwordInvalid ? 'setup-password-error' : undefined}
             data-testid="setup-password-input"
           />
-          <p className="role-hint">At least {PASSWORD_MIN_LENGTH} characters.</p>
-          <FieldError id="setup-password-error" message={errors.password} />
+          <p className="role-hint">
+            At least {PASSWORD_MIN_LENGTH} characters (max {PASSWORD_MAX_LENGTH}).
+          </p>
+          <FieldError id="setup-password-error" message={fieldErrors.password} />
         </div>
       ) : null}
 
@@ -229,7 +240,7 @@ export function SetupForm({ siteKey, authMode }: { siteKey?: string; authMode: A
         {pending ? 'Creating…' : 'Create household'}
       </button>
 
-      {state.status === 'error' ? (
+      {showFormBanner ? (
         <p className="login-error" role="alert" data-testid={`setup-error-${state.reason}`}>
           {errorCopy[state.reason]}
         </p>

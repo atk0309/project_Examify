@@ -28,10 +28,12 @@ Surface:
   `ExamApp` themselves; their attempts persist under the parent's own account, never the
   child's.
 - **`/setup`** — first-run household bootstrap (only when no household exists).
-  `SetupForm` reads submitted FormData (autofill-safe) and never silently
-  disables Create household; field-level / `aria-invalid` errors explain what
-  failed. Email is the required admin account id in every `AUTH_MODE`
-  (including password).
+  `SetupForm` reads submitted FormData (autofill-safe), keeps inputs
+  uncontrolled so a Turnstile remount cannot wipe autofill, and never
+  silently disables Create household. Field-level / `aria-invalid` errors
+  explain what failed and clear on input when the operator fixes the field.
+  Email is the required admin account id in every `AUTH_MODE` (including
+  password).
 - **`/onboarding`** — post-bootstrap content wizard (household **admin** only, while
   `onboarding_complete` is false). Welcome → subjects → PDF dropzones → AI setup
   (optional `examify-ingest generate` after files + mode; OpenAI mode can

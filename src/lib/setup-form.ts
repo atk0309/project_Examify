@@ -13,10 +13,11 @@ export const SETUP_HOUSEHOLD_NAME_MAX = 80;
 
 export const SETUP_FIELD_ERROR = {
   householdName: 'Enter a household name.',
-  householdNameLong: 'Household name is too long.',
+  householdNameLong: `Household name must be at most ${SETUP_HOUSEHOLD_NAME_MAX} characters.`,
   setupSecret: 'Enter the setup code for this instance.',
   email: 'Enter a valid email. This is the admin account id.',
   password: `Choose a password of at least ${PASSWORD_MIN_LENGTH} characters.`,
+  passwordLong: `Password must be at most ${PASSWORD_MAX_LENGTH} characters.`,
 } as const;
 
 export type SetupFormFields = {
@@ -58,19 +59,41 @@ export function validateSetupFields(fields: SetupFormFields, authMode: AuthMode)
   }
   if (authMode === 'password') {
     const length = fields.password.length;
-    if (length < PASSWORD_MIN_LENGTH || length > PASSWORD_MAX_LENGTH) {
+    if (length < PASSWORD_MIN_LENGTH) {
       errors.password = SETUP_FIELD_ERROR.password;
+    } else if (length > PASSWORD_MAX_LENGTH) {
+      errors.password = SETUP_FIELD_ERROR.passwordLong;
     }
   }
   return errors;
+}
+
+export function writeSetupFields(form: HTMLFormElement, fields: SetupFormFields): void {
+  const assign = (name: keyof SetupFormFields, value: string) => {
+    const el = form.elements.namedItem(name);
+    if (el instanceof HTMLInputElement) el.value = value;
+  };
+  assign('householdName', fields.householdName);
+  assign('setupSecret', fields.setupSecret);
+  assign('email', fields.email);
+  assign('password', fields.password);
 }
 
 export function hasSetupFieldErrors(errors: SetupFieldErrors): boolean {
   return Object.keys(errors).length > 0;
 }
 
+export type SetupBootstrapReason =
+  'invalid' | 'already_setup' | 'captcha' | 'rate_limited' | 'forbidden';
+
+/** Reasons already shown on a field — do not also raise the form banner. */
+export function isFieldMappedBootstrapReason(reason: SetupBootstrapReason): boolean {
+  return reason === 'invalid' || reason === 'forbidden';
+}
+
 export function setupFieldErrorsFromServer(
-  reason: 'invalid' | 'already_setup' | 'captcha' | 'rate_limited' | 'forbidden',
+  reason: SetupBootstrapReason,
+  authMode: AuthMode,
 ): SetupFieldErrors {
   if (reason === 'forbidden') {
     return { setupSecret: 'That setup code is not valid.' };
@@ -79,6 +102,7 @@ export function setupFieldErrorsFromServer(
     return {
       householdName: SETUP_FIELD_ERROR.householdName,
       email: SETUP_FIELD_ERROR.email,
+      ...(authMode === 'password' ? { password: SETUP_FIELD_ERROR.password } : {}),
     };
   }
   return {};

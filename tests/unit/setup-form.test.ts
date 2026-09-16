@@ -3,6 +3,7 @@ import { z } from 'zod';
 import {
   EMAIL_RE,
   hasSetupFieldErrors,
+  isFieldMappedBootstrapReason,
   isSetupEmailValid,
   readSetupFields,
   SETUP_FIELD_ERROR,
@@ -100,6 +101,9 @@ describe('readSetupFields / validateSetupFields', () => {
     expect(validateSetupFields(fields({ password: 'short' }), 'password')).toEqual({
       password: SETUP_FIELD_ERROR.password,
     });
+    expect(validateSetupFields(fields({ password: 'x'.repeat(201) }), 'password')).toEqual({
+      password: SETUP_FIELD_ERROR.passwordLong,
+    });
     expect(hasSetupFieldErrors(validateSetupFields(fields({ password: '' }), 'password'))).toBe(
       true,
     );
@@ -107,12 +111,20 @@ describe('readSetupFields / validateSetupFields', () => {
   });
 
   it('maps server forbidden/invalid onto the fields the operator can fix', () => {
-    expect(setupFieldErrorsFromServer('forbidden')).toEqual({
+    expect(setupFieldErrorsFromServer('forbidden', 'magic-link')).toEqual({
       setupSecret: 'That setup code is not valid.',
     });
-    expect(setupFieldErrorsFromServer('invalid')).toMatchObject({
+    expect(setupFieldErrorsFromServer('invalid', 'magic-link')).toEqual({
+      householdName: SETUP_FIELD_ERROR.householdName,
       email: SETUP_FIELD_ERROR.email,
     });
-    expect(setupFieldErrorsFromServer('captcha')).toEqual({});
+    expect(setupFieldErrorsFromServer('invalid', 'password')).toMatchObject({
+      email: SETUP_FIELD_ERROR.email,
+      password: SETUP_FIELD_ERROR.password,
+    });
+    expect(setupFieldErrorsFromServer('captcha', 'magic-link')).toEqual({});
+    expect(isFieldMappedBootstrapReason('forbidden')).toBe(true);
+    expect(isFieldMappedBootstrapReason('invalid')).toBe(true);
+    expect(isFieldMappedBootstrapReason('captcha')).toBe(false);
   });
 });

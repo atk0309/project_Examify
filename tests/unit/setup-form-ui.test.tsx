@@ -80,13 +80,57 @@ describe('SetupForm autofill desync', () => {
     fireEvent.submit(screen.getByTestId('setup-form'));
 
     await waitFor(() => {
-      expect(screen.getByTestId('setup-error-forbidden')).toBeVisible();
+      expect(screen.getByTestId('setup-secret-error')).toHaveTextContent(
+        'That setup code is not valid.',
+      );
     });
+    expect(screen.queryByTestId('setup-error-forbidden')).toBeNull();
     expect(screen.getByTestId('setup-email-input')).toHaveValue('autofill@example.com');
     expect(screen.getByTestId('setup-secret-input')).toHaveValue('definitely-not-the-setup-secret');
-    expect(screen.getByTestId('setup-secret-error')).toHaveTextContent(
-      'That setup code is not valid.',
-    );
+  });
+
+  it('clears a server field error on input without waiting for the next submit', async () => {
+    bootstrapHouseholdAction.mockImplementation(async () => ({
+      status: 'error',
+      reason: 'forbidden',
+    }));
+    render(<SetupForm authMode="magic-link" />);
+    autofillWithoutEvents('household-name-input', 'Autofill family');
+    autofillWithoutEvents('setup-secret-input', 'definitely-not-the-setup-secret');
+    autofillWithoutEvents('setup-email-input', 'autofill@example.com');
+    fireEvent.submit(screen.getByTestId('setup-form'));
+    await waitFor(() => {
+      expect(screen.getByTestId('setup-secret-error')).toHaveTextContent(
+        'That setup code is not valid.',
+      );
+    });
+
+    fireEvent.input(screen.getByTestId('setup-secret-input'), {
+      target: { value: 'corrected-setup-secret' },
+    });
+
+    expect(screen.queryByTestId('setup-secret-error')).toBeNull();
+    expect(screen.getByTestId('setup-secret-input')).not.toHaveAttribute('aria-invalid');
+    expect(bootstrapHouseholdAction).toHaveBeenCalledOnce();
+  });
+
+  it('keeps autofilled DOM values when Turnstile mounts on a re-render', () => {
+    const { rerender } = render(<SetupForm authMode="magic-link" />);
+    autofillWithoutEvents('household-name-input', 'Autofill family');
+    autofillWithoutEvents('setup-secret-input', 'instance-secret');
+    autofillWithoutEvents('setup-email-input', 'autofill@example.com');
+
+    rerender(<SetupForm authMode="magic-link" siteKey="1x00000000000000000000AA" />);
+
+    expect(screen.getByTestId('turnstile')).toBeInTheDocument();
+    expect(screen.getByTestId('household-name-input')).toHaveValue('Autofill family');
+    expect(screen.getByTestId('setup-secret-input')).toHaveValue('instance-secret');
+    expect(screen.getByTestId('setup-email-input')).toHaveValue('autofill@example.com');
+    fireEvent.submit(screen.getByTestId('setup-form'));
+    expect(bootstrapHouseholdAction).toHaveBeenCalledOnce();
+    const formData = bootstrapHouseholdAction.mock.calls[0]?.[1];
+    expect(formData?.get('email')).toBe('autofill@example.com');
+    expect(formData?.get('setupSecret')).toBe('instance-secret');
   });
 
   it('syncs onInput after a failed submit and clears the field error', () => {
@@ -117,6 +161,7 @@ describe('SetupForm autofill desync', () => {
       'This email is the admin account id, not optional',
     );
     expect(screen.getByLabelText('Admin email')).toBeRequired();
+    expect(screen.getByText(/At least 10 characters \(max 200\)/)).toBeInTheDocument();
 
     fireEvent.submit(screen.getByTestId('setup-form'));
     expect(screen.getByTestId('setup-email-error')).toBeVisible();
