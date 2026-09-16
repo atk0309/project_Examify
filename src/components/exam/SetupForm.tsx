@@ -46,6 +46,10 @@ export function SetupForm({ siteKey, authMode }: { siteKey?: string; authMode: A
     { status: 'idle' },
   );
   const formRef = useRef<HTMLFormElement>(null);
+  const [householdName, setHouseholdName] = useState('Our family');
+  const [setupSecret, setSetupSecret] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [attempted, setAttempted] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<SetupFieldErrors>({});
 
@@ -54,18 +58,28 @@ export function SetupForm({ siteKey, authMode }: { siteKey?: string; authMode: A
     ...fieldErrors,
   };
 
+  function applyFields(fields: ReturnType<typeof readSetupFields>) {
+    setHouseholdName(fields.householdName);
+    setSetupSecret(fields.setupSecret);
+    setEmail(fields.email);
+    setPassword(fields.password);
+  }
+
   function refreshErrorsFromDom(form: HTMLFormElement) {
-    setFieldErrors(validateSetupFields(readSetupFields(new FormData(form)), authMode));
+    const fields = readSetupFields(new FormData(form));
+    applyFields(fields);
+    if (attempted) setFieldErrors(validateSetupFields(fields, authMode));
   }
 
   function onFieldInput(event: FormEvent<HTMLInputElement>) {
-    if (!attempted) return;
     const form = event.currentTarget.form ?? formRef.current;
     if (form) refreshErrorsFromDom(form);
   }
 
   function submit(formData: FormData) {
-    const nextErrors = validateSetupFields(readSetupFields(formData), authMode);
+    const fields = readSetupFields(formData);
+    applyFields(fields);
+    const nextErrors = validateSetupFields(fields, authMode);
     setAttempted(true);
     setFieldErrors(nextErrors);
     if (hasSetupFieldErrors(nextErrors)) return;
@@ -116,7 +130,7 @@ export function SetupForm({ siteKey, authMode }: { siteKey?: string; authMode: A
           type="text"
           required
           maxLength={SETUP_HOUSEHOLD_NAME_MAX}
-          defaultValue="Our family"
+          value={householdName}
           onInput={onFieldInput}
           aria-invalid={nameInvalid || undefined}
           aria-describedby={nameInvalid ? 'setup-household-error' : undefined}
@@ -136,6 +150,7 @@ export function SetupForm({ siteKey, authMode }: { siteKey?: string; authMode: A
           type="password"
           autoComplete="off"
           required
+          value={setupSecret}
           onInput={onFieldInput}
           aria-invalid={secretInvalid || undefined}
           aria-describedby={secretInvalid ? 'setup-secret-error' : undefined}
@@ -157,6 +172,7 @@ export function SetupForm({ siteKey, authMode }: { siteKey?: string; authMode: A
           autoComplete="email"
           required
           placeholder="you@example.com"
+          value={email}
           onInput={onFieldInput}
           aria-invalid={emailInvalid || undefined}
           aria-describedby={emailInvalid ? 'setup-email-error' : undefined}
@@ -184,6 +200,7 @@ export function SetupForm({ siteKey, authMode }: { siteKey?: string; authMode: A
             required
             minLength={PASSWORD_MIN_LENGTH}
             maxLength={PASSWORD_MAX_LENGTH}
+            value={password}
             onInput={onFieldInput}
             aria-invalid={passwordInvalid || undefined}
             aria-describedby={passwordInvalid ? 'setup-password-error' : undefined}

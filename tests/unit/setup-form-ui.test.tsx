@@ -1,14 +1,17 @@
 /** @vitest-environment jsdom */
 
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { BootstrapState } from '@/actions/bootstrapHousehold';
 import { SetupForm } from '@/components/exam/SetupForm';
 import { SETUP_FIELD_ERROR } from '@/lib/setup-form';
 
-const bootstrapHouseholdAction = vi.fn(async (_prev: unknown, _formData: FormData) => ({
-  status: 'idle' as const,
-}));
+const bootstrapHouseholdAction = vi.fn(
+  async (_prev: unknown, _formData: FormData): Promise<BootstrapState> => ({
+    status: 'idle',
+  }),
+);
 
 vi.mock('@/actions/bootstrapHousehold', () => ({
   bootstrapHouseholdAction: (prev: unknown, formData: FormData) =>
@@ -43,7 +46,7 @@ describe('SetupForm autofill desync', () => {
     expect(submit).toHaveTextContent('Create household');
   });
 
-  it('submits DOM values after autofill that never fires onChange', () => {
+  it('submits DOM values after autofill that never fires onChange', async () => {
     render(<SetupForm authMode="magic-link" />);
     autofillWithoutEvents('household-name-input', 'Autofill family');
     autofillWithoutEvents('setup-secret-input', 'instance-secret');
@@ -58,6 +61,32 @@ describe('SetupForm autofill desync', () => {
     expect(formData?.get('setupSecret')).toBe('instance-secret');
     expect(formData?.get('email')).toBe('autofill@example.com');
     expect(screen.queryByTestId('setup-email-error')).toBeNull();
+    await waitFor(() => {
+      expect(screen.getByTestId('setup-email-input')).toHaveValue('autofill@example.com');
+    });
+    expect(screen.getByTestId('setup-secret-input')).toHaveValue('instance-secret');
+  });
+
+  it('keeps autofilled values after a server forbidden response', async () => {
+    bootstrapHouseholdAction.mockImplementation(async () => ({
+      status: 'error',
+      reason: 'forbidden',
+    }));
+    render(<SetupForm authMode="magic-link" />);
+    autofillWithoutEvents('household-name-input', 'Autofill family');
+    autofillWithoutEvents('setup-secret-input', 'definitely-not-the-setup-secret');
+    autofillWithoutEvents('setup-email-input', 'autofill@example.com');
+
+    fireEvent.submit(screen.getByTestId('setup-form'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('setup-error-forbidden')).toBeVisible();
+    });
+    expect(screen.getByTestId('setup-email-input')).toHaveValue('autofill@example.com');
+    expect(screen.getByTestId('setup-secret-input')).toHaveValue('definitely-not-the-setup-secret');
+    expect(screen.getByTestId('setup-secret-error')).toHaveTextContent(
+      'That setup code is not valid.',
+    );
   });
 
   it('syncs onInput after a failed submit and clears the field error', () => {
