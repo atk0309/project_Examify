@@ -1314,7 +1314,7 @@ function EnvKeyPanel({
             onClick={() => {
               if (
                 !window.confirm(
-                  `Clear the ${label} from this host’s .env store? Generate will fail closed until you set a new key.`,
+                  `Clear the ${label} from this host’s .env store? Generate and grading that need this key fail closed until you set a new one. A restart will not brick the app.`,
                 )
               ) {
                 return;

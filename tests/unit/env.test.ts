@@ -210,6 +210,18 @@ describe('parseEnv production fail-closed', () => {
       }),
     ).not.toThrow();
   });
+
+  it('keeps ANTHROPIC_API_KEY optional after wizard clear (restart does not brick)', () => {
+    const afterClear = { ...prodBase };
+    delete afterClear.ANTHROPIC_API_KEY;
+    const parsed = parseEnv(afterClear);
+    expect(parsed.ANTHROPIC_API_KEY).toBeUndefined();
+    expect('OPENAI_API_KEY' in parsed).toBe(false);
+    expect(parseEnv({ ...prodBase, ANTHROPIC_API_KEY: '' }).ANTHROPIC_API_KEY).toBeUndefined();
+    expect(parseEnv({ ...prodBase, ANTHROPIC_API_KEY: '   ' }).ANTHROPIC_API_KEY).toBeUndefined();
+    expect(parseEnv(prodBase).ANTHROPIC_API_KEY).toBe('sk-ant-real');
+    expect(parseEnv({ ...prodBase, ANTHROPIC_API_KEY: 'test' }).ANTHROPIC_API_KEY).toBe('test');
+  });
 });
 
 describe('getAuthMode + resolveMailTransport', () => {

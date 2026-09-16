@@ -162,7 +162,9 @@ describe('onboarding generate graph', () => {
     expect(wizard).toMatch(/type="password"/);
     expect(wizard).toMatch(/autoComplete="off"/);
     expect(wizard).toMatch(/window\.confirm\(/);
-    expect(wizard).toMatch(/Generate will fail closed until you set a new key/);
+    expect(wizard).toMatch(
+      /Generate and grading that need this key fail closed until you set a new one\. A restart will not brick the app/,
+    );
     expect(wizard).toMatch(/className="btn btn-ghost"/);
     expect(wizard).toMatch(/data-testid=\{\`\$\{testId\}-rotate\`\}/);
     expect(wizard).toMatch(/data-testid=\{\`\$\{testId\}-clear\`\}/);
@@ -198,6 +200,11 @@ describe('onboarding generate graph', () => {
       'utf8',
     );
     expect(generateCli).toMatch(/mergeRepoEnvFiles\(repoRoot, io\.env \?\? process\.env\)/);
+    const envSchema = readFileSync(path.join(process.cwd(), 'src/lib/env.ts'), 'utf8');
+    expect(envSchema).toMatch(
+      /ANTHROPIC_API_KEY: z\.preprocess\([\s\S]*?z\.string\(\)\.min\(1\)\.optional\(\)/,
+    );
+    expect(envSchema).not.toMatch(/OPENAI_API_KEY:/);
   });
 
   it('locks Welcome skip, Back, and rail while generateBusy so Cancel stays reachable', () => {

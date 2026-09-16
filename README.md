@@ -241,7 +241,8 @@ generating a question bank from your own study-material PDFs — is in
 Free-text answers are graded server-side by the Anthropic Messages API
 (`claude-sonnet-4-6`), strictly against the rubric you wrote for that question:
 
-- Configure `ANTHROPIC_API_KEY`. The grader reads the live key from
+- Configure `ANTHROPIC_API_KEY` (optional in production — wizard clear +
+  restart will not brick boot). The grader reads the live key from
   `process.env` (updated by `/onboarding` set / rotate / clear), never a
   boot-frozen snapshot. The `test` sentinel (the dev default) swaps in a
   deterministic full-score stub with no network calls — the same pattern as the Resend
@@ -282,7 +283,8 @@ applied at runtime via `accentCSS()`.
 
 Defined and validated by zod in `src/lib/env.ts`; the canonical reference is
 `.env.example`. Required in production: `SITE_URL`, `AUTH_SECRET`, `DATABASE_URL`,
-`ANTHROPIC_API_KEY`, `SETUP_BOOTSTRAP_SECRET`. `AUTH_MODE` defaults to
+`SETUP_BOOTSTRAP_SECRET`. `ANTHROPIC_API_KEY` is optional (wizard clear +
+restart will not brick boot; grading fail-closes without a key). `AUTH_MODE` defaults to
 `magic-link`. Documented placeholder `AUTH_SECRET` / `SETUP_BOOTSTRAP_SECRET`
 values fail production boot. A leftover `FAMILIES` value that is set but invalid
 also crashes production boot. Mail is optional when `AUTH_MODE=password`.

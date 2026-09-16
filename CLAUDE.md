@@ -457,7 +457,8 @@ These are non-negotiable. Don't "fix" them out.
   `env.ts` snapshot) so a wizard set / rotate / clear is visible on the next
   grade. The `test` sentinel still stubs; a missing key after clear is
   fail-closed (`needs_review`, no stub) — same usable-key rule as the
-  Configured badge.
+  Configured badge. `ANTHROPIC_API_KEY` is optional in `env.ts` (wizard
+  clear + production restart must not brick boot).
 - **A free-text item is "correct" at `PASS_THRESHOLD` (0.6).** `isFreePass(score, maxScore)`
   (`attempts.ts`, the shared constant — not an inline literal) decides the ring/tally. A
   `needs_review` item persists `score: null, verdict: null` and counts as incorrect.
@@ -484,7 +485,7 @@ unparsable **crashes production boot**. `/setup` itself is gated by
 placeholder); captcha is not identity. Documented placeholder `AUTH_SECRET` /
 `SETUP_BOOTSTRAP_SECRET` values also fail production boot.
 
-Required in production: `SITE_URL`, `AUTH_SECRET`, `DATABASE_URL`, `ANTHROPIC_API_KEY`,
+Required in production: `SITE_URL`, `AUTH_SECRET`, `DATABASE_URL`,
 `SETUP_BOOTSTRAP_SECRET`. `AUTH_MODE` defaults to `magic-link` (existing #56 hosts
 keep working). `password` sign-in needs no mail; password-mode invite accept
 sends a mailbox OTP and fails closed without a transport. `local-otp` in production requires
@@ -501,8 +502,9 @@ captcha off; exactly one key in production crashes boot).
 The OTP step after a `sent` screen mounts Turnstile with an explicit
 `turnstile.render()` (`ExplicitTurnstile`) because the implicit scanner
 already ran on the first form.
-`ANTHROPIC_API_KEY` still fails closed in prod when missing; the `test` sentinel
-routes the grader to a deterministic stub. See `.env.example` for the canonical list.
+`ANTHROPIC_API_KEY` is optional (wizard clear + production restart must not
+brick boot). A missing key fail-closes free-text grading (`needs_review`, no
+stub); the `test` sentinel still stubs. See `.env.example` for the canonical list.
 
 ## Testing rules
 
