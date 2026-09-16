@@ -75,7 +75,9 @@ extensions in the subject folder except `bank.ir.json`. `--provider` is required
 recorded in the run manifest. A tree generate of `content/subjects` still needs
 a source file per subject — biology is hand-authored and has none, so target
 `content/subjects/demo` (or add sources) instead of claiming biology generate
-works on a fresh clone.
+works on a fresh clone. Tree generate **preflights every target for sources**
+before writing any IR: if a sibling is sourceless, the run fails closed, lists
+those ids, and writes **no** BankIR (A/B/C are not left on disk after D dies).
 
 `--dry-run-ir` prints the would-write path and writes nothing durable (no IR,
 cache, or manifest). If `bank.ir.json` already exists, dry-run says

@@ -233,8 +233,8 @@ validate → emit path, adding subjects (all 13 original duotone icons remain in
 bank from source PDFs kept local-only in the gitignored `content/source-pdfs/`.
 
 Automated path: author or `pnpm examify-ingest generate` a
-`content/subjects/<id>/bank.ir.json`, then `pnpm examify-ingest validate`,
-`emit --dry-run`, and only afterward `emit --apply`
+`content/subjects/<id>/bank.ir.json`, then `pnpm examify-ingest validate content/subjects`,
+`emit content/subjects --dry-run`, and only afterward `emit content/subjects --apply`
 (or use `/onboarding` after first-run bootstrap — AI-step generate is optional,
 then the same directory emit, HITL dry-run before apply, empty tree refused).
 Hand-authored biology has no source file — skip generate (validate/emit only).
@@ -245,7 +245,9 @@ run/cache files only. Existing `bank.ir.json` is not overwritten unless
 `--force` (`--dry-run-ir` says **would overwrite**). Frozen sample-bank ids
 fail closed at generate (same set as validate) unless `--replace-sample` —
 `--provider test` must not write `maths-easy-1` / other SAMPLE ids without
-that flag. `generateSubject` accepts optional `AbortSignal` (forwarded
+that flag. Tree generate preflights every target for sources before any IR
+write: sourceless siblings fail closed with a listed error and no partial
+BankIR. `generateSubject` accepts optional `AbortSignal` (forwarded
 to provider HTTP/CMD; abort throws and writes no IR, IR cache, page-raster
 cache, or run manifest). Cloud
 providers fail closed without an env key (generate also fills unset keys from

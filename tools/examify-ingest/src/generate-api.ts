@@ -1,10 +1,12 @@
 /** Library + CLI entry for Phase 2 generate. Import from `examify-ingest/generate`. */
 export {
+  assertGenerateTargetsHaveSources,
   assertReadableProviderInput,
   generateSubject,
   generateTargets,
   NEXT_INGEST_COMMANDS,
   publicSplitHasNoSecrets,
+  sourcelessGenerateTargetIds,
   type GenerateRequest,
   type GenerateSubjectResult,
 } from './generate';

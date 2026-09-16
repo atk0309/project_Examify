@@ -270,12 +270,34 @@ export function assertReadableProviderInput(
   );
 }
 
+/** Subject ids in this run that have no generate sources. */
+export function sourcelessGenerateTargetIds(
+  targets: readonly Pick<GenerateTarget, 'subjectId' | 'sources'>[],
+): string[] {
+  return targets.filter((target) => target.sources.length === 0).map((target) => target.subjectId);
+}
+
+/**
+ * Preflight every target for sources before any IR write. Tree generate of
+ * A/B/C plus empty sibling D must fail closed and write nothing.
+ */
+export function assertGenerateTargetsHaveSources(
+  targets: readonly Pick<GenerateTarget, 'subjectId' | 'sources'>[],
+): void {
+  const missing = sourcelessGenerateTargetIds(targets);
+  if (missing.length === 0) return;
+  throw new Error(
+    `no source files for ${missing.join(', ')} (looked in each subject folder and content/source-pdfs/<id>); no BankIR written`,
+  );
+}
+
 export async function generateTargets(
   targets: readonly GenerateTarget[],
   options: Omit<GenerateRequest, 'subject' | 'subjectDir' | 'sources'> & {
     dryRunIr?: boolean;
   },
 ): Promise<GenerateSubjectResult[]> {
+  assertGenerateTargetsHaveSources(targets);
   const results: GenerateSubjectResult[] = [];
   for (const target of targets) {
     results.push(

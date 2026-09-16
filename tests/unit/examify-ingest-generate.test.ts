@@ -32,6 +32,7 @@ import {
   extractJsonObject,
   GenerateAbortedError,
   generateSubject,
+  generateTargets,
   irCachePath,
   loadGeneratePrompt,
   providerRequestSignal,
@@ -254,6 +255,98 @@ describe('examify-ingest generate P0 gates', () => {
     const ir = JSON.parse(readFileSync(path.join(dest, 'bank.ir.json'), 'utf8')) as BankIR;
     expect(ir.subject.id).toBe('demo');
     expect(ir.difficulties.easy[0]?.id).toBe('demo-easy-1');
+  });
+
+  it('tree generate preflights sources and writes no IR when a sibling is empty', async () => {
+    const root = examifyRepo();
+    mkdirSync(path.join(root, 'content/subjects/empty'), { recursive: true });
+    const streams = io();
+    streams.handle.cwd = root;
+    const code = await runCliAsync(
+      ['generate', '--provider', 'test', 'content/subjects'],
+      streams.handle,
+    );
+    expect(code).toBe(1);
+    expect(streams.err()).toContain('empty');
+    expect(streams.err()).toMatch(/no source files/);
+    expect(streams.err()).toMatch(/no BankIR written/);
+    expect(existsSync(path.join(root, 'content/subjects/plants/bank.ir.json'))).toBe(false);
+    expect(existsSync(path.join(root, 'content/subjects/empty/bank.ir.json'))).toBe(false);
+    expect(existsSync(path.join(root, '.examify-ingest'))).toBe(false);
+  });
+
+  it('tree generate lists every sourceless subject before any write', async () => {
+    const root = examifyRepo();
+    mkdirSync(path.join(root, 'content/subjects/empty-a'), { recursive: true });
+    mkdirSync(path.join(root, 'content/subjects/empty-b'), { recursive: true });
+    const streams = io();
+    streams.handle.cwd = root;
+    const code = await runCliAsync(
+      ['generate', '--provider', 'test', '--dry-run-ir', 'content/subjects'],
+      streams.handle,
+    );
+    expect(code).toBe(1);
+    expect(streams.err()).toContain('empty-a');
+    expect(streams.err()).toContain('empty-b');
+    expect(streams.err()).toMatch(/no BankIR written/);
+    expect(existsSync(path.join(root, 'content/subjects/plants/bank.ir.json'))).toBe(false);
+  });
+
+  it('tree generate writes every IR when all targets have sources', async () => {
+    const root = examifyRepo();
+    const rocks = path.join(root, 'content/subjects/rocks');
+    mkdirSync(rocks, { recursive: true });
+    writeFileSync(path.join(rocks, 'notes.txt'), 'Granite is an igneous rock.\n');
+    const streams = io();
+    streams.handle.cwd = root;
+    const code = await runCliAsync(
+      ['generate', '--provider', 'test', 'content/subjects'],
+      streams.handle,
+    );
+    expect(code).toBe(0);
+    expect(existsSync(path.join(root, 'content/subjects/plants/bank.ir.json'))).toBe(true);
+    expect(existsSync(path.join(rocks, 'bank.ir.json'))).toBe(true);
+  });
+
+  it('generateTargets preflights sources and does not write a leading subject', async () => {
+    const root = examifyRepo();
+    const emptyDir = path.join(root, 'content/subjects/empty');
+    mkdirSync(emptyDir, { recursive: true });
+    const plantsDir = path.join(root, 'content/subjects/plants');
+    await expect(
+      generateTargets(
+        [
+          {
+            subjectId: 'plants',
+            subjectDir: plantsDir,
+            subject: {
+              id: 'plants',
+              label: 'Plants',
+              icon: 'biology',
+              l: 0.58,
+              c: 0.09,
+              h: 142,
+            },
+            sources: resolveSubjectSources(root, 'plants', plantsDir),
+          },
+          {
+            subjectId: 'empty',
+            subjectDir: emptyDir,
+            subject: {
+              id: 'empty',
+              label: 'Empty',
+              icon: 'biology',
+              l: 0.5,
+              c: 0.1,
+              h: 140,
+            },
+            sources: [],
+          },
+        ],
+        { repoRoot: root, provider: 'test', seed: 0, env: {} },
+      ),
+    ).rejects.toThrow(/no source files for empty/);
+    expect(existsSync(path.join(plantsDir, 'bank.ir.json'))).toBe(false);
   });
 
   it('biology is hand-authored: no generate sources on a fresh clone', async () => {

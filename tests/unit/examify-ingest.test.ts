@@ -457,6 +457,19 @@ describe('examify-ingest CLI', () => {
     expect(USAGE).toContain('mixed');
   });
 
+  it('docs happy path is validate/emit with content/subjects, not bare argv', () => {
+    const authoring = readFileSync(path.join(repoRoot, 'docs/content-authoring.md'), 'utf8');
+    const ingestReadme = readFileSync(
+      path.join(repoRoot, 'tools/examify-ingest/README.md'),
+      'utf8',
+    );
+    for (const text of [authoring, ingestReadme]) {
+      expect(text).toContain('pnpm examify-ingest validate content/subjects');
+      expect(text).toContain('pnpm examify-ingest emit content/subjects --dry-run');
+      expect(text).not.toMatch(/pnpm examify-ingest validate(?! content\/subjects)/);
+    }
+  });
+
   it('validate succeeds on content/subjects', () => {
     const chunks: string[] = [];
     const code = runCli(['validate', 'content/subjects'], {

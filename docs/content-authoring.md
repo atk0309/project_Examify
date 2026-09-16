@@ -253,8 +253,10 @@ deployment was produced from school study guides with this same grounding rule.
 4. Keep questions grounded: stay close to what the source actually says (a good
    rule of thumb is ~80% direct grounding, ~20% reasonable application of it),
    and record each item's `provenance { pdf, locator }` as you go.
-5. Run `pnpm examify-ingest validate` then `pnpm test` — the guards below catch
-   most authoring mistakes immediately. Generate never writes `content/generated/`.
+5. Run `pnpm examify-ingest validate content/subjects` then `pnpm test` — the
+   guards below catch most authoring mistakes immediately. Generate never
+   writes `content/generated/`. Bare `validate` / `emit` (no path) exit 2
+   and are not the happy path.
 
 ## Guards & test-coupled ids
 

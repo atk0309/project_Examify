@@ -19,15 +19,17 @@ Explicit IR files never prune; mixed file+directory argv is partial-safe and
 never prunes.
 
 generate writes BankIR only (content/subjects/<id>/bank.ir.json). It never
-emits or applies. After generate, run validate then emit --dry-run then
-emit --apply. Default seed is 0. Cloud providers require ANTHROPIC_API_KEY
+emits or applies. After generate, run validate content/subjects then
+emit content/subjects --dry-run then emit content/subjects --apply.
+Default seed is 0. Cloud providers require ANTHROPIC_API_KEY
 or OPENAI_API_KEY from the environment or repo .env / .env.local
 (never the CLI; existing env vars win) unless a matching
 cacheKey IR is already cached. Use --provider test in CI. --dry-run-ir
 writes nothing durable. Existing bank.ir.json is not overwritten unless
 --force (dry-run says "would overwrite"). Sample-bank ids fail closed
-unless --replace-sample. Run manifests live under .examify-ingest/runs/
-(gitignored).
+unless --replace-sample. Tree generate preflights sources and writes no
+BankIR if any subject is sourceless. Run manifests live under
+.examify-ingest/runs/ (gitignored).
 `;
 
 export type CliIo = {
