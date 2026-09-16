@@ -78,6 +78,18 @@ describe('install.sh', () => {
     }
   });
 
+  it('prompts for ANTHROPIC_API_KEY as an OpenAI twin (secret, same .env store)', () => {
+    const script = fs.readFileSync(SCRIPT, 'utf8');
+    expect(script).toContain('ANTHROPIC_API_KEY for /onboarding Cloud (Anthropic) generate.');
+    expect(script).toContain(
+      'Same .env store as the wizard. Leave blank to keep the test sentinel (you can set it later).',
+    );
+    expect(script).toContain('prompt ANTHROPIC_API_KEY "Anthropic API key" "" secret');
+    expect(script).toContain('Optional: OPENAI_API_KEY for /onboarding Cloud (OpenAI) generate.');
+    expect(script).toContain('prompt OPENAI_API_KEY "OpenAI API key" "" secret');
+    expect(script).toContain('ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-test}"');
+  });
+
   it('writes ANTHROPIC_API_KEY when provided instead of the test sentinel', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-install-'));
     try {

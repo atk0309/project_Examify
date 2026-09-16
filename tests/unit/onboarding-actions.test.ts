@@ -1304,6 +1304,33 @@ describe('onboarding actions', () => {
     }
   });
 
+  it('refuses Anthropic null bytes and the test sentinel without echoing or writing', async () => {
+    const { setEnvStoreRootForTests } = await import('@/lib/env-store');
+    const root = tempRoot();
+    setEnvStoreRootForTests(root);
+    writeFileSync(path.join(root, '.env'), 'OPENAI_API_KEY=keep-openai\n');
+    await signInHost();
+    const previous = process.env.ANTHROPIC_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+    try {
+      const { setOnboardingAnthropicKeyAction } = await import('@/actions/onboarding');
+      for (const raw of ['test', `sk-ok${'\0'}sk-bad`, 'sk-ok\nsk-bad'] as const) {
+        const data = new FormData();
+        data.set('intent', 'set');
+        data.set('anthropicApiKey', raw);
+        const result = await setOnboardingAnthropicKeyAction(data);
+        expect(result).toEqual({ ok: false, reason: 'invalid' });
+        expect(JSON.stringify(result)).not.toContain('sk-ok');
+        expect(JSON.stringify(result)).not.toMatch(/ANTHROPIC_API_KEY=/);
+      }
+      expect(readFileSync(path.join(root, '.env'), 'utf8')).toBe('OPENAI_API_KEY=keep-openai\n');
+      expect(process.env.ANTHROPIC_API_KEY).toBeUndefined();
+    } finally {
+      if (previous === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = previous;
+    }
+  });
+
   it('refuses Anthropic set / rotate / clear after onboarding is complete', async () => {
     const { setEnvStoreRootForTests } = await import('@/lib/env-store');
     const root = tempRoot();

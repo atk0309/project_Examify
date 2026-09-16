@@ -142,6 +142,49 @@ describe('onboarding generate graph', () => {
     expect(wizard).toContain('label="OpenAI API key"');
   });
 
+  it('locks Anthropic key UI to cloud mode and the OpenAI #69 bars', () => {
+    const wizard = readFileSync(
+      path.join(process.cwd(), 'src/components/exam/OnboardingWizard.tsx'),
+      'utf8',
+    );
+    const actions = readFileSync(path.join(process.cwd(), 'src/actions/onboarding.ts'), 'utf8');
+    const store = readFileSync(path.join(process.cwd(), 'src/lib/env-store.ts'), 'utf8');
+    const flags = readFileSync(path.join(process.cwd(), 'src/lib/onboarding.ts'), 'utf8');
+
+    const anthropicPanelAt = wizard.indexOf('testId="wizard-anthropic-key"');
+    expect(anthropicPanelAt).toBeGreaterThan(-1);
+    const cloudGate = wizard.lastIndexOf("snapshot.aiMode === 'cloud'", anthropicPanelAt);
+    expect(cloudGate).toBeGreaterThan(-1);
+    expect(wizard.slice(cloudGate, anthropicPanelAt)).not.toMatch(/cloud-openai/);
+    expect(wizard).toMatch(/snapshot\.aiMode === 'cloud-openai'/);
+
+    expect(wizard).toMatch(/type="password"/);
+    expect(wizard).toMatch(/autoComplete="off"/);
+    expect(wizard).toMatch(/window\.confirm\(/);
+    expect(wizard).toMatch(/Generate will fail closed until you set a new key/);
+    expect(wizard).toMatch(/className="btn btn-ghost"/);
+    expect(wizard).toMatch(/data-testid=\{\`\$\{testId\}-rotate\`\}/);
+    expect(wizard).toMatch(/data-testid=\{\`\$\{testId\}-clear\`\}/);
+    expect(wizard).toContain(
+      '{configured ? <span className="wizard-mode-badge">Configured</span> : null}',
+    );
+    expect(wizard).not.toMatch(/NEXT_PUBLIC_ANTHROPIC|NEXT_PUBLIC_OPENAI/);
+
+    expect(actions).toMatch(/checkRateLimit\(ip, 'env_write'\)/);
+    expect(actions).toMatch(/ANTHROPIC_ENV_KEY/);
+    expect(actions).toMatch(/setOnboardingAnthropicKeyAction/);
+    expect(actions).not.toMatch(/NEXT_PUBLIC_/);
+
+    expect(store).toMatch(/findRepoRoot/);
+    expect(store).toMatch(/Never NEXT_PUBLIC_\*/);
+    expect(store).toMatch(/raw\.includes\('\\0'\)/);
+    expect(store).toMatch(/envStoreSecretHostManaged/);
+
+    expect(flags).toMatch(/anthropicConfigured: envStoreSecretConfigured\('ANTHROPIC_API_KEY'\)/);
+    expect(flags).toMatch(/anthropicHostManaged: envStoreSecretHostManaged\('ANTHROPIC_API_KEY'\)/);
+    expect(flags).not.toMatch(/ANTHROPIC_API_KEY: env\.ANTHROPIC_API_KEY/);
+  });
+
   it('locks Welcome skip, Back, and rail while generateBusy so Cancel stays reachable', () => {
     const wizard = readFileSync(
       path.join(process.cwd(), 'src/components/exam/OnboardingWizard.tsx'),
