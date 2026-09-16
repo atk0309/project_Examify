@@ -51,6 +51,9 @@ describe('parseEnvFile', () => {
       DATABASE_URL: 'file:./data/quoted.db',
     });
     expect(parseEnvFile('KEEP=bar#baz\n')).toEqual({ KEEP: 'bar#baz' });
+    expect(parseEnvFile(`DATABASE_URL=file:./data/app.db${' '.repeat(400)}# local\n`)).toEqual({
+      DATABASE_URL: 'file:./data/app.db',
+    });
   });
 });
 

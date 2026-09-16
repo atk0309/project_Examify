@@ -11,24 +11,32 @@ function isEnoent(error: unknown): boolean {
   );
 }
 
+function isWrappedInQuotes(value: string): boolean {
+  if (value.length < 2) return false;
+  const start = value[0];
+  const end = value[value.length - 1];
+  return (start === '"' && end === '"') || (start === "'" && end === "'");
+}
+
+/** Next.js / dotenv: unquoted comment starts at `#` after whitespace. Linear scan (no ReDoS). */
+function stripUnquotedInlineComment(value: string): string {
+  for (let i = 0; i < value.length; i += 1) {
+    if (value[i] !== '#') continue;
+    if (i === 0) return '';
+    const prev = value.charCodeAt(i - 1);
+    if (prev === 32 || prev === 9 || prev === 11 || prev === 12 || prev === 13) {
+      return value.slice(0, i).trimEnd();
+    }
+  }
+  return value;
+}
+
 /** Strip an unquoted ` # comment`, then unwrap matching quotes (Next.js / dotenv). */
 function parseEnvAssignmentValue(raw: string): string {
   const trimmed = raw.trim();
-  if (trimmed.length >= 2) {
-    const start = trimmed[0];
-    const end = trimmed[trimmed.length - 1];
-    if ((start === '"' && end === '"') || (start === "'" && end === "'")) {
-      return trimmed.slice(1, -1);
-    }
-  }
-  const uncommented = trimmed.replace(/\s+#.*$/, '').trim();
-  if (uncommented.length >= 2) {
-    const start = uncommented[0];
-    const end = uncommented[uncommented.length - 1];
-    if ((start === '"' && end === '"') || (start === "'" && end === "'")) {
-      return uncommented.slice(1, -1);
-    }
-  }
+  if (isWrappedInQuotes(trimmed)) return trimmed.slice(1, -1);
+  const uncommented = stripUnquotedInlineComment(trimmed);
+  if (isWrappedInQuotes(uncommented)) return uncommented.slice(1, -1);
   return uncommented;
 }
 
