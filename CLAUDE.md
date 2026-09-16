@@ -115,22 +115,22 @@ grouped weekly Dependabot PRs in `.github/dependabot.yml`.
 
 ## Commands cheat-sheet
 
-| Command               | What it does                                               |
-| --------------------- | ---------------------------------------------------------- |
-| `pnpm dev`            | Next.js dev server with Turbopack                          |
-| `pnpm build`          | Production build                                           |
-| `pnpm start`          | Run the production build (`PORT` defaults to 3000)         |
-| `pnpm lint`           | ESLint flat-config across the repo                         |
-| `pnpm format`         | Prettier write                                             |
-| `pnpm format:check`   | Prettier dry-run (CI guard)                                |
-| `pnpm typecheck`      | `tsc --noEmit`                                             |
-| `pnpm test`           | Vitest unit suite                                          |
-| `pnpm test:e2e`       | Playwright e2e (`pnpm build` then both suites)             |
-| `pnpm db:generate`    | Generate a new Drizzle migration from schema diffs         |
-| `pnpm db:migrate`     | Apply pending migrations to `DATABASE_URL`                 |
-| `pnpm db:studio`      | Drizzle Studio against the local DB                        |
-| `pnpm examify-ingest` | Generate / validate / emit BankIR (`tools/examify-ingest`) |
-| `./install.sh`        | Interactive self-host install (env + migrate + build)      |
+| Command               | What it does                                                        |
+| --------------------- | ------------------------------------------------------------------- |
+| `pnpm dev`            | Next.js dev server with Turbopack                                   |
+| `pnpm build`          | Production build                                                    |
+| `pnpm start`          | Run the production build (`PORT` defaults to 3000)                  |
+| `pnpm lint`           | ESLint flat-config across the repo                                  |
+| `pnpm format`         | Prettier write                                                      |
+| `pnpm format:check`   | Prettier dry-run (CI guard)                                         |
+| `pnpm typecheck`      | `tsc --noEmit`                                                      |
+| `pnpm test`           | Vitest unit suite                                                   |
+| `pnpm test:e2e`       | Playwright e2e (`pnpm build` then both suites)                      |
+| `pnpm db:generate`    | Generate a new Drizzle migration from schema diffs                  |
+| `pnpm db:migrate`     | Apply pending migrations to repo-root `.env` `DATABASE_URL`         |
+| `pnpm db:studio`      | Drizzle Studio against the local DB                                 |
+| `pnpm examify-ingest` | Generate / validate / emit BankIR (`tools/examify-ingest`)          |
+| `./install.sh`        | Interactive self-host install (env + mail/outbox + migrate + build) |
 
 ## Branch + PR rules
 
@@ -184,7 +184,7 @@ src/
     onboarding-generate.ts # AI-step generateSubject bridge (preview then commit if !cancelled)
     onboarding-admin.ts # shared household-admin gate for wizard actions + cancel route
     onboarding-types.ts # client-safe wizard snapshot / AI mode types
-    repo-root.ts        # shared `findRepoRoot` (env-store, content I/O, ingest keys)
+    repo-root.ts        # shared `findRepoRoot` (env-store, content I/O, ingest keys, db:migrate)
     env-store.ts        # server-only `.env` upsert/clear (OPENAI_API_KEY write path)
     families.ts         # leftover FAMILIES JSON parser (optional one-shot import only)
     allowlist.ts        # isAllowedEmail(role,email), derived from household membership
@@ -244,7 +244,8 @@ cache, or run manifest). Cloud
 providers fail closed without an env key (generate also fills unset keys from
 repo `.env` / `.env.local`); `--provider test` is the CI
 fixture. OpenAI-compatible generate fails closed when the only sources are
-PDFs and no page images were rasterized. `emit` is dry-run by default;
+PDFs and no page images were rasterized (`pdftoppm` from poppler-utils).
+`emit` is dry-run by default;
 `--apply` writes `content/generated/` (public
 subjects/questions + server-only keys). The running app reads that JSON at
 request time (`src/lib/exam/live-bank.server.ts`) and merges it onto the
@@ -483,7 +484,10 @@ placeholder); captcha is not identity. Documented placeholder `AUTH_SECRET` /
 Required in production: `SITE_URL`, `AUTH_SECRET`, `DATABASE_URL`, `ANTHROPIC_API_KEY`,
 `SETUP_BOOTSTRAP_SECRET`. `AUTH_MODE` defaults to `magic-link` (existing #56 hosts
 keep working). `password` sign-in needs no mail; password-mode invite accept
-sends a mailbox OTP and fails closed without a transport. `local-otp` in production requires
+sends a mailbox OTP and fails closed without a transport. Interactive /
+default `install.sh` (`AUTH_MODE=password`) prompts for mail or enables a
+local outbox (`ALLOW_LOCAL_OUTBOX=1`) so kid invites are not stranded —
+it does not skip mailbox proof. `local-otp` in production requires
 `ALLOW_LOCAL_OUTBOX=1`. `MAIL_TRANSPORT` is `auto` (SMTP if `SMTP_HOST`, else
 Resend if a real key, else outbox). Explicit `MAIL_TRANSPORT=smtp` needs
 `SMTP_HOST` + `SMTP_FROM`; `auto` + `SMTP_HOST` also needs `SMTP_FROM`. A

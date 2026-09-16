@@ -63,7 +63,7 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   providers fail closed without an env key (generate also reads repo `.env` /
   `.env.local` for unset keys); `--provider test` is the CI
   fixture. OpenAI-compatible generate refuses PDF-only input when no page
-  images were rasterized. Run cache/manifests are gitignored under
+  images were rasterized (`pdftoppm` from poppler-utils). Run cache/manifests are gitignored under
   `.examify-ingest/`.
 - **Free-text is LLM-graded server-side** (`src/lib/grading/index.ts`,
   `ANTHROPIC_API_KEY`; `test` → deterministic stub). Grading never throws — failures
@@ -130,8 +130,12 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   if the DB has no households. Production boot fails if `FAMILIES` is set and invalid.
 - **Auth mode** is `AUTH_MODE` (`password` | `magic-link` | `local-otp`, default
   `magic-link`). `install.sh` writes it. Password sign-in needs no mail;
-  password-mode invite accept still sends a mailbox OTP. Magic-link /
+  password-mode invite accept still sends a mailbox OTP (never skipped).
+  Interactive / default `install.sh` prompts for mail or enables a local
+  outbox so kid invites are not stranded. Magic-link /
   local-otp use `MAIL_TRANSPORT` (`auto` / `resend` / `smtp` / `outbox`).
+  `pnpm db:migrate` fills `DATABASE_URL` from the repo-root `.env` /
+  `.env.local` via `findRepoRoot` (same walk as env-store / ingest).
   Production `local-otp` or explicit `outbox` requires `ALLOW_LOCAL_OUTBOX=1`.
   SMTP AUTH/DATA requires TLS (STARTTLS or `SMTP_SECURE`) unless
   `SMTP_ALLOW_INSECURE=1`. `SMTP_FROM` is required only when SMTP is the

@@ -12,8 +12,9 @@ no env-JSON allowlist to hand-edit.
 
 ## Features
 
-- **Host-picked auth** — password (no email service), magic-link (Resend / SMTP /
-  local outbox), or a local one-time code for tiny installs. Role-aware
+- **Host-picked auth** — password (sign-in needs no email service; invite accept
+  still needs mail or an outbox), magic-link (Resend / SMTP / local outbox),
+  or a local one-time code for tiny installs. Role-aware
   (Student / Parent), rate-limited, no membership enumeration. Cloudflare
   Turnstile is **optional**.
 - **Invite-only households** — first-run bootstrap creates the admin; parents invite
@@ -116,15 +117,21 @@ appears in no dashboard.
 
 ### Installer (recommended)
 
-`install.sh` asks a few questions (site URL, secrets, auth mode, optional
-Turnstile, email, and OpenAI key), writes `.env`, installs, migrates, and builds:
+`install.sh` asks a few questions (site URL, secrets, auth mode, mail for
+invite-accept OTP, optional Turnstile, and OpenAI key), writes `.env`,
+installs, migrates, and builds. OpenAI generate from PDFs also needs
+`pdftoppm` (from **poppler** / `poppler-utils`) on `PATH`.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/atk0309/project_Examify/main/install.sh | bash
 ```
 
-From a clone: `./install.sh`. Non-interactive: `EXAMIFY_NONINTERACTIVE=1 ./install.sh`
-(defaults to `AUTH_MODE=password` unless you set the env vars yourself).
+From a clone: `./install.sh`. Help: `./install.sh --help` (piped:
+`curl -fsSL …/install.sh | bash -s -- --help` — not `bash --help`).
+Non-interactive: `EXAMIFY_NONINTERACTIVE=1 ./install.sh` (defaults to
+`AUTH_MODE=password` and a local outbox at `data/outbox` so kid invite
+accept can deliver the mailbox OTP; set `SMTP_*` / `RESEND_*` for real
+mail). Invite accept never skips that OTP.
 
 Then `pnpm start` (or `pnpm dev`), open `SITE_URL`, and complete **`/setup`**
 with the printed setup code.
@@ -144,7 +151,10 @@ the dev default works locally), and create the first household. Invite the
 student from the dashboard. With `ANTHROPIC_API_KEY=test`, free-text grading
 uses a deterministic local stub — no network, no API key needed for development.
 
-Set `AUTH_MODE=password` in `.env` if you want to develop without mail.
+Set `AUTH_MODE=password` in `.env` if you want to develop without a mail
+provider. Sign-in needs no mail; invite accept still uses the local
+outbox in development (or SMTP / Resend / `ALLOW_LOCAL_OUTBOX=1` in
+production).
 
 ## Access: invite-only households
 
@@ -262,19 +272,19 @@ applied at runtime via `accentCSS()`.
 
 ## Commands
 
-| Command               | What it does                                               |
-| --------------------- | ---------------------------------------------------------- |
-| `pnpm dev`            | Dev server (Turbopack)                                     |
-| `pnpm build`          | Production build                                           |
-| `pnpm start`          | Run the production build (`PORT` defaults to 3000)         |
-| `pnpm lint`           | ESLint                                                     |
-| `pnpm typecheck`      | `tsc --noEmit`                                             |
-| `pnpm format`         | Prettier write                                             |
-| `pnpm test`           | Vitest unit suite                                          |
-| `pnpm test:e2e`       | Playwright e2e (needs `pnpm test:e2e:install`)             |
-| `pnpm db:generate`    | Generate a Drizzle migration from schema diffs             |
-| `pnpm db:migrate`     | Apply pending migrations to `DATABASE_URL`                 |
-| `pnpm examify-ingest` | Generate / validate / emit BankIR (`tools/examify-ingest`) |
+| Command               | What it does                                                |
+| --------------------- | ----------------------------------------------------------- |
+| `pnpm dev`            | Dev server (Turbopack)                                      |
+| `pnpm build`          | Production build                                            |
+| `pnpm start`          | Run the production build (`PORT` defaults to 3000)          |
+| `pnpm lint`           | ESLint                                                      |
+| `pnpm typecheck`      | `tsc --noEmit`                                              |
+| `pnpm format`         | Prettier write                                              |
+| `pnpm test`           | Vitest unit suite                                           |
+| `pnpm test:e2e`       | Playwright e2e (needs `pnpm test:e2e:install`)              |
+| `pnpm db:generate`    | Generate a Drizzle migration from schema diffs              |
+| `pnpm db:migrate`     | Apply pending migrations to repo-root `.env` `DATABASE_URL` |
+| `pnpm examify-ingest` | Generate / validate / emit BankIR (`tools/examify-ingest`)  |
 
 ## Environment
 
@@ -283,7 +293,10 @@ Defined and validated by zod in `src/lib/env.ts`; the canonical reference is
 `ANTHROPIC_API_KEY`, `SETUP_BOOTSTRAP_SECRET`. `AUTH_MODE` defaults to
 `magic-link`. Documented placeholder `AUTH_SECRET` / `SETUP_BOOTSTRAP_SECRET`
 values fail production boot. A leftover `FAMILIES` value that is set but invalid
-also crashes production boot. Mail is optional when `AUTH_MODE=password`.
+also crashes production boot. `AUTH_MODE=password` sign-in needs no mail;
+invite accept still requires SMTP, Resend, or an allowed outbox (the
+installer enables `MAIL_TRANSPORT=outbox` + `ALLOW_LOCAL_OUTBOX=1` when
+nothing else is configured).
 `MAIL_TRANSPORT=auto` (default) uses SMTP, Resend, or the outbox depending on
 what is set. Production with no real mail transport does not write tokens to
 disk unless `ALLOW_LOCAL_OUTBOX=1`. `local-otp` and explicit `outbox` require
@@ -308,7 +321,7 @@ Or the manual equivalent:
 ```bash
 pnpm install --frozen-lockfile
 pnpm build
-pnpm db:migrate && pnpm start    # run migrations at startup, then serve
+pnpm db:migrate && pnpm start    # repo-root .env DATABASE_URL, then serve
 ```
 
 Point `DATABASE_URL` at a file on **persistent storage** so the database survives
