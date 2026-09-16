@@ -257,7 +257,7 @@ describe('scoreAttempt — wizard write, no restart', () => {
     });
     const fetchSpy = vi
       .spyOn(globalThis, 'fetch')
-      .mockResolvedValue(new Response(okBody, { status: 200 }));
+      .mockImplementation(async () => new Response(okBody, { status: 200 }));
     try {
       const items = geographyMediumItems();
       const stubbed = await scoreAttempt({
@@ -289,19 +289,17 @@ describe('scoreAttempt — wizard write, no restart', () => {
       });
       expect(written.ok).toBe(true);
       if (!written.ok) return;
-      const liveItem = written.items.find(
-        (candidate) => candidate.id === 'geography-medium-free-1',
-      );
-      expect(liveItem).toMatchObject({
-        type: 'free',
-        status: 'graded',
-        score: 1,
-        verdict: { verdict: liveVerdict },
-      });
-      expect(liveItem && liveItem.type === 'free' && liveItem.verdict?.verdict).not.toBe(
-        stubVerdict,
-      );
-      expect(fetchSpy).toHaveBeenCalled();
+      const liveFrees = written.items.filter((candidate) => candidate.type === 'free');
+      expect(liveFrees.length).toBeGreaterThan(0);
+      for (const liveItem of liveFrees) {
+        expect(liveItem).toMatchObject({
+          status: 'graded',
+          score: 1,
+          verdict: { verdict: liveVerdict },
+        });
+        expect(liveItem.verdict?.verdict).not.toBe(stubVerdict);
+      }
+      expect(fetchSpy).toHaveBeenCalledTimes(liveFrees.length);
       expect((fetchSpy.mock.calls[0]?.[1] as RequestInit).headers).toMatchObject({
         'x-api-key': secret,
       });
@@ -319,19 +317,19 @@ describe('scoreAttempt — wizard write, no restart', () => {
       });
       expect(cleared.ok).toBe(true);
       if (!cleared.ok) return;
-      const clearedItem = cleared.items.find(
-        (candidate) => candidate.id === 'geography-medium-free-1',
-      );
-      expect(clearedItem).toMatchObject({
-        type: 'free',
-        status: 'needs_review',
-        score: null,
-        verdict: null,
-      });
-      expect(clearedItem).not.toMatchObject({
-        status: 'graded',
-        verdict: { verdict: stubVerdict },
-      });
+      const clearedFrees = cleared.items.filter((candidate) => candidate.type === 'free');
+      expect(clearedFrees.length).toBeGreaterThan(0);
+      for (const clearedItem of clearedFrees) {
+        expect(clearedItem).toMatchObject({
+          status: 'needs_review',
+          score: null,
+          verdict: null,
+        });
+        expect(clearedItem).not.toMatchObject({
+          status: 'graded',
+          verdict: { verdict: stubVerdict },
+        });
+      }
       expect(fetchSpy).toHaveBeenCalledTimes(fetchCountAfterSet);
     } finally {
       if (previous === undefined) delete process.env.ANTHROPIC_API_KEY;

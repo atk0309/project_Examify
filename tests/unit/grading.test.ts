@@ -159,7 +159,9 @@ describe('gradeFreeText (wizard write, no restart)', () => {
     process.env.ANTHROPIC_API_KEY = 'test';
     const fetchSpy = vi
       .spyOn(globalThis, 'fetch')
-      .mockResolvedValue(new Response(anthropicOkBody(1, liveVerdict), { status: 200 }));
+      .mockImplementation(
+        async () => new Response(anthropicOkBody(1, liveVerdict), { status: 200 }),
+      );
     try {
       expect(envStoreSecretConfigured('ANTHROPIC_API_KEY')).toBe(false);
       const stubbed = await gradeFreeText(args);
@@ -219,7 +221,9 @@ describe('gradeFreeText (wizard write, no restart)', () => {
     process.env.ANTHROPIC_API_KEY = 'test';
     const fetchSpy = vi
       .spyOn(globalThis, 'fetch')
-      .mockResolvedValue(new Response(anthropicOkBody(1, liveVerdict), { status: 200 }));
+      .mockImplementation(
+        async () => new Response(anthropicOkBody(1, liveVerdict), { status: 200 }),
+      );
     try {
       expect(envStoreSecretConfigured('ANTHROPIC_API_KEY')).toBe(false);
       const stubbed = await gradeFreeText(args);
