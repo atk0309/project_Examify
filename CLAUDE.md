@@ -245,9 +245,10 @@ run/cache files only. Existing `bank.ir.json` is not overwritten unless
 `--force` (`--dry-run-ir` says **would overwrite**). Frozen sample-bank ids
 fail closed at generate (same set as validate) unless `--replace-sample` —
 `--provider test` must not write `maths-easy-1` / other SAMPLE ids without
-that flag. Tree generate preflights every target for sources before any IR
-write: sourceless siblings fail closed with a listed error and no partial
-BankIR. `generateSubject` accepts optional `AbortSignal` (forwarded
+that flag. Persist uses shared `writeBankIrAtomic` (force required to
+clobber). Tree generate drafts every subject before the first IR write
+(sources, overwrite, SAMPLE freeze, provider) so a mid-list failure leaves
+no BankIR. `generateSubject` accepts optional `AbortSignal` (forwarded)
 to provider HTTP/CMD; abort throws and writes no IR, IR cache, page-raster
 cache, or run manifest). Cloud
 providers fail closed without an env key (generate also fills unset keys from

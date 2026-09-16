@@ -467,6 +467,9 @@ describe('examify-ingest CLI', () => {
       expect(text).toContain('pnpm examify-ingest validate content/subjects');
       expect(text).toContain('pnpm examify-ingest emit content/subjects --dry-run');
       expect(text).not.toMatch(/pnpm examify-ingest validate(?! content\/subjects)/);
+      expect(text).not.toMatch(/pnpm examify-ingest emit(?! content\/subjects)/);
+      expect(text).not.toMatch(/`emit --dry-run`/);
+      expect(text).not.toMatch(/→ emit --dry-run →/);
     }
   });
 

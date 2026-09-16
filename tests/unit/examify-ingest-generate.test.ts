@@ -33,6 +33,8 @@ import {
   GenerateAbortedError,
   generateSubject,
   generateTargets,
+  writeBankIrAtomic,
+  BankIrOverwriteError,
   irCachePath,
   loadGeneratePrompt,
   providerRequestSignal,
@@ -346,6 +348,73 @@ describe('examify-ingest generate P0 gates', () => {
         { repoRoot: root, provider: 'test', seed: 0, env: {} },
       ),
     ).rejects.toThrow(/no source files for empty/);
+    expect(existsSync(path.join(plantsDir, 'bank.ir.json'))).toBe(false);
+  });
+
+  it('writeBankIrAtomic refuses existing IR without force and writes with force', () => {
+    const root = examifyRepo();
+    const irPath = path.join(root, 'content/subjects/plants/bank.ir.json');
+    writeFileSync(irPath, '{ "stale": true }\n');
+    expect(() => writeBankIrAtomic(irPath, '{ "ok": true }\n')).toThrow(BankIrOverwriteError);
+    expect(readFileSync(irPath, 'utf8')).toBe('{ "stale": true }\n');
+    expect(writeBankIrAtomic(irPath, '{ "ok": true }\n', { force: true })).toEqual({
+      existed: true,
+    });
+    expect(readFileSync(irPath, 'utf8')).toBe('{ "ok": true }\n');
+  });
+
+  it('tree generate SAMPLE freeze after a sourced sibling writes no BankIR', async () => {
+    const root = examifyRepo();
+    const mathsDir = path.join(root, 'content/subjects/maths');
+    mkdirSync(mathsDir, { recursive: true });
+    writeFileSync(path.join(mathsDir, 'notes.txt'), 'What is 2 + 2?\n');
+    const plantsDir = path.join(root, 'content/subjects/plants');
+    const plantsTarget = {
+      subjectId: 'plants',
+      subjectDir: plantsDir,
+      subject: {
+        id: 'plants',
+        label: 'Plants',
+        icon: 'biology',
+        l: 0.58,
+        c: 0.09,
+        h: 142,
+      },
+      sources: resolveSubjectSources(root, 'plants', plantsDir),
+    };
+    const mathsTarget = {
+      subjectId: 'maths',
+      subjectDir: mathsDir,
+      subject: {
+        id: 'maths',
+        label: 'Maths',
+        icon: 'maths',
+        l: 0.55,
+        c: 0.1,
+        h: 250,
+      },
+      sources: resolveSubjectSources(root, 'maths', mathsDir),
+    };
+    await expect(
+      generateTargets([plantsTarget, mathsTarget], {
+        repoRoot: root,
+        provider: 'test',
+        seed: 0,
+        env: {},
+      }),
+    ).rejects.toThrow(/maths-easy-1/);
+    expect(existsSync(path.join(plantsDir, 'bank.ir.json'))).toBe(false);
+    expect(existsSync(path.join(mathsDir, 'bank.ir.json'))).toBe(false);
+    expect(existsSync(path.join(root, '.examify-ingest/cache/ir'))).toBe(false);
+
+    const streams = io();
+    streams.handle.cwd = root;
+    const code = await runCliAsync(
+      ['generate', '--provider', 'test', 'content/subjects'],
+      streams.handle,
+    );
+    expect(code).toBe(1);
+    expect(streams.err()).toContain('maths-easy-1');
     expect(existsSync(path.join(plantsDir, 'bank.ir.json'))).toBe(false);
   });
 

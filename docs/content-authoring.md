@@ -234,7 +234,8 @@ Behaviour you can rely on:
 Phase 2 `examify-ingest generate` can draft BankIR from those files (vision-first
 when `pdftoppm` can rasterize pages; images are cached under
 `.examify-ingest/cache/pages/<pdf-sha256>/`). You still review the IR, then
-`validate` and `emit --dry-run` / `emit --apply`. The original 13-subject
+`validate content/subjects` and `emit content/subjects --dry-run` /
+`emit content/subjects --apply`. The original 13-subject
 deployment was produced from school study guides with this same grounding rule.
 
 1. Drop your source PDFs in `content/source-pdfs/<subject-id>/`. The directory is

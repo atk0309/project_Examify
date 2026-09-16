@@ -63,8 +63,8 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   Fresh-clone generate: `content/subjects/demo/notes.txt`. Existing
   `bank.ir.json` requires `--force` (dry-run says **would overwrite**).
   Frozen sample-bank ids fail at generate unless `--replace-sample`.
-  Tree generate preflights sources on every target and writes no BankIR if
-  any sibling is sourceless.
+  Tree generate drafts every subject before the first IR write (sources,
+  overwrite, SAMPLE freeze, provider); a mid-list failure writes no BankIR.
   `generateSubject` accepts optional `AbortSignal` (forwarded to provider
   HTTP/CMD; abort throws and writes no IR, IR cache, page-raster cache, or
   run manifest). Cloud

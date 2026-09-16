@@ -27,8 +27,9 @@ or OPENAI_API_KEY from the environment or repo .env / .env.local
 cacheKey IR is already cached. Use --provider test in CI. --dry-run-ir
 writes nothing durable. Existing bank.ir.json is not overwritten unless
 --force (dry-run says "would overwrite"). Sample-bank ids fail closed
-unless --replace-sample. Tree generate preflights sources and writes no
-BankIR if any subject is sourceless. Run manifests live under
+unless --replace-sample. Tree generate preflights sources and overwrite,
+drafts every subject (SAMPLE freeze / provider) before the first IR write,
+and commits BankIR only if every draft succeeds. Run manifests live under
 .examify-ingest/runs/ (gitignored).
 `;
 

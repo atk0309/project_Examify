@@ -1,10 +1,6 @@
 import path from 'node:path';
 import { parseArgs, runCli, USAGE, type CliIo, type ParsedCli } from './cli';
-import {
-  NEXT_INGEST_COMMANDS,
-  assertGenerateTargetsHaveSources,
-  generateSubject,
-} from './generate';
+import { NEXT_INGEST_COMMANDS, generateTargets } from './generate';
 import { findRepoRoot } from './load';
 import { mergeRepoEnvFiles } from './repo-env';
 import { resolveGenerateTargets } from './sources';
@@ -40,21 +36,19 @@ async function runGenerate(parsed: ParsedCli, io: CliIo): Promise<number> {
   const env = mergeRepoEnvFiles(repoRoot, io.env ?? process.env);
 
   try {
-    assertGenerateTargetsHaveSources(targets);
-    for (const target of targets) {
-      const result = await generateSubject({
-        repoRoot,
-        subject: target.subject,
-        subjectDir: target.subjectDir,
-        sources: target.sources,
-        provider: parsed.provider,
-        model: parsed.model ?? undefined,
-        seed: parsed.seed,
-        dryRunIr: parsed.dryRunIr,
-        force: parsed.force,
-        replaceSample: parsed.replaceSample,
-        env,
-      });
+    const results = await generateTargets(targets, {
+      repoRoot,
+      provider: parsed.provider,
+      model: parsed.model ?? undefined,
+      seed: parsed.seed,
+      dryRunIr: parsed.dryRunIr,
+      force: parsed.force,
+      replaceSample: parsed.replaceSample,
+      env,
+    });
+    for (let i = 0; i < results.length; i += 1) {
+      const result = results[i]!;
+      const target = targets[i]!;
       const verb = result.wroteIr
         ? result.irExisted
           ? 'overwrote'

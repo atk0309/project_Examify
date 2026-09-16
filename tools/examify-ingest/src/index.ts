@@ -50,3 +50,10 @@ export {
 export { formatFileDiff, stableJson } from './diff';
 export { resolveSubjectSources } from './sources';
 export { parseArgs, runCli, USAGE, type CliIo, type ParsedCli } from './cli';
+export {
+  assertCanWriteBankIr,
+  BankIrOverwriteError,
+  writeBankIrAtomic,
+  writeFileAtomic,
+  type WriteBankIrOptions,
+} from './write-atomic';

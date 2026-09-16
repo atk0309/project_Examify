@@ -75,9 +75,11 @@ extensions in the subject folder except `bank.ir.json`. `--provider` is required
 recorded in the run manifest. A tree generate of `content/subjects` still needs
 a source file per subject — biology is hand-authored and has none, so target
 `content/subjects/demo` (or add sources) instead of claiming biology generate
-works on a fresh clone. Tree generate **preflights every target for sources**
-before writing any IR: if a sibling is sourceless, the run fails closed, lists
-those ids, and writes **no** BankIR (A/B/C are not left on disk after D dies).
+works on a fresh clone. Tree generate is **all-or-nothing for BankIR**: it
+preflights sources and overwrite, drafts every subject (`dry-run-ir` — SAMPLE
+freeze and provider fail closed here), and writes IR only if every draft
+succeeds. A sourceless or frozen sibling lists the problem and leaves **no**
+partial BankIR.
 
 `--dry-run-ir` prints the would-write path and writes nothing durable (no IR,
 cache, or manifest). If `bank.ir.json` already exists, dry-run says
@@ -138,8 +140,8 @@ Source blobs are wrapped as `UNTRUSTED SOURCE MATERIAL` with static
 `BEGIN`/`END` markers. Those delimiters stay fixed on prompt v2 on purpose:
 a per-run nonce would bust every `cacheKey` and would not stop a hostile PDF
 from emitting the same label. The fence is a model-facing reminder, not a
-capability boundary. A human still runs validate → emit --dry-run →
-emit --apply.
+capability boundary. A human still runs validate content/subjects →
+emit content/subjects --dry-run → emit content/subjects --apply.
 
 `validate` and `emit` accept a subjects directory (scans `*/bank.ir.json`) or
 one or more explicit IR file paths. Generate does not change those commands.
@@ -243,7 +245,7 @@ the client. Do not import `content/generated/keys/` from client code.
 Generated files are meant to be committed. Source PDFs stay in the gitignored
 `content/source-pdfs/` directory.
 
-After `emit --apply`, `planEmit` rewrites
+After `emit content/subjects --apply`, `planEmit` rewrites
 `src/lib/exam/generated-public.ts` and
 `src/lib/exam/generated-keys.server.ts` from the merged catalog as a
 committed / missing-catalog fallback. Do not add those imports by hand. The
@@ -258,8 +260,9 @@ import { generateSubject } from 'examify-ingest/generate';
 
 `generateSubject` is the library entry the Setup Wizard can call later
 (`examify-ingest/generate`, not the Phase 0 emit graph). It still only writes
-BankIR (+ gitignored run/cache files). Callers must run validate → emit
-dry-run → emit apply themselves.
+BankIR (+ gitignored run/cache files). Callers must run
+validate content/subjects → emit content/subjects --dry-run →
+emit content/subjects --apply themselves.
 
 Optional `signal?: AbortSignal` is forwarded to Anthropic / OpenAI / local HTTP
 `fetch` and to the local CMD subprocess. Abort/timeout kill the POSIX process

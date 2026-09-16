@@ -18,7 +18,7 @@ import {
   type ProviderDeps,
   type ProviderEnv,
 } from './providers';
-import { writeFileAtomic } from './write-atomic';
+import { assertCanWriteBankIr, writeBankIrAtomic } from './write-atomic';
 import {
   GENERATE_TEMPERATURE,
   bankIrSchema,
@@ -141,11 +141,10 @@ export async function generateSubject(request: GenerateRequest): Promise<Generat
   const adapter = getProvider(request.provider);
   const persist = request.dryRunIr !== true;
   const irPath = path.join(request.subjectDir, BANK_IR_FILE);
+  const displayPath = pathFromRoot(request.repoRoot, irPath);
   const irExisted = existsSync(irPath);
-  if (irExisted && persist && request.force !== true) {
-    throw new Error(
-      `refusing to overwrite existing ${pathFromRoot(request.repoRoot, irPath)}; pass --force to replace it`,
-    );
+  if (persist) {
+    assertCanWriteBankIr(irPath, { force: request.force === true, displayPath });
   }
 
   const prompt = loadGeneratePrompt();
@@ -244,7 +243,10 @@ export async function generateSubject(request: GenerateRequest): Promise<Generat
     persistPageImages(request.repoRoot, request.sources, pageImages);
     writeCachedIr(request.repoRoot, cacheKey, bank);
     manifestPath = writeRunManifest(request.repoRoot, cacheKey, timestamp, stableJson(manifest));
-    writeFileAtomic(irPath, stableJson(bank));
+    writeBankIrAtomic(irPath, stableJson(bank), {
+      force: request.force === true,
+      displayPath,
+    });
   }
 
   return { bank, cacheKey, cacheHit, manifest, manifestPath, irPath, wroteIr, irExisted };
@@ -291,6 +293,51 @@ export function assertGenerateTargetsHaveSources(
   );
 }
 
+/** Persist-only: existing IR without force fails before any generate write. */
+export function assertGenerateTargetsCanPersist(
+  repoRoot: string,
+  targets: readonly GenerateTarget[],
+  force: boolean,
+): void {
+  if (force) return;
+  const existing = targets
+    .filter((target) => existsSync(path.join(target.subjectDir, BANK_IR_FILE)))
+    .map((target) => pathFromRoot(repoRoot, path.join(target.subjectDir, BANK_IR_FILE)));
+  if (existing.length === 0) return;
+  throw new Error(
+    `refusing to overwrite existing ${existing.join(', ')}; pass --force to replace it; no BankIR written`,
+  );
+}
+
+function commitGeneratedDraft(
+  draft: GenerateSubjectResult,
+  target: GenerateTarget,
+  options: Omit<GenerateRequest, 'subject' | 'subjectDir' | 'sources'>,
+): GenerateSubjectResult {
+  const pageImages = resolvePageImages(options.repoRoot, target.sources, {
+    persist: true,
+    rasterize: options.rasterize,
+  });
+  persistPageImages(options.repoRoot, target.sources, pageImages);
+  writeCachedIr(options.repoRoot, draft.cacheKey, draft.bank);
+  const manifestPath = writeRunManifest(
+    options.repoRoot,
+    draft.cacheKey,
+    draft.manifest.timestamp,
+    stableJson(draft.manifest),
+  );
+  writeBankIrAtomic(draft.irPath, stableJson(draft.bank), {
+    force: options.force === true,
+    displayPath: pathFromRoot(options.repoRoot, draft.irPath),
+  });
+  return { ...draft, wroteIr: true, manifestPath };
+}
+
+/**
+ * Tree generate is all-or-nothing for BankIR: sources + overwrite preflight,
+ * then every subject is drafted (`dryRunIr`) so SAMPLE freeze / provider
+ * failures happen before the first IR write. Only then are IRs committed.
+ */
 export async function generateTargets(
   targets: readonly GenerateTarget[],
   options: Omit<GenerateRequest, 'subject' | 'subjectDir' | 'sources'> & {
@@ -298,18 +345,33 @@ export async function generateTargets(
   },
 ): Promise<GenerateSubjectResult[]> {
   assertGenerateTargetsHaveSources(targets);
-  const results: GenerateSubjectResult[] = [];
+  if (options.dryRunIr !== true) {
+    assertGenerateTargetsCanPersist(options.repoRoot, targets, options.force === true);
+  }
+
+  const drafts: GenerateSubjectResult[] = [];
   for (const target of targets) {
-    results.push(
+    drafts.push(
       await generateSubject({
         ...options,
         subject: target.subject,
         subjectDir: target.subjectDir,
         sources: target.sources,
+        dryRunIr: true,
       }),
     );
   }
-  return results;
+
+  if (options.dryRunIr === true) {
+    return drafts;
+  }
+
+  const committed: GenerateSubjectResult[] = [];
+  for (let i = 0; i < drafts.length; i += 1) {
+    await checkpointAbort(options.signal);
+    committed.push(commitGeneratedDraft(drafts[i]!, targets[i]!, options));
+  }
+  return committed;
 }
 
 /** Public split of generated IR — answers/rubrics/provenance stay out. */
