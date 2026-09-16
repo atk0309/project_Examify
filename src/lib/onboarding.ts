@@ -18,7 +18,7 @@ import {
   collectQuestionIds,
   formatFileDiff,
   isAuthoritativeCatalogInput,
-  isExistingBankIr,
+  hasExistingBankIr,
   loadIrFiles,
   planEmit,
   publicQuestionIds,
@@ -247,7 +247,7 @@ export function listOnboardingSubjects(root = getOnboardingContentRoot()): Onboa
   return names.map((id) => {
     const irPath = path.join(dir, id, BANK_IR_FILE);
     const raw = readJsonUnknown(irPath);
-    const hasIr = isExistingBankIr(irPath);
+    const hasIr = hasExistingBankIr(irPath);
     let label = id;
     let icon: string = 'maths';
     if (raw && typeof raw === 'object') {
@@ -470,8 +470,8 @@ export function addOnboardingSubject(
   if (existsSync(dir)) return { ok: false, reason: 'duplicate' };
 
   mkdirSync(dir, { recursive: true });
-  // Metadata only — an empty/placeholder bank.ir.json is not “existing”
-  // BankIR and must not force overwrite confirm on first generate.
+  // Metadata only — never write an empty/placeholder bank.ir.json.
+  // Overwrite confirm uses shared hasExistingBankIr (empty ≠ existing).
   writeSubjectMetaFile(dir, id, label, icon);
   return { ok: true, subject: listOnboardingSubjects(root).find((row) => row.id === id)! };
 }

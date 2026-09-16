@@ -253,7 +253,8 @@ async function generateOnboardingSubjectUnlocked(input: {
   const existingIrPath = path.join(root, SUBJECTS_REL, subjectId, BANK_IR_FILE);
   const existingIrRel = posixRel(root, existingIrPath);
   const force = input.force === true || input.overwrite === 'force';
-  if (ingestGenerate.isExistingBankIr(existingIrPath) && input.overwrite === 'skip') {
+  // Shared empty≠existing predicate — never existsSync on the IR path.
+  if (ingestGenerate.hasExistingBankIr(existingIrPath) && input.overwrite === 'skip') {
     return skippedResult(existingIrRel);
   }
   // Confirm before generate: existing IR without force never starts a

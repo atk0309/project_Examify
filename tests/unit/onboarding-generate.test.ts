@@ -189,6 +189,8 @@ describe('onboarding generate graph', () => {
     const emit = readFileSync(path.join(process.cwd(), 'src/lib/onboarding.ts'), 'utf8');
     expect(emit).not.toMatch(/examify-ingest\/generate/);
     expect(emit).not.toMatch(/generateSubject/);
+    expect(emit).toMatch(/hasExistingBankIr/);
+    expect(emit).not.toMatch(/existsSync\(irPath\)/);
     expect(emit).toMatch(/resolveSubjectSources/);
     const generate = readFileSync(
       path.join(process.cwd(), 'src/lib/onboarding-generate.ts'),
@@ -199,6 +201,9 @@ describe('onboarding generate graph', () => {
     expect(generate).toMatch(/dryRunIr: true/);
     expect(generate).toMatch(/needs_confirm/);
     expect(generate).toMatch(/overwrite === 'skip'/);
+    expect(generate).toMatch(/hasExistingBankIr/);
+    expect(generate).not.toMatch(/existsSync\(/);
+    expect(generate).not.toMatch(/isExistingBankIr|isPlaceholderBankIr/);
     expect(generate).toMatch(/writeBankIrAtomic/);
     expect(generate).toMatch(/assertCanWriteBankIr/);
     expect(generate).toMatch(/BankIrOverwriteError/);

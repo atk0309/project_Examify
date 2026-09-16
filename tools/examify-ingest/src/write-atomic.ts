@@ -8,6 +8,7 @@ import {
 } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import path from 'node:path';
+import { DIFFICULTIES, bankIrSchema } from './schema';
 
 /** Thrown when persist would clobber existing `bank.ir.json` without `force`. */
 export class BankIrOverwriteError extends Error {
@@ -25,47 +26,48 @@ export type WriteBankIrOptions = {
   displayPath?: string;
 };
 
-/**
- * Wizard add used to write an empty-difficulties `bank.ir.json`. That
- * placeholder (or a blank file) is not real content — overwrite / confirm
- * must not treat it as existing BankIR.
- */
-export function isPlaceholderBankIr(value: unknown): boolean {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const difficulties = (value as { difficulties?: unknown }).difficulties;
-  if (!difficulties || typeof difficulties !== 'object' || Array.isArray(difficulties)) {
-    return false;
-  }
-  const lists = Object.values(difficulties as Record<string, unknown>);
-  if (lists.length === 0) return true;
-  return lists.every((list) => Array.isArray(list) && list.length === 0);
+function isEnoent(error: unknown): boolean {
+  return (
+    error instanceof Error && 'code' in error && (error as NodeJS.ErrnoException).code === 'ENOENT'
+  );
 }
 
-/** True when `bank.ir.json` has real content that overwrite must protect. */
-export function isExistingBankIr(absPath: string): boolean {
+/**
+ * True only for a schema-valid BankIR that already has at least one question.
+ * Empty files, `{}`, schema-fail JSON, and zero-item placeholders are
+ * non-existing for the overwrite gate (first real generate must not need
+ * `--force`). Unreadable files fail closed (treated as existing).
+ * Onboarding overwrite / skip / generate must use this (or
+ * assertCanWriteBankIr) instead of existsSync on the IR path.
+ */
+export function hasExistingBankIr(absPath: string): boolean {
   if (!existsSync(absPath)) return false;
   let raw: string;
   try {
     raw = readFileSync(absPath, 'utf8');
-  } catch {
+  } catch (error) {
+    if (isEnoent(error)) return false;
     return true;
   }
   if (raw.trim() === '') return false;
+  let parsed: unknown;
   try {
-    return !isPlaceholderBankIr(JSON.parse(raw) as unknown);
+    parsed = JSON.parse(raw) as unknown;
   } catch {
-    return true;
+    return false;
   }
+  const result = bankIrSchema.safeParse(parsed);
+  if (!result.success) return false;
+  return DIFFICULTIES.some((difficulty) => result.data.difficulties[difficulty].length > 0);
 }
 
 /**
  * Shared persist gate for `bank.ir.json`. CLI generate persist uses this.
  * Onboarding IR commit should call writeBankIrAtomic(path, body, { force })
- * with force from user confirm (no confirm UI here). Empty / placeholder
- * IR does not require force.
+ * with force from user confirm (no confirm UI here).
  */
 export function assertCanWriteBankIr(absPath: string, options: WriteBankIrOptions = {}): boolean {
-  const existed = isExistingBankIr(absPath);
+  const existed = hasExistingBankIr(absPath);
   if (existed && options.force !== true) {
     throw new BankIrOverwriteError(options.displayPath ?? absPath);
   }

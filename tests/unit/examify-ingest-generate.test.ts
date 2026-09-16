@@ -35,7 +35,7 @@ import {
   generateTargets,
   writeBankIrAtomic,
   BankIrOverwriteError,
-  isExistingBankIr,
+  hasExistingBankIr,
   irCachePath,
   loadGeneratePrompt,
   providerRequestSignal,
@@ -49,6 +49,27 @@ import {
   writeFileAtomic,
   defaultSubjectMeta,
 } from '../../tools/examify-ingest/src/generate-api';
+
+function realBankIr(id: string): BankIR {
+  return {
+    version: 1,
+    subject: { id, label: id, icon: 'biology', l: 0.58, c: 0.09, h: 142 },
+    difficulties: {
+      easy: [
+        {
+          id: `${id}-easy-1`,
+          type: 'mcq',
+          q: 'Prior question?',
+          choices: ['A', 'B', 'C', 'D'],
+          answer: 0,
+          provenance: { pdf: 'hand-authored', locator: 'prior' },
+        },
+      ],
+      medium: [],
+      hard: [],
+    },
+  };
+}
 
 function examifyRepo(): string {
   const tmp = mkdtempSync(path.join(tmpdir(), 'examify-generate-'));
@@ -153,7 +174,7 @@ describe('examify-ingest generate P0 gates', () => {
   it('refuses to overwrite existing IR without --force and does not write', async () => {
     const root = examifyRepo();
     const irPath = path.join(root, 'content/subjects/plants/bank.ir.json');
-    const stale = '{ "stale": true }\n';
+    const stale = `${JSON.stringify(realBankIr('plants'), null, 2)}\n`;
     writeFileSync(irPath, stale);
     const streams = io();
     streams.handle.cwd = root;
@@ -171,7 +192,7 @@ describe('examify-ingest generate P0 gates', () => {
   it('--dry-run-ir says would overwrite when IR exists and writes nothing', async () => {
     const root = examifyRepo();
     const irPath = path.join(root, 'content/subjects/plants/bank.ir.json');
-    const stale = '{ "stale": true }\n';
+    const stale = `${JSON.stringify(realBankIr('plants'), null, 2)}\n`;
     writeFileSync(irPath, stale);
     const streams = io();
     streams.handle.cwd = root;
@@ -188,7 +209,7 @@ describe('examify-ingest generate P0 gates', () => {
   it('--force allows overwrite of existing IR', async () => {
     const root = examifyRepo();
     const irPath = path.join(root, 'content/subjects/plants/bank.ir.json');
-    writeFileSync(irPath, '{ "stale": true }\n');
+    writeFileSync(irPath, `${JSON.stringify(realBankIr('plants'), null, 2)}\n`);
     const streams = io();
     streams.handle.cwd = root;
     const code = await runCliAsync(
@@ -356,43 +377,50 @@ describe('examify-ingest generate P0 gates', () => {
   it('writeBankIrAtomic refuses existing IR without force and writes with force', () => {
     const root = examifyRepo();
     const irPath = path.join(root, 'content/subjects/plants/bank.ir.json');
-    writeFileSync(irPath, '{ "stale": true }\n');
+    const prior = `${JSON.stringify(realBankIr('plants'), null, 2)}\n`;
+    writeFileSync(irPath, prior);
     expect(() => writeBankIrAtomic(irPath, '{ "ok": true }\n')).toThrow(BankIrOverwriteError);
-    expect(readFileSync(irPath, 'utf8')).toBe('{ "stale": true }\n');
+    expect(readFileSync(irPath, 'utf8')).toBe(prior);
     expect(writeBankIrAtomic(irPath, '{ "ok": true }\n', { force: true })).toEqual({
       existed: true,
     });
     expect(readFileSync(irPath, 'utf8')).toBe('{ "ok": true }\n');
   });
 
-  it('writeBankIrAtomic treats empty and placeholder IR as not existing', () => {
+  it('S6: empty / invalid / placeholder IR is non-existing; real IR still needs force', () => {
     const root = examifyRepo();
-    const emptyPath = path.join(root, 'content/subjects/empty-ir/bank.ir.json');
-    const placeholderPath = path.join(root, 'content/subjects/placeholder/bank.ir.json');
-    mkdirSync(path.dirname(emptyPath), { recursive: true });
-    mkdirSync(path.dirname(placeholderPath), { recursive: true });
-    writeFileSync(emptyPath, '  \n');
-    writeFileSync(
-      placeholderPath,
-      JSON.stringify({
-        version: 1,
-        subject: {
-          id: 'placeholder',
-          label: 'Placeholder',
-          icon: 'biology',
-          l: 0.5,
-          c: 0.1,
-          h: 140,
-        },
-        difficulties: { easy: [], medium: [], hard: [] },
-      }),
-    );
-    expect(isExistingBankIr(emptyPath)).toBe(false);
-    expect(isExistingBankIr(placeholderPath)).toBe(false);
-    expect(writeBankIrAtomic(emptyPath, '{ "ok": true }\n')).toEqual({ existed: false });
-    expect(writeBankIrAtomic(placeholderPath, '{ "ok": true }\n')).toEqual({ existed: false });
-    expect(readFileSync(emptyPath, 'utf8')).toBe('{ "ok": true }\n');
-    expect(readFileSync(placeholderPath, 'utf8')).toBe('{ "ok": true }\n');
+    const irPath = path.join(root, 'content/subjects/plants/bank.ir.json');
+    const zeroItem = {
+      version: 1,
+      subject: { id: 'plants', label: 'Plants', icon: 'biology', l: 0.58, c: 0.09, h: 142 },
+      difficulties: { easy: [], medium: [], hard: [] },
+    };
+
+    expect(hasExistingBankIr(irPath)).toBe(false);
+    writeFileSync(irPath, '');
+    expect(hasExistingBankIr(irPath)).toBe(false);
+    writeFileSync(irPath, '{}\n');
+    expect(hasExistingBankIr(irPath)).toBe(false);
+    writeFileSync(irPath, '{ "stale": true }\n');
+    expect(hasExistingBankIr(irPath)).toBe(false);
+    writeFileSync(irPath, `${JSON.stringify(zeroItem)}\n`);
+    expect(hasExistingBankIr(irPath)).toBe(false);
+    writeFileSync(irPath, `${JSON.stringify(realBankIr('plants'))}\n`);
+    expect(hasExistingBankIr(irPath)).toBe(true);
+
+    for (const placeholder of [
+      '',
+      '{}\n',
+      '{ "stale": true }\n',
+      `${JSON.stringify(zeroItem)}\n`,
+    ]) {
+      writeFileSync(irPath, placeholder);
+      expect(writeBankIrAtomic(irPath, '{ "ok": true }\n')).toEqual({ existed: false });
+      expect(readFileSync(irPath, 'utf8')).toBe('{ "ok": true }\n');
+    }
+
+    writeFileSync(irPath, `${JSON.stringify(realBankIr('plants'))}\n`);
+    expect(() => writeBankIrAtomic(irPath, '{ "ok": true }\n')).toThrow(BankIrOverwriteError);
   });
 
   it('tree generate SAMPLE freeze after a sourced sibling writes no BankIR', async () => {

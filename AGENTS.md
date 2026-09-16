@@ -61,14 +61,14 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   `emit content/subjects --apply`. It never auto-applies.
   Hand-authored biology has no source file (skip generate; validate/emit only).
   Fresh-clone generate: `content/subjects/demo/notes.txt`. Existing
-  `bank.ir.json` requires `--force` (dry-run says **would overwrite**);
-  empty/placeholder IR does not.
+  `bank.ir.json` requires `--force` (dry-run says **would overwrite**)
+  when `hasExistingBankIr` is true; empty/placeholder IR does not.
   Frozen sample-bank ids fail at generate unless `--replace-sample`.
   Tree generate drafts every subject before the first IR write (sources,
   overwrite, SAMPLE freeze, provider); a mid-list or persist failure writes
   no BankIR (commit rolls back earlier writes; abort is gated before persist).
-  Persist uses shared `writeBankIrAtomic`. Empty/placeholder IR does not
-  require force. The wizard never silently
+  Persist uses shared `writeBankIrAtomic` + `hasExistingBankIr`. Empty /
+  placeholder IR does not require force. The wizard never silently
   replaces existing `bank.ir.json` (named confirm, or skip/cancel;
   confirm is that same `--force` for the subject).
   `generateSubject` accepts optional `AbortSignal` (forwarded to provider
@@ -117,7 +117,8 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   and other CLI sources generate already reads), choose an AI mode, optionally
   run `examify-ingest generate` (BankIR only; never emit/apply; adding a
   subject writes `subject.json` only — no empty/placeholder `bank.ir.json`;
-  empty/placeholder IR is not “existing” for overwrite; real existing
+  overwrite / skip / generate use shared `hasExistingBankIr` (empty ≠
+  existing; never `existsSync` on the IR path); real existing
   `bank.ir.json` needs a calm confirm — preview names `would overwrite`,
   decline is skipped/cancelled not invalid, confirm is CLI `--force` for
   that subject; generate-all confirms per colliding subject or one named

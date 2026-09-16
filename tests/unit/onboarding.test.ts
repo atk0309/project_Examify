@@ -432,21 +432,29 @@ describe('onboarding subjects and files', () => {
     expect(snap.liveSubjects.some((row) => row.label && row.id)).toBe(true);
   });
 
-  it('treats a leftover empty BankIR as not existing for overwrite', async () => {
+  it('treats leftover empty / invalid BankIR as not existing for overwrite', async () => {
     const { listOnboardingSubjects, setOnboardingContentRootForTests } =
       await import('@/lib/onboarding');
+    const { hasExistingBankIr } = await import('examify-ingest');
     const root = tempRoot();
+    const irPath = path.join(root, 'content/subjects/history/bank.ir.json');
     mkdirSync(path.join(root, 'content/subjects/history'), { recursive: true });
-    writeFileSync(
-      path.join(root, 'content/subjects/history/bank.ir.json'),
+    setOnboardingContentRootForTests(root);
+
+    for (const body of [
+      '',
+      '{}\n',
+      '{ "stale": true }\n',
       JSON.stringify({
         version: 1,
         subject: { id: 'history', label: 'History', icon: 'geography', l: 0.6, c: 0.08, h: 40 },
         difficulties: { easy: [], medium: [], hard: [] },
       }),
-    );
-    setOnboardingContentRootForTests(root);
-    expect(listOnboardingSubjects(root)[0]).toMatchObject({ id: 'history', hasIr: false });
+    ]) {
+      writeFileSync(irPath, body);
+      expect(hasExistingBankIr(irPath)).toBe(false);
+      expect(listOnboardingSubjects(root)[0]).toMatchObject({ id: 'history', hasIr: false });
+    }
   });
 
   it('does not leave the IR dir renamed when the destination PDF dir already exists', async () => {

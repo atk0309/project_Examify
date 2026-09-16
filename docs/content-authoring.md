@@ -30,8 +30,9 @@ local PDFs (under `content/source-pdfs/<subject>/` only; generate also reads
 BankIR on the AI step (`examify-ingest/generate`, IR only), and run the same
 directory emit (validate, Review / dry-run HITL with planned deletes, then apply). The
 wizard does **not** auto-emit or auto-apply after generate. Adding a subject
-writes `subject.json` only — no empty/placeholder `bank.ir.json`. Empty or
-placeholder IR is not “existing” for overwrite. A real existing
+writes `subject.json` only — no empty/placeholder `bank.ir.json`. Overwrite /
+skip / generate use shared `hasExistingBankIr` (empty ≠ existing; never
+`existsSync` on the IR path). A real existing
 `bank.ir.json` is never silently replaced: the generate preview names
 `would overwrite content/subjects/<id>/bank.ir.json`, then the wizard
 asks “Replace existing BankIR for {label}?” before any write (generate-all

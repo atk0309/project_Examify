@@ -25,7 +25,7 @@ import {
   type ProviderDeps,
   type ProviderEnv,
 } from './providers';
-import { assertCanWriteBankIr, isExistingBankIr, writeBankIrAtomic } from './write-atomic';
+import { assertCanWriteBankIr, hasExistingBankIr, writeBankIrAtomic } from './write-atomic';
 import {
   GENERATE_TEMPERATURE,
   bankIrSchema,
@@ -261,7 +261,7 @@ export async function generateSubject(request: GenerateRequest): Promise<Generat
   const persist = request.dryRunIr !== true;
   const irPath = path.join(request.subjectDir, BANK_IR_FILE);
   const displayPath = pathFromRoot(request.repoRoot, irPath);
-  const irExisted = isExistingBankIr(irPath);
+  const irExisted = hasExistingBankIr(irPath);
   if (persist) {
     assertCanWriteBankIr(irPath, { force: request.force === true, displayPath });
   }
@@ -428,7 +428,7 @@ export function assertGenerateTargetsCanPersist(
 ): void {
   if (force) return;
   const existing = targets
-    .filter((target) => existsSync(path.join(target.subjectDir, BANK_IR_FILE)))
+    .filter((target) => hasExistingBankIr(path.join(target.subjectDir, BANK_IR_FILE)))
     .map((target) => pathFromRoot(repoRoot, path.join(target.subjectDir, BANK_IR_FILE)));
   if (existing.length === 0) return;
   throw new Error(
