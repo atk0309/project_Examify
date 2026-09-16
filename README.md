@@ -35,13 +35,17 @@ no env-JSON allowlist to hand-edit.
 1. **`/setup`** (first run) or **`/signin`** — on a fresh install, the first visitor
    creates the household and becomes admin (and sets a password when `AUTH_MODE=password`).
    After bootstrap, **`/onboarding`** lets the household admin add subjects, attach
-   local study PDFs, choose an AI mode (Anthropic / OpenAI keys write the same
+   local study files (PDFs plus notes.txt and other CLI sources), choose an AI mode (Anthropic / OpenAI keys write the same
    repo-root `.env` as `install.sh` / `examify-ingest generate`; host-injected
-   keys stay host-managed via the process exec environment), optionally generate BankIR from those
+   usable keys stay host-managed; a boot `test` sentinel stays “not configured”
+   but Clear/Rotate remain available), optionally generate BankIR from those
    files, and emit through `examify-ingest` (validate + Review / dry-run HITL, then apply;
    desktop uses a step rail, mobile a compact progress bar; one stage at a time;
-   generate never auto-applies; existing BankIR needs a confirm before
+   generate never auto-applies; adding a subject does not write empty BankIR;
+   real existing BankIR needs a confirm before
    overwrite (preview names `would overwrite`; decline keeps prior IR);
+   Apply prune of leftover generated subjects needs a named confirm; Ready
+   lists live subject ids/names and question counts;
    cancel POSTs `/api/onboarding/cancel-generate`
    (not a queued Server Action), aborts provider HTTP/CMD via AbortSignal,
    and discards the preview so prior IR is unchanged (the wizard waits for

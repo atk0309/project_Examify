@@ -25,10 +25,13 @@ the build fails if it ever ends up in the client graph. A unit-test guard
 You can author a **BankIR** JSON document by hand, or generate one from local
 source files, then emit the two-file split with `examify-ingest`. After
 first-run `/setup`, the admin wizard at `/onboarding` can add subjects, attach
-local PDFs (under `content/source-pdfs/<subject>/` only), optionally generate
+local PDFs (under `content/source-pdfs/<subject>/` only; generate also reads
+`notes.txt` and other CLI sources already in the subject folder), optionally generate
 BankIR on the AI step (`examify-ingest/generate`, IR only), and run the same
 directory emit (validate, Review / dry-run HITL with planned deletes, then apply). The
-wizard does **not** auto-emit or auto-apply after generate. An existing
+wizard does **not** auto-emit or auto-apply after generate. Adding a subject
+writes `subject.json` only — no empty/placeholder `bank.ir.json`. Empty or
+placeholder IR is not “existing” for overwrite. A real existing
 `bank.ir.json` is never silently replaced: the generate preview names
 `would overwrite content/subjects/<id>/bank.ir.json`, then the wizard
 asks “Replace existing BankIR for {label}?” before any write (generate-all
@@ -46,7 +49,9 @@ after the wait. Generate is limited to subjects in the wizard catalog. Hand-auth
 can skip generate. Apply refuses if the plan hash no longer
 matches the confirmed dry-run. Finish requires that confirmed apply; skip is
 the no-emit exit (sample bank). Deleting a subject removes its IR/source dirs;
-leftover generated JSON is pruned only on the confirmed whole-tree apply (#62).
+leftover generated JSON is pruned only after a named HITL confirm on Apply
+(cancel keeps those files). Ready lists live bank subject ids/names and
+question counts.
 An empty subjects tree is refused and never wipes generated files. Uploaded
 PDFs must start with `%PDF`. `--replace-sample` is off unless the admin enables
 the advanced toggle.

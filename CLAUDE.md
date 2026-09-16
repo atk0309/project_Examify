@@ -40,12 +40,15 @@ Surface:
   modes can set / rotate / clear `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` in
   the same repo-root `.env` as `install.sh` and `examify-ingest generate`
   (shared `findRepoRoot`, never `process.cwd()`), never echoed; a
-  host-injected key (exec environ assignment, including empty / `test`) is
-  not rotatable in the wizard) → validate → Review
+  host-injected usable key is not rotatable in the wizard; a boot
+  `ANTHROPIC_API_KEY=test` sentinel stays “not configured” but Clear/Rotate
+  remain available) → validate → Review
   (dry-run HITL) → apply → ready. The wizard is one stage at a time: desktop
   (≥900px) uses a left step rail + stage + sticky footer; mobile uses compact
   “Step N of M · Label” progress and a sticky bottom bar. Generate writes BankIR
-  only and never auto-applies. An existing `bank.ir.json` is never
+  only and never auto-applies. Adding a subject writes `subject.json`
+  only — no empty/placeholder `bank.ir.json`. Empty/placeholder IR is not
+  “existing” for the overwrite gate. A real existing `bank.ir.json` is never
   silently clobbered: the dry-run/preview names `would overwrite <rel>`
   and the wizard asks a calm confirm before any write (“Replace existing
   BankIR for {label}?” or a named generate-all batch). Decline
@@ -72,7 +75,8 @@ Surface:
   “Finish content setup” chip remains. Invited students and parents never see
   it. Directory-only `examify-ingest` emit (dry-run before apply, empty catalog
   refused). Delete removes IR/source dirs only; prune of leftover generated JSON
-  waits for confirmed directory apply (#62). Not a replacement for `install.sh`
+  waits for a named HITL confirm on Apply (cancel = no deletes/writes). Ready
+  lists live bank subject ids/names and question counts. Not a replacement for `install.sh`
   auth-mode picking. Existing households are backfilled complete.
   `/setup/wizard` redirects here.
 - **`/invite/[token]`** — accept a household invite (password, magic-link, or local OTP).
@@ -254,7 +258,8 @@ A committed generate fixture is `content/subjects/demo/notes.txt`
 (`pnpm examify-ingest generate --provider test --seed 0 content/subjects/demo`).
 Generate never auto-applies; it writes IR + gitignored `.examify-ingest/`
 run/cache files only. Existing `bank.ir.json` is not overwritten unless
-`--force` (`--dry-run-ir` says **would overwrite**). Frozen sample-bank ids
+`--force` (`--dry-run-ir` says **would overwrite**). Empty/placeholder IR
+does not require `--force`. Frozen sample-bank ids
 fail closed at generate (same set as validate) unless `--replace-sample` —
 `--provider test` must not write `maths-easy-1` / other SAMPLE ids without
 that flag. Persist uses shared `writeBankIrAtomic` (force required to

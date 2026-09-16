@@ -35,6 +35,7 @@ import {
   generateTargets,
   writeBankIrAtomic,
   BankIrOverwriteError,
+  isExistingBankIr,
   irCachePath,
   loadGeneratePrompt,
   providerRequestSignal,
@@ -362,6 +363,36 @@ describe('examify-ingest generate P0 gates', () => {
       existed: true,
     });
     expect(readFileSync(irPath, 'utf8')).toBe('{ "ok": true }\n');
+  });
+
+  it('writeBankIrAtomic treats empty and placeholder IR as not existing', () => {
+    const root = examifyRepo();
+    const emptyPath = path.join(root, 'content/subjects/empty-ir/bank.ir.json');
+    const placeholderPath = path.join(root, 'content/subjects/placeholder/bank.ir.json');
+    mkdirSync(path.dirname(emptyPath), { recursive: true });
+    mkdirSync(path.dirname(placeholderPath), { recursive: true });
+    writeFileSync(emptyPath, '  \n');
+    writeFileSync(
+      placeholderPath,
+      JSON.stringify({
+        version: 1,
+        subject: {
+          id: 'placeholder',
+          label: 'Placeholder',
+          icon: 'biology',
+          l: 0.5,
+          c: 0.1,
+          h: 140,
+        },
+        difficulties: { easy: [], medium: [], hard: [] },
+      }),
+    );
+    expect(isExistingBankIr(emptyPath)).toBe(false);
+    expect(isExistingBankIr(placeholderPath)).toBe(false);
+    expect(writeBankIrAtomic(emptyPath, '{ "ok": true }\n')).toEqual({ existed: false });
+    expect(writeBankIrAtomic(placeholderPath, '{ "ok": true }\n')).toEqual({ existed: false });
+    expect(readFileSync(emptyPath, 'utf8')).toBe('{ "ok": true }\n');
+    expect(readFileSync(placeholderPath, 'utf8')).toBe('{ "ok": true }\n');
   });
 
   it('tree generate SAMPLE freeze after a sourced sibling writes no BankIR', async () => {

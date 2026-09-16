@@ -44,7 +44,20 @@ function seedSubject(root: string) {
     JSON.stringify({
       version: 1,
       subject: { id: 'history', label: 'History', icon: 'geography', l: 0.6, c: 0.08, h: 40 },
-      difficulties: { easy: [], medium: [], hard: [] },
+      difficulties: {
+        easy: [
+          {
+            id: 'history-easy-1',
+            type: 'mcq',
+            q: 'Prior BankIR?',
+            choices: ['A', 'B', 'C', 'D'],
+            answer: 1,
+            provenance: { pdf: 'hand-authored', locator: 'unit' },
+          },
+        ],
+        medium: [],
+        hard: [],
+      },
     }),
   );
   writeFileSync(path.join(root, 'content/subjects/history/notes.md'), 'A primary source note.\n');
@@ -154,6 +167,21 @@ describe('onboarding generate mapping', () => {
     expect(asked).toEqual(['Replace 2 existing BankIR files (History, Biology)?']);
     expect(confirmOnboardingIrOverwrite([], () => false)).toBe('force');
   });
+
+  it('names leftover prune subjects and cancel copy', async () => {
+    const { onboardingPruneConfirmMessage, onboardingPruneEntries, onboardingPruneSubjectIds } =
+      await import('@/lib/onboarding-types');
+    const plan = [
+      { path: 'content/generated/questions/history.json', action: 'add' as const },
+      { path: 'content/generated/questions/chemistry.json', action: 'delete' as const },
+      { path: 'content/generated/keys/chemistry.json', action: 'delete' as const },
+    ];
+    const deletes = onboardingPruneEntries(plan);
+    expect(onboardingPruneSubjectIds(deletes)).toEqual(['chemistry']);
+    expect(onboardingPruneConfirmMessage(deletes)).toMatch(/chemistry/);
+    expect(onboardingPruneConfirmMessage(deletes)).toMatch(/Cancel keeps everything/);
+    expect(onboardingPruneConfirmMessage([])).toBeNull();
+  });
 });
 
 describe('onboarding generate graph', () => {
@@ -200,6 +228,13 @@ describe('onboarding generate graph', () => {
     expect(wizard).toMatch(/Replace existing BankIR for \$\{/);
     expect(wizard).toMatch(/wizard-generate-skipped/);
     expect(wizard).toMatch(/data-testid="wizard-generate-overwrite-batch"/);
+    expect(wizard).toMatch(/Generate from local sources/);
+    expect(wizard).not.toMatch(/Generate from PDFs/);
+    expect(wizard).toMatch(/notes\.txt/);
+    expect(wizard).toMatch(/wizard-ready-subjects/);
+    expect(wizard).toMatch(/wizard-apply-prune/);
+    expect(wizard).toMatch(/confirmPrune/);
+    expect(wizard).toMatch(/A test sentinel is present/);
     expect(wizard).toMatch(/data\.set\('force', '1'\)/);
     const types = readFileSync(path.join(process.cwd(), 'src/lib/onboarding-types.ts'), 'utf8');
     expect(types).toMatch(/Replace existing BankIR for \$\{colliding\[0\]!\.label\}\?/);
@@ -250,6 +285,7 @@ describe('onboarding generate graph', () => {
     expect(store).toMatch(/envStoreSecretHostManaged/);
 
     expect(flags).toMatch(/anthropicConfigured: envStoreSecretConfigured\('ANTHROPIC_API_KEY'\)/);
+    expect(flags).toMatch(/anthropicPresent: envStoreSecretPresent\('ANTHROPIC_API_KEY'\)/);
     expect(flags).toMatch(/anthropicHostManaged: envStoreSecretHostManaged\('ANTHROPIC_API_KEY'\)/);
     expect(flags).not.toMatch(/ANTHROPIC_API_KEY: env\.ANTHROPIC_API_KEY/);
 
@@ -455,6 +491,49 @@ describe('generateOnboardingSubject', () => {
     expect(generateSpy).not.toHaveBeenCalled();
     expect(writeSpy).not.toHaveBeenCalled();
     expect(readFileSync(irPath, 'utf8')).toBe(prior);
+  });
+
+  it('does not require overwrite confirm for empty or placeholder BankIR', async () => {
+    const { generateOnboardingSubject } = await import('@/lib/onboarding-generate');
+    const { listOnboardingSubjects, setOnboardingContentRootForTests } =
+      await import('@/lib/onboarding');
+    const root = tempRoot();
+    setOnboardingContentRootForTests(root);
+    writeFileSync(path.join(root, 'content/subjects/history/notes.txt'), 'A source note.\n');
+    writeFileSync(
+      path.join(root, 'content/subjects/history/subject.json'),
+      JSON.stringify({
+        id: 'history',
+        label: 'History',
+        icon: 'geography',
+        l: 0.6,
+        c: 0.08,
+        h: 40,
+      }),
+    );
+    expect(listOnboardingSubjects(root)[0]?.hasIr).toBe(false);
+
+    writeFileSync(
+      path.join(root, 'content/subjects/history/bank.ir.json'),
+      JSON.stringify({
+        version: 1,
+        subject: { id: 'history', label: 'History', icon: 'geography', l: 0.6, c: 0.08, h: 40 },
+        difficulties: { easy: [], medium: [], hard: [] },
+      }),
+    );
+    expect(listOnboardingSubjects(root)[0]?.hasIr).toBe(false);
+
+    const result = await generateOnboardingSubject({
+      subjectId: 'history',
+      provider: 'test',
+      seed: 0,
+      root,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected generate without confirm');
+    expect(result.result.wroteIr).toBe(true);
+    expect(result.result.overwrite).toBe(false);
+    expect(listOnboardingSubjects(root)[0]?.hasIr).toBe(true);
   });
 
   it('writes over existing IR when confirm/force is set', async () => {

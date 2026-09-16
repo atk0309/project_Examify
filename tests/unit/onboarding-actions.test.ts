@@ -210,6 +210,68 @@ describe('onboarding actions', () => {
     expect(SUBJECTS.some((subject) => subject.id === 'history')).toBe(false);
     expect(live.questions.history?.easy?.[0]?.id).toBe('history-easy-1');
     expect(loadLiveAnswerKeys()['history-easy-1']?.type).toBe('mcq');
+    expect(applied.ok).toBe(true);
+    if (!applied.ok) throw new Error('expected apply');
+    expect(
+      applied.snapshot.liveSubjects.some((row) => row.id === 'history' && row.label === 'History'),
+    ).toBe(true);
+  });
+
+  it('refuses apply prune without confirm and writes nothing', async () => {
+    const root = tempRoot();
+    const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
+    setOnboardingContentRootForTests(root);
+    await signInHost();
+    fs.mkdirSync(path.join(root, 'content/subjects/history'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'content/generated/questions'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'content/generated/keys'), { recursive: true });
+    writeFileSync(
+      path.join(root, 'content/subjects/history/bank.ir.json'),
+      JSON.stringify({
+        version: 1,
+        subject: { id: 'history', label: 'History', icon: 'geography', l: 0.6, c: 0.08, h: 40 },
+        difficulties: {
+          easy: [
+            {
+              id: 'history-easy-1',
+              type: 'mcq',
+              q: 'A fixture question?',
+              choices: ['A', 'B', 'C', 'D'],
+              answer: 1,
+              provenance: { pdf: 'hand-authored', locator: 'unit' },
+            },
+          ],
+          medium: [],
+          hard: [],
+        },
+      }),
+    );
+    writeFileSync(
+      path.join(root, 'content/generated/subjects.json'),
+      JSON.stringify([
+        { id: 'chemistry', label: 'Chemistry', icon: 'chemistry', l: 0.6, c: 0.1, h: 30 },
+      ]),
+    );
+    writeFileSync(path.join(root, 'content/generated/questions/chemistry.json'), '{}\n');
+    writeFileSync(path.join(root, 'content/generated/keys/chemistry.json'), '{}\n');
+    const { previewOnboardingEmitAction, applyOnboardingEmitAction } =
+      await import('@/actions/onboarding');
+    expect((await previewOnboardingEmitAction()).ok).toBe(true);
+    const refused = await applyOnboardingEmitAction();
+    expect(refused.ok).toBe(false);
+    if (refused.ok) throw new Error('expected prune confirm');
+    expect(refused.reason).toBe('prune_confirm_required');
+    expect(refused.message).toMatch(/chemistry/);
+    expect(fs.existsSync(path.join(root, 'content/generated/questions/chemistry.json'))).toBe(true);
+    expect(fs.existsSync(path.join(root, 'content/generated/keys/chemistry.json'))).toBe(true);
+
+    const data = new FormData();
+    data.set('confirmPrune', '1');
+    const applied = await applyOnboardingEmitAction(data);
+    expect(applied.ok).toBe(true);
+    expect(fs.existsSync(path.join(root, 'content/generated/questions/chemistry.json'))).toBe(
+      false,
+    );
   });
 
   it('validates with the persisted replace-sample setting', async () => {
