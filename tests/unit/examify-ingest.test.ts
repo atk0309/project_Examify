@@ -457,6 +457,12 @@ describe('examify-ingest CLI', () => {
     expect(USAGE).toContain('mixed');
   });
 
+  it('USAGE says generate sources include notes/text in the subject folder', () => {
+    expect(USAGE).toMatch(/notes\/text|\.txt\/\.md/);
+    expect(USAGE).toContain('subject folder');
+    expect(USAGE).toContain('PDF');
+  });
+
   it('docs happy path is validate/emit with content/subjects, not bare argv', () => {
     const authoring = readFileSync(path.join(repoRoot, 'docs/content-authoring.md'), 'utf8');
     const ingestReadme = readFileSync(

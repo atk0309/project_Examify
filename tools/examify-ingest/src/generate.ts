@@ -25,7 +25,7 @@ import {
   type ProviderDeps,
   type ProviderEnv,
 } from './providers';
-import { assertCanWriteBankIr, writeBankIrAtomic } from './write-atomic';
+import { assertCanWriteBankIr, hasExistingBankIr, writeBankIrAtomic } from './write-atomic';
 import {
   GENERATE_TEMPERATURE,
   bankIrSchema,
@@ -128,14 +128,14 @@ function pathFromRoot(repoRoot: string, absPath: string): string {
   return path.relative(repoRoot, absPath).split(path.sep).join('/') || absPath;
 }
 
-function assertNotFrozenSampleIds(bank: BankIR, label: string, request: GenerateRequest): void {
-  const result = validateIrCollection([{ path: label, data: bank }], {
+function assertNotFrozenSampleIds(bank: BankIR, request: GenerateRequest): void {
+  const result = validateIrCollection([{ path: request.subject.id, data: bank }], {
     replaceSample: request.replaceSample === true,
     frozenIds: request.frozenIds ?? sampleBankFrozenIds(),
   });
   if (!result.ok) {
     throw new Error(
-      `${label} failed sample-bank freeze: ${result.errors.map((error) => error.message).join('; ')}`,
+      `${request.subject.id} failed sample-bank freeze: ${result.errors.map((error) => error.message).join('; ')}; no BankIR written`,
     );
   }
 }
@@ -261,10 +261,7 @@ export async function generateSubject(request: GenerateRequest): Promise<Generat
   const persist = request.dryRunIr !== true;
   const irPath = path.join(request.subjectDir, BANK_IR_FILE);
   const displayPath = pathFromRoot(request.repoRoot, irPath);
-  const irExisted = existsSync(irPath);
-  if (persist) {
-    assertCanWriteBankIr(irPath, { force: request.force === true, displayPath });
-  }
+  const irExisted = hasExistingBankIr(irPath);
 
   const prompt = loadGeneratePrompt();
   const sourceHashes = sourceHashesOf(request.sources);
@@ -307,6 +304,11 @@ export async function generateSubject(request: GenerateRequest): Promise<Generat
 
   if (!bank) {
     adapter.requireReady(env);
+  }
+  if (persist) {
+    assertCanWriteBankIr(irPath, { force: request.force === true, displayPath });
+  }
+  if (!bank) {
     const deps: ProviderDeps = { env, fetch: request.fetch, signal: request.signal };
     let raw;
     try {
@@ -355,7 +357,7 @@ export async function generateSubject(request: GenerateRequest): Promise<Generat
   });
 
   await checkpointAbort(request.signal);
-  assertNotFrozenSampleIds(bank, pathFromRoot(request.repoRoot, irPath), request);
+  assertNotFrozenSampleIds(bank, request);
   const wroteIr = persist;
   let manifestPath: string | null = null;
   if (persist) {
@@ -415,8 +417,12 @@ export function assertGenerateTargetsHaveSources(
 ): void {
   const missing = sourcelessGenerateTargetIds(targets);
   if (missing.length === 0) return;
+  const hint =
+    targets.length > 1
+      ? '; target content/subjects/<id> or --subject <id> (e.g. demo) instead of the whole tree'
+      : '';
   throw new Error(
-    `no source files for ${missing.join(', ')} (looked in each subject folder and content/source-pdfs/<id>); no BankIR written`,
+    `no source files for ${missing.join(', ')} (looked in each subject folder and content/source-pdfs/<id>); no BankIR written${hint}`,
   );
 }
 
@@ -428,7 +434,7 @@ export function assertGenerateTargetsCanPersist(
 ): void {
   if (force) return;
   const existing = targets
-    .filter((target) => existsSync(path.join(target.subjectDir, BANK_IR_FILE)))
+    .filter((target) => hasExistingBankIr(path.join(target.subjectDir, BANK_IR_FILE)))
     .map((target) => pathFromRoot(repoRoot, path.join(target.subjectDir, BANK_IR_FILE)));
   if (existing.length === 0) return;
   throw new Error(
@@ -458,7 +464,12 @@ export async function generateTargets(
   },
 ): Promise<GenerateSubjectResult[]> {
   assertGenerateTargetsHaveSources(targets);
-  if (options.dryRunIr !== true) {
+  const env = options.env ?? {};
+  const adapter = getProvider(options.provider);
+  const keyReady = !adapter.keyEnv || hasUsableKey(env, adapter.keyEnv);
+  // When a cloud key is required and missing, draft first so requireReady
+  // (missing key) wins over overwrite messaging. Cache hits still skip the key.
+  if (options.dryRunIr !== true && keyReady) {
     assertGenerateTargetsCanPersist(options.repoRoot, targets, options.force === true);
   }
 
@@ -477,6 +488,10 @@ export async function generateTargets(
 
   if (options.dryRunIr === true) {
     return drafts;
+  }
+
+  if (!keyReady) {
+    assertGenerateTargetsCanPersist(options.repoRoot, targets, options.force === true);
   }
 
   if (options.beforeCommit) {

@@ -1,6 +1,14 @@
-import { existsSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import path from 'node:path';
+import { DIFFICULTIES, bankIrSchema } from './schema';
 
 /** Thrown when persist would clobber existing `bank.ir.json` without `force`. */
 export class BankIrOverwriteError extends Error {
@@ -18,13 +26,47 @@ export type WriteBankIrOptions = {
   displayPath?: string;
 };
 
+function isEnoent(error: unknown): boolean {
+  return (
+    error instanceof Error && 'code' in error && (error as NodeJS.ErrnoException).code === 'ENOENT'
+  );
+}
+
+/**
+ * True only for a schema-valid BankIR that already has at least one question.
+ * Empty files, `{}`, schema-fail JSON, and zero-item placeholders are
+ * non-existing for the overwrite gate (first real generate must not need
+ * `--force`). Unreadable files fail closed (treated as existing).
+ * Onboarding should use this (or assertCanWriteBankIr) instead of existsSync.
+ */
+export function hasExistingBankIr(absPath: string): boolean {
+  if (!existsSync(absPath)) return false;
+  let raw: string;
+  try {
+    raw = readFileSync(absPath, 'utf8');
+  } catch (error) {
+    if (isEnoent(error)) return false;
+    return true;
+  }
+  if (raw.trim() === '') return false;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw) as unknown;
+  } catch {
+    return false;
+  }
+  const result = bankIrSchema.safeParse(parsed);
+  if (!result.success) return false;
+  return DIFFICULTIES.some((difficulty) => result.data.difficulties[difficulty].length > 0);
+}
+
 /**
  * Shared persist gate for `bank.ir.json`. CLI generate persist uses this.
  * Onboarding IR commit should call writeBankIrAtomic(path, body, { force })
  * with force from user confirm (no confirm UI here).
  */
 export function assertCanWriteBankIr(absPath: string, options: WriteBankIrOptions = {}): boolean {
-  const existed = existsSync(absPath);
+  const existed = hasExistingBankIr(absPath);
   if (existed && options.force !== true) {
     throw new BankIrOverwriteError(options.displayPath ?? absPath);
   }
