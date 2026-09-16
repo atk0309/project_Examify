@@ -30,7 +30,10 @@ Surface:
 - **`/setup`** — first-run household bootstrap (only when no household exists).
   `SetupForm` reads submitted FormData (autofill-safe), keeps inputs
   uncontrolled, and re-reads / restores a FormData snapshot if a Turnstile
-  remount wipes values. It never silently disables Create household.
+  remount wipes values. First-paint default household name (“Our family”)
+  does not seed that snapshot; silent autofill is captured so a remount
+  can restore it. A user-cleared password is never resurrected from an
+  old snapshot. It never silently disables Create household.
   Field-level / `aria-invalid` errors explain what failed and drop on the
   next successful edit of that field or on resubmit. Email is the required
   admin account id in every `AUTH_MODE` (including password).
@@ -518,7 +521,12 @@ default `install.sh` (`AUTH_MODE=password`) prompts for mail or enables a
 local outbox (`ALLOW_LOCAL_OUTBOX=1`) when it **writes** `.env` so kid
 invites are not stranded — it does not skip mailbox proof. A kept
 password-mode `.env` with no mail path is refused (no false “enabled
-outbox” claim). `local-otp` in production requires
+outbox” claim). Keep-broken / keep-good is judged from on-disk `.env`
+(and `.env.local` if present), not a transient host process env —
+`ALLOW_LOCAL_OUTBOX=1` on the installer must not greenlight a broken
+file. A host `AUTH_MODE` that differs from the kept `.env` is refused
+with copy that names the file’s mode. `RESEND_API_KEY=test` is not a
+mail path. `local-otp` in production requires
 `ALLOW_LOCAL_OUTBOX=1`. `MAIL_TRANSPORT` is `auto` (SMTP if `SMTP_HOST`, else
 Resend if a real key, else outbox). Explicit `MAIL_TRANSPORT=smtp` needs
 `SMTP_HOST` + `SMTP_FROM`; `auto` + `SMTP_HOST` also needs `SMTP_FROM`. A

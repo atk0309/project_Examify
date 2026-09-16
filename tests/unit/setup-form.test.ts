@@ -6,8 +6,11 @@ import {
   isFieldMappedBootstrapReason,
   isSetupEmailValid,
   readSetupFields,
+  captureSilentSetupSnapshot,
+  isDefaultOnlySetupSnapshot,
   recoverSetupFieldsAfterRemount,
   resolveSetupFieldErrors,
+  SETUP_DEFAULT_HOUSEHOLD_NAME,
   SETUP_FIELD_ERROR,
   SETUP_HOUSEHOLD_NAME_MAX,
   setupFieldErrorsFromServer,
@@ -19,7 +22,7 @@ const serverEmail = z.string().trim().toLowerCase().email();
 
 function fields(over: Partial<ReturnType<typeof readSetupFields>> = {}) {
   return {
-    householdName: 'Our family',
+    householdName: SETUP_DEFAULT_HOUSEHOLD_NAME,
     setupSecret: 'dev-setup-bootstrap-secret',
     email: 'host@example.com',
     password: '',
@@ -164,14 +167,67 @@ describe('readSetupFields / validateSetupFields', () => {
       setupSecret: 'instance-secret',
       email: 'autofill@example.com',
     });
-    const wiped = fields({ householdName: 'Our family', setupSecret: '', email: '' });
+    const wiped = fields({
+      householdName: SETUP_DEFAULT_HOUSEHOLD_NAME,
+      setupSecret: '',
+      email: '',
+    });
     expect(recoverSetupFieldsAfterRemount(wiped, snapshot)).toEqual({
-      householdName: 'Our family',
+      householdName: 'Autofill family',
       setupSecret: 'instance-secret',
       email: 'autofill@example.com',
       password: '',
     });
     expect(recoverSetupFieldsAfterRemount(snapshot, snapshot)).toEqual(snapshot);
     expect(recoverSetupFieldsAfterRemount(wiped, null)).toEqual(wiped);
+  });
+
+  it('does not let the first-paint default household name poison the snapshot', () => {
+    const firstPaint = fields({
+      householdName: SETUP_DEFAULT_HOUSEHOLD_NAME,
+      setupSecret: '',
+      email: '',
+      password: '',
+    });
+    expect(isDefaultOnlySetupSnapshot(firstPaint)).toBe(true);
+    expect(captureSilentSetupSnapshot(firstPaint, null)).toBeNull();
+
+    const autofilled = fields({
+      householdName: 'Autofill family',
+      setupSecret: '',
+      email: '',
+      password: '',
+    });
+    expect(captureSilentSetupSnapshot(autofilled, null)).toEqual(autofilled);
+    expect(
+      recoverSetupFieldsAfterRemount(
+        fields({ householdName: SETUP_DEFAULT_HOUSEHOLD_NAME, setupSecret: '', email: '' }),
+        autofilled,
+      ).householdName,
+    ).toBe('Autofill family');
+  });
+
+  it('never resurrects a cleared password from an older snapshot', () => {
+    const snapshot = fields({
+      householdName: 'Autofill family',
+      setupSecret: 'instance-secret',
+      email: 'autofill@example.com',
+      password: 'admin-password',
+    });
+    const afterClear = fields({
+      householdName: SETUP_DEFAULT_HOUSEHOLD_NAME,
+      setupSecret: '',
+      email: '',
+      password: '',
+    });
+    expect(recoverSetupFieldsAfterRemount(afterClear, snapshot)).toEqual({
+      householdName: 'Autofill family',
+      setupSecret: 'instance-secret',
+      email: 'autofill@example.com',
+      password: '',
+    });
+    expect(
+      captureSilentSetupSnapshot(fields({ ...snapshot, password: '' }), snapshot)?.password,
+    ).toBe('admin-password');
   });
 });

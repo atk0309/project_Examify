@@ -352,6 +352,102 @@ describe('install.sh', () => {
     }
   });
 
+  it('refuses a kept broken password .env even when the host has ALLOW_LOCAL_OUTBOX=1', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-install-'));
+    try {
+      const dest = path.join(dir, '.env');
+      const existing = ['KEEP_ME=1', 'AUTH_MODE=password', 'MAIL_TRANSPORT=auto', ''].join('\n');
+      fs.writeFileSync(dest, existing, { mode: 0o600 });
+      const result = spawnSync('bash', [SCRIPT, '--write-env-only'], {
+        cwd: dir,
+        env: installEnv({ AUTH_MODE: 'password', ALLOW_LOCAL_OUTBOX: '1' }),
+        encoding: 'utf8',
+      });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('Keeping existing .env');
+      expect(result.stderr).toContain('AUTH_MODE=password');
+      expect(result.stderr).toContain('did not enable an outbox');
+      expect(result.stderr).not.toContain('Enabling MAIL_TRANSPORT=outbox');
+      expect(fs.readFileSync(dest, 'utf8')).toBe(existing);
+      expect(fs.readFileSync(dest, 'utf8')).not.toContain('ALLOW_LOCAL_OUTBOX=');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a host AUTH_MODE that differs from the kept .env and names the file', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-install-'));
+    try {
+      const dest = path.join(dir, '.env');
+      const existing = 'KEEP_ME=1\nAUTH_MODE=magic-link\n';
+      fs.writeFileSync(dest, existing, { mode: 0o600 });
+      const result = spawnSync('bash', [SCRIPT, '--write-env-only'], {
+        cwd: dir,
+        env: installEnv({ AUTH_MODE: 'password' }),
+        encoding: 'utf8',
+      });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('Host AUTH_MODE=password');
+      expect(result.stderr).toContain('the kept file is AUTH_MODE=magic-link');
+      expect(result.stderr).not.toContain('the kept file is AUTH_MODE=password');
+      expect(result.stderr).not.toContain('Enabling MAIL_TRANSPORT=outbox');
+      expect(fs.readFileSync(dest, 'utf8')).toBe(existing);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not treat on-disk RESEND_API_KEY=test as a mail path', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-install-'));
+    try {
+      const dest = path.join(dir, '.env');
+      const existing = [
+        'AUTH_MODE=password',
+        'MAIL_TRANSPORT=auto',
+        'RESEND_API_KEY=test',
+        'RESEND_FROM=Examify <you@example.com>',
+        '',
+      ].join('\n');
+      fs.writeFileSync(dest, existing, { mode: 0o600 });
+      const result = spawnSync('bash', [SCRIPT, '--write-env-only'], {
+        cwd: dir,
+        env: installEnv({ AUTH_MODE: 'password' }),
+        encoding: 'utf8',
+      });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('did not enable an outbox');
+      expect(fs.readFileSync(dest, 'utf8')).toBe(existing);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps a good password outbox .env byte-identical even if the host also sets ALLOW_LOCAL_OUTBOX', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-install-'));
+    try {
+      const dest = path.join(dir, '.env');
+      const existing = [
+        'KEEP_ME=1',
+        'AUTH_MODE=password',
+        'MAIL_TRANSPORT=outbox',
+        'ALLOW_LOCAL_OUTBOX=1',
+        '',
+      ].join('\n');
+      fs.writeFileSync(dest, existing, { mode: 0o600 });
+      const result = spawnSync('bash', [SCRIPT, '--write-env-only'], {
+        cwd: dir,
+        env: installEnv({ AUTH_MODE: 'password', ALLOW_LOCAL_OUTBOX: '1' }),
+        encoding: 'utf8',
+      });
+      expect(result.status).toBe(0);
+      expect(result.stderr).not.toContain('Enabling MAIL_TRANSPORT=outbox');
+      expect(result.stderr).not.toContain('did not enable an outbox');
+      expect(fs.readFileSync(dest, 'utf8')).toBe(existing);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('keeps a password .env whose AUTH_MODE line has an unquoted comment', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-install-'));
     try {

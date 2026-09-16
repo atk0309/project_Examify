@@ -133,8 +133,13 @@ From a clone: `./install.sh`. Help: `./install.sh --help` (piped:
 Non-interactive: `EXAMIFY_NONINTERACTIVE=1 ./install.sh` (defaults to
 `AUTH_MODE=password` and a local outbox at `data/outbox` so kid invite
 accept can deliver the mailbox OTP — only when this run writes `.env`;
-set `SMTP_*` / `RESEND_*` for real mail). A kept password-mode `.env`
-with no mail path is refused (not described as enabled). Invite accept
+set `SMTP_*` / `RESEND_*` for real mail). Keep-broken / keep-good is
+judged from on-disk `.env` (and `.env.local` if present), not a transient
+host env: `ALLOW_LOCAL_OUTBOX=1` on the installer process does not
+greenlight a broken password file. A kept password-mode `.env` with no
+mail path is refused (not described as enabled). A host `AUTH_MODE` that
+differs from the kept `.env` is refused with copy that names the file,
+not the host. `RESEND_API_KEY=test` is not a mail path. Invite accept
 never skips that OTP.
 
 Then `pnpm start` (or `pnpm dev`), open `SITE_URL`, and complete **`/setup`**

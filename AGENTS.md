@@ -107,7 +107,10 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   when no household exists, and only after `SETUP_BOOTSTRAP_SECRET` matches (required
   in production; captcha is not identity). `SetupForm` reads submitted FormData
   (autofill-safe), keeps inputs uncontrolled, and re-reads / restores a
-  FormData snapshot if a Turnstile remount wipes values. It never silently
+  FormData snapshot if a Turnstile remount wipes values. First-paint
+  default household name does not seed that snapshot; silent autofill is
+  captured so a remount can restore it. A user-cleared password is never
+  resurrected from an old snapshot. It never silently
   disables Create household. Field-level / `aria-invalid` errors drop on the
   next successful edit of that field or on resubmit. Email is the required
   admin account id in every `AUTH_MODE` (including password). After bootstrap, `/onboarding` lets the
@@ -159,7 +162,10 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   password-mode invite accept still sends a mailbox OTP (never skipped).
   Interactive / default `install.sh` prompts for mail or enables a local
   outbox when it writes `.env` so kid invites are not stranded. A kept
-  password-mode `.env` with no mail path is refused. Magic-link /
+  password-mode `.env` with no mail path is refused (judged from on-disk
+  `.env` / `.env.local`, not a transient host `ALLOW_LOCAL_OUTBOX`). A
+  host `AUTH_MODE` that differs from the kept `.env` is refused with copy
+  that names the file. Magic-link /
   local-otp use `MAIL_TRANSPORT` (`auto` / `resend` / `smtp` / `outbox`).
   `pnpm db:migrate` fills `DATABASE_URL` from the repo-root `.env` /
   `.env.local` via `findRepoRoot` (same walk as env-store / ingest).

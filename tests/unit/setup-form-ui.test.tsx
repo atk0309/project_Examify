@@ -1,11 +1,11 @@
 /** @vitest-environment jsdom */
 
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BootstrapState } from '@/actions/bootstrapHousehold';
 import { SetupForm } from '@/components/exam/SetupForm';
-import { SETUP_FIELD_ERROR } from '@/lib/setup-form';
+import { SETUP_DEFAULT_HOUSEHOLD_NAME, SETUP_FIELD_ERROR } from '@/lib/setup-form';
 
 const bootstrapHouseholdAction = vi.fn(
   async (_prev: unknown, _formData: FormData): Promise<BootstrapState> => ({
@@ -198,6 +198,46 @@ describe('SetupForm autofill desync', () => {
     expect(email).not.toHaveAttribute('aria-invalid');
     expect(screen.queryByTestId('setup-email-error')).toBeNull();
     expect(screen.queryByTestId('setup-secret-error')).toBeNull();
+  });
+
+  it('keeps an autofilled custom household name after a remount wipe (no input event)', async () => {
+    const { rerender } = render(<SetupForm authMode="magic-link" />);
+    autofillWithoutEvents('household-name-input', 'Autofill family');
+
+    await act(async () => {
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+      });
+    });
+
+    autofillWithoutEvents('household-name-input', SETUP_DEFAULT_HOUSEHOLD_NAME);
+    rerender(<SetupForm authMode="magic-link" siteKey="1x00000000000000000000AA" />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('household-name-input')).toHaveValue('Autofill family');
+    });
+    expect(screen.getByTestId('setup-submit')).toBeEnabled();
+  });
+
+  it('does not resurrect a user-cleared password after remount', async () => {
+    const { rerender } = render(<SetupForm authMode="password" />);
+    fireEvent.input(screen.getByTestId('setup-password-input'), {
+      target: { value: 'admin-password' },
+    });
+    fireEvent.input(screen.getByTestId('household-name-input'), {
+      target: { value: 'Stoyanov family' },
+    });
+    autofillWithoutEvents('setup-password-input', '');
+    autofillWithoutEvents('household-name-input', SETUP_DEFAULT_HOUSEHOLD_NAME);
+    autofillWithoutEvents('setup-secret-input', '');
+    autofillWithoutEvents('setup-email-input', '');
+    rerender(<SetupForm authMode="password" siteKey="1x00000000000000000000AA" />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('household-name-input')).toHaveValue('Stoyanov family');
+    });
+    expect(screen.getByTestId('setup-password-input')).toHaveValue('');
+    expect(screen.getByTestId('setup-submit')).toBeEnabled();
   });
 
   it('surfaces password-mode copy that email is the required admin account id', () => {
