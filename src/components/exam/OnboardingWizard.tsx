@@ -42,6 +42,7 @@ import {
   type OnboardingAiMode,
   type OnboardingDryRun,
   type OnboardingGenerateResult,
+  type OnboardingPlanEntry,
   type OnboardingSnapshot,
   type OnboardingSubject,
   type SubjectIconOption,
@@ -2021,7 +2022,7 @@ function ApplyStep({
     | { status: 'success'; written: number; questionCount: number; subjectCount: number }
     | { status: 'error'; message: string };
   hasDryRun: boolean;
-  deletes: { path: string; action: 'delete' }[];
+  deletes: OnboardingPlanEntry[];
   onApply: () => void;
 }) {
   return (
