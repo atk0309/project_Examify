@@ -83,10 +83,12 @@ back earlier artifacts. A sourceless or frozen sibling lists the problem and
 leaves **no** partial BankIR.
 
 `--dry-run-ir` prints the would-write path and writes nothing durable (no IR,
-cache, or manifest). If `hasExistingBankIr` is true (schema-valid BankIR with at least one
-question — empty / `{}` / schema-fail / zero-item placeholders are not
-existing), dry-run says **would overwrite**. Persist over existing IR
-requires `--force`; without it generate fails closed (non-zero, no write). Sample-bank ids (`SAMPLE_QUESTIONS`,
+cache, or manifest). If `hasExistingBankIr` is true (schema-valid BankIR with questions, or
+corrupt / unparseable / invalid-schema IR — empty file and valid
+zero-item placeholders are not existing), dry-run says **would overwrite**.
+Persist over existing or corrupt IR requires `--force`; without it
+generate fails closed (non-zero, no write). The error names corruption
+instead of treating the file as missing. Sample-bank ids (`SAMPLE_QUESTIONS`,
 the same frozen set as validate/emit) fail closed **before** the IR write
 unless `--replace-sample`. `--provider test` on a sample subject such as
 `maths` would emit `maths-easy-1` and is refused without that flag.

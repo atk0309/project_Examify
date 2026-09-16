@@ -13,10 +13,23 @@ import { DIFFICULTIES, bankIrSchema } from './schema';
 /** Thrown when persist would clobber existing `bank.ir.json` without `force`. */
 export class BankIrOverwriteError extends Error {
   readonly irPath: string;
-  constructor(irPath: string) {
-    super(`refusing to overwrite existing ${irPath}; pass --force to replace it`);
+  constructor(irPath: string, message?: string) {
+    super(message ?? `refusing to overwrite existing ${irPath}; pass --force to replace it`);
     this.name = 'BankIrOverwriteError';
     this.irPath = irPath;
+  }
+}
+
+/** Corrupt / unreadable IR is overwrite-protected; message names corruption. */
+export class BankIrCorruptError extends BankIrOverwriteError {
+  readonly reason: BankIrCorruptReason;
+  constructor(irPath: string, reason: BankIrCorruptReason) {
+    super(
+      irPath,
+      `refusing to overwrite corrupt ${irPath} (${reason}); pass --force to replace it`,
+    );
+    this.name = 'BankIrCorruptError';
+    this.reason = reason;
   }
 }
 
@@ -26,6 +39,19 @@ export type WriteBankIrOptions = {
   displayPath?: string;
 };
 
+export const BANK_IR_CORRUPT_REASONS = [
+  'unreadable',
+  'unparseable JSON',
+  'invalid BankIR schema',
+] as const;
+export type BankIrCorruptReason = (typeof BANK_IR_CORRUPT_REASONS)[number];
+
+export type BankIrPresence =
+  | { kind: 'missing' }
+  | { kind: 'placeholder' }
+  | { kind: 'existing' }
+  | { kind: 'corrupt'; reason: BankIrCorruptReason };
+
 function isEnoent(error: unknown): boolean {
   return (
     error instanceof Error && 'code' in error && (error as NodeJS.ErrnoException).code === 'ENOENT'
@@ -33,32 +59,43 @@ function isEnoent(error: unknown): boolean {
 }
 
 /**
- * True only for a schema-valid BankIR that already has at least one question.
- * Empty files, `{}`, schema-fail JSON, and zero-item placeholders are
- * non-existing for the overwrite gate (first real generate must not need
- * `--force`). Unreadable files fail closed (treated as existing).
- * Onboarding overwrite / skip / generate must use this (or
- * assertCanWriteBankIr) instead of existsSync on the IR path.
+ * Classify `bank.ir.json` for the overwrite gate.
+ * Empty file / valid zero-item IR → placeholder (non-existing).
+ * Unreadable / unparseable / invalid schema → corrupt (requires --force).
+ * Schema-valid IR with questions → existing (requires --force).
+ * Onboarding should use this (or assertCanWriteBankIr) instead of existsSync.
  */
-export function hasExistingBankIr(absPath: string): boolean {
-  if (!existsSync(absPath)) return false;
+export function classifyBankIr(absPath: string): BankIrPresence {
+  if (!existsSync(absPath)) return { kind: 'missing' };
   let raw: string;
   try {
     raw = readFileSync(absPath, 'utf8');
   } catch (error) {
-    if (isEnoent(error)) return false;
-    return true;
+    if (isEnoent(error)) return { kind: 'missing' };
+    return { kind: 'corrupt', reason: 'unreadable' };
   }
-  if (raw.trim() === '') return false;
+  if (raw.trim() === '') return { kind: 'placeholder' };
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw) as unknown;
   } catch {
-    return false;
+    return { kind: 'corrupt', reason: 'unparseable JSON' };
   }
   const result = bankIrSchema.safeParse(parsed);
-  if (!result.success) return false;
-  return DIFFICULTIES.some((difficulty) => result.data.difficulties[difficulty].length > 0);
+  if (!result.success) return { kind: 'corrupt', reason: 'invalid BankIR schema' };
+  const hasItems = DIFFICULTIES.some(
+    (difficulty) => result.data.difficulties[difficulty].length > 0,
+  );
+  return hasItems ? { kind: 'existing' } : { kind: 'placeholder' };
+}
+
+/**
+ * True when the overwrite gate treats the path as present (real IR or corrupt).
+ * Empty / placeholder IR is false so first generate does not need `--force`.
+ */
+export function hasExistingBankIr(absPath: string): boolean {
+  const kind = classifyBankIr(absPath).kind;
+  return kind === 'existing' || kind === 'corrupt';
 }
 
 /**
@@ -67,9 +104,14 @@ export function hasExistingBankIr(absPath: string): boolean {
  * with force from user confirm (no confirm UI here).
  */
 export function assertCanWriteBankIr(absPath: string, options: WriteBankIrOptions = {}): boolean {
-  const existed = hasExistingBankIr(absPath);
+  const presence = classifyBankIr(absPath);
+  const existed = presence.kind === 'existing' || presence.kind === 'corrupt';
   if (existed && options.force !== true) {
-    throw new BankIrOverwriteError(options.displayPath ?? absPath);
+    const display = options.displayPath ?? absPath;
+    if (presence.kind === 'corrupt') {
+      throw new BankIrCorruptError(display, presence.reason);
+    }
+    throw new BankIrOverwriteError(display);
   }
   return existed;
 }

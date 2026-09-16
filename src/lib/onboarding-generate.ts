@@ -254,6 +254,7 @@ async function generateOnboardingSubjectUnlocked(input: {
   const existingIrRel = posixRel(root, existingIrPath);
   const force = input.force === true || input.overwrite === 'force';
   // Shared empty≠existing predicate — never existsSync on the IR path.
+  // Corrupt IR is existing (confirm / force); empty + zero-item are not.
   if (ingestGenerate.hasExistingBankIr(existingIrPath) && input.overwrite === 'skip') {
     return skippedResult(existingIrRel);
   }

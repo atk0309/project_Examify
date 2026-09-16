@@ -23,10 +23,13 @@ export {
 export { sortRecord } from './hash';
 export {
   assertCanWriteBankIr,
+  BankIrCorruptError,
   BankIrOverwriteError,
+  classifyBankIr,
   hasExistingBankIr,
   writeBankIrAtomic,
   writeFileAtomic,
+  type BankIrPresence,
   type WriteBankIrOptions,
 } from './write-atomic';
 export { mergeRepoEnvFiles, parseEnvFile } from './repo-env';

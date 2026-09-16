@@ -541,6 +541,79 @@ describe('generateOnboardingSubject', () => {
     expect(listOnboardingSubjects(root)[0]?.hasIr).toBe(true);
   });
 
+  it('requires overwrite confirm for corrupt BankIR and keeps bytes on skip', async () => {
+    const { generateOnboardingSubject } = await import('@/lib/onboarding-generate');
+    const { listOnboardingSubjects, setOnboardingContentRootForTests } =
+      await import('@/lib/onboarding');
+    const ingest = await import('examify-ingest/generate');
+    const root = tempRoot();
+    setOnboardingContentRootForTests(root);
+    writeFileSync(path.join(root, 'content/subjects/history/notes.txt'), 'A source note.\n');
+    writeFileSync(
+      path.join(root, 'content/subjects/history/subject.json'),
+      JSON.stringify({
+        id: 'history',
+        label: 'History',
+        icon: 'geography',
+        l: 0.6,
+        c: 0.08,
+        h: 40,
+      }),
+    );
+    const irPath = path.join(root, 'content/subjects/history/bank.ir.json');
+    const prior = '{ "stale": true }\n';
+    writeFileSync(irPath, prior);
+    expect(listOnboardingSubjects(root)[0]?.hasIr).toBe(true);
+
+    const writeSpy = vi.spyOn(ingest, 'writeBankIrAtomic');
+    const generateSpy = vi.spyOn(ingest, 'generateSubject');
+    const refused = await generateOnboardingSubject({
+      subjectId: 'history',
+      provider: 'test',
+      seed: 0,
+      root,
+    });
+    expect(refused.ok).toBe(false);
+    if (refused.ok) throw new Error('expected needs_confirm for corrupt IR');
+    expect(refused.reason).toBe('needs_confirm');
+    expect(refused.message).toBe('would overwrite content/subjects/history/bank.ir.json');
+    expect(refused.message).not.toMatch(/--force/);
+    expect(generateSpy).not.toHaveBeenCalled();
+    expect(writeSpy).not.toHaveBeenCalled();
+    expect(readFileSync(irPath, 'utf8')).toBe(prior);
+
+    const skipped = await generateOnboardingSubject({
+      subjectId: 'history',
+      provider: 'test',
+      seed: 0,
+      root,
+      overwrite: 'skip',
+    });
+    expect(skipped.ok).toBe(false);
+    if (skipped.ok) throw new Error('expected skipped for corrupt IR');
+    expect(skipped.reason).toBe('skipped');
+    expect(generateSpy).not.toHaveBeenCalled();
+    expect(writeSpy).not.toHaveBeenCalled();
+    expect(readFileSync(irPath, 'utf8')).toBe(prior);
+    writeSpy.mockRestore();
+    generateSpy.mockRestore();
+
+    const forced = await generateOnboardingSubject({
+      subjectId: 'history',
+      provider: 'test',
+      seed: 0,
+      root,
+      force: true,
+    });
+    expect(forced.ok).toBe(true);
+    if (!forced.ok) throw new Error('expected generate over corrupt IR with force');
+    expect(forced.result.wroteIr).toBe(true);
+    expect(forced.result.overwrite).toBe(true);
+    expect(JSON.parse(readFileSync(irPath, 'utf8')).difficulties.easy[0]?.id).toBe(
+      'history-easy-1',
+    );
+  });
+
   it('writes over existing IR when confirm/force is set', async () => {
     const { generateOnboardingSubject } = await import('@/lib/onboarding-generate');
     const root = tempRoot();

@@ -471,7 +471,8 @@ export function addOnboardingSubject(
 
   mkdirSync(dir, { recursive: true });
   // Metadata only — never write an empty/placeholder bank.ir.json.
-  // Overwrite confirm uses shared hasExistingBankIr (empty ≠ existing).
+  // Overwrite confirm uses shared hasExistingBankIr (empty/placeholder ≠
+  // existing; corrupt is existing and needs force).
   writeSubjectMetaFile(dir, id, label, icon);
   return { ok: true, subject: listOnboardingSubjects(root).find((row) => row.id === id)! };
 }

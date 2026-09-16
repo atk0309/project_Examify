@@ -567,6 +567,49 @@ describe('onboarding actions', () => {
     expect(fs.readFileSync(irPath, 'utf8')).toBe(prior);
   });
 
+  it('refuses to clobber corrupt IR without force and keeps bytes on skip', async () => {
+    const root = tempRoot();
+    const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
+    setOnboardingContentRootForTests(root);
+    await signInHost();
+    const irPath = path.join(root, 'content/subjects/history/bank.ir.json');
+    fs.mkdirSync(path.join(root, 'content/subjects/history'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'content/source-pdfs/history'), { recursive: true });
+    const prior = '{ "stale": true }\n';
+    writeFileSync(irPath, prior);
+    writeFileSync(path.join(root, 'content/source-pdfs/history/notes.txt'), 'A source note.\n');
+
+    const { generateOnboardingSubjectAction, setOnboardingAiModeAction } =
+      await import('@/actions/onboarding');
+    const mode = new FormData();
+    mode.set('aiMode', 'skip-stub');
+    expect((await setOnboardingAiModeAction(mode)).ok).toBe(true);
+    const generate = new FormData();
+    generate.set('subjectId', 'history');
+    expect(await generateOnboardingSubjectAction(generate)).toEqual({
+      ok: false,
+      reason: 'needs_confirm',
+      irRel: 'content/subjects/history/bank.ir.json',
+    });
+    expect(fs.readFileSync(irPath, 'utf8')).toBe(prior);
+
+    generate.set('overwrite', 'skip');
+    expect(await generateOnboardingSubjectAction(generate)).toEqual({
+      ok: false,
+      reason: 'skipped',
+    });
+    expect(fs.readFileSync(irPath, 'utf8')).toBe(prior);
+
+    generate.set('overwrite', 'force');
+    const forced = await generateOnboardingSubjectAction(generate);
+    expect(forced.ok).toBe(true);
+    if (!forced.ok) throw new Error('expected generate over corrupt IR');
+    expect(forced.result.overwrite).toBe(true);
+    expect(JSON.parse(fs.readFileSync(irPath, 'utf8')).difficulties.easy[0]?.id).toBe(
+      'history-easy-1',
+    );
+  });
+
   it('refuses generate for a kebab-case id that is not in the wizard catalog', async () => {
     const root = tempRoot();
     const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');

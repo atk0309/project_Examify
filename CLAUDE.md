@@ -48,8 +48,9 @@ Surface:
   “Step N of M · Label” progress and a sticky bottom bar. Generate writes BankIR
   only and never auto-applies. Adding a subject writes `subject.json`
   only — no empty/placeholder `bank.ir.json`. Overwrite / skip / generate
-  use shared `hasExistingBankIr` (empty ≠ existing; never `existsSync` on
-  the IR path). A real existing `bank.ir.json` is never
+  use shared `hasExistingBankIr` (empty / valid zero-item ≠ existing;
+  corrupt / unparseable / invalid schema needs force; never `existsSync`
+  on the IR path). A real existing `bank.ir.json` is never
   silently clobbered: the dry-run/preview names `would overwrite <rel>`
   and the wizard asks a calm confirm before any write (“Replace existing
   BankIR for {label}?” or a named generate-all batch). Decline
@@ -260,8 +261,8 @@ A committed generate fixture is `content/subjects/demo/notes.txt`
 Generate never auto-applies; it writes IR + gitignored `.examify-ingest/`
 run/cache files only. Existing `bank.ir.json` is not overwritten unless
 `--force` (`--dry-run-ir` says **would overwrite**) when
-`hasExistingBankIr` is true. Empty/placeholder IR does not require
-`--force`. Frozen sample-bank ids
+`hasExistingBankIr` is true (real IR or corrupt). Empty / valid
+zero-item placeholder IR does not require `--force`. Frozen sample-bank ids
 fail closed at generate (same set as validate) unless `--replace-sample` —
 `--provider test` must not write `maths-easy-1` / other SAMPLE ids without
 that flag. Persist uses shared `writeBankIrAtomic` (force required to

@@ -432,28 +432,51 @@ describe('onboarding subjects and files', () => {
     expect(snap.liveSubjects.some((row) => row.label && row.id)).toBe(true);
   });
 
-  it('treats leftover empty / invalid BankIR as not existing for overwrite', async () => {
+  it('treats leftover empty / zero-item BankIR as not existing for overwrite', async () => {
     const { listOnboardingSubjects, setOnboardingContentRootForTests } =
       await import('@/lib/onboarding');
-    const { hasExistingBankIr } = await import('examify-ingest');
+    const { classifyBankIr, hasExistingBankIr } = await import('examify-ingest');
     const root = tempRoot();
     const irPath = path.join(root, 'content/subjects/history/bank.ir.json');
     mkdirSync(path.join(root, 'content/subjects/history'), { recursive: true });
     setOnboardingContentRootForTests(root);
 
-    for (const body of [
-      '',
-      '{}\n',
-      '{ "stale": true }\n',
+    writeFileSync(irPath, '');
+    expect(classifyBankIr(irPath)).toEqual({ kind: 'placeholder' });
+    expect(hasExistingBankIr(irPath)).toBe(false);
+    expect(listOnboardingSubjects(root)[0]).toMatchObject({ id: 'history', hasIr: false });
+
+    writeFileSync(
+      irPath,
       JSON.stringify({
         version: 1,
         subject: { id: 'history', label: 'History', icon: 'geography', l: 0.6, c: 0.08, h: 40 },
         difficulties: { easy: [], medium: [], hard: [] },
       }),
-    ]) {
+    );
+    expect(classifyBankIr(irPath)).toEqual({ kind: 'placeholder' });
+    expect(hasExistingBankIr(irPath)).toBe(false);
+    expect(listOnboardingSubjects(root)[0]).toMatchObject({ id: 'history', hasIr: false });
+  });
+
+  it('treats leftover corrupt BankIR as existing for overwrite', async () => {
+    const { listOnboardingSubjects, setOnboardingContentRootForTests } =
+      await import('@/lib/onboarding');
+    const { classifyBankIr, hasExistingBankIr } = await import('examify-ingest');
+    const root = tempRoot();
+    const irPath = path.join(root, 'content/subjects/history/bank.ir.json');
+    mkdirSync(path.join(root, 'content/subjects/history'), { recursive: true });
+    setOnboardingContentRootForTests(root);
+
+    for (const [body, reason] of [
+      ['{}\n', 'invalid BankIR schema'],
+      ['{ "stale": true }\n', 'invalid BankIR schema'],
+      ['not-json{\n', 'unparseable JSON'],
+    ] as const) {
       writeFileSync(irPath, body);
-      expect(hasExistingBankIr(irPath)).toBe(false);
-      expect(listOnboardingSubjects(root)[0]).toMatchObject({ id: 'history', hasIr: false });
+      expect(classifyBankIr(irPath)).toEqual({ kind: 'corrupt', reason });
+      expect(hasExistingBankIr(irPath)).toBe(true);
+      expect(listOnboardingSubjects(root)[0]).toMatchObject({ id: 'history', hasIr: true });
     }
   });
 

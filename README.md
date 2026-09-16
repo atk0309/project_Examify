@@ -42,7 +42,7 @@ no env-JSON allowlist to hand-edit.
    files, and emit through `examify-ingest` (validate + Review / dry-run HITL, then apply;
    desktop uses a step rail, mobile a compact progress bar; one stage at a time;
    generate never auto-applies; adding a subject does not write empty BankIR;
-   real existing BankIR needs a confirm before
+   real or corrupt BankIR needs a confirm before
    overwrite (preview names `would overwrite`; decline keeps prior IR);
    Apply prune of leftover generated subjects needs a named confirm; Ready
    lists live subject ids/names and question counts;
