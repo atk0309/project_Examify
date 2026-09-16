@@ -140,9 +140,26 @@ function stableJson(value: unknown): string {
   return `${JSON.stringify(value, null, 2)}\n`;
 }
 
+function needsConfirmResult(irRel: string): GenerateOnboardingError {
+  return {
+    ok: false,
+    reason: 'needs_confirm',
+    message: generateIrWriteLabel(irRel, false, true),
+    irRel,
+  };
+}
+
+function skippedResult(irRel: string): GenerateOnboardingError {
+  return { ok: false, reason: 'skipped', message: 'Generate skipped.', irRel };
+}
+
 function mapGenerateError(error: unknown): GenerateOnboardingError {
   if (isUserGenerateAbort(error)) {
     return cancelledResult();
+  }
+  if (error instanceof ingestGenerate.BankIrOverwriteError) {
+    // Calm reason only — never leak CLI `--force` copy to the wizard.
+    return needsConfirmResult(error.irPath);
   }
   const message = error instanceof Error ? error.message : String(error);
   if (error instanceof ingestGenerate.ProviderConfigError) {
@@ -185,9 +202,10 @@ function publicGenerateResult(
 /**
  * Draft BankIR for one wizard subject via `examify-ingest/generate`.
  * Preview uses ingest `dryRunIr` so `generateSubject` does not write
- * `bank.ir.json`. The wizard path commits that file only if the
- * cancel token is still clear **and** an existing IR has `force`
- * (same as CLI `--force` for that subject). Never emit / apply.
+ * `bank.ir.json`. Confirm happens before generate so a dry-run never
+ * looks finished first. The wizard commits only through shared
+ * `writeBankIrAtomic` when the cancel token is still clear **and**
+ * an existing IR has `force` (same as CLI `--force`). Never emit / apply.
  * A cancel token mints an AbortController whose signal is passed into
  * ingest generate/providers so Cancel aborts HTTP/CMD, not only the
  * IR write. `GenerateAbortedError` maps to `cancelled` (never raw abort
@@ -237,12 +255,22 @@ async function generateOnboardingSubjectUnlocked(input: {
   const existingIrRel = posixRel(root, existingIrPath);
   const force = input.force === true || input.overwrite === 'force';
   if (existsSync(existingIrPath) && input.overwrite === 'skip') {
-    return {
-      ok: false,
-      reason: 'skipped',
-      message: 'Generate skipped.',
-      irRel: existingIrRel,
-    };
+    return skippedResult(existingIrRel);
+  }
+  // Confirm before generate: existing IR without force never starts a
+  // provider dry-run that already looks done. Shared helper, same as CLI.
+  if (!force) {
+    try {
+      ingestGenerate.assertCanWriteBankIr(existingIrPath, {
+        force: false,
+        displayPath: existingIrRel,
+      });
+    } catch (error) {
+      if (error instanceof ingestGenerate.BankIrOverwriteError) {
+        return needsConfirmResult(existingIrRel);
+      }
+      return mapGenerateError(error);
+    }
   }
 
   const subjectInput = path.join(SUBJECTS_REL, subjectId);
@@ -280,27 +308,20 @@ async function generateOnboardingSubjectUnlocked(input: {
       return cancelledResult();
     }
     // #65: re-check after the provider returns so a delete/rename during
-    // generateSubject is not resurrected by writeFileAtomic's mkdirSync.
+    // generateSubject is not resurrected by writeBankIrAtomic's mkdirSync.
     if (!listOnboardingSubjects(root).some((row) => row.id === subjectId)) {
       return { ok: false, reason: 'missing', message: 'Subject is not in the wizard catalog.' };
     }
     const irRel = posixRel(root, generated.irPath);
-    const existed = existsSync(generated.irPath);
-    // Name the overwrite on the dry-run/preview path before any write
-    // (parity with CLI dry-run `would overwrite <rel>`).
-    if (existed && !force) {
-      return {
-        ok: false,
-        reason: 'needs_confirm',
-        message: generateIrWriteLabel(irRel, false, true),
-        irRel,
-      };
-    }
-    ingestGenerate.writeFileAtomic(generated.irPath, stableJson(generated.bank));
+    // TOCTOU: re-check existence at commit via the shared persist gate.
+    const written = ingestGenerate.writeBankIrAtomic(generated.irPath, stableJson(generated.bank), {
+      force,
+      displayPath: irRel,
+    });
     markOnboardingGenerateCommitted(token);
     return {
       ok: true,
-      result: publicGenerateResult(subjectId, root, generated, true, existed),
+      result: publicGenerateResult(subjectId, root, generated, true, written.existed),
     };
   } catch (error) {
     if (isGenerateCancelled(token) || isUserGenerateAbort(error)) {

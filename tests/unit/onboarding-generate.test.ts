@@ -151,7 +151,7 @@ describe('onboarding generate mapping', () => {
         return false;
       }),
     ).toBe('skip');
-    expect(asked).toEqual(['Replace 2 existing BankIR files?']);
+    expect(asked).toEqual(['Replace 2 existing BankIR files (History, Biology)?']);
     expect(confirmOnboardingIrOverwrite([], () => false)).toBe('force');
   });
 });
@@ -171,7 +171,11 @@ describe('onboarding generate graph', () => {
     expect(generate).toMatch(/dryRunIr: true/);
     expect(generate).toMatch(/needs_confirm/);
     expect(generate).toMatch(/overwrite === 'skip'/);
-    expect(generate).toMatch(/generateIrWriteLabel\(irRel, false, true\)/);
+    expect(generate).toMatch(/writeBankIrAtomic/);
+    expect(generate).toMatch(/assertCanWriteBankIr/);
+    expect(generate).toMatch(/BankIrOverwriteError/);
+    expect(generate).not.toMatch(/writeFileAtomic\(/);
+    expect(generate).toMatch(/never leak CLI `--force`/);
     expect(generate).toMatch(/signal: controller\.signal/);
     expect(generate).toMatch(/abortControllers\.get\(token\)\?\.abort\(\)/);
     expect(generate).toMatch(/GenerateAbortedError/);
@@ -197,7 +201,9 @@ describe('onboarding generate graph', () => {
     expect(wizard).toMatch(/data\.set\('force', '1'\)/);
     const types = readFileSync(path.join(process.cwd(), 'src/lib/onboarding-types.ts'), 'utf8');
     expect(types).toMatch(/Replace existing BankIR for \$\{colliding\[0\]!\.label\}\?/);
-    expect(types).toMatch(/Replace \$\{colliding\.length\} existing BankIR files\?/);
+    expect(types).toMatch(
+      /Replace \$\{colliding\.length\} existing BankIR files \(\$\{names\}\)\?/,
+    );
   });
 
   it('locks Welcome skip, Back, and rail while generateBusy so Cancel stays reachable', () => {
@@ -362,7 +368,8 @@ describe('generateOnboardingSubject', () => {
     seedSubject(root);
     const irPath = path.join(root, 'content/subjects/history/bank.ir.json');
     const prior = readFileSync(irPath, 'utf8');
-    const writeSpy = vi.spyOn(ingest, 'writeFileAtomic');
+    const writeSpy = vi.spyOn(ingest, 'writeBankIrAtomic');
+    const generateSpy = vi.spyOn(ingest, 'generateSubject');
 
     const result = await generateOnboardingSubject({
       subjectId: 'history',
@@ -375,7 +382,9 @@ describe('generateOnboardingSubject', () => {
     expect(result.reason).toBe('needs_confirm');
     expect(result.reason).not.toBe('invalid');
     expect(result.message).toBe('would overwrite content/subjects/history/bank.ir.json');
+    expect(result.message).not.toMatch(/--force/);
     expect(result.irRel).toBe('content/subjects/history/bank.ir.json');
+    expect(generateSpy).not.toHaveBeenCalled();
     expect(writeSpy).not.toHaveBeenCalled();
     expect(readFileSync(irPath, 'utf8')).toBe(prior);
   });
@@ -411,7 +420,7 @@ describe('generateOnboardingSubject', () => {
     seedSubject(root);
     const irPath = path.join(root, 'content/subjects/history/bank.ir.json');
     const prior = readFileSync(irPath, 'utf8');
-    const writeSpy = vi.spyOn(ingest, 'writeFileAtomic');
+    const writeSpy = vi.spyOn(ingest, 'writeBankIrAtomic');
     const generateSpy = vi.spyOn(ingest, 'generateSubject');
 
     const result = await generateOnboardingSubject({
@@ -468,6 +477,7 @@ describe('generateOnboardingSubject', () => {
       provider: 'test',
       seed: 0,
       root,
+      force: true,
     });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected empty sources');
@@ -489,6 +499,7 @@ describe('generateOnboardingSubject', () => {
         provider: 'openai',
         seed: 0,
         root,
+        force: true,
       });
       expect(result.ok).toBe(false);
       if (result.ok) throw new Error('expected missing key');
@@ -512,6 +523,7 @@ describe('generateOnboardingSubject', () => {
         provider: 'anthropic',
         seed: 0,
         root,
+        force: true,
       });
       expect(result.ok).toBe(false);
       if (result.ok) throw new Error('expected missing key');
@@ -569,6 +581,7 @@ describe('generateOnboardingSubject', () => {
       seed: 0,
       root,
       cancelToken: token,
+      force: true,
     });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected cancelled');
@@ -617,6 +630,7 @@ describe('generateOnboardingSubject', () => {
       provider: 'test',
       seed: 0,
       root,
+      force: true,
     });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected missing after delete');
@@ -707,6 +721,7 @@ describe('generateOnboardingSubject', () => {
       seed: 0,
       root,
       cancelToken: token,
+      force: true,
     });
     await vi.waitFor(() => {
       expect(ingest.generateSubject).toHaveBeenCalled();
@@ -730,7 +745,7 @@ describe('generateOnboardingSubject', () => {
     setOnboardingContentRootForTests(root);
     const irPath = path.join(root, 'content/subjects/history/bank.ir.json');
     const prior = readFileSync(irPath, 'utf8');
-    const writeSpy = vi.spyOn(ingest, 'writeFileAtomic');
+    const writeSpy = vi.spyOn(ingest, 'writeBankIrAtomic');
     let seenSignal: AbortSignal | undefined;
     vi.spyOn(ingest, 'generateSubject').mockImplementation((request) => {
       seenSignal = request.signal;
@@ -757,6 +772,7 @@ describe('generateOnboardingSubject', () => {
       seed: 0,
       root,
       cancelToken: token,
+      force: true,
     });
     await vi.waitFor(() => {
       expect(seenSignal).toBeInstanceOf(AbortSignal);
@@ -782,7 +798,7 @@ describe('generateOnboardingSubject', () => {
     setOnboardingContentRootForTests(root);
     const irPath = path.join(root, 'content/subjects/history/bank.ir.json');
     const prior = readFileSync(irPath, 'utf8');
-    const writeSpy = vi.spyOn(ingest, 'writeFileAtomic');
+    const writeSpy = vi.spyOn(ingest, 'writeBankIrAtomic');
     vi.spyOn(ingest, 'generateSubject').mockRejectedValue(
       new ingest.GenerateAbortedError('raw abort internals'),
     );
@@ -792,6 +808,7 @@ describe('generateOnboardingSubject', () => {
       provider: 'test',
       seed: 0,
       root,
+      force: true,
     });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected cancelled');
@@ -812,7 +829,7 @@ describe('generateOnboardingSubject', () => {
     setOnboardingContentRootForTests(root);
     const irPath = path.join(root, 'content/subjects/history/bank.ir.json');
     const prior = readFileSync(irPath, 'utf8');
-    const writeSpy = vi.spyOn(ingest, 'writeFileAtomic');
+    const writeSpy = vi.spyOn(ingest, 'writeBankIrAtomic');
     const timeout = new DOMException('The operation was aborted due to timeout', 'AbortError');
     vi.spyOn(ingest, 'generateSubject').mockRejectedValue(timeout);
 
@@ -821,6 +838,7 @@ describe('generateOnboardingSubject', () => {
       provider: 'test',
       seed: 0,
       root,
+      force: true,
     });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
@@ -891,6 +909,42 @@ describe('generateOnboardingSubject', () => {
     expect(readFileSync(irPath, 'utf8')).toBe(prior);
   });
 
+  it('re-checks existing IR at commit and maps BankIrOverwriteError without --force copy', async () => {
+    const ingest = await import('examify-ingest/generate');
+    const { generateOnboardingSubject } = await import('@/lib/onboarding-generate');
+    const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
+    const root = tempRoot();
+    seedSubject(root);
+    setOnboardingContentRootForTests(root);
+    const irPath = path.join(root, 'content/subjects/history/bank.ir.json');
+    rmSync(irPath);
+    const sneaked = `${JSON.stringify({
+      version: 1,
+      subject: { id: 'history', label: 'History', icon: 'geography', l: 0.6, c: 0.08, h: 40 },
+      difficulties: { easy: [], medium: [], hard: [] },
+    })}\n`;
+    const { generateSubject: actualGenerateSubject } =
+      await vi.importActual<typeof ingest>('examify-ingest/generate');
+    vi.spyOn(ingest, 'generateSubject').mockImplementation(async (request) => {
+      const generated = await actualGenerateSubject(request);
+      writeFileSync(irPath, sneaked);
+      return generated;
+    });
+
+    const result = await generateOnboardingSubject({
+      subjectId: 'history',
+      provider: 'test',
+      seed: 0,
+      root,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected needs_confirm after TOCTOU');
+    expect(result.reason).toBe('needs_confirm');
+    expect(result.message).toBe('would overwrite content/subjects/history/bank.ir.json');
+    expect(result.message).not.toMatch(/--force/);
+    expect(readFileSync(irPath, 'utf8')).toBe(sneaked);
+  });
+
   it('fails closed for local without CMD or BASE_URL', async () => {
     const { generateOnboardingSubject } = await import('@/lib/onboarding-generate');
     const root = tempRoot();
@@ -905,6 +959,7 @@ describe('generateOnboardingSubject', () => {
         provider: 'local',
         seed: 0,
         root,
+        force: true,
       });
       expect(result.ok).toBe(false);
       if (result.ok) throw new Error('expected missing local');

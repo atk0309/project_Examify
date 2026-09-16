@@ -40,10 +40,10 @@ Surface:
   “Step N of M · Label” progress and a sticky bottom bar. Generate writes BankIR
   only and never auto-applies. An existing `bank.ir.json` is never
   silently clobbered: the dry-run/preview names `would overwrite <rel>`
-  and the wizard asks a calm confirm (“Replace existing BankIR for
-  {label}?” or generate-all “Replace N existing BankIR files?”). Decline
+  and the wizard asks a calm confirm before any write (“Replace existing
+  BankIR for {label}?” or a named generate-all batch). Decline
   keeps prior bytes (`skipped` / cancelled — not `invalid`); confirm
-  writes with the same meaning as CLI `--force` for that subject.
+  writes through shared `writeBankIrAtomic` (CLI `--force` for that subject).
   Cancel POSTs `/api/onboarding/cancel-generate` (a Route Handler, not a
   queued Server Action) so the token can land while generate is in flight,
   then aborts provider HTTP/CMD via AbortSignal and discards the preview

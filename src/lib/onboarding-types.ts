@@ -182,19 +182,26 @@ export function onboardingGenerateOverwriteSubjects<
   return subjects.filter((subject) => wanted.has(subject.id) && subject.hasIr);
 }
 
+/** Calm confirm copy. Batch names subjects — never an opaque count alone. */
+export function onboardingIrOverwriteConfirmMessage(
+  colliding: readonly Pick<OnboardingSubject, 'label'>[],
+): string | null {
+  if (colliding.length === 0) return null;
+  if (colliding.length === 1) return `Replace existing BankIR for ${colliding[0]!.label}?`;
+  const names = colliding.map((row) => row.label).join(', ');
+  return `Replace ${colliding.length} existing BankIR files (${names})?`;
+}
+
 /**
  * Calm overwrite confirm. One subject uses the label; generate-all
- * colliding subjects use a batch count. Decline is skip, not invalid.
+ * colliding subjects use a named batch. Decline is skip, not invalid.
  */
 export function confirmOnboardingIrOverwrite(
   colliding: readonly Pick<OnboardingSubject, 'label'>[],
   ask: (message: string) => boolean,
 ): OnboardingIrOverwriteDecision {
-  if (colliding.length === 0) return 'force';
-  const message =
-    colliding.length === 1
-      ? `Replace existing BankIR for ${colliding[0]!.label}?`
-      : `Replace ${colliding.length} existing BankIR files?`;
+  const message = onboardingIrOverwriteConfirmMessage(colliding);
+  if (!message) return 'force';
   return ask(message) ? 'force' : 'skip';
 }
 

@@ -58,6 +58,7 @@ export {
   confirmOnboardingIrOverwrite,
   generateIrWriteLabel,
   generateIrWriteVerb,
+  onboardingIrOverwriteConfirmMessage,
   onboardingGenerateAndEmitCli,
   onboardingGenerateBatchIds,
   onboardingGenerateCli,

@@ -31,6 +31,7 @@ import {
   onboardingGenerateAndEmitCli,
   onboardingGenerateBatchIds,
   onboardingGenerateOverwriteSubjects,
+  onboardingIrOverwriteConfirmMessage,
   onboardingSubjectIrRel,
   providerForOnboardingAiMode,
   type OnboardingAiMode,
@@ -1596,13 +1597,20 @@ function GeneratePanel({
       </details>
       <div className="wizard-generate-actions">
         {batchOverwrites.length > 0 ? (
-          <p className="login-fine" data-testid="wizard-generate-overwrite-batch">
-            {batchOverwrites
-              .map((subject) =>
-                generateIrWriteLabel(onboardingSubjectIrRel(subject.id), false, true),
-              )
-              .join(' · ')}
-          </p>
+          <details className="wizard-details" data-testid="wizard-generate-overwrite-batch">
+            <summary>
+              {onboardingIrOverwriteConfirmMessage(batchOverwrites) ??
+                generateIrWriteLabel(onboardingSubjectIrRel(batchOverwrites[0]!.id), false, true)}
+            </summary>
+            <ul className="wizard-issues">
+              {batchOverwrites.map((subject) => (
+                <li key={subject.id}>
+                  {subject.label} ·{' '}
+                  {generateIrWriteLabel(onboardingSubjectIrRel(subject.id), false, true)}
+                </li>
+              ))}
+            </ul>
+          </details>
         ) : null}
         <button
           type="button"

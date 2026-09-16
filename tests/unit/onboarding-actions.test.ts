@@ -449,6 +449,7 @@ describe('onboarding actions', () => {
       reason: 'needs_confirm',
       irRel: 'content/subjects/history/bank.ir.json',
     });
+    expect(JSON.stringify(result)).not.toMatch(/--force/);
     expect(fs.readFileSync(irPath, 'utf8')).toBe(prior);
   });
 
@@ -621,6 +622,7 @@ describe('onboarding actions', () => {
     const generate = new FormData();
     generate.set('subjectId', 'history');
     generate.set('cancelToken', token);
+    generate.set('force', '1');
     const pending = generateOnboardingSubjectAction(generate);
     await vi.waitFor(() => {
       expect(ingest.generateSubject).toHaveBeenCalled();
@@ -796,6 +798,7 @@ describe('onboarding actions', () => {
     const generate = new FormData();
     generate.set('subjectId', 'history');
     generate.set('cancelToken', token);
+    generate.set('force', '1');
     const pending = generateOnboardingSubjectAction(generate);
     await vi.waitFor(() => {
       expect(ingest.generateSubject).toHaveBeenCalled();
@@ -929,6 +932,7 @@ describe('onboarding actions', () => {
     expect((await setOnboardingAiModeAction(mode)).ok).toBe(true);
     const generate = new FormData();
     generate.set('subjectId', 'history');
+    generate.set('force', '1');
     const result = await generateOnboardingSubjectAction(generate);
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected fail-closed');
@@ -1014,6 +1018,7 @@ describe('onboarding actions', () => {
       expect((await setOnboardingAiModeAction(mode)).ok).toBe(true);
       const generate = new FormData();
       generate.set('subjectId', 'history');
+      generate.set('force', '1');
       const result = await generateOnboardingSubjectAction(generate);
       expect(result.ok).toBe(false);
       if (result.ok) throw new Error('expected fail-closed');

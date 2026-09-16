@@ -31,10 +31,10 @@ directory emit (validate, Review / dry-run HITL with planned deletes, then apply
 wizard does **not** auto-emit or auto-apply after generate. An existing
 `bank.ir.json` is never silently replaced: the generate preview names
 `would overwrite content/subjects/<id>/bank.ir.json`, then the wizard
-asks “Replace existing BankIR for {label}?” (or generate-all “Replace N
-existing BankIR files?”). Decline keeps the prior file (`skipped` or
-cancelled, not invalid). Confirm writes with the same meaning as CLI
-`--force` for that subject. Cancel POSTs
+asks “Replace existing BankIR for {label}?” before any write (generate-all
+uses a named batch, not an opaque count). Decline keeps the prior file
+(`skipped` or cancelled, not invalid). Confirm writes through shared
+`writeBankIrAtomic` (CLI `--force` for that subject). Cancel POSTs
 `/api/onboarding/cancel-generate` (a Route Handler, not a queued Server
 Action) so the token can land mid-generate, then aborts provider HTTP/CMD
 via AbortSignal and discards the preview so prior `bank.ir.json` is

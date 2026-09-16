@@ -105,8 +105,8 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   run `examify-ingest generate` (BankIR only; never emit/apply; existing
   `bank.ir.json` needs a calm confirm — preview names `would overwrite`,
   decline is skipped/cancelled not invalid, confirm is CLI `--force` for
-  that subject; generate-all confirms per colliding subject or one batch
-  “Replace N existing BankIR files?”; cancel
+  that subject; generate-all confirms per colliding subject or one named
+  batch; persist is shared `writeBankIrAtomic`; cancel
   POSTs `/api/onboarding/cancel-generate` so the token is not queued
   behind generate, then aborts provider HTTP/CMD via AbortSignal and
   discards the preview (no IR write; prior IR unchanged); the wizard
