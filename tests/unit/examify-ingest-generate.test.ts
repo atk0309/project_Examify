@@ -1,4 +1,5 @@
 import {
+  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -31,6 +32,9 @@ import {
   extractJsonObject,
   GenerateAbortedError,
   generateSubject,
+  generateTargets,
+  writeBankIrAtomic,
+  BankIrOverwriteError,
   irCachePath,
   loadGeneratePrompt,
   providerRequestSignal,
@@ -106,6 +110,29 @@ describe('examify-ingest generate parse', () => {
     expect(parsed.seed).toBe(DEFAULT_GENERATE_SEED);
     expect(parsed.dryRunIr).toBe(false);
     expect(parsed.apply).toBe(false);
+    expect(parsed.force).toBe(false);
+    expect(parsed.replaceSample).toBe(false);
+  });
+
+  it('accepts --force and --replace-sample on generate', () => {
+    const parsed = parseArgs([
+      'generate',
+      '--provider',
+      'test',
+      '--force',
+      '--replace-sample',
+      'content/subjects/demo',
+    ]);
+    expect('error' in parsed).toBe(false);
+    if ('error' in parsed) return;
+    expect(parsed.force).toBe(true);
+    expect(parsed.replaceSample).toBe(true);
+  });
+
+  it('refuses --force on emit', () => {
+    const parsed = parseArgs(['emit', '--force', 'content/subjects']);
+    expect('error' in parsed).toBe(true);
+    if ('error' in parsed) expect(parsed.error).toContain('--force');
   });
 
   it('refuses --apply on generate', () => {
@@ -117,6 +144,294 @@ describe('examify-ingest generate parse', () => {
   it('does not treat generate flags as valid on emit', () => {
     const parsed = parseArgs(['emit', '--provider', 'test', 'content/subjects']);
     expect('error' in parsed).toBe(true);
+  });
+});
+
+describe('examify-ingest generate P0 gates', () => {
+  it('refuses to overwrite existing IR without --force and does not write', async () => {
+    const root = examifyRepo();
+    const irPath = path.join(root, 'content/subjects/plants/bank.ir.json');
+    const stale = '{ "stale": true }\n';
+    writeFileSync(irPath, stale);
+    const streams = io();
+    streams.handle.cwd = root;
+    const code = await runCliAsync(
+      ['generate', '--provider', 'test', 'content/subjects/plants'],
+      streams.handle,
+    );
+    expect(code).toBe(1);
+    expect(streams.err()).toMatch(/refusing to overwrite existing .*bank\.ir\.json/);
+    expect(streams.err()).toContain('--force');
+    expect(readFileSync(irPath, 'utf8')).toBe(stale);
+    expect(existsSync(path.join(root, '.examify-ingest'))).toBe(false);
+  });
+
+  it('--dry-run-ir says would overwrite when IR exists and writes nothing', async () => {
+    const root = examifyRepo();
+    const irPath = path.join(root, 'content/subjects/plants/bank.ir.json');
+    const stale = '{ "stale": true }\n';
+    writeFileSync(irPath, stale);
+    const streams = io();
+    streams.handle.cwd = root;
+    const code = await runCliAsync(
+      ['generate', '--provider', 'test', '--dry-run-ir', 'content/subjects/plants'],
+      streams.handle,
+    );
+    expect(code).toBe(0);
+    expect(streams.out()).toContain('would overwrite');
+    expect(readFileSync(irPath, 'utf8')).toBe(stale);
+    expect(existsSync(path.join(root, '.examify-ingest'))).toBe(false);
+  });
+
+  it('--force allows overwrite of existing IR', async () => {
+    const root = examifyRepo();
+    const irPath = path.join(root, 'content/subjects/plants/bank.ir.json');
+    writeFileSync(irPath, '{ "stale": true }\n');
+    const streams = io();
+    streams.handle.cwd = root;
+    const code = await runCliAsync(
+      ['generate', '--provider', 'test', '--force', 'content/subjects/plants'],
+      streams.handle,
+    );
+    expect(code).toBe(0);
+    expect(streams.out()).toMatch(/overwrote|wrote/);
+    const ir = JSON.parse(readFileSync(irPath, 'utf8')) as BankIR;
+    expect(ir.subject.id).toBe('plants');
+    expect(ir.difficulties.easy[0]?.id).toBe('plants-easy-1');
+  });
+
+  it('test provider SAMPLE ids fail at generate without --replace-sample', async () => {
+    const root = examifyRepo();
+    const mathsDir = path.join(root, 'content/subjects/maths');
+    mkdirSync(mathsDir, { recursive: true });
+    writeFileSync(path.join(mathsDir, 'notes.txt'), 'What is 2 + 2?\n');
+    const streams = io();
+    streams.handle.cwd = root;
+    const code = await runCliAsync(
+      ['generate', '--provider', 'test', 'content/subjects/maths'],
+      streams.handle,
+    );
+    expect(code).toBe(1);
+    expect(streams.err()).toContain('maths-easy-1');
+    expect(streams.err()).toMatch(/sample-bank|--replace-sample/);
+    expect(existsSync(path.join(mathsDir, 'bank.ir.json'))).toBe(false);
+    expect(existsSync(path.join(root, '.examify-ingest'))).toBe(false);
+  });
+
+  it('--replace-sample lets generate write SAMPLE ids', async () => {
+    const root = examifyRepo();
+    const mathsDir = path.join(root, 'content/subjects/maths');
+    mkdirSync(mathsDir, { recursive: true });
+    writeFileSync(path.join(mathsDir, 'notes.txt'), 'What is 2 + 2?\n');
+    const streams = io();
+    streams.handle.cwd = root;
+    const code = await runCliAsync(
+      ['generate', '--provider', 'test', '--replace-sample', 'content/subjects/maths'],
+      streams.handle,
+    );
+    expect(code).toBe(0);
+    const ir = JSON.parse(readFileSync(path.join(mathsDir, 'bank.ir.json'), 'utf8')) as BankIR;
+    expect(ir.difficulties.easy[0]?.id).toBe('maths-easy-1');
+  });
+
+  it('fresh-clone demo fixture generate succeeds', async () => {
+    const repoRoot = path.resolve(__dirname, '../..');
+    const fixtureDir = path.join(repoRoot, 'content/subjects/demo');
+    expect(existsSync(path.join(fixtureDir, 'notes.txt'))).toBe(true);
+    expect(existsSync(path.join(fixtureDir, 'subject.json'))).toBe(true);
+
+    const root = examifyRepo();
+    const dest = path.join(root, 'content/subjects/demo');
+    mkdirSync(dest, { recursive: true });
+    copyFileSync(path.join(fixtureDir, 'notes.txt'), path.join(dest, 'notes.txt'));
+    copyFileSync(path.join(fixtureDir, 'subject.json'), path.join(dest, 'subject.json'));
+
+    const streams = io();
+    streams.handle.cwd = root;
+    const code = await runCliAsync(
+      ['generate', '--provider', 'test', '--seed', '0', 'content/subjects/demo'],
+      streams.handle,
+    );
+    expect(code).toBe(0);
+    expect(streams.out()).toContain('wrote content/subjects/demo/bank.ir.json');
+    const ir = JSON.parse(readFileSync(path.join(dest, 'bank.ir.json'), 'utf8')) as BankIR;
+    expect(ir.subject.id).toBe('demo');
+    expect(ir.difficulties.easy[0]?.id).toBe('demo-easy-1');
+  });
+
+  it('tree generate preflights sources and writes no IR when a sibling is empty', async () => {
+    const root = examifyRepo();
+    mkdirSync(path.join(root, 'content/subjects/empty'), { recursive: true });
+    const streams = io();
+    streams.handle.cwd = root;
+    const code = await runCliAsync(
+      ['generate', '--provider', 'test', 'content/subjects'],
+      streams.handle,
+    );
+    expect(code).toBe(1);
+    expect(streams.err()).toContain('empty');
+    expect(streams.err()).toMatch(/no source files/);
+    expect(streams.err()).toMatch(/no BankIR written/);
+    expect(existsSync(path.join(root, 'content/subjects/plants/bank.ir.json'))).toBe(false);
+    expect(existsSync(path.join(root, 'content/subjects/empty/bank.ir.json'))).toBe(false);
+    expect(existsSync(path.join(root, '.examify-ingest'))).toBe(false);
+  });
+
+  it('tree generate lists every sourceless subject before any write', async () => {
+    const root = examifyRepo();
+    mkdirSync(path.join(root, 'content/subjects/empty-a'), { recursive: true });
+    mkdirSync(path.join(root, 'content/subjects/empty-b'), { recursive: true });
+    const streams = io();
+    streams.handle.cwd = root;
+    const code = await runCliAsync(
+      ['generate', '--provider', 'test', '--dry-run-ir', 'content/subjects'],
+      streams.handle,
+    );
+    expect(code).toBe(1);
+    expect(streams.err()).toContain('empty-a');
+    expect(streams.err()).toContain('empty-b');
+    expect(streams.err()).toMatch(/no BankIR written/);
+    expect(existsSync(path.join(root, 'content/subjects/plants/bank.ir.json'))).toBe(false);
+  });
+
+  it('tree generate writes every IR when all targets have sources', async () => {
+    const root = examifyRepo();
+    const rocks = path.join(root, 'content/subjects/rocks');
+    mkdirSync(rocks, { recursive: true });
+    writeFileSync(path.join(rocks, 'notes.txt'), 'Granite is an igneous rock.\n');
+    const streams = io();
+    streams.handle.cwd = root;
+    const code = await runCliAsync(
+      ['generate', '--provider', 'test', 'content/subjects'],
+      streams.handle,
+    );
+    expect(code).toBe(0);
+    expect(existsSync(path.join(root, 'content/subjects/plants/bank.ir.json'))).toBe(true);
+    expect(existsSync(path.join(rocks, 'bank.ir.json'))).toBe(true);
+  });
+
+  it('generateTargets preflights sources and does not write a leading subject', async () => {
+    const root = examifyRepo();
+    const emptyDir = path.join(root, 'content/subjects/empty');
+    mkdirSync(emptyDir, { recursive: true });
+    const plantsDir = path.join(root, 'content/subjects/plants');
+    await expect(
+      generateTargets(
+        [
+          {
+            subjectId: 'plants',
+            subjectDir: plantsDir,
+            subject: {
+              id: 'plants',
+              label: 'Plants',
+              icon: 'biology',
+              l: 0.58,
+              c: 0.09,
+              h: 142,
+            },
+            sources: resolveSubjectSources(root, 'plants', plantsDir),
+          },
+          {
+            subjectId: 'empty',
+            subjectDir: emptyDir,
+            subject: {
+              id: 'empty',
+              label: 'Empty',
+              icon: 'biology',
+              l: 0.5,
+              c: 0.1,
+              h: 140,
+            },
+            sources: [],
+          },
+        ],
+        { repoRoot: root, provider: 'test', seed: 0, env: {} },
+      ),
+    ).rejects.toThrow(/no source files for empty/);
+    expect(existsSync(path.join(plantsDir, 'bank.ir.json'))).toBe(false);
+  });
+
+  it('writeBankIrAtomic refuses existing IR without force and writes with force', () => {
+    const root = examifyRepo();
+    const irPath = path.join(root, 'content/subjects/plants/bank.ir.json');
+    writeFileSync(irPath, '{ "stale": true }\n');
+    expect(() => writeBankIrAtomic(irPath, '{ "ok": true }\n')).toThrow(BankIrOverwriteError);
+    expect(readFileSync(irPath, 'utf8')).toBe('{ "stale": true }\n');
+    expect(writeBankIrAtomic(irPath, '{ "ok": true }\n', { force: true })).toEqual({
+      existed: true,
+    });
+    expect(readFileSync(irPath, 'utf8')).toBe('{ "ok": true }\n');
+  });
+
+  it('tree generate SAMPLE freeze after a sourced sibling writes no BankIR', async () => {
+    const root = examifyRepo();
+    const mathsDir = path.join(root, 'content/subjects/maths');
+    mkdirSync(mathsDir, { recursive: true });
+    writeFileSync(path.join(mathsDir, 'notes.txt'), 'What is 2 + 2?\n');
+    const plantsDir = path.join(root, 'content/subjects/plants');
+    const plantsTarget = {
+      subjectId: 'plants',
+      subjectDir: plantsDir,
+      subject: {
+        id: 'plants',
+        label: 'Plants',
+        icon: 'biology',
+        l: 0.58,
+        c: 0.09,
+        h: 142,
+      },
+      sources: resolveSubjectSources(root, 'plants', plantsDir),
+    };
+    const mathsTarget = {
+      subjectId: 'maths',
+      subjectDir: mathsDir,
+      subject: {
+        id: 'maths',
+        label: 'Maths',
+        icon: 'maths',
+        l: 0.55,
+        c: 0.1,
+        h: 250,
+      },
+      sources: resolveSubjectSources(root, 'maths', mathsDir),
+    };
+    await expect(
+      generateTargets([plantsTarget, mathsTarget], {
+        repoRoot: root,
+        provider: 'test',
+        seed: 0,
+        env: {},
+      }),
+    ).rejects.toThrow(/maths-easy-1/);
+    expect(existsSync(path.join(plantsDir, 'bank.ir.json'))).toBe(false);
+    expect(existsSync(path.join(mathsDir, 'bank.ir.json'))).toBe(false);
+    expect(existsSync(path.join(root, '.examify-ingest/cache/ir'))).toBe(false);
+
+    const streams = io();
+    streams.handle.cwd = root;
+    const code = await runCliAsync(
+      ['generate', '--provider', 'test', 'content/subjects'],
+      streams.handle,
+    );
+    expect(code).toBe(1);
+    expect(streams.err()).toContain('maths-easy-1');
+    expect(existsSync(path.join(plantsDir, 'bank.ir.json'))).toBe(false);
+  });
+
+  it('biology is hand-authored: no generate sources on a fresh clone', async () => {
+    const repoRoot = path.resolve(__dirname, '../..');
+    const biologyDir = path.join(repoRoot, 'content/subjects/biology');
+    expect(resolveSubjectSources(repoRoot, 'biology', biologyDir)).toEqual([]);
+
+    const streams = io();
+    streams.handle.cwd = repoRoot;
+    const code = await runCliAsync(
+      ['generate', '--provider', 'test', 'content/subjects/biology'],
+      streams.handle,
+    );
+    expect(code).toBe(1);
+    expect(streams.err()).toMatch(/no source files/);
+    expect(existsSync(path.join(biologyDir, 'bank.ir.json'))).toBe(true);
   });
 });
 
@@ -141,7 +456,7 @@ describe('examify-ingest generate', () => {
     const secondStreams = io();
     secondStreams.handle.cwd = root;
     const second = await runCliAsync(
-      ['generate', '--provider', 'test', '--seed', '0', 'content/subjects/plants'],
+      ['generate', '--provider', 'test', '--seed', '0', '--force', 'content/subjects/plants'],
       secondStreams.handle,
     );
     expect(second).toBe(0);
@@ -644,6 +959,7 @@ describe('examify-ingest generate', () => {
     let fetchCalls = 0;
     const replay = await generateSubject({
       ...request,
+      force: true,
       env: {},
       fetch: async () => {
         fetchCalls += 1;
@@ -760,6 +1076,7 @@ describe('examify-ingest generate', () => {
       sources,
       provider: 'test',
       seed: 0,
+      force: true,
       env: {},
     });
     expect(second.cacheKey).not.toBe(first.cacheKey);
@@ -772,6 +1089,7 @@ describe('examify-ingest generate', () => {
       sources,
       provider: 'test',
       seed: 0,
+      force: true,
       env: {},
     });
     expect(third.cacheKey).toBe(second.cacheKey);

@@ -1,0 +1,5 @@
+Examify generate fixture (committed so a fresh clone can run generate).
+
+Chloroplasts in plant cells capture light and make sugar.
+Mitochondria release energy from food.
+A cell wall is present in plant cells and absent in animal cells.

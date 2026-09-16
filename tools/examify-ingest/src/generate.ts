@@ -1,6 +1,8 @@
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { buildCacheKey, readCachedIr, writeCachedIr, writeRunManifest } from './cache';
 import { stableJson } from './diff';
+import { sampleBankFrozenIds } from './frozen-ids';
 import {
   PAGE_RASTER_PROFILE,
   pageImageHashesOf,
@@ -16,7 +18,7 @@ import {
   type ProviderDeps,
   type ProviderEnv,
 } from './providers';
-import { writeFileAtomic } from './write-atomic';
+import { assertCanWriteBankIr, writeBankIrAtomic } from './write-atomic';
 import {
   GENERATE_TEMPERATURE,
   bankIrSchema,
@@ -48,6 +50,12 @@ export type GenerateRequest = {
   env?: ProviderEnv;
   fetch?: typeof fetch;
   now?: () => Date;
+  /** Overwrite an existing `bank.ir.json`. Required for persist when the file exists. */
+  force?: boolean;
+  /** Allow generated ids that collide with the sample bank (same set as validate/emit). */
+  replaceSample?: boolean;
+  /** Override the frozen sample-bank id set. Defaults to `sampleBankFrozenIds()`. */
+  frozenIds?: Iterable<string>;
   /** Test seam — same hook as `resolvePageImages`. Durable page cache waits for abort. */
   rasterize?: (pdfAbsPath: string, prefix: string) => boolean;
   /**
@@ -65,6 +73,7 @@ export type GenerateSubjectResult = {
   manifestPath: string | null;
   irPath: string;
   wroteIr: boolean;
+  irExisted: boolean;
 };
 
 function attachMeta(
@@ -99,6 +108,22 @@ function assertValidBank(bank: BankIR, label: string): BankIR {
   return parsed.data;
 }
 
+function pathFromRoot(repoRoot: string, absPath: string): string {
+  return path.relative(repoRoot, absPath).split(path.sep).join('/') || absPath;
+}
+
+function assertNotFrozenSampleIds(bank: BankIR, label: string, request: GenerateRequest): void {
+  const result = validateIrCollection([{ path: label, data: bank }], {
+    replaceSample: request.replaceSample === true,
+    frozenIds: request.frozenIds ?? sampleBankFrozenIds(),
+  });
+  if (!result.ok) {
+    throw new Error(
+      `${label} failed sample-bank freeze: ${result.errors.map((error) => error.message).join('; ')}`,
+    );
+  }
+}
+
 async function checkpointAbort(signal?: AbortSignal): Promise<void> {
   if (signal) await Promise.resolve();
   throwIfAborted(signal);
@@ -115,6 +140,12 @@ export async function generateSubject(request: GenerateRequest): Promise<Generat
   const env = request.env ?? {};
   const adapter = getProvider(request.provider);
   const persist = request.dryRunIr !== true;
+  const irPath = path.join(request.subjectDir, BANK_IR_FILE);
+  const displayPath = pathFromRoot(request.repoRoot, irPath);
+  const irExisted = existsSync(irPath);
+  if (persist) {
+    assertCanWriteBankIr(irPath, { force: request.force === true, displayPath });
+  }
 
   const prompt = loadGeneratePrompt();
   const sourceHashes = sourceHashesOf(request.sources);
@@ -204,18 +235,21 @@ export async function generateSubject(request: GenerateRequest): Promise<Generat
     seedHonored: adapter.seedHonored,
   });
 
-  const irPath = path.join(request.subjectDir, BANK_IR_FILE);
   await checkpointAbort(request.signal);
+  assertNotFrozenSampleIds(bank, pathFromRoot(request.repoRoot, irPath), request);
   const wroteIr = persist;
   let manifestPath: string | null = null;
   if (persist) {
     persistPageImages(request.repoRoot, request.sources, pageImages);
     writeCachedIr(request.repoRoot, cacheKey, bank);
     manifestPath = writeRunManifest(request.repoRoot, cacheKey, timestamp, stableJson(manifest));
-    writeFileAtomic(irPath, stableJson(bank));
+    writeBankIrAtomic(irPath, stableJson(bank), {
+      force: request.force === true,
+      displayPath,
+    });
   }
 
-  return { bank, cacheKey, cacheHit, manifest, manifestPath, irPath, wroteIr };
+  return { bank, cacheKey, cacheHit, manifest, manifestPath, irPath, wroteIr, irExisted };
 }
 
 /**
@@ -238,24 +272,106 @@ export function assertReadableProviderInput(
   );
 }
 
+/** Subject ids in this run that have no generate sources. */
+export function sourcelessGenerateTargetIds(
+  targets: readonly Pick<GenerateTarget, 'subjectId' | 'sources'>[],
+): string[] {
+  return targets.filter((target) => target.sources.length === 0).map((target) => target.subjectId);
+}
+
+/**
+ * Preflight every target for sources before any IR write. Tree generate of
+ * A/B/C plus empty sibling D must fail closed and write nothing.
+ */
+export function assertGenerateTargetsHaveSources(
+  targets: readonly Pick<GenerateTarget, 'subjectId' | 'sources'>[],
+): void {
+  const missing = sourcelessGenerateTargetIds(targets);
+  if (missing.length === 0) return;
+  throw new Error(
+    `no source files for ${missing.join(', ')} (looked in each subject folder and content/source-pdfs/<id>); no BankIR written`,
+  );
+}
+
+/** Persist-only: existing IR without force fails before any generate write. */
+export function assertGenerateTargetsCanPersist(
+  repoRoot: string,
+  targets: readonly GenerateTarget[],
+  force: boolean,
+): void {
+  if (force) return;
+  const existing = targets
+    .filter((target) => existsSync(path.join(target.subjectDir, BANK_IR_FILE)))
+    .map((target) => pathFromRoot(repoRoot, path.join(target.subjectDir, BANK_IR_FILE)));
+  if (existing.length === 0) return;
+  throw new Error(
+    `refusing to overwrite existing ${existing.join(', ')}; pass --force to replace it; no BankIR written`,
+  );
+}
+
+function commitGeneratedDraft(
+  draft: GenerateSubjectResult,
+  target: GenerateTarget,
+  options: Omit<GenerateRequest, 'subject' | 'subjectDir' | 'sources'>,
+): GenerateSubjectResult {
+  const pageImages = resolvePageImages(options.repoRoot, target.sources, {
+    persist: true,
+    rasterize: options.rasterize,
+  });
+  persistPageImages(options.repoRoot, target.sources, pageImages);
+  writeCachedIr(options.repoRoot, draft.cacheKey, draft.bank);
+  const manifestPath = writeRunManifest(
+    options.repoRoot,
+    draft.cacheKey,
+    draft.manifest.timestamp,
+    stableJson(draft.manifest),
+  );
+  writeBankIrAtomic(draft.irPath, stableJson(draft.bank), {
+    force: options.force === true,
+    displayPath: pathFromRoot(options.repoRoot, draft.irPath),
+  });
+  return { ...draft, wroteIr: true, manifestPath };
+}
+
+/**
+ * Tree generate is all-or-nothing for BankIR: sources + overwrite preflight,
+ * then every subject is drafted (`dryRunIr`) so SAMPLE freeze / provider
+ * failures happen before the first IR write. Only then are IRs committed.
+ */
 export async function generateTargets(
   targets: readonly GenerateTarget[],
   options: Omit<GenerateRequest, 'subject' | 'subjectDir' | 'sources'> & {
     dryRunIr?: boolean;
   },
 ): Promise<GenerateSubjectResult[]> {
-  const results: GenerateSubjectResult[] = [];
+  assertGenerateTargetsHaveSources(targets);
+  if (options.dryRunIr !== true) {
+    assertGenerateTargetsCanPersist(options.repoRoot, targets, options.force === true);
+  }
+
+  const drafts: GenerateSubjectResult[] = [];
   for (const target of targets) {
-    results.push(
+    drafts.push(
       await generateSubject({
         ...options,
         subject: target.subject,
         subjectDir: target.subjectDir,
         sources: target.sources,
+        dryRunIr: true,
       }),
     );
   }
-  return results;
+
+  if (options.dryRunIr === true) {
+    return drafts;
+  }
+
+  const committed: GenerateSubjectResult[] = [];
+  for (let i = 0; i < drafts.length; i += 1) {
+    await checkpointAbort(options.signal);
+    committed.push(commitGeneratedDraft(drafts[i]!, targets[i]!, options));
+  }
+  return committed;
 }
 
 /** Public split of generated IR — answers/rubrics/provenance stay out. */

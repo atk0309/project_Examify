@@ -17,6 +17,7 @@ import {
   collectGeneratedSubjectIds,
   collectQuestionIds,
   FIXTURE_IDS,
+  sampleBankFrozenIds,
   formatFileDiff,
   isAuthoritativeCatalogInput,
   parseArgs,
@@ -136,6 +137,10 @@ describe('examify-ingest schema + split', () => {
     expect(split.keys['biology-easy-free-1']).toMatchObject({ type: 'free', maxScore: 2 });
     expect(Object.keys(split.questions.easy![0]!).sort()).toEqual(['choices', 'id', 'q', 'type']);
     expect(Object.keys(split.questions.easy![1]!).sort()).toEqual(['id', 'q', 'type']);
+  });
+
+  it('sampleBankFrozenIds is the same set validate/emit freeze', () => {
+    expect(sampleBankFrozenIds()).toEqual(SAMPLE_IDS);
   });
 
   it('refuses any sample-bank id unless --replace-sample', () => {
@@ -450,6 +455,22 @@ describe('examify-ingest CLI', () => {
   it('USAGE mentions whole-tree prune and partial-safe file argv', () => {
     expect(USAGE).toContain('prunes leftover generated subject JSON');
     expect(USAGE).toContain('mixed');
+  });
+
+  it('docs happy path is validate/emit with content/subjects, not bare argv', () => {
+    const authoring = readFileSync(path.join(repoRoot, 'docs/content-authoring.md'), 'utf8');
+    const ingestReadme = readFileSync(
+      path.join(repoRoot, 'tools/examify-ingest/README.md'),
+      'utf8',
+    );
+    for (const text of [authoring, ingestReadme]) {
+      expect(text).toContain('pnpm examify-ingest validate content/subjects');
+      expect(text).toContain('pnpm examify-ingest emit content/subjects --dry-run');
+      expect(text).not.toMatch(/pnpm examify-ingest validate(?! content\/subjects)/);
+      expect(text).not.toMatch(/pnpm examify-ingest emit(?! content\/subjects)/);
+      expect(text).not.toMatch(/`emit --dry-run`/);
+      expect(text).not.toMatch(/→ emit --dry-run →/);
+    }
   });
 
   it('validate succeeds on content/subjects', () => {

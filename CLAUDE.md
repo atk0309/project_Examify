@@ -44,7 +44,12 @@ Surface:
   (dry-run HITL) → apply → ready. The wizard is one stage at a time: desktop
   (≥900px) uses a left step rail + stage + sticky footer; mobile uses compact
   “Step N of M · Label” progress and a sticky bottom bar. Generate writes BankIR
-  only and never auto-applies.
+  only and never auto-applies. An existing `bank.ir.json` is never
+  silently clobbered: the dry-run/preview names `would overwrite <rel>`
+  and the wizard asks a calm confirm before any write (“Replace existing
+  BankIR for {label}?” or a named generate-all batch). Decline
+  keeps prior bytes (`skipped` / cancelled — not `invalid`); confirm
+  writes through shared `writeBankIrAtomic` (CLI `--force` for that subject).
   Cancel POSTs `/api/onboarding/cancel-generate` (a Route Handler, not a
   queued Server Action) so the token can land while generate is in flight,
   then aborts provider HTTP/CMD via AbortSignal and discards the preview
@@ -239,12 +244,23 @@ validate → emit path, adding subjects (all 13 original duotone icons remain in
 bank from source PDFs kept local-only in the gitignored `content/source-pdfs/`.
 
 Automated path: author or `pnpm examify-ingest generate` a
-`content/subjects/<id>/bank.ir.json`, then `pnpm examify-ingest validate`,
-`emit --dry-run`, and only afterward `emit --apply`
+`content/subjects/<id>/bank.ir.json`, then `pnpm examify-ingest validate content/subjects`,
+`emit content/subjects --dry-run`, and only afterward `emit content/subjects --apply`
 (or use `/onboarding` after first-run bootstrap — AI-step generate is optional,
 then the same directory emit, HITL dry-run before apply, empty tree refused).
+Hand-authored biology has no source file — skip generate (validate/emit only).
+A committed generate fixture is `content/subjects/demo/notes.txt`
+(`pnpm examify-ingest generate --provider test --seed 0 content/subjects/demo`).
 Generate never auto-applies; it writes IR + gitignored `.examify-ingest/`
-run/cache files only. `generateSubject` accepts optional `AbortSignal` (forwarded
+run/cache files only. Existing `bank.ir.json` is not overwritten unless
+`--force` (`--dry-run-ir` says **would overwrite**). Frozen sample-bank ids
+fail closed at generate (same set as validate) unless `--replace-sample` —
+`--provider test` must not write `maths-easy-1` / other SAMPLE ids without
+that flag. Persist uses shared `writeBankIrAtomic` (force required to
+clobber). Tree generate drafts every subject before the first IR write
+(sources, overwrite, SAMPLE freeze, provider) so a mid-list failure leaves
+no BankIR. The `/onboarding` generate path calls that same helper: named
+confirm supplies `force`; decline/cancel keeps prior bytes. `generateSubject` accepts optional `AbortSignal` (forwarded
 to provider HTTP/CMD; abort throws and writes no IR, IR cache, page-raster
 cache, or run manifest). Cloud
 providers fail closed without an env key (generate also fills unset keys from

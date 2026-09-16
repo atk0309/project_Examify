@@ -48,7 +48,8 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   `{ id, type, q, choices? }` in `data.ts` **plus** a matching `ANSWER_KEYS[id]`
   (with provenance) in `answer-keys.server.ts`, **or** author
   `content/subjects/<id>/bank.ir.json` (by hand or `pnpm examify-ingest generate`)
-  then `pnpm examify-ingest validate` → `emit --dry-run` → `emit --apply`
+  then `pnpm examify-ingest validate content/subjects` →
+  `emit content/subjects --dry-run` → `emit content/subjects --apply`
   (emit is dry-run by default; never clobbers any sample-bank id without
   `--replace-sample`; partial emit (explicit IR files or mixed file+dir argv)
   merges `subjects.json`; a whole-tree emit of subjects directories only
@@ -56,7 +57,17 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   reads `content/generated/` at request time so a production Apply is visible
   without rebuilding. Guide: `docs/content-authoring.md` and
   `tools/examify-ingest/README.md`. Generate writes IR only — still
-  validate → emit --dry-run → emit --apply. It never auto-applies.
+  `validate content/subjects` → `emit content/subjects --dry-run` →
+  `emit content/subjects --apply`. It never auto-applies.
+  Hand-authored biology has no source file (skip generate; validate/emit only).
+  Fresh-clone generate: `content/subjects/demo/notes.txt`. Existing
+  `bank.ir.json` requires `--force` (dry-run says **would overwrite**).
+  Frozen sample-bank ids fail at generate unless `--replace-sample`.
+  Tree generate drafts every subject before the first IR write (sources,
+  overwrite, SAMPLE freeze, provider); a mid-list failure writes no BankIR.
+  Persist uses shared `writeBankIrAtomic`. The wizard never silently
+  replaces existing `bank.ir.json` (named confirm, or skip/cancel;
+  confirm is that same `--force` for the subject).
   `generateSubject` accepts optional `AbortSignal` (forwarded to provider
   HTTP/CMD; abort throws and writes no IR, IR cache, page-raster cache, or
   run manifest). Cloud
@@ -96,7 +107,11 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   next successful edit of that field or on resubmit. Email is the required
   admin account id in every `AUTH_MODE` (including password). After bootstrap, `/onboarding` lets the
   household admin add subjects, attach local PDFs, choose an AI mode, optionally
-  run `examify-ingest generate` (BankIR only; never emit/apply; cancel
+  run `examify-ingest generate` (BankIR only; never emit/apply; existing
+  `bank.ir.json` needs a calm confirm — preview names `would overwrite`,
+  decline is skipped/cancelled not invalid, confirm is CLI `--force` for
+  that subject; generate-all confirms per colliding subject or one named
+  batch; persist is shared `writeBankIrAtomic`; cancel
   POSTs `/api/onboarding/cancel-generate` so the token is not queued
   behind generate, then aborts provider HTTP/CMD via AbortSignal and
   discards the preview (no IR write; prior IR unchanged); the wizard

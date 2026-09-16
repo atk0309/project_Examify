@@ -153,7 +153,57 @@ export type OnboardingGenerateResult = {
   sourceHashes: Record<string, string>;
   wroteIr: boolean;
   irRel: string;
+  /** True when the write replaced an existing `bank.ir.json`. */
+  overwrite: boolean;
 };
+
+export type OnboardingIrOverwriteDecision = 'force' | 'skip';
+
+/** Repo-relative BankIR path the CLI dry-run names. */
+export function onboardingSubjectIrRel(subjectId: string): string {
+  return `content/subjects/${subjectId}/bank.ir.json`;
+}
+
+/** CLI-shaped generate write verb (`wrote` / `would write` + overwrite). */
+export function generateIrWriteVerb(wrote: boolean, overwrite: boolean): string {
+  if (overwrite) return wrote ? 'overwrote' : 'would overwrite';
+  return wrote ? 'wrote' : 'would write';
+}
+
+export function generateIrWriteLabel(irRel: string, wrote: boolean, overwrite: boolean): string {
+  return `${generateIrWriteVerb(wrote, overwrite)} ${irRel}`;
+}
+
+/** Subjects whose generate would replace an existing `bank.ir.json`. */
+export function onboardingGenerateOverwriteSubjects<
+  T extends Pick<OnboardingSubject, 'id' | 'hasIr'>,
+>(subjects: readonly T[], subjectIds: readonly string[]): T[] {
+  const wanted = new Set(subjectIds);
+  return subjects.filter((subject) => wanted.has(subject.id) && subject.hasIr);
+}
+
+/** Calm confirm copy. Batch names subjects — never an opaque count alone. */
+export function onboardingIrOverwriteConfirmMessage(
+  colliding: readonly Pick<OnboardingSubject, 'label'>[],
+): string | null {
+  if (colliding.length === 0) return null;
+  if (colliding.length === 1) return `Replace existing BankIR for ${colliding[0]!.label}?`;
+  const names = colliding.map((row) => row.label).join(', ');
+  return `Replace ${colliding.length} existing BankIR files (${names})?`;
+}
+
+/**
+ * Calm overwrite confirm. One subject uses the label; generate-all
+ * colliding subjects use a named batch. Decline is skip, not invalid.
+ */
+export function confirmOnboardingIrOverwrite(
+  colliding: readonly Pick<OnboardingSubject, 'label'>[],
+  ask: (message: string) => boolean,
+): OnboardingIrOverwriteDecision {
+  const message = onboardingIrOverwriteConfirmMessage(colliding);
+  if (!message) return 'force';
+  return ask(message) ? 'force' : 'skip';
+}
 
 export const ONBOARDING_INGEST_CLI = [
   'pnpm examify-ingest validate content/subjects',
