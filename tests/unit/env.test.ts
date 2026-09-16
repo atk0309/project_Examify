@@ -263,6 +263,18 @@ describe('parseEnv dev/test defaults', () => {
     const parsed = parseEnv({ NODE_ENV: 'test' });
     expect(parsed.SETUP_BOOTSTRAP_SECRET.length).toBeGreaterThanOrEqual(16);
   });
+
+  it('does not coerce missing or blank ANTHROPIC_API_KEY to the test sentinel', () => {
+    expect(parseEnv({ NODE_ENV: 'test' }).ANTHROPIC_API_KEY).toBeUndefined();
+    expect(parseEnv({ NODE_ENV: 'development' }).ANTHROPIC_API_KEY).toBeUndefined();
+    expect(parseEnv({ NODE_ENV: 'test', ANTHROPIC_API_KEY: '' }).ANTHROPIC_API_KEY).toBeUndefined();
+    expect(
+      parseEnv({ NODE_ENV: 'development', ANTHROPIC_API_KEY: '   ' }).ANTHROPIC_API_KEY,
+    ).toBeUndefined();
+    expect(parseEnv({ NODE_ENV: 'test', ANTHROPIC_API_KEY: 'test' }).ANTHROPIC_API_KEY).toBe(
+      'test',
+    );
+  });
 });
 
 describe('allowLocalMailOutbox', () => {

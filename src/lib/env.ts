@@ -148,13 +148,9 @@ function buildEnvSchema(isProd: boolean) {
       // Anthropic key for free-text grading and /onboarding Cloud generate.
       // Optional — same spirit as OPENAI_API_KEY (not in this schema). Wizard
       // clear deletes the store line; production restart must not crash.
-      // The grader live-reads process.env and fail-closes (`needs_review`)
-      // when the key is missing. The `test` sentinel (dev/test default) still
-      // stubs — no network — like the Resend outbox stub above.
-      ANTHROPIC_API_KEY: z.preprocess(
-        (v) => emptyToUndef(v) ?? dev('test'),
-        z.string().min(1).optional(),
-      ),
+      // Missing / empty / whitespace stay unset — never coerced to the `test`
+      // sentinel. Only an explicit live `test` stubs the grader.
+      ANTHROPIC_API_KEY: z.preprocess(emptyToUndef, z.string().min(1).optional()),
 
       // Optional local-agent endpoint for examify-ingest generate --provider local
       // (CLI and /onboarding AI step). Not a secret. Never expose via NEXT_PUBLIC_*.

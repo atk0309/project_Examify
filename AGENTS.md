@@ -68,9 +68,9 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
 - **Free-text is LLM-graded server-side** (`src/lib/grading/index.ts`,
   live `ANTHROPIC_API_KEY` from `process.env` only so a wizard set / rotate /
   clear is visible without restart; `test` → deterministic stub; missing
-  after clear → `needs_review`, no stub; same usable-key rule as the
-  Configured badge; optional in `env.ts` so a production restart after
-  clear does not brick boot). Grading never throws — failures
+  after clear → `needs_review`, no stub; blank is never treated as `test`;
+  same usable-key rule as the Configured badge; optional in `env.ts` so a
+  production restart after clear does not brick boot). Grading never throws — failures
   fall to `needs_review`. A free item is "correct" at `PASS_THRESHOLD` (0.6). The UI
   renders only the bounded `Verdict` fields, never the rubric. Results are
   server-driven (a "Marking…" state covers the submit round-trip). Full design:

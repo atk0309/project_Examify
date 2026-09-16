@@ -181,6 +181,22 @@ describe('examify-ingest generate', () => {
     }
   });
 
+  it('fails closed for --provider anthropic when the key is unset or whitespace (no stub)', async () => {
+    const root = examifyRepo();
+    for (const env of [{}, { ANTHROPIC_API_KEY: '   ' }] as const) {
+      const streams = io();
+      streams.handle.cwd = root;
+      streams.handle.env = { ...env };
+      const code = await runCliAsync(
+        ['generate', '--provider', 'anthropic', 'content/subjects/plants'],
+        streams.handle,
+      );
+      expect(code).toBe(1);
+      expect(streams.err()).toMatch(/missing ANTHROPIC_API_KEY|sentinel/);
+      expect(existsSync(path.join(root, 'content/subjects/plants/bank.ir.json'))).toBe(false);
+    }
+  });
+
   it('treats the ANTHROPIC_API_KEY=test sentinel as missing for --provider anthropic', async () => {
     const root = examifyRepo();
     const streams = io();

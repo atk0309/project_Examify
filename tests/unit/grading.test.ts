@@ -20,24 +20,48 @@ describe('clampScore', () => {
 });
 
 describe('gradeFreeText (test sentinel)', () => {
+  const args = {
+    question: 'What is a metaphor?',
+    rubric: 'Award up to 3 marks…',
+    maxScore: 3,
+    studentAnswer: 'A comparison that says one thing is another.',
+  };
+
   it('returns a full-score graded verdict with no network', async () => {
     const previous = process.env.ANTHROPIC_API_KEY;
     process.env.ANTHROPIC_API_KEY = 'test';
     try {
-      const res = await gradeFreeText({
-        question: 'What is a metaphor?',
-        rubric: 'Award up to 3 marks…',
-        maxScore: 3,
-        studentAnswer: 'A comparison that says one thing is another.',
-      });
+      const res = await gradeFreeText(args);
       expect(res.status).toBe('graded');
       if (res.status !== 'graded') return;
       expect(res.verdict.score).toBe(3);
-      expect(typeof res.verdict.verdict).toBe('string');
+      expect(res.verdict.verdict).toBe('Looks good.');
       expect(Array.isArray(res.verdict.gotRight)).toBe(true);
       expect(Array.isArray(res.verdict.toReview)).toBe(true);
       expect(Array.isArray(res.verdict.spelling)).toBe(true);
     } finally {
+      if (previous === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = previous;
+    }
+  });
+
+  it('fail-closes on missing, empty, or whitespace keys — never stubs a blank as test', async () => {
+    const previous = process.env.ANTHROPIC_API_KEY;
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    try {
+      for (const live of [undefined, '', '   '] as const) {
+        if (live === undefined) delete process.env.ANTHROPIC_API_KEY;
+        else process.env.ANTHROPIC_API_KEY = live;
+        const res = await gradeFreeText(args);
+        expect(res).toEqual({ status: 'needs_review' });
+        expect(res).not.toMatchObject({
+          status: 'graded',
+          verdict: { verdict: 'Looks good.' },
+        });
+      }
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
       if (previous === undefined) delete process.env.ANTHROPIC_API_KEY;
       else process.env.ANTHROPIC_API_KEY = previous;
     }

@@ -202,8 +202,9 @@ describe('onboarding generate graph', () => {
     expect(generateCli).toMatch(/mergeRepoEnvFiles\(repoRoot, io\.env \?\? process\.env\)/);
     const envSchema = readFileSync(path.join(process.cwd(), 'src/lib/env.ts'), 'utf8');
     expect(envSchema).toMatch(
-      /ANTHROPIC_API_KEY: z\.preprocess\([\s\S]*?z\.string\(\)\.min\(1\)\.optional\(\)/,
+      /ANTHROPIC_API_KEY: z\.preprocess\(emptyToUndef, z\.string\(\)\.min\(1\)\.optional\(\)\)/,
     );
+    expect(envSchema).not.toMatch(/ANTHROPIC_API_KEY:[\s\S]*?\?\? dev\('test'\)/);
     expect(envSchema).not.toMatch(/OPENAI_API_KEY:/);
   });
 

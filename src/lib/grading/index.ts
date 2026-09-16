@@ -7,9 +7,10 @@ import 'server-only';
    Claude. Two paths:
    - live `ANTHROPIC_API_KEY === 'test'` (process.env only, never the boot-frozen
      `env.ts` snapshot) → a deterministic full-score stub, no network. This
-     mirrors the Resend outbox stub so `pnpm dev`, unit tests and Playwright
-     (which inject the `test` sentinel) never hit the API.
-   - live key missing / empty (wizard clear) → `{ status: 'needs_review' }`
+     is the intentional sentinel only — blank / missing / whitespace are not
+     `test`. Mirrors the Resend outbox stub so `pnpm dev`, unit tests and
+     Playwright (which inject the `test` sentinel) never hit the API.
+   - live key missing / empty / whitespace (wizard clear) → `{ status: 'needs_review' }`
      fail-closed. No stub. Same “usable?” rule as the wizard Configured badge.
    - otherwise → a single `fetch` to the Anthropic Messages API.
 
@@ -115,7 +116,8 @@ function userPrompt(args: GradeArgs): string {
 function liveAnthropicApiKey(): string | undefined {
   const live = process.env[ANTHROPIC_ENV_KEY];
   if (typeof live !== 'string') return undefined;
-  return live.trim();
+  const trimmed = live.trim();
+  return trimmed === '' ? undefined : trimmed;
 }
 
 /**
