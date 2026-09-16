@@ -39,7 +39,9 @@ no env-JSON allowlist to hand-edit.
    host-managed via the process exec environment), optionally generate BankIR from those
    files, and emit through `examify-ingest` (validate + Review / dry-run HITL, then apply;
    desktop uses a step rail, mobile a compact progress bar; one stage at a time;
-   generate never auto-applies; cancel POSTs `/api/onboarding/cancel-generate`
+   generate never auto-applies; existing BankIR needs a confirm before
+   overwrite (preview names `would overwrite`; decline keeps prior IR);
+   cancel POSTs `/api/onboarding/cancel-generate`
    (not a queued Server Action), aborts provider HTTP/CMD via AbortSignal,
    and discards the preview so prior IR is unchanged (the wizard waits for
    an `ok` cancel response before claiming cancelled; cancel after that

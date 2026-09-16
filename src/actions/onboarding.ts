@@ -65,10 +65,13 @@ export type OnboardingActionError = {
     | 'missing_local'
     | 'empty_sources'
     | 'cancelled'
+    | 'skipped'
+    | 'needs_confirm'
     | 'already_committed'
     | 'rate_limited'
     | 'host_managed';
   message?: string;
+  irRel?: string;
   issues?: { file: string; message: string }[];
 };
 
@@ -196,6 +199,10 @@ export async function generateOnboardingSubjectAction(
     typeof rawToken === 'string' && isOnboardingGenerateCancelToken(rawToken)
       ? rawToken
       : undefined;
+  const rawForce = formData.get('force');
+  const force = rawForce === '1' || rawForce === 'true';
+  const rawOverwrite = formData.get('overwrite');
+  const overwrite = rawOverwrite === 'skip' || rawOverwrite === 'force' ? rawOverwrite : undefined;
 
   const state = getHouseholdOnboarding(gate.householdId).state;
   if (!state.aiMode) return { ok: false, reason: 'missing_provider' };
@@ -206,9 +213,16 @@ export async function generateOnboardingSubjectAction(
     provider,
     seed: seedParsed.data,
     cancelToken,
+    force,
+    overwrite,
   });
   if (!generated.ok) {
     // Safe codes only — never forward raw provider / path / env messages.
+    // needs_confirm may include the public irRel so the wizard can name
+    // the overwrite (same shape as CLI dry-run) before the user confirms.
+    if (generated.reason === 'needs_confirm') {
+      return { ok: false, reason: 'needs_confirm', irRel: generated.irRel };
+    }
     return { ok: false, reason: generated.reason };
   }
   // IR changed — any prior HITL dry-run / apply is stale. Generate never emit/applies.

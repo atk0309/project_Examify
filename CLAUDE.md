@@ -38,7 +38,12 @@ Surface:
   (dry-run HITL) → apply → ready. The wizard is one stage at a time: desktop
   (≥900px) uses a left step rail + stage + sticky footer; mobile uses compact
   “Step N of M · Label” progress and a sticky bottom bar. Generate writes BankIR
-  only and never auto-applies.
+  only and never auto-applies. An existing `bank.ir.json` is never
+  silently clobbered: the dry-run/preview names `would overwrite <rel>`
+  and the wizard asks a calm confirm (“Replace existing BankIR for
+  {label}?” or generate-all “Replace N existing BankIR files?”). Decline
+  keeps prior bytes (`skipped` / cancelled — not `invalid`); confirm
+  writes with the same meaning as CLI `--force` for that subject.
   Cancel POSTs `/api/onboarding/cancel-generate` (a Route Handler, not a
   queued Server Action) so the token can land while generate is in flight,
   then aborts provider HTTP/CMD via AbortSignal and discards the preview
@@ -238,7 +243,9 @@ Automated path: author or `pnpm examify-ingest generate` a
 (or use `/onboarding` after first-run bootstrap — AI-step generate is optional,
 then the same directory emit, HITL dry-run before apply, empty tree refused).
 Generate never auto-applies; it writes IR + gitignored `.examify-ingest/`
-run/cache files only. `generateSubject` accepts optional `AbortSignal` (forwarded
+run/cache files only. The `/onboarding` generate path refuses a silent
+overwrite of existing `bank.ir.json` unless the admin confirms (CLI
+`--force` for that subject). `generateSubject` accepts optional `AbortSignal` (forwarded
 to provider HTTP/CMD; abort throws and writes no IR, IR cache, page-raster
 cache, or run manifest). Cloud
 providers fail closed without an env key (generate also fills unset keys from

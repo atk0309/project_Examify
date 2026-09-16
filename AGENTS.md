@@ -57,6 +57,8 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   without rebuilding. Guide: `docs/content-authoring.md` and
   `tools/examify-ingest/README.md`. Generate writes IR only — still
   validate → emit --dry-run → emit --apply. It never auto-applies.
+  The wizard never silently replaces existing `bank.ir.json` (confirm, or
+  skip/cancel; confirm is CLI `--force` for that subject).
   `generateSubject` accepts optional `AbortSignal` (forwarded to provider
   HTTP/CMD; abort throws and writes no IR, IR cache, page-raster cache, or
   run manifest). Cloud
@@ -91,7 +93,11 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   when no household exists, and only after `SETUP_BOOTSTRAP_SECRET` matches (required
   in production; captcha is not identity). After bootstrap, `/onboarding` lets the
   household admin add subjects, attach local PDFs, choose an AI mode, optionally
-  run `examify-ingest generate` (BankIR only; never emit/apply; cancel
+  run `examify-ingest generate` (BankIR only; never emit/apply; existing
+  `bank.ir.json` needs a calm confirm — preview names `would overwrite`,
+  decline is skipped/cancelled not invalid, confirm is CLI `--force` for
+  that subject; generate-all confirms per colliding subject or one batch
+  “Replace N existing BankIR files?”; cancel
   POSTs `/api/onboarding/cancel-generate` so the token is not queued
   behind generate, then aborts provider HTTP/CMD via AbortSignal and
   discards the preview (no IR write; prior IR unchanged); the wizard

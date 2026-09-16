@@ -402,6 +402,7 @@ describe('onboarding actions', () => {
     const generate = new FormData();
     generate.set('subjectId', 'history');
     generate.set('seed', '0');
+    generate.set('force', '1');
     const result = await generateOnboardingSubjectAction(generate);
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected generate');
@@ -415,7 +416,71 @@ describe('onboarding actions', () => {
     );
     expect(result.snapshot.hasDryRun).toBe(false);
     expect(result.snapshot.hasApplied).toBe(false);
+    expect(result.result.overwrite).toBe(true);
     expect((await validateOnboardingAction()).ok).toBe(true);
+  });
+
+  it('refuses to clobber existing IR without force and names the overwrite', async () => {
+    const root = tempRoot();
+    const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
+    setOnboardingContentRootForTests(root);
+    await signInHost();
+    const irPath = path.join(root, 'content/subjects/history/bank.ir.json');
+    fs.mkdirSync(path.join(root, 'content/subjects/history'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'content/source-pdfs/history'), { recursive: true });
+    const prior = `${JSON.stringify({
+      version: 1,
+      subject: { id: 'history', label: 'History', icon: 'geography', l: 0.6, c: 0.08, h: 40 },
+      difficulties: { easy: [], medium: [], hard: [] },
+    })}\n`;
+    writeFileSync(irPath, prior);
+    writeFileSync(path.join(root, 'content/source-pdfs/history/notes.txt'), 'A source note.\n');
+
+    const { generateOnboardingSubjectAction, setOnboardingAiModeAction } =
+      await import('@/actions/onboarding');
+    const mode = new FormData();
+    mode.set('aiMode', 'skip-stub');
+    expect((await setOnboardingAiModeAction(mode)).ok).toBe(true);
+    const generate = new FormData();
+    generate.set('subjectId', 'history');
+    const result = await generateOnboardingSubjectAction(generate);
+    expect(result).toEqual({
+      ok: false,
+      reason: 'needs_confirm',
+      irRel: 'content/subjects/history/bank.ir.json',
+    });
+    expect(fs.readFileSync(irPath, 'utf8')).toBe(prior);
+  });
+
+  it('keeps prior IR bytes when overwrite is skipped', async () => {
+    const root = tempRoot();
+    const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
+    setOnboardingContentRootForTests(root);
+    await signInHost();
+    const irPath = path.join(root, 'content/subjects/history/bank.ir.json');
+    fs.mkdirSync(path.join(root, 'content/subjects/history'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'content/source-pdfs/history'), { recursive: true });
+    const prior = `${JSON.stringify({
+      version: 1,
+      subject: { id: 'history', label: 'History', icon: 'geography', l: 0.6, c: 0.08, h: 40 },
+      difficulties: { easy: [], medium: [], hard: [] },
+    })}\n`;
+    writeFileSync(irPath, prior);
+    writeFileSync(path.join(root, 'content/source-pdfs/history/notes.txt'), 'A source note.\n');
+
+    const { generateOnboardingSubjectAction, setOnboardingAiModeAction } =
+      await import('@/actions/onboarding');
+    const mode = new FormData();
+    mode.set('aiMode', 'skip-stub');
+    expect((await setOnboardingAiModeAction(mode)).ok).toBe(true);
+    const generate = new FormData();
+    generate.set('subjectId', 'history');
+    generate.set('overwrite', 'skip');
+    expect(await generateOnboardingSubjectAction(generate)).toEqual({
+      ok: false,
+      reason: 'skipped',
+    });
+    expect(fs.readFileSync(irPath, 'utf8')).toBe(prior);
   });
 
   it('refuses generate for a kebab-case id that is not in the wizard catalog', async () => {
@@ -609,6 +674,7 @@ describe('onboarding actions', () => {
 
     const generate = new FormData();
     generate.set('subjectId', 'history');
+    generate.set('force', '1');
     const pendingGenerate = generateOnboardingSubjectAction(generate);
     await vi.waitFor(() => {
       expect(ingest.generateSubject).toHaveBeenCalled();
@@ -674,6 +740,7 @@ describe('onboarding actions', () => {
 
     const generate = new FormData();
     generate.set('subjectId', 'history');
+    generate.set('force', '1');
     const pendingGenerate = generateOnboardingSubjectAction(generate);
     await vi.waitFor(() => {
       expect(ingest.generateSubject).toHaveBeenCalled();
@@ -822,6 +889,7 @@ describe('onboarding actions', () => {
     const generate = new FormData();
     generate.set('subjectId', 'history');
     generate.set('cancelToken', token);
+    generate.set('force', '1');
     expect((await generateOnboardingSubjectAction(generate)).ok).toBe(true);
 
     const late = await POST(

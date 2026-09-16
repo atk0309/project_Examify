@@ -26,8 +26,12 @@ import {
   postOnboardingGenerateCancel,
   ONBOARDING_INGEST_CLI,
   SUBJECT_ICON_OPTIONS,
+  confirmOnboardingIrOverwrite,
+  generateIrWriteLabel,
   onboardingGenerateAndEmitCli,
   onboardingGenerateBatchIds,
+  onboardingGenerateOverwriteSubjects,
+  onboardingSubjectIrRel,
   providerForOnboardingAiMode,
   type OnboardingAiMode,
   type OnboardingDryRun,
@@ -134,6 +138,12 @@ function errorCopy(error: OnboardingActionError): string {
       return 'No source files for that subject (source-pdfs/<id>/, <id>.pdf, or files in the subject folder).';
     case 'cancelled':
       return 'Generate cancelled.';
+    case 'skipped':
+      return 'Generate skipped.';
+    case 'needs_confirm':
+      return error.irRel
+        ? generateIrWriteLabel(error.irRel, false, true)
+        : 'Replace the existing BankIR first.';
     case 'already_committed':
       return 'Generate already finished — review the new BankIR.';
     case 'rate_limited':
@@ -187,6 +197,9 @@ export function OnboardingWizard({
   const [generateSeed, setGenerateSeed] = useState(ONBOARDING_GENERATE_SEED_DEFAULT);
   const [generateBusy, setGenerateBusy] = useState(false);
   const [generateNote, setGenerateNote] = useState<string | null>(null);
+  const [generateNoteKind, setGenerateNoteKind] = useState<'cancelled' | 'skipped' | 'overwrite'>(
+    'cancelled',
+  );
   const [generateCancelAck, setGenerateCancelAck] = useState(false);
   const [irReady, setIrReady] = useState(false);
   const [generateRuns, setGenerateRuns] = useState<Record<string, OnboardingGenerateResult>>({});
@@ -226,7 +239,16 @@ export function OnboardingWizard({
       return true;
     }
     if (result.reason === 'cancelled') {
+      setGenerateNoteKind('cancelled');
       setGenerateNote('Generate cancelled');
+      return false;
+    }
+    if (result.reason === 'skipped') {
+      setGenerateNoteKind('skipped');
+      setGenerateNote('Generate skipped');
+      return false;
+    }
+    if (result.reason === 'needs_confirm') {
       return false;
     }
     setError(errorCopy(result));
@@ -428,6 +450,7 @@ export function OnboardingWizard({
                       generateCancelRef.current = true;
                       if (generateCancelTokenRef.current !== token) return;
                       setError(null);
+                      setGenerateNoteKind('cancelled');
                       setGenerateNote('Generate cancelled');
                       setGenerateBusy(false);
                       setGenerateCancelAck(true);
@@ -440,6 +463,29 @@ export function OnboardingWizard({
                 onGoValidate={() => go('validate')}
                 onGenerate={(subjectIds) =>
                   run(async () => {
+                    const colliding = onboardingGenerateOverwriteSubjects(
+                      snapshot.subjects,
+                      subjectIds,
+                    );
+                    if (colliding.length > 0) {
+                      setGenerateNoteKind('overwrite');
+                      setGenerateNote(
+                        colliding
+                          .map((subject) =>
+                            generateIrWriteLabel(onboardingSubjectIrRel(subject.id), false, true),
+                          )
+                          .join(' · '),
+                      );
+                      const decision = confirmOnboardingIrOverwrite(colliding, (message) =>
+                        window.confirm(message),
+                      );
+                      if (decision === 'skip') {
+                        setGenerateNoteKind('skipped');
+                        setGenerateNote('Generate skipped');
+                        return;
+                      }
+                    }
+
                     const token = crypto.randomUUID();
                     generateCancelTokenRef.current = token;
                     generateCancelRef.current = false;
@@ -448,6 +494,22 @@ export function OnboardingWizard({
                     setGenerateBusy(true);
                     let wroteAny = false;
                     let cancelled = false;
+                    const recordSuccess = (
+                      subjectId: string,
+                      result: {
+                        snapshot: OnboardingSnapshot;
+                        result: OnboardingGenerateResult;
+                      },
+                    ) => {
+                      setSnapshot(result.snapshot);
+                      setGenerateRuns((currentRuns) => ({
+                        ...currentRuns,
+                        [subjectId]: result.result,
+                      }));
+                      setDryRun(null);
+                      setValidated(false);
+                      wroteAny = wroteAny || result.result.wroteIr;
+                    };
                     try {
                       for (const subjectId of subjectIds) {
                         if (generateCancelRef.current) {
@@ -459,23 +521,50 @@ export function OnboardingWizard({
                         data.set('subjectId', subjectId);
                         data.set('seed', String(generateSeed));
                         data.set('cancelToken', token);
+                        const subject = snapshot.subjects.find((row) => row.id === subjectId);
+                        if (subject?.hasIr) data.set('force', '1');
                         const result = await generateOnboardingSubjectAction(data);
                         if (!result.ok) {
                           if (result.reason === 'cancelled' || generateCancelRef.current) {
                             cancelled = true;
                             break;
                           }
+                          if (result.reason === 'skipped') {
+                            setGenerateNoteKind('skipped');
+                            setGenerateNote('Generate skipped');
+                            continue;
+                          }
+                          if (result.reason === 'needs_confirm') {
+                            const irRel = result.irRel ?? onboardingSubjectIrRel(subjectId);
+                            setGenerateNoteKind('overwrite');
+                            setGenerateNote(generateIrWriteLabel(irRel, false, true));
+                            const label = subject?.label ?? subjectId;
+                            if (!window.confirm(`Replace existing BankIR for ${label}?`)) {
+                              setGenerateNoteKind('skipped');
+                              setGenerateNote('Generate skipped');
+                              continue;
+                            }
+                            data.set('force', '1');
+                            const retried = await generateOnboardingSubjectAction(data);
+                            if (!retried.ok) {
+                              if (retried.reason === 'cancelled' || generateCancelRef.current) {
+                                cancelled = true;
+                                break;
+                              }
+                              applyResult(retried);
+                              return;
+                            }
+                            recordSuccess(subjectId, retried);
+                            if (generateCancelRef.current) {
+                              cancelled = true;
+                              break;
+                            }
+                            continue;
+                          }
                           applyResult(result);
                           return;
                         }
-                        setSnapshot(result.snapshot);
-                        setGenerateRuns((currentRuns) => ({
-                          ...currentRuns,
-                          [subjectId]: result.result,
-                        }));
-                        setDryRun(null);
-                        setValidated(false);
-                        wroteAny = wroteAny || result.result.wroteIr;
+                        recordSuccess(subjectId, result);
                         if (generateCancelRef.current) {
                           cancelled = true;
                           break;
@@ -483,7 +572,10 @@ export function OnboardingWizard({
                       }
                       // Keep IR-ready for subjects that already finished (including generate-all cancel).
                       if (wroteAny) setIrReady(true);
-                      if (cancelled) setGenerateNote('Generate cancelled');
+                      if (cancelled) {
+                        setGenerateNoteKind('cancelled');
+                        setGenerateNote('Generate cancelled');
+                      }
                     } finally {
                       if (generateCancelTokenRef.current === token) {
                         generateCancelTokenRef.current = null;
@@ -581,7 +673,16 @@ export function OnboardingWizard({
             ) : null}
 
             {generateNote ? (
-              <p className="wizard-callout" data-testid="wizard-generate-cancelled">
+              <p
+                className="wizard-callout"
+                data-testid={
+                  generateNoteKind === 'skipped'
+                    ? 'wizard-generate-skipped'
+                    : generateNoteKind === 'overwrite'
+                      ? 'wizard-generate-overwrite'
+                      : 'wizard-generate-cancelled'
+                }
+              >
                 {generateNote}
               </p>
             ) : null}
@@ -1469,6 +1570,8 @@ function GeneratePanel({
   onCancel: () => void;
   onGoValidate: () => void;
 }) {
+  const batchIds = onboardingGenerateBatchIds(snapshot.subjects);
+  const batchOverwrites = onboardingGenerateOverwriteSubjects(snapshot.subjects, batchIds);
   return (
     <div className="wizard-generate-panel">
       <PowerUserCommands
@@ -1492,12 +1595,21 @@ function GeneratePanel({
         </label>
       </details>
       <div className="wizard-generate-actions">
+        {batchOverwrites.length > 0 ? (
+          <p className="login-fine" data-testid="wizard-generate-overwrite-batch">
+            {batchOverwrites
+              .map((subject) =>
+                generateIrWriteLabel(onboardingSubjectIrRel(subject.id), false, true),
+              )
+              .join(' · ')}
+          </p>
+        ) : null}
         <button
           type="button"
           className="btn btn-primary"
-          disabled={busy || onboardingGenerateBatchIds(snapshot.subjects).length < 1}
+          disabled={busy || batchIds.length < 1}
           data-testid="wizard-generate-all"
-          onClick={() => onGenerate(onboardingGenerateBatchIds(snapshot.subjects))}
+          onClick={() => onGenerate(batchIds)}
         >
           {generateBusy ? 'Generating…' : 'Generate all'}
         </button>
@@ -1539,6 +1651,11 @@ function GeneratePanel({
                     {active ? 'Generating…' : 'Generate BankIR'}
                   </button>
                 </div>
+                {subject.hasIr ? (
+                  <p className="login-fine" data-testid={`wizard-generate-overwrite-${subject.id}`}>
+                    {generateIrWriteLabel(onboardingSubjectIrRel(subject.id), false, true)}
+                  </p>
+                ) : null}
                 {subject.generateSources.length === 0 ? (
                   <p className="login-fine">No sources found.</p>
                 ) : (
@@ -1595,7 +1712,7 @@ function GenerateRunSummary({ run }: { run: OnboardingGenerateResult }) {
       <p className="login-fine">
         {run.subjectId} · {run.provider}/{run.model} · seed {run.seed} · {run.sourceCount} source
         {run.sourceCount === 1 ? '' : 's'} · {run.cacheHit ? 'cache hit' : 'live call'}
-        {run.wroteIr ? ` · wrote ${run.irRel}` : ''}
+        {run.wroteIr ? ` · ${generateIrWriteLabel(run.irRel, true, run.overwrite)}` : ''}
       </p>
       {hashes.length > 0 ? (
         <details className="wizard-details">

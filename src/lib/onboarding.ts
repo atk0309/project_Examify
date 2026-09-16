@@ -55,9 +55,14 @@ export {
   ONBOARDING_GENERATE_SEED_DEFAULT,
   ONBOARDING_INGEST_CLI,
   SUBJECT_ICON_OPTIONS,
+  confirmOnboardingIrOverwrite,
+  generateIrWriteLabel,
+  generateIrWriteVerb,
   onboardingGenerateAndEmitCli,
   onboardingGenerateBatchIds,
   onboardingGenerateCli,
+  onboardingGenerateOverwriteSubjects,
+  onboardingSubjectIrRel,
   providerForOnboardingAiMode,
 } from '@/lib/onboarding-types';
 export { getOnboardingContentRoot, setOnboardingContentRootForTests } from '@/lib/content-root';

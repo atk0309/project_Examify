@@ -12,8 +12,13 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   ONBOARDING_INGEST_CLI,
+  confirmOnboardingIrOverwrite,
+  generateIrWriteLabel,
+  generateIrWriteVerb,
   onboardingGenerateAndEmitCli,
   onboardingGenerateBatchIds,
+  onboardingGenerateOverwriteSubjects,
+  onboardingSubjectIrRel,
   providerForOnboardingAiMode,
 } from '@/lib/onboarding-types';
 
@@ -106,6 +111,49 @@ describe('onboarding generate mapping', () => {
       ]),
     ).toEqual(['history']);
   });
+
+  it('names overwrite the same way CLI dry-run would', () => {
+    expect(onboardingSubjectIrRel('history')).toBe('content/subjects/history/bank.ir.json');
+    expect(generateIrWriteVerb(false, false)).toBe('would write');
+    expect(generateIrWriteVerb(true, false)).toBe('wrote');
+    expect(generateIrWriteVerb(false, true)).toBe('would overwrite');
+    expect(generateIrWriteVerb(true, true)).toBe('overwrote');
+    expect(generateIrWriteLabel('content/subjects/history/bank.ir.json', false, true)).toBe(
+      'would overwrite content/subjects/history/bank.ir.json',
+    );
+  });
+
+  it('confirms one label or a batch count, and decline is skip', () => {
+    expect(
+      onboardingGenerateOverwriteSubjects(
+        [
+          { id: 'history', hasIr: true },
+          { id: 'civics', hasIr: false },
+          { id: 'biology', hasIr: true },
+        ],
+        ['history', 'civics', 'biology'],
+      ).map((row) => row.id),
+    ).toEqual(['history', 'biology']);
+
+    const asked: string[] = [];
+    expect(
+      confirmOnboardingIrOverwrite([{ label: 'History' }], (message) => {
+        asked.push(message);
+        return true;
+      }),
+    ).toBe('force');
+    expect(asked).toEqual(['Replace existing BankIR for History?']);
+
+    asked.length = 0;
+    expect(
+      confirmOnboardingIrOverwrite([{ label: 'History' }, { label: 'Biology' }], (message) => {
+        asked.push(message);
+        return false;
+      }),
+    ).toBe('skip');
+    expect(asked).toEqual(['Replace 2 existing BankIR files?']);
+    expect(confirmOnboardingIrOverwrite([], () => false)).toBe('force');
+  });
 });
 
 describe('onboarding generate graph', () => {
@@ -121,6 +169,9 @@ describe('onboarding generate graph', () => {
     expect(generate).toMatch(/from 'examify-ingest\/generate'/);
     expect(generate).toMatch(/generateSubject/);
     expect(generate).toMatch(/dryRunIr: true/);
+    expect(generate).toMatch(/needs_confirm/);
+    expect(generate).toMatch(/overwrite === 'skip'/);
+    expect(generate).toMatch(/generateIrWriteLabel\(irRel, false, true\)/);
     expect(generate).toMatch(/signal: controller\.signal/);
     expect(generate).toMatch(/abortControllers\.get\(token\)\?\.abort\(\)/);
     expect(generate).toMatch(/GenerateAbortedError/);
@@ -136,8 +187,17 @@ describe('onboarding generate graph', () => {
     expect(wizard).not.toMatch(/examify-ingest\/generate/);
     expect(wizard).not.toMatch(/generateSubject/);
     expect(wizard).toMatch(/case 'invalid':\n      return 'That input is not valid\.'/);
+    expect(wizard).toMatch(/case 'skipped':\n      return 'Generate skipped\.'/);
+    expect(wizard).toMatch(/case 'needs_confirm':/);
     expect(wizard).toMatch(/case 'rate_limited':/);
     expect(wizard).toMatch(/Clear the OpenAI API key from this host/);
+    expect(wizard).toMatch(/Replace existing BankIR for \$\{/);
+    expect(wizard).toMatch(/wizard-generate-skipped/);
+    expect(wizard).toMatch(/data-testid="wizard-generate-overwrite-batch"/);
+    expect(wizard).toMatch(/data\.set\('force', '1'\)/);
+    const types = readFileSync(path.join(process.cwd(), 'src/lib/onboarding-types.ts'), 'utf8');
+    expect(types).toMatch(/Replace existing BankIR for \$\{colliding\[0\]!\.label\}\?/);
+    expect(types).toMatch(/Replace \$\{colliding\.length\} existing BankIR files\?/);
   });
 
   it('locks Welcome skip, Back, and rail while generateBusy so Cancel stays reachable', () => {
@@ -155,10 +215,11 @@ describe('onboarding generate graph', () => {
     expect(wizard).toMatch(/generateCancelRef\.current = true/);
     expect(wizard).toMatch(/generateCancelTokenRef\.current = null/);
     expect(wizard).toMatch(/generateCancelRef\.current = false/);
-    expect(wizard).toMatch(/data-testid="wizard-generate-cancelled"/);
-    expect(wizard).toMatch(/className="wizard-callout" data-testid="wizard-generate-cancelled"/);
+    expect(wizard).toMatch(/wizard-generate-cancelled/);
+    expect(wizard).toMatch(/wizard-generate-skipped/);
+    expect(wizard).toMatch(/wizard-generate-overwrite/);
     expect(wizard).toMatch(
-      /if \(result\.reason === 'cancelled'\) \{\s*setGenerateNote\('Generate cancelled'\)/,
+      /if \(result\.reason === 'cancelled'\) \{\s*setGenerateNoteKind\('cancelled'\);\s*setGenerateNote\('Generate cancelled'\)/,
     );
     expect(wizard).toMatch(
       /if \(result\.reason === 'cancelled' \|\| generateCancelRef\.current\) \{\s*cancelled = true;/,
@@ -167,7 +228,7 @@ describe('onboarding generate graph', () => {
       /const recorded = await postOnboardingGenerateCancel\(token\);\s*if \(!recorded\) \{\s*setError\('Could not cancel generate\.'\)/,
     );
     expect(wizard).toMatch(
-      /generateCancelRef\.current = true;\s*if \(generateCancelTokenRef\.current !== token\) return;\s*setError\(null\);\s*setGenerateNote\('Generate cancelled'\);\s*setGenerateBusy\(false\);\s*setGenerateCancelAck\(true\)/,
+      /generateCancelRef\.current = true;\s*if \(generateCancelTokenRef\.current !== token\) return;\s*setError\(null\);\s*setGenerateNoteKind\('cancelled'\);\s*setGenerateNote\('Generate cancelled'\);\s*setGenerateBusy\(false\);\s*setGenerateCancelAck\(true\)/,
     );
     expect(wizard).toMatch(/postOnboardingGenerateCancel\(token\)/);
     expect(wizard).not.toMatch(/cancelOnboardingGenerateAction/);
@@ -194,7 +255,9 @@ describe('onboarding generate graph', () => {
       /\/\/ Keep IR-ready for subjects that already finished \(including generate-all cancel\)\./,
     );
     expect(wizard).toMatch(/if \(wroteAny\) setIrReady\(true\)/);
-    expect(wizard).toMatch(/if \(cancelled\) setGenerateNote\('Generate cancelled'\)/);
+    expect(wizard).toMatch(
+      /if \(cancelled\) \{\s*setGenerateNoteKind\('cancelled'\);\s*setGenerateNote\('Generate cancelled'\)/,
+    );
   });
 
   it('keeps dry-run step id and testids while the rail label is Review', () => {
@@ -259,12 +322,14 @@ describe('generateOnboardingSubject', () => {
       provider: 'test',
       seed: 0,
       root,
+      force: true,
     });
     expect(generateSpy).toHaveBeenCalledWith(expect.objectContaining({ dryRunIr: true }));
     expect(generateSpy.mock.calls[0]?.[0]).not.toHaveProperty('signal');
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected generate');
     expect(result.result.wroteIr).toBe(true);
+    expect(result.result.overwrite).toBe(true);
     expect(result.result.provider).toBe('test');
     expect(result.result.seed).toBe(0);
     expect(result.result.sourceCount).toBe(3);
@@ -288,6 +353,102 @@ describe('generateOnboardingSubject', () => {
     expect(readFileSync(path.join(root, 'content/generated/keys/biology.json'), 'utf8')).toBe(
       generatedBefore.keys,
     );
+  });
+
+  it('does not write over existing IR without confirm', async () => {
+    const { generateOnboardingSubject } = await import('@/lib/onboarding-generate');
+    const ingest = await import('examify-ingest/generate');
+    const root = tempRoot();
+    seedSubject(root);
+    const irPath = path.join(root, 'content/subjects/history/bank.ir.json');
+    const prior = readFileSync(irPath, 'utf8');
+    const writeSpy = vi.spyOn(ingest, 'writeFileAtomic');
+
+    const result = await generateOnboardingSubject({
+      subjectId: 'history',
+      provider: 'test',
+      seed: 0,
+      root,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected needs_confirm');
+    expect(result.reason).toBe('needs_confirm');
+    expect(result.reason).not.toBe('invalid');
+    expect(result.message).toBe('would overwrite content/subjects/history/bank.ir.json');
+    expect(result.irRel).toBe('content/subjects/history/bank.ir.json');
+    expect(writeSpy).not.toHaveBeenCalled();
+    expect(readFileSync(irPath, 'utf8')).toBe(prior);
+  });
+
+  it('writes over existing IR when confirm/force is set', async () => {
+    const { generateOnboardingSubject } = await import('@/lib/onboarding-generate');
+    const root = tempRoot();
+    seedSubject(root);
+    const irPath = path.join(root, 'content/subjects/history/bank.ir.json');
+    const prior = readFileSync(irPath, 'utf8');
+
+    const result = await generateOnboardingSubject({
+      subjectId: 'history',
+      provider: 'test',
+      seed: 0,
+      root,
+      force: true,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected generate');
+    expect(result.result.wroteIr).toBe(true);
+    expect(result.result.overwrite).toBe(true);
+    expect(result.result.irRel).toBe('content/subjects/history/bank.ir.json');
+    const after = readFileSync(irPath, 'utf8');
+    expect(after).not.toBe(prior);
+    expect(JSON.parse(after).difficulties.easy[0]?.id).toBe('history-easy-1');
+  });
+
+  it('keeps prior IR bytes when overwrite is declined', async () => {
+    const { generateOnboardingSubject } = await import('@/lib/onboarding-generate');
+    const ingest = await import('examify-ingest/generate');
+    const root = tempRoot();
+    seedSubject(root);
+    const irPath = path.join(root, 'content/subjects/history/bank.ir.json');
+    const prior = readFileSync(irPath, 'utf8');
+    const writeSpy = vi.spyOn(ingest, 'writeFileAtomic');
+    const generateSpy = vi.spyOn(ingest, 'generateSubject');
+
+    const result = await generateOnboardingSubject({
+      subjectId: 'history',
+      provider: 'test',
+      seed: 0,
+      root,
+      overwrite: 'skip',
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected skipped');
+    expect(result.reason).toBe('skipped');
+    expect(result.reason).not.toBe('invalid');
+    expect(result.message).toBe('Generate skipped.');
+    expect(generateSpy).not.toHaveBeenCalled();
+    expect(writeSpy).not.toHaveBeenCalled();
+    expect(readFileSync(irPath, 'utf8')).toBe(prior);
+  });
+
+  it('writes BankIR without force when no file exists yet', async () => {
+    const { generateOnboardingSubject } = await import('@/lib/onboarding-generate');
+    const root = tempRoot();
+    seedSubject(root);
+    const irPath = path.join(root, 'content/subjects/history/bank.ir.json');
+    rmSync(irPath);
+
+    const result = await generateOnboardingSubject({
+      subjectId: 'history',
+      provider: 'test',
+      seed: 0,
+      root,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected generate');
+    expect(result.result.wroteIr).toBe(true);
+    expect(result.result.overwrite).toBe(false);
+    expect(existsSync(irPath)).toBe(true);
   });
 
   it('fails closed on empty sources without writing IR', async () => {
@@ -496,6 +657,7 @@ describe('generateOnboardingSubject', () => {
       provider: 'test',
       seed: 0,
       root,
+      force: true,
     });
     await vi.waitFor(() => {
       expect(firstInFlight).toBe(true);
@@ -505,6 +667,7 @@ describe('generateOnboardingSubject', () => {
       provider: 'test',
       seed: 1,
       root,
+      force: true,
     });
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(secondStartedWhileFirstHeld).toBe(false);
@@ -683,6 +846,7 @@ describe('generateOnboardingSubject', () => {
       seed: 0,
       root,
       cancelToken: token,
+      force: true,
     });
     expect(result.ok).toBe(true);
     expect(requestOnboardingGenerateCancel(token)).toBe(false);
@@ -708,6 +872,7 @@ describe('generateOnboardingSubject', () => {
       seed: 0,
       root,
       cancelToken: 'tok-000000',
+      force: true,
     });
     expect(evicted.ok).toBe(true);
     if (!evicted.ok) throw new Error('expected evicted token to no longer cancel');
