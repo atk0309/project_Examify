@@ -6,7 +6,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SetupForm } from '@/components/exam/SetupForm';
 import { SETUP_FIELD_ERROR } from '@/lib/setup-form';
 
-const bootstrapHouseholdAction = vi.fn(async () => ({ status: 'idle' as const }));
+const bootstrapHouseholdAction = vi.fn(async (_prev: unknown, _formData: FormData) => ({
+  status: 'idle' as const,
+}));
 
 vi.mock('@/actions/bootstrapHousehold', () => ({
   bootstrapHouseholdAction: (prev: unknown, formData: FormData) =>
@@ -50,10 +52,11 @@ describe('SetupForm autofill desync', () => {
     fireEvent.submit(screen.getByTestId('setup-form'));
 
     expect(bootstrapHouseholdAction).toHaveBeenCalledOnce();
-    const formData = bootstrapHouseholdAction.mock.calls[0]?.[1] as FormData;
-    expect(formData.get('householdName')).toBe('Autofill family');
-    expect(formData.get('setupSecret')).toBe('instance-secret');
-    expect(formData.get('email')).toBe('autofill@example.com');
+    const formData = bootstrapHouseholdAction.mock.calls[0]?.[1];
+    expect(formData).toBeInstanceOf(FormData);
+    expect(formData?.get('householdName')).toBe('Autofill family');
+    expect(formData?.get('setupSecret')).toBe('instance-secret');
+    expect(formData?.get('email')).toBe('autofill@example.com');
     expect(screen.queryByTestId('setup-email-error')).toBeNull();
   });
 
