@@ -20,7 +20,7 @@ import 'server-only';
    Only the bounded `Verdict` fields ever leave this module; the rubric and the
    raw model text are never returned to callers (and so never reach the client).
    ========================================================================== */
-import { envStoreSecretConfigured } from '@/lib/env-store';
+import { ANTHROPIC_ENV_KEY, envStoreSecretConfigured } from '@/lib/env-store';
 import type { Verdict } from '@/lib/db/schema';
 
 export type GradeResult = { status: 'graded'; verdict: Verdict } | { status: 'needs_review' };
@@ -107,12 +107,13 @@ function userPrompt(args: GradeArgs): string {
 }
 
 /**
- * Wizard / install writes update `process.env` and `.env`. Never read the
- * boot-frozen env.ts snapshot — after clear that would stub again. Same
- * usable-key rule as the wizard Configured badge (`anthropicConfigured`).
+ * Wizard / install writes update `process.env` and `.env`. Computed
+ * `process.env[ANTHROPIC_ENV_KEY]` so Next cannot inline a boot snapshot.
+ * Never read env.ts — after clear that would stub on leftover `test`.
+ * Same usable-key rule as the wizard Configured badge (`anthropicConfigured`).
  */
 function liveAnthropicApiKey(): string | undefined {
-  const live = process.env.ANTHROPIC_API_KEY;
+  const live = process.env[ANTHROPIC_ENV_KEY];
   if (typeof live !== 'string') return undefined;
   return live.trim();
 }

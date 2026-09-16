@@ -187,10 +187,17 @@ describe('onboarding generate graph', () => {
 
     // Grader + Configured badge stay twins: live process.env / env-store, never
     // the boot-frozen env.ts snapshot (clear must fail closed, not restub).
+    // OpenAI is not in the Next grader; CLI generate already re-merges .env.
     expect(grading).not.toMatch(/from ['"]@\/lib\/env['"]/);
     expect(grading).not.toMatch(/(?<!process\.)env\.ANTHROPIC_API_KEY/);
-    expect(grading).toMatch(/process\.env\.ANTHROPIC_API_KEY/);
+    expect(grading).toMatch(/process\.env\[ANTHROPIC_ENV_KEY\]/);
     expect(grading).toMatch(/envStoreSecretConfigured\('ANTHROPIC_API_KEY'\)/);
+    expect(grading).not.toMatch(/OPENAI_API_KEY/);
+    const generateCli = readFileSync(
+      path.join(process.cwd(), 'tools/examify-ingest/src/generate-cli.ts'),
+      'utf8',
+    );
+    expect(generateCli).toMatch(/mergeRepoEnvFiles\(repoRoot, io\.env \?\? process\.env\)/);
   });
 
   it('locks Welcome skip, Back, and rail while generateBusy so Cancel stays reachable', () => {
