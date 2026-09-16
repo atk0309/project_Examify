@@ -72,7 +72,7 @@ export type MigrateConfig = {
  */
 export function resolveMigrateConfig(
   cwd = process.cwd(),
-  env: NodeJS.ProcessEnv = process.env,
+  env: Record<string, string | undefined> = process.env,
 ): MigrateConfig {
   const repoRoot = findRepoRoot(cwd);
   const fromFiles: Record<string, string> = {};
