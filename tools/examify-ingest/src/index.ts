@@ -53,7 +53,10 @@ export { parseArgs, runCli, USAGE, type CliIo, type ParsedCli } from './cli';
 export {
   assertCanWriteBankIr,
   BankIrOverwriteError,
+  isExistingBankIr,
+  isPlaceholderBankIr,
   writeBankIrAtomic,
   writeFileAtomic,
   type WriteBankIrOptions,
 } from './write-atomic';
+export { SUBJECT_META_FILE, BANK_IR_FILE } from './sources';

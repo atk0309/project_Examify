@@ -33,6 +33,10 @@ import {
   onboardingGenerateBatchIds,
   onboardingGenerateOverwriteSubjects,
   onboardingIrOverwriteConfirmMessage,
+  onboardingPruneConfirmMessage,
+  onboardingPruneEntries,
+  onboardingSourceCountLabel,
+  onboardingSourceFileNames,
   onboardingSubjectIrRel,
   providerForOnboardingAiMode,
   type OnboardingAiMode,
@@ -60,8 +64,9 @@ type StepId = (typeof STEPS)[number]['id'];
 const STAGE_HELP: Record<StepId, string> = {
   welcome: '',
   subjects: 'Add the subjects you want in the practice bank. One is enough to continue.',
-  files: 'Keep study PDFs on this host. They never enter the question bank.',
-  ai: 'Choose how generate talks to a model, then optionally draft BankIR from local files.',
+  files:
+    'Keep study files on this host — PDFs you upload, plus notes.txt and other CLI sources generate already reads. They never enter the question bank.',
+  ai: 'Choose how generate talks to a model, then optionally draft BankIR from local sources (PDFs, notes.txt, and other files generate already reads).',
   validate: 'Check BankIR before anything is written to the generated bank.',
   'dry-run': 'Preview the emit plan, including planned deletes. Apply is the only write.',
   apply: 'Confirm the reviewed plan. An empty catalog is refused.',
@@ -126,6 +131,8 @@ function errorCopy(error: OnboardingActionError): string {
       return 'Run a dry-run preview before applying.';
     case 'stale_preview':
       return 'Subjects or BankIR changed since the last dry-run. Preview again.';
+    case 'prune_confirm_required':
+      return error.message ?? 'Confirm the leftover files that Apply will remove.';
     case 'emit_required':
       return 'Confirm apply before opening the dashboard, or skip to keep the sample bank.';
     case 'already_complete':
@@ -652,10 +659,18 @@ export function OnboardingWizard({
                 pending={holdWizard}
                 applyState={applyState}
                 hasDryRun={Boolean(snapshot.hasDryRun && dryRun)}
+                deletes={dryRun ? onboardingPruneEntries(dryRun.plan) : []}
                 onApply={() =>
                   run(async () => {
+                    const deletes = dryRun ? onboardingPruneEntries(dryRun.plan) : [];
+                    const pruneMessage = onboardingPruneConfirmMessage(deletes);
+                    if (pruneMessage && !window.confirm(pruneMessage)) {
+                      return;
+                    }
                     setApplyState({ status: 'applying' });
-                    const result = await applyOnboardingEmitAction();
+                    const data = new FormData();
+                    if (deletes.length > 0) data.set('confirmPrune', '1');
+                    const result = await applyOnboardingEmitAction(data);
                     if (result.ok) {
                       setSnapshot(result.snapshot);
                       setApplyState({
@@ -676,6 +691,7 @@ export function OnboardingWizard({
 
             {step === 'ready' ? (
               <ReadyStep
+                snapshot={snapshot}
                 applyState={applyState}
                 canInvite={canInvite}
                 pendingInvites={pendingInvites}
@@ -846,7 +862,7 @@ function WelcomeStep() {
       <p className="eyebrow">First-run</p>
       <h1 className="display-title">Set up your family’s content</h1>
       <p className="wizard-help wizard-help-lead">
-        Add subjects, keep study PDFs on this host, then generate and review BankIR before anything
+        Add subjects, keep study files on this host, then generate and review BankIR before anything
         is applied. The sample bank stays usable if you skip.
       </p>
       <ul className="wizard-benefits">
@@ -864,8 +880,11 @@ function WelcomeStep() {
             {MailIconDoc}
           </span>
           <span>
-            <strong>Local study PDFs</strong>
-            <span>Uploads stay on this host. They never ship in the public bank.</span>
+            <strong>Local study files</strong>
+            <span>
+              PDFs you upload, plus notes.txt and other CLI sources generate already reads. They
+              stay on this host — never in the public bank.
+            </span>
           </span>
         </li>
         <li>
@@ -1002,7 +1021,7 @@ function SubjectsStep({
                       onClick={() => {
                         if (
                           !window.confirm(
-                            `Delete subject “${subject.label}”? This removes its BankIR and study PDFs. This cannot be undone.`,
+                            `Delete subject “${subject.label}”? This removes its BankIR and study files. This cannot be undone.`,
                           )
                         ) {
                           return;
@@ -1153,7 +1172,8 @@ function FilesStep({
   if (snapshot.subjects.length === 0 || !focused) {
     return (
       <p className="wizard-empty" data-testid="wizard-files-empty">
-        Add a subject first to attach study PDFs.
+        Add a subject first to attach study files. Generate also reads notes.txt and other CLI
+        sources already in the subject folder.
       </p>
     );
   }
@@ -1161,7 +1181,8 @@ function FilesStep({
   return (
     <div className="wizard-panel" data-testid="wizard-files">
       <p className="wizard-path-hint">
-        PDFs stay under source-pdfs on this host — never in the bank.
+        Upload PDFs under source-pdfs. Generate also reads notes.txt and other local sources in the
+        subject folder — never the bank.
       </p>
       <div className="wizard-files-layout">
         {snapshot.subjects.length > 1 ? (
@@ -1177,9 +1198,7 @@ function FilesStep({
                   onClick={() => setFocusId(subject.id)}
                 >
                   {subject.label}
-                  <span className="invite-meta">
-                    {subject.sourceFiles.length} PDF{subject.sourceFiles.length === 1 ? '' : 's'}
-                  </span>
+                  <span className="invite-meta">{onboardingSourceCountLabel(subject)}</span>
                 </button>
               );
             })}
@@ -1235,34 +1254,47 @@ function SubjectDropzone({
   return (
     <section className="wizard-subject-files" data-testid={`wizard-files-${subject.id}`}>
       <h2 className="wizard-subhead">{subject.label}</h2>
-      {subject.sourceFiles.length > 0 ? (
-        <ul className="wizard-file-chips">
-          {subject.sourceFiles.map((name) => (
-            <li key={name} className="wizard-file-chip">
-              <span>{name}</span>
-              <button
-                type="button"
-                className="btn btn-ghost invite-revoke"
-                disabled={pending}
-                data-testid={`wizard-detach-${subject.id}-${name}`}
-                onClick={() => {
-                  if (
-                    !window.confirm(
-                      `Remove “${name}” from ${subject.label}? This cannot be undone.`,
-                    )
-                  ) {
-                    return;
-                  }
-                  const data = new FormData();
-                  data.set('subjectId', subject.id);
-                  data.set('filename', name);
-                  onDetach(data);
-                }}
-              >
-                Remove
-              </button>
-            </li>
-          ))}
+      {subject.hasIr && subject.generateSources.length === 0 && subject.sourceFiles.length === 0 ? (
+        <p className="login-fine" data-testid={`wizard-files-authored-${subject.id}`}>
+          Hand-authored BankIR is already here. Generate is optional — add a PDF or a notes.txt if
+          you want to draft from sources.
+        </p>
+      ) : null}
+      {onboardingSourceFileNames(subject).length > 0 ? (
+        <ul className="wizard-file-chips" data-testid={`wizard-file-sources-${subject.id}`}>
+          {onboardingSourceFileNames(subject).map((name) => {
+            const uploaded = subject.sourceFiles.includes(name);
+            return (
+              <li key={name} className="wizard-file-chip">
+                <span>{name}</span>
+                {uploaded ? (
+                  <button
+                    type="button"
+                    className="btn btn-ghost invite-revoke"
+                    disabled={pending}
+                    data-testid={`wizard-detach-${subject.id}-${name}`}
+                    onClick={() => {
+                      if (
+                        !window.confirm(
+                          `Remove “${name}” from ${subject.label}? This cannot be undone.`,
+                        )
+                      ) {
+                        return;
+                      }
+                      const data = new FormData();
+                      data.set('subjectId', subject.id);
+                      data.set('filename', name);
+                      onDetach(data);
+                    }}
+                  >
+                    Remove
+                  </button>
+                ) : (
+                  <span className="invite-meta">local source</span>
+                )}
+              </li>
+            );
+          })}
         </ul>
       ) : null}
       <label
@@ -1312,6 +1344,7 @@ function EnvKeyPanel({
   label,
   hostName,
   configured,
+  present,
   hostManaged,
   pending,
   onSave,
@@ -1321,6 +1354,7 @@ function EnvKeyPanel({
   label: string;
   hostName: string;
   configured: boolean;
+  present: boolean;
   hostManaged: boolean;
   pending: boolean;
   onSave: (key: string) => Promise<boolean>;
@@ -1330,17 +1364,22 @@ function EnvKeyPanel({
   const [value, setValue] = useState('');
   const [saving, setSaving] = useState(false);
   const busy = pending || saving;
-  const showField = !hostManaged && (!configured || rotating);
+  const sentinel = present && !configured;
+  const locked = hostManaged && configured;
+  const canMutate = !hostManaged || sentinel;
+  const showField = canMutate && (!configured || rotating);
   const inputId = `${testId}-input`;
 
   return (
     <div className="wizard-secret" data-testid={testId}>
       <p className="login-fine">
-        {hostManaged
+        {locked
           ? `${hostName} is set by the host environment (Docker, systemd, or a parent process). Rotate or clear it there — a .env write will not survive restart.`
-          : 'Saved on this host in the same .env store as install.sh. The value is never shown again.'}
+          : sentinel
+            ? 'A test sentinel is present (not a usable key). Clear it, or save a real key. The value is never shown.'
+            : 'Saved on this host in the same .env store as install.sh. The value is never shown again.'}
       </p>
-      {hostManaged ? null : showField ? (
+      {locked ? null : showField ? (
         <form
           className="wizard-secret-form"
           onSubmit={(event) => {
@@ -1393,6 +1432,37 @@ function EnvKeyPanel({
                 }}
               >
                 Cancel
+              </button>
+            ) : null}
+            {sentinel ? (
+              <button
+                className="btn btn-ghost"
+                type="button"
+                disabled={busy}
+                data-testid={`${testId}-rotate`}
+                onClick={() => setRotating(true)}
+              >
+                Rotate
+              </button>
+            ) : null}
+            {sentinel ? (
+              <button
+                className="btn btn-ghost"
+                type="button"
+                disabled={busy}
+                data-testid={`${testId}-clear`}
+                onClick={() => {
+                  if (
+                    !window.confirm(
+                      `Clear the ${label} from this host’s .env store? Generate and grading that need this key fail closed until you set a new one. A restart will not brick the app.`,
+                    )
+                  ) {
+                    return;
+                  }
+                  onClear();
+                }}
+              >
+                Clear
               </button>
             ) : null}
           </div>
@@ -1505,6 +1575,7 @@ function AiStep({
           label="Anthropic API key"
           hostName="Anthropic"
           configured={snapshot.anthropicConfigured}
+          present={snapshot.anthropicPresent}
           hostManaged={snapshot.anthropicHostManaged}
           pending={busy}
           onSave={async (key) => {
@@ -1527,6 +1598,7 @@ function AiStep({
           label="OpenAI API key"
           hostName="OpenAI"
           configured={snapshot.openaiConfigured}
+          present={snapshot.openaiPresent}
           hostManaged={snapshot.openaiHostManaged}
           pending={busy}
           onSave={async (key) => {
@@ -1547,7 +1619,7 @@ function AiStep({
         <div className="wizard-generate" data-testid="wizard-generate">
           {hasExistingIr ? (
             <details className="wizard-details">
-              <summary>Generate from PDFs</summary>
+              <summary>Generate from local sources</summary>
               <GeneratePanel
                 snapshot={snapshot}
                 provider={provider}
@@ -1680,7 +1752,7 @@ function GeneratePanel({
 
       {snapshot.subjects.length === 0 ? (
         <p className="wizard-empty" data-testid="wizard-generate-empty">
-          Add a subject first. Generate reads local sources only.
+          Add a subject first. Generate reads PDFs, notes.txt, and other local sources.
         </p>
       ) : (
         <ul className="wizard-list">
@@ -1710,7 +1782,14 @@ function GeneratePanel({
                   </p>
                 ) : null}
                 {subject.generateSources.length === 0 ? (
-                  <p className="login-fine">No sources found.</p>
+                  <p
+                    className="login-fine"
+                    data-testid={`wizard-generate-no-sources-${subject.id}`}
+                  >
+                    {subject.hasIr
+                      ? 'No generate sources yet (PDFs, notes.txt, or other files). Hand-authored BankIR can skip generate.'
+                      : 'No generate sources yet. Add a PDF or a notes.txt (or other CLI source) for this subject.'}
+                  </p>
                 ) : (
                   <details className="wizard-details">
                     <summary>
@@ -1932,6 +2011,7 @@ function ApplyStep({
   pending,
   applyState,
   hasDryRun,
+  deletes,
   onApply,
 }: {
   pending: boolean;
@@ -1941,10 +2021,17 @@ function ApplyStep({
     | { status: 'success'; written: number; questionCount: number; subjectCount: number }
     | { status: 'error'; message: string };
   hasDryRun: boolean;
+  deletes: { path: string; action: 'delete' }[];
   onApply: () => void;
 }) {
   return (
     <div className="wizard-panel" data-testid="wizard-apply">
+      {deletes.length > 0 && applyState.status === 'idle' ? (
+        <p className="wizard-callout" data-testid="wizard-apply-prune">
+          Apply will remove leftover generated files:{' '}
+          {deletes.map((entry) => entry.path).join(', ')}. Cancel the confirm to keep them.
+        </p>
+      ) : null}
       {applyState.status === 'idle' ? (
         <button
           type="button"
@@ -1978,12 +2065,14 @@ function ApplyStep({
 }
 
 function ReadyStep({
+  snapshot,
   applyState,
   canInvite,
   pendingInvites,
   members,
   authMode,
 }: {
+  snapshot: OnboardingSnapshot;
   applyState:
     | { status: 'idle' }
     | { status: 'applying' }
@@ -1999,6 +2088,16 @@ function ReadyStep({
       <div className="wizard-ready-mark" aria-hidden>
         {UIcon.check}
       </div>
+      {snapshot.liveSubjects.length > 0 ? (
+        <ul className="wizard-issues" data-testid="wizard-ready-subjects">
+          {snapshot.liveSubjects.map((subject) => (
+            <li key={subject.id} data-testid={`wizard-ready-subject-${subject.id}`}>
+              {subject.label} ({subject.id}) · {subject.questionCount} question
+              {subject.questionCount === 1 ? '' : 's'}
+            </li>
+          ))}
+        </ul>
+      ) : null}
       {applyState.status === 'success' ? (
         <p className="login-fine" data-testid="wizard-ready-counts">
           {applyState.questionCount} questions across {applyState.subjectCount} generated subject

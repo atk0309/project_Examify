@@ -25,7 +25,7 @@ import {
   type ProviderDeps,
   type ProviderEnv,
 } from './providers';
-import { assertCanWriteBankIr, writeBankIrAtomic } from './write-atomic';
+import { assertCanWriteBankIr, isExistingBankIr, writeBankIrAtomic } from './write-atomic';
 import {
   GENERATE_TEMPERATURE,
   bankIrSchema,
@@ -261,7 +261,7 @@ export async function generateSubject(request: GenerateRequest): Promise<Generat
   const persist = request.dryRunIr !== true;
   const irPath = path.join(request.subjectDir, BANK_IR_FILE);
   const displayPath = pathFromRoot(request.repoRoot, irPath);
-  const irExisted = existsSync(irPath);
+  const irExisted = isExistingBankIr(irPath);
   if (persist) {
     assertCanWriteBankIr(irPath, { force: request.force === true, displayPath });
   }

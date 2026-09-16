@@ -24,6 +24,8 @@ export { sortRecord } from './hash';
 export {
   assertCanWriteBankIr,
   BankIrOverwriteError,
+  isExistingBankIr,
+  isPlaceholderBankIr,
   writeBankIrAtomic,
   writeFileAtomic,
   type WriteBankIrOptions,

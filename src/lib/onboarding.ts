@@ -18,12 +18,14 @@ import {
   collectQuestionIds,
   formatFileDiff,
   isAuthoritativeCatalogInput,
+  isExistingBankIr,
   loadIrFiles,
   planEmit,
   publicQuestionIds,
   resolveIrFiles,
   resolveSubjectSources,
   SUBJECT_ID_RE,
+  SUBJECT_META_FILE,
   validateIrCollection,
   type PlannedFile,
   type ValidatedBank,
@@ -32,8 +34,13 @@ import { getOnboardingContentRoot } from '@/lib/content-root';
 import { db, schema } from '@/lib/db';
 import type { HouseholdRole } from '@/lib/db/schema';
 import { SAMPLE_QUESTIONS, SAMPLE_SUBJECTS } from '@/lib/exam/data';
+import { loadLivePublicBank } from '@/lib/exam/live-bank.server';
 import { env } from '@/lib/env';
-import { envStoreSecretConfigured, envStoreSecretHostManaged } from '@/lib/env-store';
+import {
+  envStoreSecretConfigured,
+  envStoreSecretHostManaged,
+  envStoreSecretPresent,
+} from '@/lib/env-store';
 import { getMembershipForUser } from '@/lib/households';
 import {
   EMPTY_AUTHORITATIVE_EMIT,
@@ -42,6 +49,7 @@ import {
   type OnboardingAiMode,
   type OnboardingDryRun,
   type OnboardingIssue,
+  type OnboardingLiveSubject,
   type OnboardingPlanAction,
   type OnboardingPlanEntry,
   type OnboardingSnapshot,
@@ -63,6 +71,9 @@ export {
   onboardingGenerateBatchIds,
   onboardingGenerateCli,
   onboardingGenerateOverwriteSubjects,
+  onboardingPruneConfirmMessage,
+  onboardingPruneEntries,
+  onboardingSourceCountLabel,
   onboardingSubjectIrRel,
   providerForOnboardingAiMode,
 } from '@/lib/onboarding-types';
@@ -71,6 +82,7 @@ export { getOnboardingContentRoot, setOnboardingContentRootForTests } from '@/li
 export const SUBJECTS_REL = 'content/subjects';
 export const SOURCE_PDFS_REL = 'content/source-pdfs';
 export const BANK_IR_FILE = 'bank.ir.json';
+export { SUBJECT_META_FILE };
 export const MAX_SOURCE_PDF_BYTES = 8 * 1024 * 1024;
 /** Server Action multipart ceiling — above {@link MAX_SOURCE_PDF_BYTES} plus form fields. */
 export const ONBOARDING_ACTION_BODY_LIMIT_BYTES = MAX_SOURCE_PDF_BYTES + 2 * 1024 * 1024;
@@ -233,13 +245,20 @@ export function listOnboardingSubjects(root = getOnboardingContentRoot()): Onboa
   return names.map((id) => {
     const irPath = path.join(dir, id, BANK_IR_FILE);
     const raw = readJsonUnknown(irPath);
-    const hasIr = existsSync(irPath);
+    const hasIr = isExistingBankIr(irPath);
     let label = id;
     let icon: string = 'maths';
     if (raw && typeof raw === 'object') {
       const subject = (raw as { subject?: { label?: unknown; icon?: unknown } }).subject;
       if (typeof subject?.label === 'string' && subject.label.trim()) label = subject.label.trim();
       icon = resolveOnboardingIcon(typeof subject?.icon === 'string' ? subject.icon : undefined);
+    } else {
+      const meta = readJsonUnknown(path.join(dir, id, SUBJECT_META_FILE));
+      if (meta && typeof meta === 'object') {
+        const rec = meta as { label?: unknown; icon?: unknown };
+        if (typeof rec.label === 'string' && rec.label.trim()) label = rec.label.trim();
+        icon = resolveOnboardingIcon(typeof rec.icon === 'string' ? rec.icon : undefined);
+      }
     }
     return {
       id,
@@ -355,9 +374,22 @@ export function completeOnboarding(householdId: number): void {
     .run();
 }
 
+function liveSubjectSummaries(root: string): OnboardingLiveSubject[] {
+  const bank = loadLivePublicBank(root);
+  return bank.subjects.map((subject) => {
+    const diffs = bank.questions[subject.id];
+    const questionCount = diffs
+      ? (diffs.easy?.length ?? 0) + (diffs.medium?.length ?? 0) + (diffs.hard?.length ?? 0)
+      : 0;
+    return { id: subject.id, label: subject.label, questionCount };
+  });
+}
+
 function aiFlags(): {
   anthropicConfigured: boolean;
   openaiConfigured: boolean;
+  anthropicPresent: boolean;
+  openaiPresent: boolean;
   anthropicHostManaged: boolean;
   openaiHostManaged: boolean;
   localAgentConfigured: boolean;
@@ -369,6 +401,8 @@ function aiFlags(): {
     // must follow the live store, not the boot-time env.ts snapshot.
     anthropicConfigured: envStoreSecretConfigured('ANTHROPIC_API_KEY'),
     openaiConfigured: envStoreSecretConfigured('OPENAI_API_KEY'),
+    anthropicPresent: envStoreSecretPresent('ANTHROPIC_API_KEY'),
+    openaiPresent: envStoreSecretPresent('OPENAI_API_KEY'),
     anthropicHostManaged: envStoreSecretHostManaged('ANTHROPIC_API_KEY'),
     openaiHostManaged: envStoreSecretHostManaged('OPENAI_API_KEY'),
     localAgentConfigured: Boolean(
@@ -389,8 +423,30 @@ export function getOnboardingSnapshot(
     replaceSample: state.replaceSample === true,
     hasDryRun: Boolean(state.dryRunHash),
     hasApplied: state.applied === true,
+    liveSubjects: liveSubjectSummaries(root),
     ...aiFlags(),
   };
+}
+
+function subjectMetaPayload(
+  id: string,
+  label: string,
+  icon: SubjectIconOption,
+): { id: string; label: string; icon: string; l: number; c: number; h: number } {
+  return { id, label, icon, ...ICON_ACCENTS[icon] };
+}
+
+function writeSubjectMetaFile(
+  dir: string,
+  id: string,
+  label: string,
+  icon: SubjectIconOption,
+): void {
+  writeFileSync(
+    path.join(dir, SUBJECT_META_FILE),
+    `${JSON.stringify(subjectMetaPayload(id, label, icon), null, 2)}\n`,
+    'utf8',
+  );
 }
 
 export type AddSubjectResult =
@@ -412,12 +468,9 @@ export function addOnboardingSubject(
   if (existsSync(dir)) return { ok: false, reason: 'duplicate' };
 
   mkdirSync(dir, { recursive: true });
-  const ir = {
-    version: 1 as const,
-    subject: { id, label, icon, ...ICON_ACCENTS[icon] },
-    difficulties: { easy: [], medium: [], hard: [] },
-  };
-  writeFileSync(path.join(dir, BANK_IR_FILE), `${JSON.stringify(ir, null, 2)}\n`, 'utf8');
+  // Metadata only — an empty/placeholder bank.ir.json is not “existing”
+  // BankIR and must not force overwrite confirm on first generate.
+  writeSubjectMetaFile(dir, id, label, icon);
   return { ok: true, subject: listOnboardingSubjects(root).find((row) => row.id === id)! };
 }
 
@@ -432,29 +485,44 @@ export function renameOnboardingSubject(
 ): RenameSubjectResult {
   const id = normalizeSubjectId(input.id);
   if (!isValidSubjectId(id)) return { ok: false, reason: 'invalid_id' };
-  const irPath = path.join(subjectsDir(root), id, BANK_IR_FILE);
-  const raw = readJsonUnknown(irPath);
-  if (!raw || typeof raw !== 'object') {
-    if (!existsSync(path.join(subjectsDir(root), id))) return { ok: false, reason: 'missing' };
-    return { ok: false, reason: 'missing' };
-  }
+  const fromDir = path.join(subjectsDir(root), id);
+  if (!existsSync(fromDir)) return { ok: false, reason: 'missing' };
 
-  const current = raw as {
-    version: 1;
-    subject: {
-      id: string;
-      label: string;
-      icon: string;
-      l: number;
-      c: number;
-      h: number;
-    };
-    difficulties: unknown;
-    meta?: unknown;
-  };
-  const label = input.label.trim() || current.subject.label || id;
+  const irPath = path.join(fromDir, BANK_IR_FILE);
+  const raw = readJsonUnknown(irPath);
+  const meta = readJsonUnknown(path.join(fromDir, SUBJECT_META_FILE));
+  const currentFromIr =
+    raw && typeof raw === 'object'
+      ? (raw as {
+          version?: 1;
+          subject?: {
+            id?: string;
+            label?: string;
+            icon?: string;
+            l?: number;
+            c?: number;
+            h?: number;
+          };
+          difficulties?: unknown;
+          meta?: unknown;
+        })
+      : null;
+  const currentFromMeta =
+    meta && typeof meta === 'object' ? (meta as { label?: unknown; icon?: unknown }) : null;
+  const currentLabel =
+    (typeof currentFromIr?.subject?.label === 'string' && currentFromIr.subject.label.trim()) ||
+    (typeof currentFromMeta?.label === 'string' && currentFromMeta.label.trim()) ||
+    id;
+  const currentIcon = resolveOnboardingIcon(
+    typeof currentFromIr?.subject?.icon === 'string'
+      ? currentFromIr.subject.icon
+      : typeof currentFromMeta?.icon === 'string'
+        ? currentFromMeta.icon
+        : undefined,
+  );
+  const label = input.label.trim() || currentLabel || id;
   if (!label || label.length > SUBJECT_LABEL_MAX) return { ok: false, reason: 'invalid_id' };
-  const icon = resolveOnboardingIcon(input.icon ?? current.subject.icon);
+  const icon = resolveOnboardingIcon(input.icon ?? currentIcon);
   const nextId = input.nextId ? normalizeSubjectId(input.nextId) : id;
   if (!isValidSubjectId(nextId) || nextId.length > SUBJECT_LABEL_MAX) {
     return { ok: false, reason: 'invalid_id' };
@@ -499,23 +567,27 @@ export function renameOnboardingSubject(
     workingId = nextId;
   }
 
-  const destIr = path.join(subjectsDir(root), workingId, BANK_IR_FILE);
-  const next = {
-    ...current,
-    version: 1 as const,
-    subject: {
-      ...current.subject,
-      id: workingId,
-      label,
-      icon,
-      ...ICON_ACCENTS[icon],
-    },
-    difficulties:
-      workingId !== id
-        ? rewriteOnboardingQuestionIds(current.difficulties, id, workingId)
-        : current.difficulties,
-  };
-  writeFileSync(destIr, `${JSON.stringify(next, null, 2)}\n`, 'utf8');
+  const destDir = path.join(subjectsDir(root), workingId);
+  const destIr = path.join(destDir, BANK_IR_FILE);
+  if (existsSync(destIr) && currentFromIr) {
+    const next = {
+      ...currentFromIr,
+      version: 1 as const,
+      subject: {
+        ...(currentFromIr.subject ?? {}),
+        id: workingId,
+        label,
+        icon,
+        ...ICON_ACCENTS[icon],
+      },
+      difficulties:
+        workingId !== id
+          ? rewriteOnboardingQuestionIds(currentFromIr.difficulties, id, workingId)
+          : currentFromIr.difficulties,
+    };
+    writeFileSync(destIr, `${JSON.stringify(next, null, 2)}\n`, 'utf8');
+  }
+  writeSubjectMetaFile(destDir, workingId, label, icon);
   return {
     ok: true,
     subject: listOnboardingSubjects(root).find((row) => row.id === workingId)!,
@@ -821,9 +893,10 @@ export type CatalogEmitApply =
     }
   | {
       ok: false;
-      reason: 'empty_catalog' | 'invalid' | 'stale_preview';
+      reason: 'empty_catalog' | 'invalid' | 'stale_preview' | 'prune_confirm_required';
       message: string;
       issues?: OnboardingIssue[];
+      deletes?: OnboardingPlanEntry[];
     };
 
 /**
@@ -832,7 +905,7 @@ export type CatalogEmitApply =
  * unconfirmed plan (a concurrent IR change after HITL confirm).
  */
 export function applyOnboardingEmit(
-  input: { replaceSample: boolean; expectedHash: string },
+  input: { replaceSample: boolean; expectedHash: string; confirmPrune?: boolean },
   root = getOnboardingContentRoot(),
 ): CatalogEmitApply {
   const preview = previewOnboardingEmit(input.replaceSample, root);
@@ -842,6 +915,17 @@ export function applyOnboardingEmit(
       ok: false,
       reason: 'stale_preview',
       message: 'Subjects or BankIR changed since the last dry-run. Preview again.',
+    };
+  }
+  const deletes = onboardingPruneEntries(preview.dryRun.plan);
+  if (deletes.length > 0 && input.confirmPrune !== true) {
+    return {
+      ok: false,
+      reason: 'prune_confirm_required',
+      message:
+        onboardingPruneConfirmMessage(deletes) ??
+        'Confirm the leftover files that Apply will remove.',
+      deletes,
     };
   }
   applyEmit(preview.planned);

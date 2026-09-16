@@ -173,7 +173,7 @@ export function setEnvStoreSecret(
   root = getEnvStoreRoot(),
 ): EnvSecretWriteSuccess | EnvSecretWriteError {
   if (!isEnvStoreKey(key)) return { ok: false, reason: 'invalid' };
-  if (envStoreSecretHostManaged(key, root)) return { ok: false, reason: 'host_managed' };
+  if (envStoreSecretWriteBlocked(key, root)) return { ok: false, reason: 'host_managed' };
   const value = normalizeSecretInput(raw);
   if (!value) return { ok: false, reason: 'invalid' };
   try {
@@ -195,7 +195,7 @@ export function clearEnvStoreSecret(
   root = getEnvStoreRoot(),
 ): EnvSecretWriteSuccess | EnvSecretWriteError {
   if (!isEnvStoreKey(key)) return { ok: false, reason: 'invalid' };
-  if (envStoreSecretHostManaged(key, root)) return { ok: false, reason: 'host_managed' };
+  if (envStoreSecretWriteBlocked(key, root)) return { ok: false, reason: 'host_managed' };
   try {
     for (const name of ENV_FILES) {
       upsertEnvFile(envStorePath(root, name), key, null);
@@ -310,4 +310,35 @@ export function envStoreSecretConfigured(
   env: Record<string, string | undefined> = process.env,
 ): boolean {
   return isUsableEnvSecret(env[key]);
+}
+
+/**
+ * True when live env or the `.env` store has a value — including `test`.
+ * Empty is not present. Never returns the value.
+ */
+export function envStoreSecretPresent(
+  key: EnvStoreKey,
+  env: Record<string, string | undefined> = process.env,
+  root = getEnvStoreRoot(),
+): boolean {
+  const live = env[key];
+  if (typeof live === 'string' && live.trim() !== '') return true;
+  const stored = readStoreFileSecret(root, key);
+  return typeof stored === 'string' && stored.trim() !== '';
+}
+
+/**
+ * Host-injected usable keys stay locked. A boot `test` sentinel can still
+ * be cleared / replaced so the wizard does not require saving a dummy key.
+ * Host-injected empty stays locked (not a sentinel the admin can clear).
+ */
+export function envStoreSecretWriteBlocked(
+  key: EnvStoreKey,
+  root = getEnvStoreRoot(),
+  env: Record<string, string | undefined> = process.env,
+  initialEnv?: Record<string, string | undefined>,
+): boolean {
+  if (!envStoreSecretHostManaged(key, root, env, initialEnv)) return false;
+  const live = env[key]?.trim() ?? '';
+  return live !== 'test';
 }
