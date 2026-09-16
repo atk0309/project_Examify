@@ -140,6 +140,29 @@ describe('SetupForm autofill desync', () => {
     expect(formData?.get('setupSecret')).toBe('instance-secret');
   });
 
+  it('keeps onInput values when a later remount would otherwise snapshot wiped fields', async () => {
+    const { rerender } = render(<SetupForm authMode="magic-link" />);
+    fireEvent.input(screen.getByTestId('household-name-input'), {
+      target: { value: 'Typed family' },
+    });
+    fireEvent.input(screen.getByTestId('setup-secret-input'), {
+      target: { value: 'typed-secret' },
+    });
+    fireEvent.input(screen.getByTestId('setup-email-input'), {
+      target: { value: 'typed@example.com' },
+    });
+
+    autofillWithoutEvents('setup-secret-input', '');
+    autofillWithoutEvents('setup-email-input', '');
+    rerender(<SetupForm authMode="magic-link" siteKey="1x00000000000000000000AA" />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('setup-email-input')).toHaveValue('typed@example.com');
+    });
+    expect(screen.getByTestId('setup-secret-input')).toHaveValue('typed-secret');
+    expect(screen.getByTestId('household-name-input')).toHaveValue('Typed family');
+  });
+
   it('re-reads the FormData snapshot after a remount wipe', async () => {
     const { rerender } = render(<SetupForm authMode="magic-link" />);
     autofillWithoutEvents('household-name-input', 'Autofill family');

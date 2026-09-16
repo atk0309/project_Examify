@@ -46,6 +46,7 @@ import {
   sortRecord,
   splitCommandLine,
   writeFileAtomic,
+  defaultSubjectMeta,
 } from '../../tools/examify-ingest/src/generate-api';
 
 function examifyRepo(): string {
@@ -416,6 +417,136 @@ describe('examify-ingest generate P0 gates', () => {
     expect(code).toBe(1);
     expect(streams.err()).toContain('maths-easy-1');
     expect(existsSync(path.join(plantsDir, 'bank.ir.json'))).toBe(false);
+  });
+
+  it('rolls back earlier BankIR when a later persist write fails', async () => {
+    const root = examifyRepo();
+    const rocks = path.join(root, 'content/subjects/rocks');
+    mkdirSync(rocks, { recursive: true });
+    writeFileSync(path.join(rocks, 'notes.txt'), 'Granite is an igneous rock.\n');
+    const plantsDir = path.join(root, 'content/subjects/plants');
+    let writes = 0;
+    await expect(
+      generateTargets(
+        [
+          {
+            subjectId: 'plants',
+            subjectDir: plantsDir,
+            subject: {
+              id: 'plants',
+              label: 'Plants',
+              icon: 'biology',
+              l: 0.58,
+              c: 0.09,
+              h: 142,
+            },
+            sources: resolveSubjectSources(root, 'plants', plantsDir),
+          },
+          {
+            subjectId: 'rocks',
+            subjectDir: rocks,
+            subject: defaultSubjectMeta('rocks'),
+            sources: resolveSubjectSources(root, 'rocks', rocks),
+          },
+        ],
+        {
+          repoRoot: root,
+          provider: 'test',
+          seed: 0,
+          env: {},
+          writeBankIr: (irPath, body, options) => {
+            writes += 1;
+            if (writes >= 2) throw new Error('disk full');
+            return writeBankIrAtomic(irPath, body, options);
+          },
+        },
+      ),
+    ).rejects.toThrow(/disk full/);
+    expect(writes).toBe(2);
+    expect(existsSync(path.join(plantsDir, 'bank.ir.json'))).toBe(false);
+    expect(existsSync(path.join(rocks, 'bank.ir.json'))).toBe(false);
+    expect(existsSync(path.join(root, '.examify-ingest/cache/ir'))).toBe(false);
+    expect(existsSync(path.join(root, '.examify-ingest/runs'))).toBe(false);
+  });
+
+  it('abort after drafts and before commit writes no BankIR', async () => {
+    const root = examifyRepo();
+    const rocks = path.join(root, 'content/subjects/rocks');
+    mkdirSync(rocks, { recursive: true });
+    writeFileSync(path.join(rocks, 'notes.txt'), 'Granite is an igneous rock.\n');
+    const plantsDir = path.join(root, 'content/subjects/plants');
+    const controller = new AbortController();
+    await expect(
+      generateTargets(
+        [
+          {
+            subjectId: 'plants',
+            subjectDir: plantsDir,
+            subject: {
+              id: 'plants',
+              label: 'Plants',
+              icon: 'biology',
+              l: 0.58,
+              c: 0.09,
+              h: 142,
+            },
+            sources: resolveSubjectSources(root, 'plants', plantsDir),
+          },
+          {
+            subjectId: 'rocks',
+            subjectDir: rocks,
+            subject: defaultSubjectMeta('rocks'),
+            sources: resolveSubjectSources(root, 'rocks', rocks),
+          },
+        ],
+        {
+          repoRoot: root,
+          provider: 'test',
+          seed: 0,
+          env: {},
+          signal: controller.signal,
+          beforeCommit: () => {
+            controller.abort();
+          },
+        },
+      ),
+    ).rejects.toThrow(GenerateAbortedError);
+    expect(existsSync(path.join(plantsDir, 'bank.ir.json'))).toBe(false);
+    expect(existsSync(path.join(rocks, 'bank.ir.json'))).toBe(false);
+    expect(existsSync(path.join(root, '.examify-ingest'))).toBe(false);
+  });
+
+  it('tree commit reuses draft page images instead of rasterizing again', async () => {
+    const root = examifyRepo();
+    const plantsDir = path.join(root, 'content/subjects/plants');
+    writeFileSync(path.join(root, 'content/source-pdfs/plants/guide.pdf'), '%PDF-1.4 fixture\n');
+    let rasters = 0;
+    const rasterize = (_pdf: string, prefix: string) => {
+      rasters += 1;
+      writeFileSync(`${prefix}-1.png`, 'commit-reuse-page');
+      return true;
+    };
+    const results = await generateTargets(
+      [
+        {
+          subjectId: 'plants',
+          subjectDir: plantsDir,
+          subject: {
+            id: 'plants',
+            label: 'Plants',
+            icon: 'biology',
+            l: 0.58,
+            c: 0.09,
+            h: 142,
+          },
+          sources: resolveSubjectSources(root, 'plants', plantsDir),
+        },
+      ],
+      { repoRoot: root, provider: 'test', seed: 0, env: {}, rasterize },
+    );
+    expect(rasters).toBe(1);
+    expect(results[0]?.pageImages).toHaveLength(1);
+    expect(existsSync(path.join(plantsDir, 'bank.ir.json'))).toBe(true);
   });
 
   it('biology is hand-authored: no generate sources on a fresh clone', async () => {

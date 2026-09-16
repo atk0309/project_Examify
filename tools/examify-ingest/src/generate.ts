@@ -1,6 +1,13 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { buildCacheKey, readCachedIr, writeCachedIr, writeRunManifest } from './cache';
+import {
+  buildCacheKey,
+  irCachePath,
+  pagesCacheDir,
+  readCachedIr,
+  writeCachedIr,
+  writeRunManifest,
+} from './cache';
 import { stableJson } from './diff';
 import { sampleBankFrozenIds } from './frozen-ids';
 import {
@@ -63,6 +70,13 @@ export type GenerateRequest = {
    * page-raster cache, or run manifest.
    */
   signal?: AbortSignal;
+  /** Test seam — persist `bank.ir.json`. Defaults to `writeBankIrAtomic`. */
+  writeBankIr?: typeof writeBankIrAtomic;
+  /**
+   * Test seam — after every subject is drafted, before the commit phase.
+   * Production callers omit this.
+   */
+  beforeCommit?: () => void | Promise<void>;
 };
 
 export type GenerateSubjectResult = {
@@ -74,6 +88,8 @@ export type GenerateSubjectResult = {
   irPath: string;
   wroteIr: boolean;
   irExisted: boolean;
+  /** In-memory rasters from the draft pass — commit reuses these instead of rasterizing again. */
+  pageImages: readonly PageImage[];
 };
 
 function attachMeta(
@@ -127,6 +143,97 @@ function assertNotFrozenSampleIds(bank: BankIR, label: string, request: Generate
 async function checkpointAbort(signal?: AbortSignal): Promise<void> {
   if (signal) await Promise.resolve();
   throwIfAborted(signal);
+}
+
+type CommitSnapshot = {
+  irPath: string;
+  previousIr: string | null;
+  cachePath: string;
+  previousCache: string | null;
+  manifestPath: string | null;
+  createdPageDirs: string[];
+};
+
+function pageCacheDirsAbsent(repoRoot: string, sources: readonly ResolvedSource[]): string[] {
+  const dirs: string[] = [];
+  for (const source of sources) {
+    if (source.kind !== 'pdf') continue;
+    const dir = pagesCacheDir(repoRoot, source.sha256);
+    if (!existsSync(dir)) dirs.push(dir);
+  }
+  return dirs;
+}
+
+function restoreTextFile(absPath: string, previous: string | null): void {
+  try {
+    if (previous === null) {
+      if (existsSync(absPath)) unlinkSync(absPath);
+      return;
+    }
+    writeFileSync(absPath, previous, 'utf8');
+  } catch {
+    // Best-effort rollback; the original persist error still throws.
+  }
+}
+
+function rollbackGeneratedCommit(snapshot: CommitSnapshot): void {
+  restoreTextFile(snapshot.irPath, snapshot.previousIr);
+  restoreTextFile(snapshot.cachePath, snapshot.previousCache);
+  if (snapshot.manifestPath) {
+    try {
+      if (existsSync(snapshot.manifestPath)) unlinkSync(snapshot.manifestPath);
+    } catch {
+      // Best-effort.
+    }
+  }
+  for (const dir of snapshot.createdPageDirs) {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // Best-effort.
+    }
+  }
+}
+
+function persistGeneratedArtifacts(
+  draft: {
+    bank: BankIR;
+    cacheKey: string;
+    irPath: string;
+    manifest: RunManifest;
+    pageImages: readonly PageImage[];
+  },
+  sources: readonly ResolvedSource[],
+  options: Pick<GenerateRequest, 'repoRoot' | 'force' | 'writeBankIr'>,
+): { manifestPath: string; snapshot: CommitSnapshot } {
+  const cachePath = irCachePath(options.repoRoot, draft.cacheKey);
+  const snapshot: CommitSnapshot = {
+    irPath: draft.irPath,
+    previousIr: existsSync(draft.irPath) ? readFileSync(draft.irPath, 'utf8') : null,
+    cachePath,
+    previousCache: existsSync(cachePath) ? readFileSync(cachePath, 'utf8') : null,
+    manifestPath: null,
+    createdPageDirs: pageCacheDirsAbsent(options.repoRoot, sources),
+  };
+  const writeIr = options.writeBankIr ?? writeBankIrAtomic;
+  try {
+    persistPageImages(options.repoRoot, sources, draft.pageImages);
+    writeCachedIr(options.repoRoot, draft.cacheKey, draft.bank);
+    snapshot.manifestPath = writeRunManifest(
+      options.repoRoot,
+      draft.cacheKey,
+      draft.manifest.timestamp,
+      stableJson(draft.manifest),
+    );
+    writeIr(draft.irPath, stableJson(draft.bank), {
+      force: options.force === true,
+      displayPath: pathFromRoot(options.repoRoot, draft.irPath),
+    });
+    return { manifestPath: snapshot.manifestPath, snapshot };
+  } catch (error) {
+    rollbackGeneratedCommit(snapshot);
+    throw error;
+  }
 }
 
 export async function generateSubject(request: GenerateRequest): Promise<GenerateSubjectResult> {
@@ -240,16 +347,24 @@ export async function generateSubject(request: GenerateRequest): Promise<Generat
   const wroteIr = persist;
   let manifestPath: string | null = null;
   if (persist) {
-    persistPageImages(request.repoRoot, request.sources, pageImages);
-    writeCachedIr(request.repoRoot, cacheKey, bank);
-    manifestPath = writeRunManifest(request.repoRoot, cacheKey, timestamp, stableJson(manifest));
-    writeBankIrAtomic(irPath, stableJson(bank), {
-      force: request.force === true,
-      displayPath,
-    });
+    manifestPath = persistGeneratedArtifacts(
+      { bank, cacheKey, irPath, manifest, pageImages },
+      request.sources,
+      request,
+    ).manifestPath;
   }
 
-  return { bank, cacheKey, cacheHit, manifest, manifestPath, irPath, wroteIr, irExisted };
+  return {
+    bank,
+    cacheKey,
+    cacheHit,
+    manifest,
+    manifestPath,
+    irPath,
+    wroteIr,
+    irExisted,
+    pageImages,
+  };
 }
 
 /**
@@ -313,30 +428,16 @@ function commitGeneratedDraft(
   draft: GenerateSubjectResult,
   target: GenerateTarget,
   options: Omit<GenerateRequest, 'subject' | 'subjectDir' | 'sources'>,
-): GenerateSubjectResult {
-  const pageImages = resolvePageImages(options.repoRoot, target.sources, {
-    persist: true,
-    rasterize: options.rasterize,
-  });
-  persistPageImages(options.repoRoot, target.sources, pageImages);
-  writeCachedIr(options.repoRoot, draft.cacheKey, draft.bank);
-  const manifestPath = writeRunManifest(
-    options.repoRoot,
-    draft.cacheKey,
-    draft.manifest.timestamp,
-    stableJson(draft.manifest),
-  );
-  writeBankIrAtomic(draft.irPath, stableJson(draft.bank), {
-    force: options.force === true,
-    displayPath: pathFromRoot(options.repoRoot, draft.irPath),
-  });
-  return { ...draft, wroteIr: true, manifestPath };
+): { result: GenerateSubjectResult; snapshot: CommitSnapshot } {
+  const { manifestPath, snapshot } = persistGeneratedArtifacts(draft, target.sources, options);
+  return { result: { ...draft, wroteIr: true, manifestPath }, snapshot };
 }
 
 /**
  * Tree generate is all-or-nothing for BankIR: sources + overwrite preflight,
  * then every subject is drafted (`dryRunIr`) so SAMPLE freeze / provider
- * failures happen before the first IR write. Only then are IRs committed.
+ * failures happen before the first IR write. Commit is one abort gate, then
+ * every IR is published; any persist failure rolls back earlier writes.
  */
 export async function generateTargets(
   targets: readonly GenerateTarget[],
@@ -366,10 +467,24 @@ export async function generateTargets(
     return drafts;
   }
 
+  if (options.beforeCommit) {
+    await options.beforeCommit();
+  }
+  await checkpointAbort(options.signal);
+
   const committed: GenerateSubjectResult[] = [];
-  for (let i = 0; i < drafts.length; i += 1) {
-    await checkpointAbort(options.signal);
-    committed.push(commitGeneratedDraft(drafts[i]!, targets[i]!, options));
+  const published: CommitSnapshot[] = [];
+  try {
+    for (let i = 0; i < drafts.length; i += 1) {
+      const { result, snapshot } = commitGeneratedDraft(drafts[i]!, targets[i]!, options);
+      published.push(snapshot);
+      committed.push(result);
+    }
+  } catch (error) {
+    for (let i = published.length - 1; i >= 0; i -= 1) {
+      rollbackGeneratedCommit(published[i]!);
+    }
+    throw error;
   }
   return committed;
 }

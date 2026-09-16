@@ -64,7 +64,8 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   `bank.ir.json` requires `--force` (dry-run says **would overwrite**).
   Frozen sample-bank ids fail at generate unless `--replace-sample`.
   Tree generate drafts every subject before the first IR write (sources,
-  overwrite, SAMPLE freeze, provider); a mid-list failure writes no BankIR.
+  overwrite, SAMPLE freeze, provider); a mid-list or persist failure writes
+  no BankIR (commit rolls back earlier writes; abort is gated before persist).
   Persist uses shared `writeBankIrAtomic`. The wizard never silently
   replaces existing `bank.ir.json` (named confirm, or skip/cancel;
   confirm is that same `--force` for the subject).

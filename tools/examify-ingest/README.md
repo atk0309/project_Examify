@@ -77,9 +77,10 @@ a source file per subject — biology is hand-authored and has none, so target
 `content/subjects/demo` (or add sources) instead of claiming biology generate
 works on a fresh clone. Tree generate is **all-or-nothing for BankIR**: it
 preflights sources and overwrite, drafts every subject (`dry-run-ir` — SAMPLE
-freeze and provider fail closed here), and writes IR only if every draft
-succeeds. A sourceless or frozen sibling lists the problem and leaves **no**
-partial BankIR.
+freeze and provider fail closed here), then commits only if every draft
+succeeds. Abort is checked before that commit; a later filesystem write rolls
+back earlier artifacts. A sourceless or frozen sibling lists the problem and
+leaves **no** partial BankIR.
 
 `--dry-run-ir` prints the would-write path and writes nothing durable (no IR,
 cache, or manifest). If `bank.ir.json` already exists, dry-run says

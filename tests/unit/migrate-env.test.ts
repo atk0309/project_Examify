@@ -39,6 +39,19 @@ describe('parseEnvFile', () => {
       EMPTY: '',
     });
   });
+
+  it('strips unquoted inline comments the way Next.js / dotenv do', () => {
+    expect(parseEnvFile('DATABASE_URL=file:./data/app.db # local\n')).toEqual({
+      DATABASE_URL: 'file:./data/app.db',
+    });
+    expect(parseEnvFile('DATABASE_URL="file:./data/app.db # local"\n')).toEqual({
+      DATABASE_URL: 'file:./data/app.db # local',
+    });
+    expect(parseEnvFile('DATABASE_URL="file:./data/quoted.db" # local\n')).toEqual({
+      DATABASE_URL: 'file:./data/quoted.db',
+    });
+    expect(parseEnvFile('KEEP=bar#baz\n')).toEqual({ KEEP: 'bar#baz' });
+  });
 });
 
 describe('resolveMigrateConfig', () => {
@@ -60,6 +73,14 @@ describe('resolveMigrateConfig', () => {
     writeFileSync(path.join(root, '.env.local'), 'DATABASE_URL=file:./data/local.db\n');
     const cfg = resolveMigrateConfig(root, {});
     expect(cfg.dbPath).toBe(path.join(root, 'data', 'local.db'));
+  });
+
+  it('strips an unquoted inline comment on DATABASE_URL so migrate opens the same file as Next.js', () => {
+    const root = tempRepo();
+    writeFileSync(path.join(root, '.env'), 'DATABASE_URL=file:./data/app.db # local\n');
+    const cfg = resolveMigrateConfig(root, {});
+    expect(cfg.databaseUrl).toBe('file:./data/app.db');
+    expect(cfg.dbPath).toBe(path.join(root, 'data', 'app.db'));
   });
 
   it('lets a non-empty process DATABASE_URL win over the repo .env', () => {

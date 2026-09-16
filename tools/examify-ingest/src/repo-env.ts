@@ -9,6 +9,27 @@ function isEnoent(error: unknown): boolean {
   );
 }
 
+/** Strip an unquoted ` # comment`, then unwrap matching quotes (Next.js / dotenv). */
+function parseEnvAssignmentValue(raw: string): string {
+  const trimmed = raw.trim();
+  if (trimmed.length >= 2) {
+    const start = trimmed[0];
+    const end = trimmed[trimmed.length - 1];
+    if ((start === '"' && end === '"') || (start === "'" && end === "'")) {
+      return trimmed.slice(1, -1);
+    }
+  }
+  const uncommented = trimmed.replace(/\s+#.*$/, '').trim();
+  if (uncommented.length >= 2) {
+    const start = uncommented[0];
+    const end = uncommented[uncommented.length - 1];
+    if ((start === '"' && end === '"') || (start === "'" && end === "'")) {
+      return uncommented.slice(1, -1);
+    }
+  }
+  return uncommented;
+}
+
 /** Parse KEY=VALUE lines. Existing process env must win; this never logs values. */
 export function parseEnvFile(contents: string): Record<string, string> {
   const out: Record<string, string> = {};
@@ -20,14 +41,7 @@ export function parseEnvFile(contents: string): Record<string, string> {
     if (eq <= 0) continue;
     const key = body.slice(0, eq).trim();
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
-    let value = body.slice(eq + 1).trim();
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1);
-    }
-    out[key] = value;
+    out[key] = parseEnvAssignmentValue(body.slice(eq + 1));
   }
   return out;
 }

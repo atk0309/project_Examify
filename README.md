@@ -120,7 +120,7 @@ appears in no dashboard.
 ### Installer (recommended)
 
 `install.sh` asks a few questions (site URL, secrets, auth mode, mail for
-invite-accept OTP, optional Turnstile, and OpenAI key), writes `.env`,
+invite-accept OTP, optional Turnstile, and Anthropic / OpenAI keys), writes `.env`,
 installs, migrates, and builds. OpenAI generate from PDFs also needs
 `pdftoppm` (from **poppler** / `poppler-utils`) on `PATH`.
 

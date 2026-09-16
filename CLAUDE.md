@@ -260,7 +260,8 @@ fail closed at generate (same set as validate) unless `--replace-sample` —
 that flag. Persist uses shared `writeBankIrAtomic` (force required to
 clobber). Tree generate drafts every subject before the first IR write
 (sources, overwrite, SAMPLE freeze, provider) so a mid-list failure leaves
-no BankIR. The `/onboarding` generate path calls that same helper: named
+no BankIR. Persist of a tree is one abort gate then a transactional commit
+(any later write rolls back earlier BankIR / IR cache / manifest / page cache). The `/onboarding` generate path calls that same helper: named
 confirm supplies `force`; decline/cancel keeps prior bytes. `generateSubject` accepts optional `AbortSignal` (forwarded
 to provider HTTP/CMD; abort throws and writes no IR, IR cache, page-raster
 cache, or run manifest). Cloud

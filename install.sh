@@ -72,6 +72,17 @@ SKIP_BUILD=0
 NONINTERACTIVE="${EXAMIFY_NONINTERACTIVE:-0}"
 ENABLED_PASSWORD_OUTBOX=0
 
+# Host-injected process env (Next.js does not override these). Installer
+# prompts only fill shell locals and must not count as runtime config when
+# validating a kept .env.
+HOST_AUTH_MODE="${AUTH_MODE-}"
+HOST_MAIL_TRANSPORT="${MAIL_TRANSPORT-}"
+HOST_ALLOW_LOCAL_OUTBOX="${ALLOW_LOCAL_OUTBOX-}"
+HOST_SMTP_HOST="${SMTP_HOST-}"
+HOST_SMTP_FROM="${SMTP_FROM-}"
+HOST_RESEND_API_KEY="${RESEND_API_KEY-}"
+HOST_RESEND_FROM="${RESEND_FROM-}"
+
 for arg in "$@"; do
   case "$arg" in
     --write-env-only) WRITE_ENV_ONLY=1 ;;
@@ -126,30 +137,48 @@ prompt() {
 }
 
 # Password sign-in needs no mail. Password-mode invite accept still sends a
-# mailbox OTP (#61) and fails closed if nothing can deliver it. True when
-# SMTP / Resend are usable or an outbox is explicitly allowed.
+# mailbox OTP (#61) and fails closed if nothing can deliver it.
+# Matches src/lib/env.ts canDeliverMailboxProof / resolveMailTransport:
+# an allowed outbox is only a path when transport is outbox, or auto that
+# actually falls back to outbox (explicit smtp/resend stay on that provider).
 has_invite_mail_path() {
-  if [ "${ALLOW_LOCAL_OUTBOX-}" = "1" ]; then
-    return 0
-  fi
-  if [ -n "${SMTP_HOST-}" ] && [ -n "${SMTP_FROM-}" ]; then
-    case "${MAIL_TRANSPORT:-auto}" in
-      smtp|auto) return 0 ;;
-    esac
-  fi
-  if [ -n "${RESEND_API_KEY-}" ] && [ "${RESEND_API_KEY}" != "test" ] && [ -n "${RESEND_FROM-}" ]; then
-    case "${MAIL_TRANSPORT:-auto}" in
-      resend|auto) return 0 ;;
-    esac
-  fi
-  return 1
+  local transport="${MAIL_TRANSPORT:-auto}"
+  case "$transport" in
+    smtp)
+      [ -n "${SMTP_HOST-}" ] && [ -n "${SMTP_FROM-}" ] && return 0
+      return 1
+      ;;
+    resend)
+      [ -n "${RESEND_API_KEY-}" ] && [ "${RESEND_API_KEY}" != "test" ] && [ -n "${RESEND_FROM-}" ] && return 0
+      return 1
+      ;;
+    outbox)
+      [ "${ALLOW_LOCAL_OUTBOX-}" = "1" ] && return 0
+      return 1
+      ;;
+    auto|"")
+      if [ -n "${SMTP_HOST-}" ]; then
+        [ -n "${SMTP_FROM-}" ] && return 0
+        return 1
+      fi
+      if [ -n "${RESEND_API_KEY-}" ] && [ "${RESEND_API_KEY}" != "test" ]; then
+        [ -n "${RESEND_FROM-}" ] && return 0
+        return 1
+      fi
+      [ "${ALLOW_LOCAL_OUTBOX-}" = "1" ] && return 0
+      return 1
+      ;;
+    *)
+      return 1
+      ;;
+  esac
 }
 
 # Last KEY=VALUE in a dotenv file. Does not eval / expand. Empty if missing.
 env_file_get() {
   local file="$1"
   local key="$2"
-  local line="" body="" value=""
+  local line="" body="" value="" quoted=0
   [ -f "$file" ] || return 0
   while IFS= read -r line || [ -n "$line" ]; do
     body="${line#"${line%%[![:space:]]*}"}"
@@ -164,6 +193,18 @@ env_file_get() {
         value="${body#"${key}="}"
         value="${value#"${value%%[![:space:]]*}"}"
         value="${value%"${value##*[![:space:]]}"}"
+        quoted=0
+        if [ "${#value}" -ge 2 ]; then
+          case "$value" in
+            \"*\") quoted=1 ;;
+            \'*\') quoted=1 ;;
+          esac
+        fi
+        if [ "$quoted" -eq 0 ]; then
+          # Next.js / dotenv: unquoted inline comment is whitespace then #.
+          value="$(printf '%s' "$value" | sed 's/[[:space:]]\{1\}#.*$//')"
+          value="${value%"${value##*[![:space:]]}"}"
+        fi
         if [ "${#value}" -ge 2 ]; then
           case "$value" in
             \"*\") value="${value#\"}"; value="${value%\"}" ;;
@@ -176,30 +217,38 @@ env_file_get() {
   printf '%s' "$value"
 }
 
-env_file_has_invite_mail_path() {
-  local file="$1"
-  local allow transport smtp_host smtp_from resend_key resend_from
-  allow="$(env_file_get "$file" ALLOW_LOCAL_OUTBOX)"
-  transport="$(env_file_get "$file" MAIL_TRANSPORT)"
-  transport="${transport:-auto}"
-  if [ "$allow" = "1" ]; then
+# Process env (host snapshot) > .env.local > .env. Empty host value is unset.
+effective_env_get() {
+  local key="$1"
+  local host="$2"
+  if [ -n "$host" ]; then
+    printf '%s' "$host"
     return 0
   fi
-  smtp_host="$(env_file_get "$file" SMTP_HOST)"
-  smtp_from="$(env_file_get "$file" SMTP_FROM)"
-  if [ -n "$smtp_host" ] && [ -n "$smtp_from" ]; then
-    case "$transport" in
-      smtp|auto) return 0 ;;
-    esac
+  local from_local
+  from_local="$(env_file_get .env.local "$key")"
+  if [ -n "$from_local" ]; then
+    printf '%s' "$from_local"
+    return 0
   fi
-  resend_key="$(env_file_get "$file" RESEND_API_KEY)"
-  resend_from="$(env_file_get "$file" RESEND_FROM)"
-  if [ -n "$resend_key" ] && [ "$resend_key" != "test" ] && [ -n "$resend_from" ]; then
-    case "$transport" in
-      resend|auto) return 0 ;;
-    esac
-  fi
-  return 1
+  env_file_get .env "$key"
+}
+
+# Kept-file check uses runtime defaults (AUTH_MODE=magic-link, MAIL_TRANSPORT=auto)
+# and Next.js precedence — not this run's installer prompt defaults.
+kept_password_has_mail() {
+  local AUTH_MODE MAIL_TRANSPORT ALLOW_LOCAL_OUTBOX SMTP_HOST SMTP_FROM RESEND_API_KEY RESEND_FROM
+  AUTH_MODE="$(effective_env_get AUTH_MODE "$HOST_AUTH_MODE")"
+  AUTH_MODE="${AUTH_MODE:-magic-link}"
+  [ "$AUTH_MODE" = "password" ] || return 0
+  MAIL_TRANSPORT="$(effective_env_get MAIL_TRANSPORT "$HOST_MAIL_TRANSPORT")"
+  MAIL_TRANSPORT="${MAIL_TRANSPORT:-auto}"
+  ALLOW_LOCAL_OUTBOX="$(effective_env_get ALLOW_LOCAL_OUTBOX "$HOST_ALLOW_LOCAL_OUTBOX")"
+  SMTP_HOST="$(effective_env_get SMTP_HOST "$HOST_SMTP_HOST")"
+  SMTP_FROM="$(effective_env_get SMTP_FROM "$HOST_SMTP_FROM")"
+  RESEND_API_KEY="$(effective_env_get RESEND_API_KEY "$HOST_RESEND_API_KEY")"
+  RESEND_FROM="$(effective_env_get RESEND_FROM "$HOST_RESEND_FROM")"
+  has_invite_mail_path
 }
 
 # Prepare in-memory outbox for a write. Do not claim enable here — keep/write
@@ -562,8 +611,7 @@ fi
 if [ "$WROTE_ENV" = "1" ] && [ "$ENABLED_PASSWORD_OUTBOX" = "1" ]; then
   claim_password_outbox_enable
 elif [ "$KEPT_EXISTING_ENV" = "1" ]; then
-  kept_mode="$(env_file_get .env AUTH_MODE)"
-  if [ "$kept_mode" = "password" ] && ! env_file_has_invite_mail_path .env; then
+  if ! kept_password_has_mail; then
     refuse_kept_password_without_mail
   fi
 fi

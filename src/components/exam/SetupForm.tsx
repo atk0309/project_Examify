@@ -100,6 +100,7 @@ export function SetupForm({ siteKey, authMode }: { siteKey?: string; authMode: A
     inputTickRef.current += 1;
     const fields = readSetupFields(new FormData(form));
     lastFieldsRef.current = fields;
+    appliedInputTickRef.current = inputTickRef.current;
     const name = event.currentTarget.name as SetupFieldKey;
     if (!attempted) return;
     const nextLocal = validateSetupFields(fields, authMode);
