@@ -524,8 +524,9 @@ password-mode `.env` with no mail path is refused (no false “enabled
 outbox” claim). Keep-broken / keep-good is judged from on-disk `.env`
 (and `.env.local` if present), not a transient host process env —
 `ALLOW_LOCAL_OUTBOX=1` on the installer must not greenlight a broken
-file. A host `AUTH_MODE` that differs from the kept `.env` is refused
-with copy that names the file’s mode. `RESEND_API_KEY=test` is not a
+file. A host `AUTH_MODE` that differs from effective on-disk `AUTH_MODE`
+(`.env.local` wins over `.env`) is refused with copy that names that
+effective mode. `RESEND_API_KEY=test` is not a
 mail path. `local-otp` in production requires
 `ALLOW_LOCAL_OUTBOX=1`. `MAIL_TRANSPORT` is `auto` (SMTP if `SMTP_HOST`, else
 Resend if a real key, else outbox). Explicit `MAIL_TRANSPORT=smtp` needs

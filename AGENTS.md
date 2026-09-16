@@ -164,8 +164,9 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   outbox when it writes `.env` so kid invites are not stranded. A kept
   password-mode `.env` with no mail path is refused (judged from on-disk
   `.env` / `.env.local`, not a transient host `ALLOW_LOCAL_OUTBOX`). A
-  host `AUTH_MODE` that differs from the kept `.env` is refused with copy
-  that names the file. Magic-link /
+  host `AUTH_MODE` that differs from effective on-disk `AUTH_MODE`
+  (`.env.local` wins over `.env`) is refused with copy that names that
+  effective mode. Magic-link /
   local-otp use `MAIL_TRANSPORT` (`auto` / `resend` / `smtp` / `outbox`).
   `pnpm db:migrate` fills `DATABASE_URL` from the repo-root `.env` /
   `.env.local` via `findRepoRoot` (same walk as env-store / ingest).

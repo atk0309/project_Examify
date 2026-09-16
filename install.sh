@@ -18,8 +18,9 @@
 #   Host ALLOW_LOCAL_OUTBOX=1 must not greenlight a broken password file.
 #   A kept password-mode file with no SMTP / Resend / allowed outbox is
 #   refused (invite accept would fail closed; this run does not claim to
-#   enable an outbox). Host AUTH_MODE that differs from the kept .env is
-#   refused with copy that names the file's AUTH_MODE, not the host's.
+#   enable an outbox). Host AUTH_MODE that differs from effective on-disk
+#   AUTH_MODE (.env.local wins over .env) is refused with copy that names
+#   that effective mode, not the host's and not .env alone when local wins.
 #   Default AUTH_MODE=password enables a local outbox so invite-accept OTP
 #   (mailbox proof) can be read from data/outbox — only when this run writes
 #   .env. Set SMTP_* / RESEND_* to use real mail instead. Invite accept never
@@ -53,8 +54,9 @@ Non-interactive (CI / automation):
   Host ALLOW_LOCAL_OUTBOX=1 must not greenlight a broken password file.
   A kept password-mode file with no SMTP / Resend / allowed outbox is
   refused (invite accept would fail closed; this run does not claim to
-  enable an outbox). Host AUTH_MODE that differs from the kept .env is
-  refused with copy that names the file's AUTH_MODE, not the host's.
+  enable an outbox). Host AUTH_MODE that differs from effective on-disk
+  AUTH_MODE (.env.local wins over .env) is refused with copy that names
+  that effective mode, not the host's and not .env alone when local wins.
   Default AUTH_MODE=password enables a local outbox so invite-accept OTP
   (mailbox proof) can be read from data/outbox — only when this run writes
   .env. Set SMTP_* / RESEND_* to use real mail instead. Invite accept never
@@ -81,7 +83,7 @@ NONINTERACTIVE="${EXAMIFY_NONINTERACTIVE:-0}"
 ENABLED_PASSWORD_OUTBOX=0
 
 # Host AUTH_MODE at invoke time (before installer defaults). Used only to
-# refuse a conflict with the kept .env — never to judge mail readiness.
+# refuse a conflict with effective on-disk AUTH_MODE — never to judge mail.
 HOST_AUTH_MODE="${AUTH_MODE-}"
 
 for arg in "$@"; do
@@ -232,11 +234,19 @@ disk_env_get() {
   env_file_get .env "$key"
 }
 
-# AUTH_MODE written in the kept `.env` (not host, not .env.local).
-# Omitted line is the runtime default (magic-link).
+# AUTH_MODE written in the kept `.env` only (not host, not .env.local).
+# Omitted line is the runtime default (magic-link). Used to name an override.
 kept_env_auth_mode() {
   local mode
   mode="$(env_file_get .env AUTH_MODE)"
+  printf '%s' "${mode:-magic-link}"
+}
+
+# Effective on-disk AUTH_MODE: .env.local wins over .env (Next.js load order).
+# Omitted everywhere is the runtime default (magic-link).
+disk_auth_mode() {
+  local mode
+  mode="$(disk_env_get AUTH_MODE)"
   printf '%s' "${mode:-magic-link}"
 }
 
@@ -297,12 +307,19 @@ refuse_kept_password_without_mail() {
   exit 1
 }
 
-# Host AUTH_MODE is this run's intent; the kept file is what would boot.
-# Never claim the file is the host value when it is not.
+# Host AUTH_MODE is this run's intent; effective on-disk mode is what would boot.
+# Never claim .env alone when .env.local wins, and never claim the host value.
 refuse_kept_auth_mode_conflict() {
   local disk_mode="$1"
   local host_mode="$2"
-  echo "Keeping existing .env. Host AUTH_MODE=${host_mode}, but the kept file is AUTH_MODE=${disk_mode}." >&2
+  local env_mode local_mode
+  env_mode="$(kept_env_auth_mode)"
+  local_mode="$(env_file_get .env.local AUTH_MODE)"
+  if [ -n "$local_mode" ] && [ "$local_mode" != "$env_mode" ]; then
+    echo "Keeping existing .env. Host AUTH_MODE=${host_mode}, but on-disk AUTH_MODE=${disk_mode} (.env.local overrides .env AUTH_MODE=${env_mode})." >&2
+  else
+    echo "Keeping existing .env. Host AUTH_MODE=${host_mode}, but the kept file is AUTH_MODE=${disk_mode}." >&2
+  fi
   echo "This run did not overwrite .env. Unset AUTH_MODE to keep this file, or remove .env and re-run." >&2
   exit 1
 }
@@ -638,7 +655,7 @@ if [ "$WROTE_ENV" = "1" ] && [ "$ENABLED_PASSWORD_OUTBOX" = "1" ]; then
   claim_password_outbox_enable
 elif [ "$KEPT_EXISTING_ENV" = "1" ]; then
   if [ -n "$HOST_AUTH_MODE" ]; then
-    kept_mode="$(kept_env_auth_mode)"
+    kept_mode="$(disk_auth_mode)"
     if [ "$HOST_AUTH_MODE" != "$kept_mode" ]; then
       refuse_kept_auth_mode_conflict "$kept_mode" "$HOST_AUTH_MODE"
     fi
