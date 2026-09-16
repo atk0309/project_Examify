@@ -13,6 +13,9 @@ test('first-run bootstrap creates the admin without Turnstile', async ({ page })
   await expect(page.getByTestId('setup-form')).toBeVisible();
   await expect(page.getByTestId('turnstile')).toHaveCount(0);
 
+  await page.setViewportSize({ width: 1100, height: 800 });
+  await expect(page.getByTestId('setup-submit')).toBeInViewport();
+
   await page.getByTestId('household-name-input').fill('Fresh family');
   await page.getByTestId('setup-email-input').fill('host@example.com');
   await page.getByTestId('setup-secret-input').fill('e2e-setup-bootstrap-secret');

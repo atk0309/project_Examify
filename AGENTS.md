@@ -89,7 +89,10 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   oldest-first) rather than the 50-capped `getProgressForUser`.
 - Access is invite-only. First-run `/setup` (`bootstrapHousehold`) creates the admin
   when no household exists, and only after `SETUP_BOOTSTRAP_SECRET` matches (required
-  in production; captcha is not identity). After bootstrap, `/onboarding` lets the
+  in production; captcha is not identity). `SetupForm` reads submitted FormData
+  (autofill-safe) and never silently disables Create household; field-level /
+  `aria-invalid` errors explain what failed. Email is the required admin account
+  id in every `AUTH_MODE` (including password). After bootstrap, `/onboarding` lets the
   household admin add subjects, attach local PDFs, choose an AI mode, optionally
   run `examify-ingest generate` (BankIR only; never emit/apply; cancel
   POSTs `/api/onboarding/cancel-generate` so the token is not queued
