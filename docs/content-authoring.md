@@ -63,8 +63,8 @@ Generate writes IR only. It never silently emits or applies:
    / `OPENAI_API_KEY` from the environment or repo `.env` / `.env.local` (existing
    env vars win) and fails closed on a cache miss if
    the key is missing or is the `test` sentinel. The `/onboarding` AI step
-   and `install.sh` can write `OPENAI_API_KEY` into that same repo-root
-   `.env` store (`findRepoRoot`, not `process.cwd()`);
+   and `install.sh` can write `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` into
+   that same repo-root `.env` store (`findRepoRoot`, not `process.cwd()`);
    the wizard never echoes the value. A host-injected key (Docker /
    systemd / parent exec environ — not live-vs-file equality) cannot be
    rotated or cleared from the wizard.

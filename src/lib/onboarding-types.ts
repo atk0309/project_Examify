@@ -137,6 +137,7 @@ export type OnboardingSnapshot = {
    * including empty / `test`. A matching `.env` value is not enough.
    * Wizard write/clear refused.
    */
+  anthropicHostManaged: boolean;
   openaiHostManaged: boolean;
   localAgentConfigured: boolean;
 };

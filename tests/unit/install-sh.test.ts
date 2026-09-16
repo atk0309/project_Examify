@@ -46,6 +46,7 @@ describe('install.sh', () => {
       expect(envFile).not.toContain('SMTP_HOST=');
       expect(envFile).not.toContain('ALLOW_LOCAL_OUTBOX=');
       expect(envFile).not.toContain('OPENAI_API_KEY=');
+      expect(envFile).toContain('ANTHROPIC_API_KEY=test');
       expect(fs.statSync(dest).mode & 0o777).toBe(0o600);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
@@ -74,6 +75,23 @@ describe('install.sh', () => {
       );
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('writes ANTHROPIC_API_KEY when provided instead of the test sentinel', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-install-'));
+    try {
+      const secret = 'sk-install-test-anthropic-key';
+      execFileSync('bash', [SCRIPT, '--write-env-only'], {
+        cwd: dir,
+        env: installEnv({ ANTHROPIC_API_KEY: secret }),
+        stdio: 'pipe',
+      });
+      const envFile = fs.readFileSync(path.join(dir, '.env'), 'utf8');
+      expect(envFile).toContain(`ANTHROPIC_API_KEY=${secret}`);
+      expect(envFile).not.toContain('ANTHROPIC_API_KEY=test');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
     }
   });
 

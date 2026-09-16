@@ -34,9 +34,9 @@ no env-JSON allowlist to hand-edit.
 1. **`/setup`** (first run) or **`/signin`** — on a fresh install, the first visitor
    creates the household and becomes admin (and sets a password when `AUTH_MODE=password`).
    After bootstrap, **`/onboarding`** lets the household admin add subjects, attach
-   local study PDFs, choose an AI mode (OpenAI keys write the same repo-root `.env`
-   as `install.sh` / `examify-ingest generate`; host-injected keys stay
-   host-managed via the process exec environment), optionally generate BankIR from those
+   local study PDFs, choose an AI mode (Anthropic / OpenAI keys write the same
+   repo-root `.env` as `install.sh` / `examify-ingest generate`; host-injected
+   keys stay host-managed via the process exec environment), optionally generate BankIR from those
    files, and emit through `examify-ingest` (validate + Review / dry-run HITL, then apply;
    desktop uses a step rail, mobile a compact progress bar; one stage at a time;
    generate never auto-applies; cancel POSTs `/api/onboarding/cancel-generate`

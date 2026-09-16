@@ -256,7 +256,11 @@ SETUP_BOOTSTRAP_SECRET="${SETUP_BOOTSTRAP_SECRET:-}"
 AUTH_MODE="${AUTH_MODE:-}"
 DATABASE_URL="${DATABASE_URL:-}"
 MAIL_TRANSPORT="${MAIL_TRANSPORT:-auto}"
-ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-test}"
+# Interactive: do not pre-fill `test` or prompt() skips. Non-interactive
+# keeps the grader/boot sentinel when the host did not inject a key.
+if [ "$NONINTERACTIVE" = "1" ]; then
+  ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-test}"
+fi
 
 if [ "$WRITE_ENV_ONLY" != "1" ]; then
   echo
@@ -341,6 +345,14 @@ fi
 if [ "$NONINTERACTIVE" != "1" ] && confirm "Enable Cloudflare Turnstile (captcha)?" "n"; then
   prompt NEXT_PUBLIC_TURNSTILE_SITE_KEY "Turnstile site key"
   prompt TURNSTILE_SECRET_KEY "Turnstile secret key" "" secret
+fi
+
+if [ "$NONINTERACTIVE" != "1" ]; then
+  echo
+  echo "ANTHROPIC_API_KEY for free-text grading and /onboarding Cloud (Anthropic) generate."
+  echo "Same .env store as the wizard. Leave blank to keep the test sentinel (local stub)."
+  prompt ANTHROPIC_API_KEY "Anthropic API key" "" secret
+  ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-test}"
 fi
 
 if [ "$NONINTERACTIVE" != "1" ]; then

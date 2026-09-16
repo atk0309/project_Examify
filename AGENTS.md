@@ -100,10 +100,11 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   the provider is still unwinding; cancelled is a
   calm status, not an error toast; delete/rename wait on the generate
   lock and re-check the admin gate after the wait; subject
-  ids must be in the wizard catalog; OpenAI mode can set / rotate / clear
-  `OPENAI_API_KEY` in the same repo-root `.env` as `install.sh` and
-  `examify-ingest generate` (shared `findRepoRoot`; never echoed; host-injected
-  keys — exec environ assignment, including empty / `test` — are not rotatable in the wizard); skip / Back / desktop rail lock while
+  ids must be in the wizard catalog; Anthropic / OpenAI modes can set /
+  rotate / clear `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` in the same
+  repo-root `.env` as `install.sh` and `examify-ingest generate` (shared
+  `findRepoRoot`; never echoed; host-injected keys — exec environ
+  assignment, including empty / `test` — are not rotatable in the wizard); skip / Back / desktop rail lock while
   generate is in flight so Cancel stays reachable), and emit
   BankIR via `examify-ingest` (directory-only, Review / dry-run HITL before apply,
   empty catalog fail-closed; `--replace-sample` only behind an explicit advanced

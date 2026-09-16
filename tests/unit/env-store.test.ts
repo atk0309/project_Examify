@@ -317,4 +317,111 @@ describe('env-store', () => {
       else process.env.OPENAI_API_KEY = previous;
     }
   });
+
+  it('upserts, rotates, and clears ANTHROPIC_API_KEY without echoing the value', async () => {
+    const {
+      setEnvStoreRootForTests,
+      setEnvStoreSecret,
+      clearEnvStoreSecret,
+      envStoreSecretConfigured,
+    } = await import('@/lib/env-store');
+    const root = tempRoot();
+    writeFileSync(path.join(root, '.env'), 'SITE_URL=http://localhost:3000\nOPENAI_API_KEY=keep\n');
+    setEnvStoreRootForTests(root);
+    const secret = 'sk-anthropic-unit-test-key-never-echo';
+    const rotated = 'sk-anthropic-rotated-key-never-echo';
+    const previous = process.env.ANTHROPIC_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+    try {
+      const written = setEnvStoreSecret('ANTHROPIC_API_KEY', `  ${secret}  `, root);
+      expect(written).toEqual({ ok: true });
+      expect(JSON.stringify(written)).not.toContain(secret);
+      expect(envStoreSecretConfigured('ANTHROPIC_API_KEY')).toBe(true);
+      expect(process.env.ANTHROPIC_API_KEY).toBe(secret);
+      expect(readFileSync(path.join(root, '.env'), 'utf8')).toContain(
+        `ANTHROPIC_API_KEY=${secret}`,
+      );
+      expect(readFileSync(path.join(root, '.env'), 'utf8')).toContain('OPENAI_API_KEY=keep');
+      expect(statSync(path.join(root, '.env')).mode & 0o777).toBe(0o600);
+
+      expect(setEnvStoreSecret('ANTHROPIC_API_KEY', rotated, root)).toEqual({ ok: true });
+      expect(readFileSync(path.join(root, '.env'), 'utf8')).toContain(
+        `ANTHROPIC_API_KEY=${rotated}`,
+      );
+      expect(readFileSync(path.join(root, '.env'), 'utf8')).not.toContain(secret);
+      expect(process.env.ANTHROPIC_API_KEY).toBe(rotated);
+
+      const cleared = clearEnvStoreSecret('ANTHROPIC_API_KEY', root);
+      expect(cleared).toEqual({ ok: true });
+      expect(envStoreSecretConfigured('ANTHROPIC_API_KEY')).toBe(false);
+      expect(process.env.ANTHROPIC_API_KEY).toBeUndefined();
+      expect(readFileSync(path.join(root, '.env'), 'utf8')).not.toMatch(/ANTHROPIC_API_KEY=/);
+      expect(readFileSync(path.join(root, '.env'), 'utf8')).toContain('OPENAI_API_KEY=keep');
+    } finally {
+      if (previous === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = previous;
+    }
+  });
+
+  it('refuses Anthropic test sentinel, empty values, newlines, and null bytes', async () => {
+    const { setEnvStoreSecret } = await import('@/lib/env-store');
+    const root = tempRoot();
+    const previous = process.env.ANTHROPIC_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+    try {
+      expect(setEnvStoreSecret('ANTHROPIC_API_KEY', 'test', root)).toEqual({
+        ok: false,
+        reason: 'invalid',
+      });
+      expect(setEnvStoreSecret('ANTHROPIC_API_KEY', '   ', root)).toEqual({
+        ok: false,
+        reason: 'invalid',
+      });
+      expect(setEnvStoreSecret('ANTHROPIC_API_KEY', 'sk-ok\nsk-bad', root)).toEqual({
+        ok: false,
+        reason: 'invalid',
+      });
+      expect(setEnvStoreSecret('ANTHROPIC_API_KEY', `sk-ok${'\0'}sk-bad`, root)).toEqual({
+        ok: false,
+        reason: 'invalid',
+      });
+      expect(process.env.ANTHROPIC_API_KEY).toBeUndefined();
+    } finally {
+      if (previous === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = previous;
+    }
+  });
+
+  it('refuses Anthropic writes when exec environ assigns the key (including empty / test)', async () => {
+    const {
+      setEnvStoreRootForTests,
+      setInitialEnvironForTests,
+      setEnvStoreSecret,
+      clearEnvStoreSecret,
+    } = await import('@/lib/env-store');
+    const root = tempRoot();
+    setEnvStoreRootForTests(root);
+    writeFileSync(path.join(root, '.env'), 'OPENAI_API_KEY=keep\n');
+    const previous = process.env.ANTHROPIC_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+    const attempted = 'sk-anthropic-host-managed-attempt-never-echo';
+    try {
+      for (const injected of ['', 'test'] as const) {
+        setInitialEnvironForTests({ ANTHROPIC_API_KEY: injected });
+        expect(setEnvStoreSecret('ANTHROPIC_API_KEY', attempted, root)).toEqual({
+          ok: false,
+          reason: 'host_managed',
+        });
+        expect(clearEnvStoreSecret('ANTHROPIC_API_KEY', root)).toEqual({
+          ok: false,
+          reason: 'host_managed',
+        });
+        expect(readFileSync(path.join(root, '.env'), 'utf8')).toBe('OPENAI_API_KEY=keep\n');
+        expect(process.env.ANTHROPIC_API_KEY).toBeUndefined();
+      }
+    } finally {
+      if (previous === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = previous;
+    }
+  });
 });
