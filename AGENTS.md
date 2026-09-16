@@ -66,7 +66,8 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   images were rasterized. Run cache/manifests are gitignored under
   `.examify-ingest/`.
 - **Free-text is LLM-graded server-side** (`src/lib/grading/index.ts`,
-  `ANTHROPIC_API_KEY`; `test` → deterministic stub). Grading never throws — failures
+  live `ANTHROPIC_API_KEY` from `process.env` first so a wizard write is
+  visible without restart; `test` → deterministic stub). Grading never throws — failures
   fall to `needs_review`. A free item is "correct" at `PASS_THRESHOLD` (0.6). The UI
   renders only the bounded `Verdict` fields, never the rubric. Results are
   server-driven (a "Marking…" state covers the submit round-trip). Full design:

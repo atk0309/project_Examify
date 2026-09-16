@@ -5,9 +5,11 @@ import 'server-only';
    ----------------------------------------------------------------------------
    Grades a child's short free-text answer against a server-only rubric using
    Claude. Two paths:
-   - `ANTHROPIC_API_KEY === 'test'` → a deterministic full-score stub, no
+   - live `ANTHROPIC_API_KEY === 'test'` → a deterministic full-score stub, no
      network. This mirrors the Resend outbox stub so `pnpm dev`, unit tests and
      Playwright (which inject the `test` sentinel) never hit the API.
+     The key is read from `process.env` first so a wizard / env-store write
+     is visible without restart (`env.ts` is boot-frozen).
    - otherwise → a single `fetch` to the Anthropic Messages API.
 
    Fail-safe (I4): any failure — network error, non-2xx, unparseable or
@@ -104,12 +106,23 @@ function userPrompt(args: GradeArgs): string {
 }
 
 /**
+ * Wizard / install writes update `process.env` and `.env`. `env.ts` is
+ * parsed once at boot, so grading must not stay on that snapshot.
+ */
+function liveAnthropicApiKey(): string {
+  const live = process.env.ANTHROPIC_API_KEY;
+  if (typeof live === 'string') return live.trim();
+  return env.ANTHROPIC_API_KEY;
+}
+
+/**
  * Grade one free-text answer. Returns `{ status: 'graded', verdict }` on success
  * or `{ status: 'needs_review' }` on any failure (never throws).
  */
 export async function gradeFreeText(args: GradeArgs): Promise<GradeResult> {
+  const apiKey = liveAnthropicApiKey();
   // Deterministic stub for dev / test — full marks, no network.
-  if (env.ANTHROPIC_API_KEY === 'test') {
+  if (apiKey === 'test') {
     return {
       status: 'graded',
       verdict: {
@@ -127,7 +140,7 @@ export async function gradeFreeText(args: GradeArgs): Promise<GradeResult> {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'x-api-key': env.ANTHROPIC_API_KEY,
+        'x-api-key': apiKey,
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({

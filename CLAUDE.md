@@ -453,8 +453,9 @@ These are non-negotiable. Don't "fix" them out.
   server-only) returns `{ status:'graded', verdict } | { status:'needs_review' }` and **never
   throws** — the request has a 15-second deadline, and any timeout/fetch error, non-2xx, or
   malformed/unparseable model JSON falls to `needs_review` so an attempt is never lost.
-  `ANTHROPIC_API_KEY === 'test'` (dev/test default) uses a deterministic full-score stub, no
-  network — same pattern as the Resend outbox stub.
+  Live `ANTHROPIC_API_KEY === 'test'` (dev/test default, read from `process.env`
+  first so a wizard / env-store write is visible without restart) uses a
+  deterministic full-score stub, no network — same pattern as the Resend outbox stub.
 - **A free-text item is "correct" at `PASS_THRESHOLD` (0.6).** `isFreePass(score, maxScore)`
   (`attempts.ts`, the shared constant — not an inline literal) decides the ring/tally. A
   `needs_review` item persists `score: null, verdict: null` and counts as incorrect.
