@@ -150,6 +150,7 @@ describe('onboarding generate graph', () => {
     const actions = readFileSync(path.join(process.cwd(), 'src/actions/onboarding.ts'), 'utf8');
     const store = readFileSync(path.join(process.cwd(), 'src/lib/env-store.ts'), 'utf8');
     const flags = readFileSync(path.join(process.cwd(), 'src/lib/onboarding.ts'), 'utf8');
+    const grading = readFileSync(path.join(process.cwd(), 'src/lib/grading/index.ts'), 'utf8');
 
     const anthropicPanelAt = wizard.indexOf('testId="wizard-anthropic-key"');
     expect(anthropicPanelAt).toBeGreaterThan(-1);
@@ -183,6 +184,13 @@ describe('onboarding generate graph', () => {
     expect(flags).toMatch(/anthropicConfigured: envStoreSecretConfigured\('ANTHROPIC_API_KEY'\)/);
     expect(flags).toMatch(/anthropicHostManaged: envStoreSecretHostManaged\('ANTHROPIC_API_KEY'\)/);
     expect(flags).not.toMatch(/ANTHROPIC_API_KEY: env\.ANTHROPIC_API_KEY/);
+
+    // Grader + Configured badge stay twins: live process.env / env-store, never
+    // the boot-frozen env.ts snapshot (clear must fail closed, not restub).
+    expect(grading).not.toMatch(/from ['"]@\/lib\/env['"]/);
+    expect(grading).not.toMatch(/env\.ANTHROPIC_API_KEY/);
+    expect(grading).toMatch(/process\.env\.ANTHROPIC_API_KEY/);
+    expect(grading).toMatch(/envStoreSecretConfigured\('ANTHROPIC_API_KEY'\)/);
   });
 
   it('locks Welcome skip, Back, and rail while generateBusy so Cancel stays reachable', () => {

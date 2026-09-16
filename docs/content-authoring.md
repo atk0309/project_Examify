@@ -201,8 +201,11 @@ type Verdict = {
 
 Behaviour you can rely on:
 
-- **`ANTHROPIC_API_KEY=test`** (the dev/test default) routes to a deterministic
-  full-score stub — no network, no key needed for local development or CI.
+- **`ANTHROPIC_API_KEY=test`** (the live `process.env` value — never the
+  boot-frozen `env.ts` snapshot) routes to a deterministic full-score stub —
+  no network, no key needed for local development or CI. A wizard set /
+  rotate is used on the next grade; clear fails closed (`needs_review`, no
+  stub) so the Configured badge and the grader stay twins.
 - **It never throws.** A fetch error, non-2xx, or unparseable model reply resolves to
   `{ status: 'needs_review' }`; the attempt persists with `score: null` and renders as
   "Saved for review" (counted as incorrect, never lost).

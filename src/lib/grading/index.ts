@@ -5,11 +5,12 @@ import 'server-only';
    ----------------------------------------------------------------------------
    Grades a child's short free-text answer against a server-only rubric using
    Claude. Two paths:
-   - live `ANTHROPIC_API_KEY === 'test'` → a deterministic full-score stub, no
-     network. This mirrors the Resend outbox stub so `pnpm dev`, unit tests and
-     Playwright (which inject the `test` sentinel) never hit the API.
-     The key is read from `process.env` first so a wizard / env-store write
-     is visible without restart (`env.ts` is boot-frozen).
+   - live `ANTHROPIC_API_KEY === 'test'` (process.env only, never the boot-frozen
+     `env.ts` snapshot) → a deterministic full-score stub, no network. This
+     mirrors the Resend outbox stub so `pnpm dev`, unit tests and Playwright
+     (which inject the `test` sentinel) never hit the API.
+   - live key missing / empty (wizard clear) → `{ status: 'needs_review' }`
+     fail-closed. No stub. Same “usable?” rule as the wizard Configured badge.
    - otherwise → a single `fetch` to the Anthropic Messages API.
 
    Fail-safe (I4): any failure — network error, non-2xx, unparseable or
@@ -19,7 +20,7 @@ import 'server-only';
    Only the bounded `Verdict` fields ever leave this module; the rubric and the
    raw model text are never returned to callers (and so never reach the client).
    ========================================================================== */
-import { env } from '@/lib/env';
+import { envStoreSecretConfigured } from '@/lib/env-store';
 import type { Verdict } from '@/lib/db/schema';
 
 export type GradeResult = { status: 'graded'; verdict: Verdict } | { status: 'needs_review' };
@@ -106,13 +107,14 @@ function userPrompt(args: GradeArgs): string {
 }
 
 /**
- * Wizard / install writes update `process.env` and `.env`. `env.ts` is
- * parsed once at boot, so grading must not stay on that snapshot.
+ * Wizard / install writes update `process.env` and `.env`. Never read the
+ * boot-frozen env.ts snapshot — after clear that would stub again. Same
+ * usable-key rule as the wizard Configured badge (`anthropicConfigured`).
  */
-function liveAnthropicApiKey(): string {
+function liveAnthropicApiKey(): string | undefined {
   const live = process.env.ANTHROPIC_API_KEY;
-  if (typeof live === 'string') return live.trim();
-  return env.ANTHROPIC_API_KEY;
+  if (typeof live !== 'string') return undefined;
+  return live.trim();
 }
 
 /**
@@ -121,7 +123,7 @@ function liveAnthropicApiKey(): string {
  */
 export async function gradeFreeText(args: GradeArgs): Promise<GradeResult> {
   const apiKey = liveAnthropicApiKey();
-  // Deterministic stub for dev / test — full marks, no network.
+  // Deterministic stub only when the live store still holds the sentinel.
   if (apiKey === 'test') {
     return {
       status: 'graded',
@@ -133,6 +135,9 @@ export async function gradeFreeText(args: GradeArgs): Promise<GradeResult> {
         spelling: [],
       },
     };
+  }
+  if (!envStoreSecretConfigured('ANTHROPIC_API_KEY') || !apiKey) {
+    return { status: 'needs_review' };
   }
 
   try {

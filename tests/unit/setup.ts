@@ -16,6 +16,7 @@ if (!process.env.TURNSTILE_SECRET_KEY)
 if (!process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY)
   Reflect.set(process.env, 'NEXT_PUBLIC_TURNSTILE_SITE_KEY', '1x00000000000000000000AA');
 if (!process.env.RESEND_API_KEY) Reflect.set(process.env, 'RESEND_API_KEY', 'test');
+if (!process.env.ANTHROPIC_API_KEY) Reflect.set(process.env, 'ANTHROPIC_API_KEY', 'test');
 if (!process.env.MAIL_OUTBOX_DIR) {
   Reflect.set(process.env, 'MAIL_OUTBOX_DIR', path.join(TMP_ROOT, `outbox-unit-${process.pid}`));
 }

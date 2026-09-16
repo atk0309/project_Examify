@@ -241,9 +241,11 @@ generating a question bank from your own study-material PDFs — is in
 Free-text answers are graded server-side by the Anthropic Messages API
 (`claude-sonnet-4-6`), strictly against the rubric you wrote for that question:
 
-- Configure `ANTHROPIC_API_KEY`. The `test` sentinel (the dev default) swaps in a
+- Configure `ANTHROPIC_API_KEY`. The grader reads the live key from
+  `process.env` (updated by `/onboarding` set / rotate / clear), never a
+  boot-frozen snapshot. The `test` sentinel (the dev default) swaps in a
   deterministic full-score stub with no network calls — the same pattern as the Resend
-  email outbox.
+  email outbox. Clear fails closed (`needs_review`, no stub).
 - Grading is **fail-safe**: requests have a 15-second deadline, and any timeout, network
   error, non-2xx, or malformed model output resolves to `needs_review` instead of throwing,
   so a finished exam is never lost. A `needs_review` item renders as "Saved for review" and

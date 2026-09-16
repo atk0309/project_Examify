@@ -21,24 +21,30 @@ describe('clampScore', () => {
 
 describe('gradeFreeText (test sentinel)', () => {
   it('returns a full-score graded verdict with no network', async () => {
-    const res = await gradeFreeText({
-      question: 'What is a metaphor?',
-      rubric: 'Award up to 3 marks…',
-      maxScore: 3,
-      studentAnswer: 'A comparison that says one thing is another.',
-    });
-    expect(res.status).toBe('graded');
-    if (res.status !== 'graded') return;
-    expect(res.verdict.score).toBe(3);
-    expect(typeof res.verdict.verdict).toBe('string');
-    expect(Array.isArray(res.verdict.gotRight)).toBe(true);
-    expect(Array.isArray(res.verdict.toReview)).toBe(true);
-    expect(Array.isArray(res.verdict.spelling)).toBe(true);
+    const previous = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = 'test';
+    try {
+      const res = await gradeFreeText({
+        question: 'What is a metaphor?',
+        rubric: 'Award up to 3 marks…',
+        maxScore: 3,
+        studentAnswer: 'A comparison that says one thing is another.',
+      });
+      expect(res.status).toBe('graded');
+      if (res.status !== 'graded') return;
+      expect(res.verdict.score).toBe(3);
+      expect(typeof res.verdict.verdict).toBe('string');
+      expect(Array.isArray(res.verdict.gotRight)).toBe(true);
+      expect(Array.isArray(res.verdict.toReview)).toBe(true);
+      expect(Array.isArray(res.verdict.spelling)).toBe(true);
+    } finally {
+      if (previous === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = previous;
+    }
   });
 });
 
 describe('gradeFreeText (live API path)', () => {
-  const originalEnvKey = env.ANTHROPIC_API_KEY;
   const originalProcessKey = process.env.ANTHROPIC_API_KEY;
   const args = {
     question: 'What is a metaphor?',
@@ -54,7 +60,6 @@ describe('gradeFreeText (live API path)', () => {
   afterEach(() => {
     if (originalProcessKey === undefined) delete process.env.ANTHROPIC_API_KEY;
     else process.env.ANTHROPIC_API_KEY = originalProcessKey;
-    (env as { ANTHROPIC_API_KEY: string }).ANTHROPIC_API_KEY = originalEnvKey;
     vi.restoreAllMocks();
   });
 
@@ -123,49 +128,70 @@ describe('gradeFreeText (wizard write, no restart)', () => {
     vi.restoreAllMocks();
   });
 
-  it('uses the env-store key immediately while env.ts stays on the boot sentinel', async () => {
+  it('set / rotate / clear stay twins with the Configured badge; clear fails closed', async () => {
     expect(env.ANTHROPIC_API_KEY).toBe('test');
-    const { setEnvStoreRootForTests, setEnvStoreSecret } = await import('@/lib/env-store');
+    const {
+      setEnvStoreRootForTests,
+      setEnvStoreSecret,
+      clearEnvStoreSecret,
+      envStoreSecretConfigured,
+    } = await import('@/lib/env-store');
     const root = mkdtempSync(path.join(tmpdir(), 'examify-grade-live-'));
     writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'project-examify' }));
     setEnvStoreRootForTests(root);
     const secret = 'sk-anth-post-write-live-never-echo';
+    const rotated = 'sk-anth-post-rotate-live-never-echo';
     const previous = process.env.ANTHROPIC_API_KEY;
     process.env.ANTHROPIC_API_KEY = 'test';
-    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify({
-                score: 3,
-                verdict: 'A sound answer.',
-                gotRight: [],
-                toReview: [],
-                spelling: [],
-              }),
-            },
-          ],
-        }),
-        { status: 200 },
-      ),
-    );
+    const okBody = JSON.stringify({
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({
+            score: 3,
+            verdict: 'A sound answer.',
+            gotRight: [],
+            toReview: [],
+            spelling: [],
+          }),
+        },
+      ],
+    });
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(okBody, { status: 200 }))
+      .mockResolvedValueOnce(new Response(okBody, { status: 200 }));
     try {
+      expect(envStoreSecretConfigured('ANTHROPIC_API_KEY')).toBe(false);
       expect(await gradeFreeText(args)).toMatchObject({ status: 'graded', verdict: { score: 3 } });
       expect(fetchSpy).not.toHaveBeenCalled();
 
       expect(setEnvStoreSecret('ANTHROPIC_API_KEY', secret, root)).toEqual({ ok: true });
       expect(env.ANTHROPIC_API_KEY).toBe('test');
-      expect(process.env.ANTHROPIC_API_KEY).toBe(secret);
+      expect(envStoreSecretConfigured('ANTHROPIC_API_KEY')).toBe(true);
+      const written = await gradeFreeText(args);
+      expect(written).toMatchObject({ status: 'graded', verdict: { score: 3 } });
+      expect((fetchSpy.mock.calls[0]?.[1] as RequestInit).headers).toMatchObject({
+        'x-api-key': secret,
+      });
 
-      const result = await gradeFreeText(args);
-      expect(result).toMatchObject({ status: 'graded', verdict: { score: 3 } });
-      expect(fetchSpy).toHaveBeenCalledTimes(1);
-      const init = fetchSpy.mock.calls[0]?.[1] as RequestInit;
-      const headers = init.headers as Record<string, string>;
-      expect(headers['x-api-key']).toBe(secret);
-      expect(JSON.stringify(result)).not.toContain(secret);
+      expect(setEnvStoreSecret('ANTHROPIC_API_KEY', rotated, root)).toEqual({ ok: true });
+      expect(env.ANTHROPIC_API_KEY).toBe('test');
+      expect(envStoreSecretConfigured('ANTHROPIC_API_KEY')).toBe(true);
+      const rotatedResult = await gradeFreeText(args);
+      expect(rotatedResult).toMatchObject({ status: 'graded', verdict: { score: 3 } });
+      expect((fetchSpy.mock.calls[1]?.[1] as RequestInit).headers).toMatchObject({
+        'x-api-key': rotated,
+      });
+
+      expect(clearEnvStoreSecret('ANTHROPIC_API_KEY', root)).toEqual({ ok: true });
+      expect(env.ANTHROPIC_API_KEY).toBe('test');
+      expect(envStoreSecretConfigured('ANTHROPIC_API_KEY')).toBe(false);
+      expect(process.env.ANTHROPIC_API_KEY).toBeUndefined();
+      expect(await gradeFreeText(args)).toEqual({ status: 'needs_review' });
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+      expect(JSON.stringify(written)).not.toContain(secret);
+      expect(JSON.stringify(rotatedResult)).not.toContain(rotated);
     } finally {
       if (previous === undefined) delete process.env.ANTHROPIC_API_KEY;
       else process.env.ANTHROPIC_API_KEY = previous;
