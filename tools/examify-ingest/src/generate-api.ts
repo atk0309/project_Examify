@@ -1,10 +1,13 @@
 /** Library + CLI entry for Phase 2 generate. Import from `examify-ingest/generate`. */
 export {
+  assertGenerateTargetsCanPersist,
+  assertGenerateTargetsHaveSources,
   assertReadableProviderInput,
   generateSubject,
   generateTargets,
   NEXT_INGEST_COMMANDS,
   publicSplitHasNoSecrets,
+  sourcelessGenerateTargetIds,
   type GenerateRequest,
   type GenerateSubjectResult,
 } from './generate';
@@ -18,9 +21,16 @@ export {
   resolvePageImages,
 } from './pages';
 export { sortRecord } from './hash';
-export { writeFileAtomic } from './write-atomic';
+export {
+  assertCanWriteBankIr,
+  BankIrOverwriteError,
+  writeBankIrAtomic,
+  writeFileAtomic,
+  type WriteBankIrOptions,
+} from './write-atomic';
 export { mergeRepoEnvFiles, parseEnvFile } from './repo-env';
 export { loadGeneratePrompt, findIngestPackageRoot, generatePromptPath } from './prompt';
+export { sampleBankFrozenIds } from './frozen-ids';
 export {
   resolveGenerateTargets,
   resolveSubjectSources,

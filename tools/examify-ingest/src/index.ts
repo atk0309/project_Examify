@@ -1,5 +1,6 @@
 export { FIXTURE_IDS, FIXTURE_ID_SET, type FixtureId } from './fixtures';
 export { collectQuestionIds } from './ids';
+export { sampleBankFrozenIds } from './frozen-ids';
 export {
   bankIrSchema,
   runManifestSchema,
@@ -49,3 +50,10 @@ export {
 export { formatFileDiff, stableJson } from './diff';
 export { resolveSubjectSources } from './sources';
 export { parseArgs, runCli, USAGE, type CliIo, type ParsedCli } from './cli';
+export {
+  assertCanWriteBankIr,
+  BankIrOverwriteError,
+  writeBankIrAtomic,
+  writeFileAtomic,
+  type WriteBankIrOptions,
+} from './write-atomic';

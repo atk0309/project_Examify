@@ -231,8 +231,11 @@ paper, `shuffle` randomises order), and a unit-test guard enforces that the two 
 stay in lockstep. You can also author `content/subjects/<id>/bank.ir.json` (by
 hand or `pnpm examify-ingest generate`) and emit the split with
 `pnpm examify-ingest emit content/subjects --dry-run` (or `--apply` to write
-`content/generated/`). Generate writes IR only — still validate, dry-run, then
-`--apply`. The full guide — adding subjects and difficulties, writing
+`content/generated/`). Generate writes IR only — still
+`pnpm examify-ingest validate content/subjects`, then
+`emit content/subjects --dry-run`, then `emit content/subjects --apply`. Hand-authored biology has no source file (skip generate). A
+fresh-clone generate fixture is `content/subjects/demo`. Existing IR needs
+`--force`; sample-bank ids fail at generate unless `--replace-sample`. The full guide — adding subjects and difficulties, writing
 rubrics the LLM grader marks well, the ingest CLI, and a workflow for
 generating a question bank from your own study-material PDFs — is in
 [`docs/content-authoring.md`](docs/content-authoring.md) and
