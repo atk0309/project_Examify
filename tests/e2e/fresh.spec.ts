@@ -7,6 +7,14 @@ const OUTBOX =
 
 test.describe.configure({ mode: 'serial' });
 
+test('setup Create household stays in the first desktop viewport', async ({ page }) => {
+  await page.setViewportSize({ width: 1100, height: 800 });
+  await page.goto('/signin');
+  await expect(page).toHaveURL(/\/setup/);
+  await expect(page.getByTestId('setup-submit')).toBeInViewport();
+  await expect(page.getByTestId('setup-submit')).toBeEnabled();
+});
+
 test('first-run bootstrap creates the admin without Turnstile', async ({ page }) => {
   await page.goto('/signin');
   await expect(page).toHaveURL(/\/setup/);

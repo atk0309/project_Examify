@@ -151,8 +151,11 @@ Set `AUTH_MODE=password` in `.env` if you want to develop without mail.
 Who may sign in is stored in SQLite, not env:
 
 1. **First run** — `/setup` creates the household and the admin (a parent). You must
-   enter the deployment `SETUP_BOOTSTRAP_SECRET` (required in production). No email
-   round-trip; you are at the keyboard.
+   enter the deployment `SETUP_BOOTSTRAP_SECRET` (required in production). Your email
+   is the required admin account id in every `AUTH_MODE` (including password). No
+   email round-trip; you are at the keyboard. The form stays submittable after
+   browser autofill, keeps those DOM values if Turnstile remounts, and shows
+   field errors (cleared on input) instead of a silent disabled button.
 2. **Invite** — from the parent dashboard, create a student invite (open or
    email-locked) or a parent invite (**email-locked**). Share `/invite/<token>`.
    Revoke unused links; remove a member if they should no longer have access.

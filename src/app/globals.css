@@ -1518,6 +1518,29 @@
     text-align: center;
     margin: var(--sp-4) 0 0;
   }
+  .field-error {
+    font-size: var(--fs-caption);
+    color: var(--err);
+    margin: var(--sp-2) 0 0;
+  }
+  .text-input[aria-invalid='true'] {
+    border-color: var(--err);
+  }
+  @media (min-width: 900px) {
+    .login-setup {
+      justify-content: flex-start;
+      padding-top: var(--sp-6);
+    }
+    .login-setup .login-head {
+      margin-bottom: var(--sp-5);
+    }
+    .login-setup .login-sub {
+      max-width: 42ch;
+    }
+    .login-setup .field {
+      margin-bottom: var(--sp-4);
+    }
+  }
   .sent-state {
     text-align: center;
   }
