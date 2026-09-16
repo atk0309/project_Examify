@@ -46,6 +46,8 @@ import {
   EMPTY_AUTHORITATIVE_EMIT,
   ONBOARDING_AI_MODES,
   SUBJECT_ICON_OPTIONS,
+  onboardingPruneConfirmMessage,
+  onboardingPruneEntries,
   type OnboardingAiMode,
   type OnboardingDryRun,
   type OnboardingIssue,

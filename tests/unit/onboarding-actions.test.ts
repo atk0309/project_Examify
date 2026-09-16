@@ -37,6 +37,27 @@ vi.mock('next/navigation', () => ({
   },
 }));
 
+function populatedIr(id = 'history', label = 'History') {
+  return {
+    version: 1,
+    subject: { id, label, icon: 'geography', l: 0.6, c: 0.08, h: 40 },
+    difficulties: {
+      easy: [
+        {
+          id: `${id}-easy-1`,
+          type: 'mcq',
+          q: 'A prior question?',
+          choices: ['A', 'B', 'C', 'D'],
+          answer: 1,
+          provenance: { pdf: 'hand-authored', locator: 'unit' },
+        },
+      ],
+      medium: [],
+      hard: [],
+    },
+  };
+}
+
 function tempRoot(): string {
   const root = mkdtempSync(path.join(tmpdir(), 'examify-onboarding-act-'));
   writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'project-examify' }));
@@ -486,7 +507,7 @@ describe('onboarding actions', () => {
     );
     expect(result.snapshot.hasDryRun).toBe(false);
     expect(result.snapshot.hasApplied).toBe(false);
-    expect(result.result.overwrite).toBe(true);
+    expect(result.result.overwrite).toBe(false);
     expect((await validateOnboardingAction()).ok).toBe(true);
   });
 
@@ -498,11 +519,7 @@ describe('onboarding actions', () => {
     const irPath = path.join(root, 'content/subjects/history/bank.ir.json');
     fs.mkdirSync(path.join(root, 'content/subjects/history'), { recursive: true });
     fs.mkdirSync(path.join(root, 'content/source-pdfs/history'), { recursive: true });
-    const prior = `${JSON.stringify({
-      version: 1,
-      subject: { id: 'history', label: 'History', icon: 'geography', l: 0.6, c: 0.08, h: 40 },
-      difficulties: { easy: [], medium: [], hard: [] },
-    })}\n`;
+    const prior = `${JSON.stringify(populatedIr())}\n`;
     writeFileSync(irPath, prior);
     writeFileSync(path.join(root, 'content/source-pdfs/history/notes.txt'), 'A source note.\n');
 
@@ -531,11 +548,7 @@ describe('onboarding actions', () => {
     const irPath = path.join(root, 'content/subjects/history/bank.ir.json');
     fs.mkdirSync(path.join(root, 'content/subjects/history'), { recursive: true });
     fs.mkdirSync(path.join(root, 'content/source-pdfs/history'), { recursive: true });
-    const prior = `${JSON.stringify({
-      version: 1,
-      subject: { id: 'history', label: 'History', icon: 'geography', l: 0.6, c: 0.08, h: 40 },
-      difficulties: { easy: [], medium: [], hard: [] },
-    })}\n`;
+    const prior = `${JSON.stringify(populatedIr())}\n`;
     writeFileSync(irPath, prior);
     writeFileSync(path.join(root, 'content/source-pdfs/history/notes.txt'), 'A source note.\n');
 

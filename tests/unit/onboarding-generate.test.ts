@@ -1068,7 +1068,20 @@ describe('generateOnboardingSubject', () => {
     const sneaked = `${JSON.stringify({
       version: 1,
       subject: { id: 'history', label: 'History', icon: 'geography', l: 0.6, c: 0.08, h: 40 },
-      difficulties: { easy: [], medium: [], hard: [] },
+      difficulties: {
+        easy: [
+          {
+            id: 'history-easy-1',
+            type: 'mcq',
+            q: 'Sneaked BankIR?',
+            choices: ['A', 'B', 'C', 'D'],
+            answer: 1,
+            provenance: { pdf: 'hand-authored', locator: 'unit' },
+          },
+        ],
+        medium: [],
+        hard: [],
+      },
     })}\n`;
     const { generateSubject: actualGenerateSubject } =
       await vi.importActual<typeof ingest>('examify-ingest/generate');

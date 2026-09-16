@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { OnboardingSnapshot } from '@/lib/onboarding-types';
 
@@ -171,10 +171,12 @@ describe('OnboardingWizard majors UI', () => {
     fireEvent.click(screen.getByTestId('wizard-next'));
     fireEvent.click(screen.getByTestId('wizard-next'));
     fireEvent.click(screen.getByTestId('wizard-next'));
-    fireEvent.click(screen.getByTestId('wizard-validate'));
-    fireEvent.click(await screen.findByTestId('wizard-next'));
-    fireEvent.click(screen.getByTestId('wizard-preview'));
-    fireEvent.click(await screen.findByTestId('wizard-to-apply'));
+    fireEvent.click(document.querySelector('.wizard-validate-btn')!);
+    await waitFor(() => expect(screen.getByTestId('wizard-next')).toBeEnabled());
+    fireEvent.click(screen.getByTestId('wizard-next'));
+    fireEvent.click(await screen.findByTestId('wizard-preview'));
+    await waitFor(() => expect(screen.getByTestId('wizard-to-apply')).toBeEnabled());
+    fireEvent.click(screen.getByTestId('wizard-to-apply'));
     expect(screen.getByTestId('wizard-apply-prune')).toHaveTextContent('chemistry.json');
     fireEvent.click(screen.getByTestId('wizard-apply-confirm'));
     expect(window.confirm).toHaveBeenCalled();
@@ -219,12 +221,15 @@ describe('OnboardingWizard majors UI', () => {
     fireEvent.click(screen.getByTestId('wizard-next'));
     fireEvent.click(screen.getByTestId('wizard-next'));
     fireEvent.click(screen.getByTestId('wizard-next'));
-    fireEvent.click(screen.getByTestId('wizard-validate'));
-    fireEvent.click(await screen.findByTestId('wizard-next'));
-    fireEvent.click(screen.getByTestId('wizard-preview'));
-    fireEvent.click(await screen.findByTestId('wizard-to-apply'));
+    fireEvent.click(document.querySelector('.wizard-validate-btn')!);
+    await waitFor(() => expect(screen.getByTestId('wizard-next')).toBeEnabled());
+    fireEvent.click(screen.getByTestId('wizard-next'));
+    fireEvent.click(await screen.findByTestId('wizard-preview'));
+    await waitFor(() => expect(screen.getByTestId('wizard-to-apply')).toBeEnabled());
+    fireEvent.click(screen.getByTestId('wizard-to-apply'));
     fireEvent.click(screen.getByTestId('wizard-apply-confirm'));
-    fireEvent.click(await screen.findByTestId('wizard-to-ready'));
+    await waitFor(() => expect(screen.getByTestId('wizard-to-ready')).toBeEnabled());
+    fireEvent.click(screen.getByTestId('wizard-to-ready'));
     expect(screen.getByTestId('wizard-ready-subjects')).toHaveTextContent('Maths (maths)');
     expect(screen.getByTestId('wizard-ready-subject-biology')).toHaveTextContent(
       'Biology (biology) · 6 questions',

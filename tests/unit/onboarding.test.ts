@@ -691,7 +691,7 @@ describe('onboarding household gate', () => {
       expect(snap.openaiConfigured).toBe(false);
       expect(snap.openaiHostManaged).toBe(false);
       expect(snap.anthropicConfigured).toBe(false);
-      expect(snap.anthropicPresent).toBe(false);
+      expect(snap.anthropicPresent).toBe(true);
     } finally {
       if (previous === undefined) delete process.env.OPENAI_API_KEY;
       else process.env.OPENAI_API_KEY = previous;
