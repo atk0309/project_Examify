@@ -40,10 +40,11 @@ no env-JSON allowlist to hand-edit.
    files, and emit through `examify-ingest` (validate + Review / dry-run HITL, then apply;
    desktop uses a step rail, mobile a compact progress bar; one stage at a time;
    generate never auto-applies; cancel POSTs `/api/onboarding/cancel-generate`
-   (not a queued Server Action) and skips the IR write without replacing
-   prior IR (the wizard waits for an `ok` cancel response before claiming
-   cancelled; cancel after that token already wrote IR is refused; an
-   acknowledged cancel unlocks nav while the provider is still pending);
+   (not a queued Server Action), aborts provider HTTP/CMD via AbortSignal,
+   and discards the preview so prior IR is unchanged (the wizard waits for
+   an `ok` cancel response before claiming cancelled; cancel after that
+   token already wrote IR is refused; an acknowledged cancel unlocks nav
+   while the provider is still unwinding);
    cancelled is a calm status, not an error toast; generate is
    gated to wizard catalog subjects; an empty
    catalog is refused; a changed plan after dry-run is refused). Finish requires

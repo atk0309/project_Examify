@@ -39,12 +39,13 @@ const CANCEL_TOKEN_RE = /^[A-Za-z0-9_-]{8,64}$/;
  * not raise the cap. Concurrent tabs are not a reason to raise it:
  * generate is still single-flight, and extra tokens are leftovers.
  *
- * This Set only skips the wizard IR write. Provider HTTP abort is
- * Ingestion's parallel PR — this module never passes a signal into
- * generateSubject / providers.
+ * This Set skips the wizard IR write. The matching AbortController
+ * (when generate is in flight) aborts provider HTTP/CMD via ingest
+ * `generateSubject({ signal })`.
  */
 const cancelledTokens = new Set<string>();
 const committedTokens = new Set<string>();
+const abortControllers = new Map<string, AbortController>();
 const MAX_CANCEL_TOKENS = 64;
 
 function rememberToken(set: Set<string>, token: string): void {
@@ -67,6 +68,7 @@ export function requestOnboardingGenerateCancel(token: string): boolean {
   if (!isOnboardingGenerateCancelToken(token)) return false;
   if (committedTokens.has(token)) return false;
   rememberToken(cancelledTokens, token);
+  abortControllers.get(token)?.abort();
   return true;
 }
 
@@ -79,7 +81,27 @@ export function markOnboardingGenerateCommitted(token: string | undefined): void
 export function resetOnboardingGenerateForTests(): void {
   cancelledTokens.clear();
   committedTokens.clear();
+  abortControllers.clear();
   generateChain = Promise.resolve();
+}
+
+function registerGenerateAbort(token: string): AbortController {
+  const existing = abortControllers.get(token);
+  if (existing) return existing;
+  const controller = new AbortController();
+  abortControllers.set(token, controller);
+  if (cancelledTokens.has(token)) controller.abort();
+  return controller;
+}
+
+function dropGenerateAbort(token?: string): void {
+  if (!token) return;
+  abortControllers.delete(token);
+}
+
+/** User cancel only — not a bare `AbortError` from the 180s provider timeout. */
+function isUserGenerateAbort(error: unknown): boolean {
+  return error instanceof ingestGenerate.GenerateAbortedError;
 }
 
 function isGenerateCancelled(token?: string): boolean {
@@ -109,6 +131,9 @@ function stableJson(value: unknown): string {
 }
 
 function mapGenerateError(error: unknown): GenerateOnboardingError {
+  if (isUserGenerateAbort(error)) {
+    return cancelledResult();
+  }
   const message = error instanceof Error ? error.message : String(error);
   if (error instanceof ingestGenerate.ProviderConfigError) {
     if (message.includes('EXAMIFY_INGEST_LOCAL_CMD') || message.includes('EXAMIFY_LLM_BASE_URL')) {
@@ -150,9 +175,12 @@ function publicGenerateResult(
  * Preview uses ingest `dryRunIr` so `generateSubject` does not write
  * `bank.ir.json`. The wizard path commits that file only if the
  * cancel token is still clear. Never emit / apply.
- * Does not pass AbortSignal into ingest generate/providers — that is a
- * parallel Ingestion PR. The returned payload is public progress
- * metadata (no answers / keys / IR).
+ * A cancel token mints an AbortController whose signal is passed into
+ * ingest generate/providers so Cancel aborts HTTP/CMD, not only the
+ * IR write. `GenerateAbortedError` maps to `cancelled` (never raw abort
+ * text). A bare `AbortError` (provider 180s timeout) is a real failure,
+ * not user cancel. The returned payload is public progress metadata
+ * (no answers / keys / IR).
  */
 export async function generateOnboardingSubject(input: {
   subjectId: string;
@@ -197,7 +225,13 @@ async function generateOnboardingSubjectUnlocked(input: {
     return { ok: false, reason: 'missing', message: 'Subject is not in the wizard catalog.' };
   }
 
+  const token = input.cancelToken;
+  const controller =
+    token && isOnboardingGenerateCancelToken(token) ? registerGenerateAbort(token) : undefined;
   try {
+    if (isGenerateCancelled(token)) {
+      return cancelledResult();
+    }
     const generated = await ingestGenerate.generateSubject({
       repoRoot: root,
       subject: target.subject,
@@ -206,10 +240,11 @@ async function generateOnboardingSubjectUnlocked(input: {
       provider: input.provider,
       seed: input.seed,
       env: ingestGenerate.mergeRepoEnvFiles(root, process.env),
-      // Ingest has no cancel hook in this PR — preview only; caller owns the IR write.
+      // Preview only — wizard owns the IR write after cancel + catalog checks.
       dryRunIr: true,
+      ...(controller ? { signal: controller.signal } : {}),
     });
-    if (isGenerateCancelled(input.cancelToken)) {
+    if (isGenerateCancelled(token)) {
       return cancelledResult();
     }
     // #65: re-check after the provider returns so a delete/rename during
@@ -218,12 +253,14 @@ async function generateOnboardingSubjectUnlocked(input: {
       return { ok: false, reason: 'missing', message: 'Subject is not in the wizard catalog.' };
     }
     ingestGenerate.writeFileAtomic(generated.irPath, stableJson(generated.bank));
-    markOnboardingGenerateCommitted(input.cancelToken);
+    markOnboardingGenerateCommitted(token);
     return { ok: true, result: publicGenerateResult(subjectId, root, generated, true) };
   } catch (error) {
-    if (isGenerateCancelled(input.cancelToken)) {
+    if (isGenerateCancelled(token) || isUserGenerateAbort(error)) {
       return cancelledResult();
     }
     return mapGenerateError(error);
+  } finally {
+    dropGenerateAbort(token);
   }
 }

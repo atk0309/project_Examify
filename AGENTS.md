@@ -93,11 +93,11 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   household admin add subjects, attach local PDFs, choose an AI mode, optionally
   run `examify-ingest generate` (BankIR only; never emit/apply; cancel
   POSTs `/api/onboarding/cancel-generate` so the token is not queued
-  behind generate, then skips the IR write — provider abort is a
-  parallel Ingestion PR — and does not replace prior IR; the wizard
+  behind generate, then aborts provider HTTP/CMD via AbortSignal and
+  discards the preview (no IR write; prior IR unchanged); the wizard
   waits for an `ok` cancel response before claiming cancelled; cancel after
   IR commit is `already_committed`; an acknowledged cancel unlocks nav while
-  the provider is still pending; cancelled is a
+  the provider is still unwinding; cancelled is a
   calm status, not an error toast; delete/rename wait on the generate
   lock and re-check the admin gate after the wait; subject
   ids must be in the wizard catalog; OpenAI mode can set / rotate / clear
