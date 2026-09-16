@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import {
   buildCacheKey,
@@ -176,15 +176,27 @@ function restoreTextFile(absPath: string, previous: string | null): void {
   }
 }
 
+function tryRemoveEmptyDir(absPath: string): void {
+  try {
+    rmdirSync(absPath);
+  } catch {
+    // Still has files, or already gone.
+  }
+}
+
 function rollbackGeneratedCommit(snapshot: CommitSnapshot): void {
   restoreTextFile(snapshot.irPath, snapshot.previousIr);
   restoreTextFile(snapshot.cachePath, snapshot.previousCache);
+  if (snapshot.previousCache === null) {
+    tryRemoveEmptyDir(path.dirname(snapshot.cachePath));
+  }
   if (snapshot.manifestPath) {
     try {
       if (existsSync(snapshot.manifestPath)) unlinkSync(snapshot.manifestPath);
     } catch {
       // Best-effort.
     }
+    tryRemoveEmptyDir(path.dirname(snapshot.manifestPath));
   }
   for (const dir of snapshot.createdPageDirs) {
     try {
