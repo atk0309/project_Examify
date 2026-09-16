@@ -55,9 +55,15 @@ export {
   ONBOARDING_GENERATE_SEED_DEFAULT,
   ONBOARDING_INGEST_CLI,
   SUBJECT_ICON_OPTIONS,
+  confirmOnboardingIrOverwrite,
+  generateIrWriteLabel,
+  generateIrWriteVerb,
+  onboardingIrOverwriteConfirmMessage,
   onboardingGenerateAndEmitCli,
   onboardingGenerateBatchIds,
   onboardingGenerateCli,
+  onboardingGenerateOverwriteSubjects,
+  onboardingSubjectIrRel,
   providerForOnboardingAiMode,
 } from '@/lib/onboarding-types';
 export { getOnboardingContentRoot, setOnboardingContentRootForTests } from '@/lib/content-root';
@@ -352,16 +358,18 @@ export function completeOnboarding(householdId: number): void {
 function aiFlags(): {
   anthropicConfigured: boolean;
   openaiConfigured: boolean;
+  anthropicHostManaged: boolean;
   openaiHostManaged: boolean;
   localAgentConfigured: boolean;
 } {
   return {
-    anthropicConfigured: envStoreSecretConfigured('ANTHROPIC_API_KEY', {
-      ANTHROPIC_API_KEY: env.ANTHROPIC_API_KEY,
-    }),
-    // OPENAI_API_KEY is not in env.ts / never NEXT_PUBLIC_*. Wizard + install.sh
-    // write the same repo-root `.env` (findRepoRoot) and update process.env.
+    // Both keys: wizard + install.sh write the same repo-root `.env`
+    // (findRepoRoot) and update process.env. OPENAI_API_KEY is not in
+    // env.ts; ANTHROPIC_API_KEY is (grader), but the configured badge
+    // must follow the live store, not the boot-time env.ts snapshot.
+    anthropicConfigured: envStoreSecretConfigured('ANTHROPIC_API_KEY'),
     openaiConfigured: envStoreSecretConfigured('OPENAI_API_KEY'),
+    anthropicHostManaged: envStoreSecretHostManaged('ANTHROPIC_API_KEY'),
     openaiHostManaged: envStoreSecretHostManaged('OPENAI_API_KEY'),
     localAgentConfigured: Boolean(
       env.EXAMIFY_LLM_BASE_URL || process.env.EXAMIFY_INGEST_LOCAL_CMD?.trim(),

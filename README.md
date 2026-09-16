@@ -12,8 +12,9 @@ no env-JSON allowlist to hand-edit.
 
 ## Features
 
-- **Host-picked auth** — password (no email service), magic-link (Resend / SMTP /
-  local outbox), or a local one-time code for tiny installs. Role-aware
+- **Host-picked auth** — password (sign-in needs no email service; invite accept
+  still needs mail or an outbox), magic-link (Resend / SMTP / local outbox),
+  or a local one-time code for tiny installs. Role-aware
   (Student / Parent), rate-limited, no membership enumeration. Cloudflare
   Turnstile is **optional**.
 - **Invite-only households** — first-run bootstrap creates the admin; parents invite
@@ -34,12 +35,14 @@ no env-JSON allowlist to hand-edit.
 1. **`/setup`** (first run) or **`/signin`** — on a fresh install, the first visitor
    creates the household and becomes admin (and sets a password when `AUTH_MODE=password`).
    After bootstrap, **`/onboarding`** lets the household admin add subjects, attach
-   local study PDFs, choose an AI mode (OpenAI keys write the same repo-root `.env`
-   as `install.sh` / `examify-ingest generate`; host-injected keys stay
-   host-managed via the process exec environment), optionally generate BankIR from those
+   local study PDFs, choose an AI mode (Anthropic / OpenAI keys write the same
+   repo-root `.env` as `install.sh` / `examify-ingest generate`; host-injected
+   keys stay host-managed via the process exec environment), optionally generate BankIR from those
    files, and emit through `examify-ingest` (validate + Review / dry-run HITL, then apply;
    desktop uses a step rail, mobile a compact progress bar; one stage at a time;
-   generate never auto-applies; cancel POSTs `/api/onboarding/cancel-generate`
+   generate never auto-applies; existing BankIR needs a confirm before
+   overwrite (preview names `would overwrite`; decline keeps prior IR);
+   cancel POSTs `/api/onboarding/cancel-generate`
    (not a queued Server Action), aborts provider HTTP/CMD via AbortSignal,
    and discards the preview so prior IR is unchanged (the wizard waits for
    an `ok` cancel response before claiming cancelled; cancel after that
@@ -116,15 +119,23 @@ appears in no dashboard.
 
 ### Installer (recommended)
 
-`install.sh` asks a few questions (site URL, secrets, auth mode, optional
-Turnstile, email, and OpenAI key), writes `.env`, installs, migrates, and builds:
+`install.sh` asks a few questions (site URL, secrets, auth mode, mail for
+invite-accept OTP, optional Turnstile, and Anthropic / OpenAI keys), writes `.env`,
+installs, migrates, and builds. OpenAI generate from PDFs also needs
+`pdftoppm` (from **poppler** / `poppler-utils`) on `PATH`.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/atk0309/project_Examify/main/install.sh | bash
 ```
 
-From a clone: `./install.sh`. Non-interactive: `EXAMIFY_NONINTERACTIVE=1 ./install.sh`
-(defaults to `AUTH_MODE=password` unless you set the env vars yourself).
+From a clone: `./install.sh`. Help: `./install.sh --help` (piped:
+`curl -fsSL …/install.sh | bash -s -- --help` — not `bash --help`).
+Non-interactive: `EXAMIFY_NONINTERACTIVE=1 ./install.sh` (defaults to
+`AUTH_MODE=password` and a local outbox at `data/outbox` so kid invite
+accept can deliver the mailbox OTP — only when this run writes `.env`;
+set `SMTP_*` / `RESEND_*` for real mail). A kept password-mode `.env`
+with no mail path is refused (not described as enabled). Invite accept
+never skips that OTP.
 
 Then `pnpm start` (or `pnpm dev`), open `SITE_URL`, and complete **`/setup`**
 with the printed setup code.
@@ -144,15 +155,21 @@ the dev default works locally), and create the first household. Invite the
 student from the dashboard. With `ANTHROPIC_API_KEY=test`, free-text grading
 uses a deterministic local stub — no network, no API key needed for development.
 
-Set `AUTH_MODE=password` in `.env` if you want to develop without mail.
+Set `AUTH_MODE=password` in `.env` if you want to develop without a mail
+provider. Sign-in needs no mail; invite accept still uses the local
+outbox in development (or SMTP / Resend / `ALLOW_LOCAL_OUTBOX=1` in
+production).
 
 ## Access: invite-only households
 
 Who may sign in is stored in SQLite, not env:
 
 1. **First run** — `/setup` creates the household and the admin (a parent). You must
-   enter the deployment `SETUP_BOOTSTRAP_SECRET` (required in production). No email
-   round-trip; you are at the keyboard.
+   enter the deployment `SETUP_BOOTSTRAP_SECRET` (required in production). Your email
+   is the required admin account id in every `AUTH_MODE` (including password). No
+   email round-trip; you are at the keyboard. The form stays submittable after
+   browser autofill, keeps those DOM values if Turnstile remounts, and shows
+   field errors (cleared on input) instead of a silent disabled button.
 2. **Invite** — from the parent dashboard, create a student invite (open or
    email-locked) or a parent invite (**email-locked**). Share `/invite/<token>`.
    Revoke unused links; remove a member if they should no longer have access.
@@ -229,8 +246,11 @@ paper, `shuffle` randomises order), and a unit-test guard enforces that the two 
 stay in lockstep. You can also author `content/subjects/<id>/bank.ir.json` (by
 hand or `pnpm examify-ingest generate`) and emit the split with
 `pnpm examify-ingest emit content/subjects --dry-run` (or `--apply` to write
-`content/generated/`). Generate writes IR only — still validate, dry-run, then
-`--apply`. The full guide — adding subjects and difficulties, writing
+`content/generated/`). Generate writes IR only — still
+`pnpm examify-ingest validate content/subjects`, then
+`emit content/subjects --dry-run`, then `emit content/subjects --apply`. Hand-authored biology has no source file (skip generate). A
+fresh-clone generate fixture is `content/subjects/demo`. Existing IR needs
+`--force`; sample-bank ids fail at generate unless `--replace-sample`. The full guide — adding subjects and difficulties, writing
 rubrics the LLM grader marks well, the ingest CLI, and a workflow for
 generating a question bank from your own study-material PDFs — is in
 [`docs/content-authoring.md`](docs/content-authoring.md) and
@@ -241,9 +261,12 @@ generating a question bank from your own study-material PDFs — is in
 Free-text answers are graded server-side by the Anthropic Messages API
 (`claude-sonnet-4-6`), strictly against the rubric you wrote for that question:
 
-- Configure `ANTHROPIC_API_KEY`. The `test` sentinel (the dev default) swaps in a
+- Configure `ANTHROPIC_API_KEY` (optional in production — wizard clear +
+  restart will not brick boot). The grader reads the live key from
+  `process.env` (updated by `/onboarding` set / rotate / clear), never a
+  boot-frozen snapshot. The `test` sentinel (the dev default) swaps in a
   deterministic full-score stub with no network calls — the same pattern as the Resend
-  email outbox.
+  email outbox. Clear fails closed (`needs_review`, no stub).
 - Grading is **fail-safe**: requests have a 15-second deadline, and any timeout, network
   error, non-2xx, or malformed model output resolves to `needs_review` instead of throwing,
   so a finished exam is never lost. A `needs_review` item renders as "Saved for review" and
@@ -262,28 +285,32 @@ applied at runtime via `accentCSS()`.
 
 ## Commands
 
-| Command               | What it does                                               |
-| --------------------- | ---------------------------------------------------------- |
-| `pnpm dev`            | Dev server (Turbopack)                                     |
-| `pnpm build`          | Production build                                           |
-| `pnpm start`          | Run the production build (`PORT` defaults to 3000)         |
-| `pnpm lint`           | ESLint                                                     |
-| `pnpm typecheck`      | `tsc --noEmit`                                             |
-| `pnpm format`         | Prettier write                                             |
-| `pnpm test`           | Vitest unit suite                                          |
-| `pnpm test:e2e`       | Playwright e2e (needs `pnpm test:e2e:install`)             |
-| `pnpm db:generate`    | Generate a Drizzle migration from schema diffs             |
-| `pnpm db:migrate`     | Apply pending migrations to `DATABASE_URL`                 |
-| `pnpm examify-ingest` | Generate / validate / emit BankIR (`tools/examify-ingest`) |
+| Command               | What it does                                                |
+| --------------------- | ----------------------------------------------------------- |
+| `pnpm dev`            | Dev server (Turbopack)                                      |
+| `pnpm build`          | Production build                                            |
+| `pnpm start`          | Run the production build (`PORT` defaults to 3000)          |
+| `pnpm lint`           | ESLint                                                      |
+| `pnpm typecheck`      | `tsc --noEmit`                                              |
+| `pnpm format`         | Prettier write                                              |
+| `pnpm test`           | Vitest unit suite                                           |
+| `pnpm test:e2e`       | Playwright e2e (needs `pnpm test:e2e:install`)              |
+| `pnpm db:generate`    | Generate a Drizzle migration from schema diffs              |
+| `pnpm db:migrate`     | Apply pending migrations to repo-root `.env` `DATABASE_URL` |
+| `pnpm examify-ingest` | Generate / validate / emit BankIR (`tools/examify-ingest`)  |
 
 ## Environment
 
 Defined and validated by zod in `src/lib/env.ts`; the canonical reference is
 `.env.example`. Required in production: `SITE_URL`, `AUTH_SECRET`, `DATABASE_URL`,
-`ANTHROPIC_API_KEY`, `SETUP_BOOTSTRAP_SECRET`. `AUTH_MODE` defaults to
+`SETUP_BOOTSTRAP_SECRET`. `ANTHROPIC_API_KEY` is optional (wizard clear +
+restart will not brick boot; grading fail-closes without a key). `AUTH_MODE` defaults to
 `magic-link`. Documented placeholder `AUTH_SECRET` / `SETUP_BOOTSTRAP_SECRET`
 values fail production boot. A leftover `FAMILIES` value that is set but invalid
-also crashes production boot. Mail is optional when `AUTH_MODE=password`.
+also crashes production boot. `AUTH_MODE=password` sign-in needs no mail;
+invite accept still requires SMTP, Resend, or an allowed outbox (the
+installer enables `MAIL_TRANSPORT=outbox` + `ALLOW_LOCAL_OUTBOX=1` when
+nothing else is configured).
 `MAIL_TRANSPORT=auto` (default) uses SMTP, Resend, or the outbox depending on
 what is set. Production with no real mail transport does not write tokens to
 disk unless `ALLOW_LOCAL_OUTBOX=1`. `local-otp` and explicit `outbox` require
@@ -308,7 +335,7 @@ Or the manual equivalent:
 ```bash
 pnpm install --frozen-lockfile
 pnpm build
-pnpm db:migrate && pnpm start    # run migrations at startup, then serve
+pnpm db:migrate && pnpm start    # repo-root .env DATABASE_URL, then serve
 ```
 
 Point `DATABASE_URL` at a file on **persistent storage** so the database survives

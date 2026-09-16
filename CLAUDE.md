@@ -28,17 +28,29 @@ Surface:
   `ExamApp` themselves; their attempts persist under the parent's own account, never the
   child's.
 - **`/setup`** — first-run household bootstrap (only when no household exists).
+  `SetupForm` reads submitted FormData (autofill-safe), keeps inputs
+  uncontrolled, and re-reads / restores a FormData snapshot if a Turnstile
+  remount wipes values. It never silently disables Create household.
+  Field-level / `aria-invalid` errors explain what failed and drop on the
+  next successful edit of that field or on resubmit. Email is the required
+  admin account id in every `AUTH_MODE` (including password).
 - **`/onboarding`** — post-bootstrap content wizard (household **admin** only, while
   `onboarding_complete` is false). Welcome → subjects → PDF dropzones → AI setup
-  (optional `examify-ingest generate` after files + mode; OpenAI mode can
-  set / rotate / clear `OPENAI_API_KEY` in the same repo-root `.env` as
-  `install.sh` and `examify-ingest generate` (shared `findRepoRoot`, never
-  `process.cwd()`), never echoed; a host-injected key (exec environ
-  assignment, including empty / `test`) is not rotatable in the wizard) → validate → Review
+  (optional `examify-ingest generate` after files + mode; Anthropic / OpenAI
+  modes can set / rotate / clear `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` in
+  the same repo-root `.env` as `install.sh` and `examify-ingest generate`
+  (shared `findRepoRoot`, never `process.cwd()`), never echoed; a
+  host-injected key (exec environ assignment, including empty / `test`) is
+  not rotatable in the wizard) → validate → Review
   (dry-run HITL) → apply → ready. The wizard is one stage at a time: desktop
   (≥900px) uses a left step rail + stage + sticky footer; mobile uses compact
   “Step N of M · Label” progress and a sticky bottom bar. Generate writes BankIR
-  only and never auto-applies.
+  only and never auto-applies. An existing `bank.ir.json` is never
+  silently clobbered: the dry-run/preview names `would overwrite <rel>`
+  and the wizard asks a calm confirm before any write (“Replace existing
+  BankIR for {label}?” or a named generate-all batch). Decline
+  keeps prior bytes (`skipped` / cancelled — not `invalid`); confirm
+  writes through shared `writeBankIrAtomic` (CLI `--force` for that subject).
   Cancel POSTs `/api/onboarding/cancel-generate` (a Route Handler, not a
   queued Server Action) so the token can land while generate is in flight,
   then aborts provider HTTP/CMD via AbortSignal and discards the preview
@@ -115,22 +127,22 @@ grouped weekly Dependabot PRs in `.github/dependabot.yml`.
 
 ## Commands cheat-sheet
 
-| Command               | What it does                                               |
-| --------------------- | ---------------------------------------------------------- |
-| `pnpm dev`            | Next.js dev server with Turbopack                          |
-| `pnpm build`          | Production build                                           |
-| `pnpm start`          | Run the production build (`PORT` defaults to 3000)         |
-| `pnpm lint`           | ESLint flat-config across the repo                         |
-| `pnpm format`         | Prettier write                                             |
-| `pnpm format:check`   | Prettier dry-run (CI guard)                                |
-| `pnpm typecheck`      | `tsc --noEmit`                                             |
-| `pnpm test`           | Vitest unit suite                                          |
-| `pnpm test:e2e`       | Playwright e2e (`pnpm build` then both suites)             |
-| `pnpm db:generate`    | Generate a new Drizzle migration from schema diffs         |
-| `pnpm db:migrate`     | Apply pending migrations to `DATABASE_URL`                 |
-| `pnpm db:studio`      | Drizzle Studio against the local DB                        |
-| `pnpm examify-ingest` | Generate / validate / emit BankIR (`tools/examify-ingest`) |
-| `./install.sh`        | Interactive self-host install (env + migrate + build)      |
+| Command               | What it does                                                        |
+| --------------------- | ------------------------------------------------------------------- |
+| `pnpm dev`            | Next.js dev server with Turbopack                                   |
+| `pnpm build`          | Production build                                                    |
+| `pnpm start`          | Run the production build (`PORT` defaults to 3000)                  |
+| `pnpm lint`           | ESLint flat-config across the repo                                  |
+| `pnpm format`         | Prettier write                                                      |
+| `pnpm format:check`   | Prettier dry-run (CI guard)                                         |
+| `pnpm typecheck`      | `tsc --noEmit`                                                      |
+| `pnpm test`           | Vitest unit suite                                                   |
+| `pnpm test:e2e`       | Playwright e2e (`pnpm build` then both suites)                      |
+| `pnpm db:generate`    | Generate a new Drizzle migration from schema diffs                  |
+| `pnpm db:migrate`     | Apply pending migrations to repo-root `.env` `DATABASE_URL`         |
+| `pnpm db:studio`      | Drizzle Studio against the local DB                                 |
+| `pnpm examify-ingest` | Generate / validate / emit BankIR (`tools/examify-ingest`)          |
+| `./install.sh`        | Interactive self-host install (env + mail/outbox + migrate + build) |
 
 ## Branch + PR rules
 
@@ -184,8 +196,8 @@ src/
     onboarding-generate.ts # AI-step generateSubject bridge (preview then commit if !cancelled)
     onboarding-admin.ts # shared household-admin gate for wizard actions + cancel route
     onboarding-types.ts # client-safe wizard snapshot / AI mode types
-    repo-root.ts        # shared `findRepoRoot` (env-store, content I/O, ingest keys)
-    env-store.ts        # server-only `.env` upsert/clear (OPENAI_API_KEY write path)
+    repo-root.ts        # shared `findRepoRoot` (env-store, content I/O, ingest keys, db:migrate)
+    env-store.ts        # server-only `.env` upsert/clear (ANTHROPIC_API_KEY / OPENAI_API_KEY write path)
     families.ts         # leftover FAMILIES JSON parser (optional one-shot import only)
     allowlist.ts        # isAllowedEmail(role,email), derived from household membership
     auth-mode.ts        # AUTH_MODE types + helpers (password / magic-link / local-otp)
@@ -233,18 +245,31 @@ validate → emit path, adding subjects (all 13 original duotone icons remain in
 bank from source PDFs kept local-only in the gitignored `content/source-pdfs/`.
 
 Automated path: author or `pnpm examify-ingest generate` a
-`content/subjects/<id>/bank.ir.json`, then `pnpm examify-ingest validate`,
-`emit --dry-run`, and only afterward `emit --apply`
+`content/subjects/<id>/bank.ir.json`, then `pnpm examify-ingest validate content/subjects`,
+`emit content/subjects --dry-run`, and only afterward `emit content/subjects --apply`
 (or use `/onboarding` after first-run bootstrap — AI-step generate is optional,
 then the same directory emit, HITL dry-run before apply, empty tree refused).
+Hand-authored biology has no source file — skip generate (validate/emit only).
+A committed generate fixture is `content/subjects/demo/notes.txt`
+(`pnpm examify-ingest generate --provider test --seed 0 content/subjects/demo`).
 Generate never auto-applies; it writes IR + gitignored `.examify-ingest/`
-run/cache files only. `generateSubject` accepts optional `AbortSignal` (forwarded
+run/cache files only. Existing `bank.ir.json` is not overwritten unless
+`--force` (`--dry-run-ir` says **would overwrite**). Frozen sample-bank ids
+fail closed at generate (same set as validate) unless `--replace-sample` —
+`--provider test` must not write `maths-easy-1` / other SAMPLE ids without
+that flag. Persist uses shared `writeBankIrAtomic` (force required to
+clobber). Tree generate drafts every subject before the first IR write
+(sources, overwrite, SAMPLE freeze, provider) so a mid-list failure leaves
+no BankIR. Persist of a tree is one abort gate then a transactional commit
+(any later write rolls back earlier BankIR / IR cache / manifest / page cache). The `/onboarding` generate path calls that same helper: named
+confirm supplies `force`; decline/cancel keeps prior bytes. `generateSubject` accepts optional `AbortSignal` (forwarded
 to provider HTTP/CMD; abort throws and writes no IR, IR cache, page-raster
 cache, or run manifest). Cloud
 providers fail closed without an env key (generate also fills unset keys from
 repo `.env` / `.env.local`); `--provider test` is the CI
 fixture. OpenAI-compatible generate fails closed when the only sources are
-PDFs and no page images were rasterized. `emit` is dry-run by default;
+PDFs and no page images were rasterized (`pdftoppm` from poppler-utils).
+`emit` is dry-run by default;
 `--apply` writes `content/generated/` (public
 subjects/questions + server-only keys). The running app reads that JSON at
 request time (`src/lib/exam/live-bank.server.ts`) and merges it onto the
@@ -452,8 +477,13 @@ These are non-negotiable. Don't "fix" them out.
   server-only) returns `{ status:'graded', verdict } | { status:'needs_review' }` and **never
   throws** — the request has a 15-second deadline, and any timeout/fetch error, non-2xx, or
   malformed/unparseable model JSON falls to `needs_review` so an attempt is never lost.
-  `ANTHROPIC_API_KEY === 'test'` (dev/test default) uses a deterministic full-score stub, no
-  network — same pattern as the Resend outbox stub.
+  Live `ANTHROPIC_API_KEY` is read from `process.env` only (never the boot-frozen
+  `env.ts` snapshot) so a wizard set / rotate / clear is visible on the next
+  grade. The `test` sentinel still stubs; a missing key after clear is
+  fail-closed (`needs_review`, no stub) — same usable-key rule as the
+  Configured badge. Blank / missing is never treated as `test`.
+  `ANTHROPIC_API_KEY` is optional in `env.ts` (wizard clear + production
+  restart must not brick boot).
 - **A free-text item is "correct" at `PASS_THRESHOLD` (0.6).** `isFreePass(score, maxScore)`
   (`attempts.ts`, the shared constant — not an inline literal) decides the ring/tally. A
   `needs_review` item persists `score: null, verdict: null` and counts as incorrect.
@@ -480,10 +510,15 @@ unparsable **crashes production boot**. `/setup` itself is gated by
 placeholder); captcha is not identity. Documented placeholder `AUTH_SECRET` /
 `SETUP_BOOTSTRAP_SECRET` values also fail production boot.
 
-Required in production: `SITE_URL`, `AUTH_SECRET`, `DATABASE_URL`, `ANTHROPIC_API_KEY`,
+Required in production: `SITE_URL`, `AUTH_SECRET`, `DATABASE_URL`,
 `SETUP_BOOTSTRAP_SECRET`. `AUTH_MODE` defaults to `magic-link` (existing #56 hosts
 keep working). `password` sign-in needs no mail; password-mode invite accept
-sends a mailbox OTP and fails closed without a transport. `local-otp` in production requires
+sends a mailbox OTP and fails closed without a transport. Interactive /
+default `install.sh` (`AUTH_MODE=password`) prompts for mail or enables a
+local outbox (`ALLOW_LOCAL_OUTBOX=1`) when it **writes** `.env` so kid
+invites are not stranded — it does not skip mailbox proof. A kept
+password-mode `.env` with no mail path is refused (no false “enabled
+outbox” claim). `local-otp` in production requires
 `ALLOW_LOCAL_OUTBOX=1`. `MAIL_TRANSPORT` is `auto` (SMTP if `SMTP_HOST`, else
 Resend if a real key, else outbox). Explicit `MAIL_TRANSPORT=smtp` needs
 `SMTP_HOST` + `SMTP_FROM`; `auto` + `SMTP_HOST` also needs `SMTP_FROM`. A
@@ -497,8 +532,10 @@ captcha off; exactly one key in production crashes boot).
 The OTP step after a `sent` screen mounts Turnstile with an explicit
 `turnstile.render()` (`ExplicitTurnstile`) because the implicit scanner
 already ran on the first form.
-`ANTHROPIC_API_KEY` still fails closed in prod when missing; the `test` sentinel
-routes the grader to a deterministic stub. See `.env.example` for the canonical list.
+`ANTHROPIC_API_KEY` is optional (wizard clear + production restart must not
+brick boot). A missing / empty key fail-closes free-text grading
+(`needs_review`, no stub) — blank is never treated as `test`. The `test`
+sentinel still stubs. See `.env.example` for the canonical list.
 
 ## Testing rules
 

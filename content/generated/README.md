@@ -1,6 +1,6 @@
 # Generated exam content
 
-These files are produced by `examify-ingest emit --apply` from
+These files are produced by `examify-ingest emit content/subjects --apply` from
 `content/subjects/*/bank.ir.json`. They are meant to be committed.
 
 | File                  | Ships to the browser? | Holds                              |
@@ -23,5 +23,6 @@ id with no matching `bank.ir.json` are deleted. An empty subjects tree is
 refused and never wipes these files. The sample bank is never touched.
 
 Do not edit these files by hand — change the BankIR source and re-emit.
-`examify-ingest generate` never writes this directory; only `emit --apply` does.
+`examify-ingest generate` never writes this directory; only
+`emit content/subjects --apply` does.
 See `tools/examify-ingest/README.md`.

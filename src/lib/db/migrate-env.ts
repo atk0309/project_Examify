@@ -1,7 +1,9 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { findRepoRoot } from '@/lib/repo-root';
 
 const ENV_FILES = ['.env', '.env.local'] as const;
+const DEFAULT_DATABASE_URL = 'file:./data/app.db';
 
 function isEnoent(error: unknown): boolean {
   return (
@@ -38,7 +40,7 @@ function parseEnvAssignmentValue(raw: string): string {
   return uncommented;
 }
 
-/** Parse KEY=VALUE lines. Existing process env must win; this never logs values. */
+/** Parse KEY=VALUE lines. Never logs values. */
 export function parseEnvFile(contents: string): Record<string, string> {
   const out: Record<string, string> = {};
   for (const raw of contents.split(/\r?\n/)) {
@@ -63,21 +65,48 @@ function readEnvFile(absPath: string): Record<string, string> {
   }
 }
 
+function firstNonEmpty(...values: Array<string | undefined>): string | undefined {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim() !== '') return value;
+  }
+  return undefined;
+}
+
+function resolveSqlitePath(url: string, repoRoot: string): string {
+  const raw = url.startsWith('file:') ? url.slice('file:'.length) : url;
+  return path.isAbsolute(raw) ? raw : path.resolve(repoRoot, raw);
+}
+
+export type MigrateConfig = {
+  repoRoot: string;
+  databaseUrl: string;
+  dbPath: string;
+  migrationsFolder: string;
+};
+
 /**
- * Fill unset keys from repo `.env` then `.env.local`.
- * Keys already present on `env` (including empty string) are left alone.
+ * Resolve the SQLite file `pnpm db:migrate` should open.
+ *
+ * Next loads repo-root `.env` / `.env.local`; this uses the same
+ * `findRepoRoot` walk so a cwd inside the tree (or a bare `pnpm db:migrate`
+ * with no exported `DATABASE_URL`) still hits the file the app will open.
+ * A non-empty `env.DATABASE_URL` wins (host-injected).
  */
-export function mergeRepoEnvFiles(
-  repoRoot: string,
-  env: Record<string, string | undefined>,
-): Record<string, string | undefined> {
+export function resolveMigrateConfig(
+  cwd = process.cwd(),
+  env: Record<string, string | undefined> = process.env,
+): MigrateConfig {
+  const repoRoot = findRepoRoot(cwd);
   const fromFiles: Record<string, string> = {};
   for (const name of ENV_FILES) {
     Object.assign(fromFiles, readEnvFile(path.join(repoRoot, name)));
   }
-  const out: Record<string, string | undefined> = { ...env };
-  for (const [key, value] of Object.entries(fromFiles)) {
-    if (out[key] === undefined) out[key] = value;
-  }
-  return out;
+  const databaseUrl =
+    firstNonEmpty(env.DATABASE_URL, fromFiles.DATABASE_URL) ?? DEFAULT_DATABASE_URL;
+  return {
+    repoRoot,
+    databaseUrl,
+    dbPath: resolveSqlitePath(databaseUrl, repoRoot),
+    migrationsFolder: path.join(repoRoot, 'src', 'lib', 'db', 'migrations'),
+  };
 }

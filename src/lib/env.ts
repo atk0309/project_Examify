@@ -89,8 +89,9 @@ function buildEnvSchema(isProd: boolean) {
       // no households. Production boot fails if FAMILIES is set and invalid.
 
       // How people sign in. Default magic-link keeps existing #56 hosts working.
-      // `password` needs no mail. `local-otp` writes a 6-digit code to the
-      // outbox (prod requires ALLOW_LOCAL_OUTBOX).
+      // `password` sign-in needs no mail; invite accept still sends a mailbox
+      // OTP. `local-otp` writes a 6-digit code to the outbox (prod requires
+      // ALLOW_LOCAL_OUTBOX).
       AUTH_MODE: z.preprocess((v) => emptyToUndef(v) ?? 'magic-link', z.enum(AUTH_MODES)),
 
       // How magic-link / OTP messages are delivered. `auto` picks SMTP when
@@ -145,11 +146,12 @@ function buildEnvSchema(isProd: boolean) {
         return v;
       }, z.boolean().optional()),
 
-      // Anthropic key for free-text grading. The `test` sentinel (dev/test default)
-      // routes the grader to a deterministic full-score stub — no network — exactly
-      // like the Resend outbox stub above. A missing key in production fails closed
-      // so an exam never silently scores every free-text answer as full marks.
-      ANTHROPIC_API_KEY: z.preprocess((v) => v ?? dev('test'), z.string().min(1)),
+      // Anthropic key for free-text grading and /onboarding Cloud generate.
+      // Optional — same spirit as OPENAI_API_KEY (not in this schema). Wizard
+      // clear deletes the store line; production restart must not crash.
+      // Missing / empty / whitespace stay unset — never coerced to the `test`
+      // sentinel. Only an explicit live `test` stubs the grader.
+      ANTHROPIC_API_KEY: z.preprocess(emptyToUndef, z.string().min(1).optional()),
 
       // Optional local-agent endpoint for examify-ingest generate --provider local
       // (CLI and /onboarding AI step). Not a secret. Never expose via NEXT_PUBLIC_*.

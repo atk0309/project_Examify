@@ -210,6 +210,18 @@ describe('parseEnv production fail-closed', () => {
       }),
     ).not.toThrow();
   });
+
+  it('keeps ANTHROPIC_API_KEY optional after wizard clear (restart does not brick)', () => {
+    const afterClear = { ...prodBase };
+    delete afterClear.ANTHROPIC_API_KEY;
+    const parsed = parseEnv(afterClear);
+    expect(parsed.ANTHROPIC_API_KEY).toBeUndefined();
+    expect('OPENAI_API_KEY' in parsed).toBe(false);
+    expect(parseEnv({ ...prodBase, ANTHROPIC_API_KEY: '' }).ANTHROPIC_API_KEY).toBeUndefined();
+    expect(parseEnv({ ...prodBase, ANTHROPIC_API_KEY: '   ' }).ANTHROPIC_API_KEY).toBeUndefined();
+    expect(parseEnv(prodBase).ANTHROPIC_API_KEY).toBe('sk-ant-real');
+    expect(parseEnv({ ...prodBase, ANTHROPIC_API_KEY: 'test' }).ANTHROPIC_API_KEY).toBe('test');
+  });
 });
 
 describe('getAuthMode + resolveMailTransport', () => {
@@ -250,6 +262,18 @@ describe('parseEnv dev/test defaults', () => {
   it('supplies a setup secret when NODE_ENV is not production', () => {
     const parsed = parseEnv({ NODE_ENV: 'test' });
     expect(parsed.SETUP_BOOTSTRAP_SECRET.length).toBeGreaterThanOrEqual(16);
+  });
+
+  it('does not coerce missing or blank ANTHROPIC_API_KEY to the test sentinel', () => {
+    expect(parseEnv({ NODE_ENV: 'test' }).ANTHROPIC_API_KEY).toBeUndefined();
+    expect(parseEnv({ NODE_ENV: 'development' }).ANTHROPIC_API_KEY).toBeUndefined();
+    expect(parseEnv({ NODE_ENV: 'test', ANTHROPIC_API_KEY: '' }).ANTHROPIC_API_KEY).toBeUndefined();
+    expect(
+      parseEnv({ NODE_ENV: 'development', ANTHROPIC_API_KEY: '   ' }).ANTHROPIC_API_KEY,
+    ).toBeUndefined();
+    expect(parseEnv({ NODE_ENV: 'test', ANTHROPIC_API_KEY: 'test' }).ANTHROPIC_API_KEY).toBe(
+      'test',
+    );
   });
 });
 

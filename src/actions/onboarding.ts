@@ -3,7 +3,13 @@
 import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { z } from 'zod';
-import { clearEnvStoreSecret, OPENAI_ENV_KEY, setEnvStoreSecret } from '@/lib/env-store';
+import {
+  ANTHROPIC_ENV_KEY,
+  OPENAI_ENV_KEY,
+  clearEnvStoreSecret,
+  setEnvStoreSecret,
+  type EnvStoreKey,
+} from '@/lib/env-store';
 import { extractClientIp } from '@/lib/ip';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { requireOnboardingAdmin } from '@/lib/onboarding-admin';
@@ -65,10 +71,13 @@ export type OnboardingActionError = {
     | 'missing_local'
     | 'empty_sources'
     | 'cancelled'
+    | 'skipped'
+    | 'needs_confirm'
     | 'already_committed'
     | 'rate_limited'
     | 'host_managed';
   message?: string;
+  irRel?: string;
   issues?: { file: string; message: string }[];
 };
 
@@ -196,6 +205,10 @@ export async function generateOnboardingSubjectAction(
     typeof rawToken === 'string' && isOnboardingGenerateCancelToken(rawToken)
       ? rawToken
       : undefined;
+  const rawForce = formData.get('force');
+  const force = rawForce === '1' || rawForce === 'true';
+  const rawOverwrite = formData.get('overwrite');
+  const overwrite = rawOverwrite === 'skip' || rawOverwrite === 'force' ? rawOverwrite : undefined;
 
   const state = getHouseholdOnboarding(gate.householdId).state;
   if (!state.aiMode) return { ok: false, reason: 'missing_provider' };
@@ -206,9 +219,16 @@ export async function generateOnboardingSubjectAction(
     provider,
     seed: seedParsed.data,
     cancelToken,
+    force,
+    overwrite,
   });
   if (!generated.ok) {
     // Safe codes only — never forward raw provider / path / env messages.
+    // needs_confirm may include the public irRel so the wizard can name
+    // the overwrite (same shape as CLI dry-run) before the user confirms.
+    if (generated.reason === 'needs_confirm') {
+      return { ok: false, reason: 'needs_confirm', irRel: generated.irRel };
+    }
     return { ok: false, reason: generated.reason };
   }
   // IR changed — any prior HITL dry-run / apply is stale. Generate never emit/applies.
@@ -232,8 +252,10 @@ export async function cancelOnboardingGenerateAction(
   return { ok: true };
 }
 
-export async function setOnboardingOpenAiKeyAction(
+async function setOnboardingEnvStoreKeyAction(
+  key: EnvStoreKey,
   formData: FormData,
+  field: 'anthropicApiKey' | 'openaiApiKey',
 ): Promise<{ ok: true; snapshot: OnboardingSnapshot } | OnboardingActionError> {
   const gate = await requireOnboardingAdmin();
   if (!gate.ok) return gate;
@@ -242,16 +264,28 @@ export async function setOnboardingOpenAiKeyAction(
   if (!limit.ok) return { ok: false, reason: 'rate_limited' };
   const intent = formData.get('intent');
   if (intent === 'clear') {
-    const cleared = clearEnvStoreSecret(OPENAI_ENV_KEY);
+    const cleared = clearEnvStoreSecret(key);
     if (!cleared.ok) return { ok: false, reason: cleared.reason };
     return { ok: true, snapshot: snapshot(gate.householdId) };
   }
   if (intent !== 'set') return { ok: false, reason: 'invalid' };
-  const raw = formData.get('openaiApiKey');
+  const raw = formData.get(field);
   if (typeof raw !== 'string') return { ok: false, reason: 'invalid' };
-  const written = setEnvStoreSecret(OPENAI_ENV_KEY, raw);
+  const written = setEnvStoreSecret(key, raw);
   if (!written.ok) return { ok: false, reason: written.reason };
   return { ok: true, snapshot: snapshot(gate.householdId) };
+}
+
+export async function setOnboardingAnthropicKeyAction(
+  formData: FormData,
+): Promise<{ ok: true; snapshot: OnboardingSnapshot } | OnboardingActionError> {
+  return setOnboardingEnvStoreKeyAction(ANTHROPIC_ENV_KEY, formData, 'anthropicApiKey');
+}
+
+export async function setOnboardingOpenAiKeyAction(
+  formData: FormData,
+): Promise<{ ok: true; snapshot: OnboardingSnapshot } | OnboardingActionError> {
+  return setOnboardingEnvStoreKeyAction(OPENAI_ENV_KEY, formData, 'openaiApiKey');
 }
 
 export async function setOnboardingAiModeAction(

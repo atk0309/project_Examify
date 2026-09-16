@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -29,27 +29,126 @@ describe('install.sh', () => {
     execFileSync('bash', ['-n', SCRIPT], { stdio: 'pipe' });
   });
 
-  it('writes a password-mode .env in write-env-only mode', () => {
+  it('writes a password-mode .env with a local-outbox invite path', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-install-'));
     try {
-      execFileSync('bash', [SCRIPT, '--write-env-only'], {
+      const result = spawnSync('bash', [SCRIPT, '--write-env-only'], {
         cwd: dir,
         env: installEnv(),
-        stdio: 'pipe',
+        encoding: 'utf8',
       });
+      expect(result.status).toBe(0);
+      expect(result.stderr).toContain('MAIL_TRANSPORT=outbox');
+      expect(result.stderr).toContain('ALLOW_LOCAL_OUTBOX=1');
+      expect(result.stderr).toContain('mailbox proof');
       const dest = path.join(dir, '.env');
       const envFile = fs.readFileSync(dest, 'utf8');
       expect(envFile).toContain('AUTH_MODE=password');
+      expect(envFile).toContain('MAIL_TRANSPORT=outbox');
+      expect(envFile).toContain('ALLOW_LOCAL_OUTBOX=1');
       expect(envFile).toContain('SITE_URL=https://examify.example.com');
       expect(envFile).toContain('SETUP_BOOTSTRAP_SECRET=install-test-setup-secret');
       expect(envFile).not.toContain('RESEND_API_KEY=');
       expect(envFile).not.toContain('SMTP_HOST=');
-      expect(envFile).not.toContain('ALLOW_LOCAL_OUTBOX=');
       expect(envFile).not.toContain('OPENAI_API_KEY=');
+      expect(envFile).toContain('ANTHROPIC_API_KEY=test');
       expect(fs.statSync(dest).mode & 0o777).toBe(0o600);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it('keeps SMTP mail when password-mode already has a delivery path', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-install-'));
+    try {
+      const result = spawnSync('bash', [SCRIPT, '--write-env-only'], {
+        cwd: dir,
+        env: installEnv({
+          MAIL_TRANSPORT: 'smtp',
+          SMTP_HOST: 'smtp.example.com',
+          SMTP_FROM: 'Examify <you@example.com>',
+        }),
+        encoding: 'utf8',
+      });
+      expect(result.status).toBe(0);
+      expect(result.stderr).not.toContain('Enabling MAIL_TRANSPORT=outbox');
+      const envFile = fs.readFileSync(path.join(dir, '.env'), 'utf8');
+      expect(envFile).toContain('AUTH_MODE=password');
+      expect(envFile).toContain('MAIL_TRANSPORT=smtp');
+      expect(envFile).toContain('SMTP_HOST=smtp.example.com');
+      expect(envFile).not.toContain('ALLOW_LOCAL_OUTBOX=');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps an already-good password .env without claiming to enable an outbox', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-install-'));
+    try {
+      const dest = path.join(dir, '.env');
+      const existing = [
+        'KEEP_ME=1',
+        'AUTH_MODE=password',
+        'MAIL_TRANSPORT=outbox',
+        'ALLOW_LOCAL_OUTBOX=1',
+        '',
+      ].join('\n');
+      fs.writeFileSync(dest, existing, { mode: 0o600 });
+      const result = spawnSync('bash', [SCRIPT, '--write-env-only'], {
+        cwd: dir,
+        env: installEnv({ AUTH_MODE: 'password' }),
+        encoding: 'utf8',
+      });
+      expect(result.status).toBe(0);
+      expect(result.stderr).not.toContain('Enabling MAIL_TRANSPORT=outbox');
+      expect(result.stderr).not.toContain('did not enable an outbox');
+      expect(fs.readFileSync(dest, 'utf8')).toBe(existing);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a kept password .env that has no invite mail path', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-install-'));
+    try {
+      const dest = path.join(dir, '.env');
+      const existing = ['KEEP_ME=1', 'AUTH_MODE=password', 'MAIL_TRANSPORT=auto', ''].join('\n');
+      fs.writeFileSync(dest, existing, { mode: 0o600 });
+      const result = spawnSync('bash', [SCRIPT, '--write-env-only'], {
+        cwd: dir,
+        env: installEnv({ AUTH_MODE: 'password' }),
+        encoding: 'utf8',
+      });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('Keeping existing .env');
+      expect(result.stderr).toContain('did not enable an outbox');
+      expect(result.stderr).not.toContain('Enabling MAIL_TRANSPORT=outbox');
+      expect(fs.readFileSync(dest, 'utf8')).toBe(existing);
+      expect(fs.readFileSync(dest, 'utf8')).not.toContain('ALLOW_LOCAL_OUTBOX=');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('prints --help without reading $0 (curl | bash -s -- --help)', () => {
+    const script = fs.readFileSync(SCRIPT);
+    const result = spawnSync('bash', ['-s', '--', '--help'], {
+      input: script,
+      encoding: 'utf8',
+    });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('Examify installer');
+    expect(result.stdout).toContain('bash -s -- --help');
+    expect(result.stdout).toContain('pdftoppm');
+    expect(result.stderr).not.toMatch(/sed:/);
+    expect(result.stdout).not.toMatch(/sed:/);
+  });
+
+  it('prints --help when invoked as ./install.sh --help', () => {
+    const result = spawnSync('bash', [SCRIPT, '--help'], { encoding: 'utf8' });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('--write-env-only');
+    expect(result.stdout).toContain('mailbox proof');
   });
 
   it('writes .env at the examify repo root when invoked from a subdirectory', () => {
@@ -77,6 +176,52 @@ describe('install.sh', () => {
     }
   });
 
+  it('prompts for ANTHROPIC_API_KEY as an OpenAI twin (secret, same .env store)', () => {
+    const script = fs.readFileSync(SCRIPT, 'utf8');
+    expect(script).toContain('ANTHROPIC_API_KEY for /onboarding Cloud (Anthropic) generate.');
+    expect(script).toContain(
+      'Same .env store as the wizard. Leave blank to keep the test sentinel (you can set it later).',
+    );
+    expect(script).toContain('prompt ANTHROPIC_API_KEY "Anthropic API key" "" secret');
+    expect(script).toContain('Optional: OPENAI_API_KEY for /onboarding Cloud (OpenAI) generate.');
+    expect(script).toContain('prompt OPENAI_API_KEY "OpenAI API key" "" secret');
+    expect(script).toContain('ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-test}"');
+  });
+
+  it('writes ANTHROPIC_API_KEY when provided instead of the test sentinel', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-install-'));
+    try {
+      const secret = 'sk-install-test-anthropic-key';
+      execFileSync('bash', [SCRIPT, '--write-env-only'], {
+        cwd: dir,
+        env: installEnv({ ANTHROPIC_API_KEY: secret }),
+        stdio: 'pipe',
+      });
+      const envFile = fs.readFileSync(path.join(dir, '.env'), 'utf8');
+      expect(envFile).toContain(`ANTHROPIC_API_KEY=${secret}`);
+      expect(envFile).not.toContain('ANTHROPIC_API_KEY=test');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not force an outbox for magic-link when mail is unset', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-install-'));
+    try {
+      execFileSync('bash', [SCRIPT, '--write-env-only'], {
+        cwd: dir,
+        env: installEnv({ AUTH_MODE: 'magic-link' }),
+        stdio: 'pipe',
+      });
+      const envFile = fs.readFileSync(path.join(dir, '.env'), 'utf8');
+      expect(envFile).toContain('AUTH_MODE=magic-link');
+      expect(envFile).toContain('MAIL_TRANSPORT=auto');
+      expect(envFile).not.toContain('ALLOW_LOCAL_OUTBOX=');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('writes OPENAI_API_KEY when provided', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-install-'));
     try {
@@ -98,15 +243,133 @@ describe('install.sh', () => {
     try {
       const dest = path.join(dir, '.env');
       fs.writeFileSync(dest, 'KEEP_ME=1\nAUTH_MODE=magic-link\n', { mode: 0o600 });
-      execFileSync('bash', [SCRIPT, '--write-env-only'], {
+      const env = installEnv({ AUTH_MODE: 'password' });
+      delete env.AUTH_MODE;
+      const result = spawnSync('bash', [SCRIPT, '--write-env-only'], {
         cwd: dir,
-        env: installEnv({ AUTH_MODE: 'password' }),
-        stdio: 'pipe',
+        env,
+        encoding: 'utf8',
       });
+      expect(result.status).toBe(0);
+      expect(result.stderr).not.toContain('Enabling MAIL_TRANSPORT=outbox');
       const envFile = fs.readFileSync(dest, 'utf8');
       expect(envFile).toContain('KEEP_ME=1');
       expect(envFile).toContain('AUTH_MODE=magic-link');
       expect(envFile).not.toContain('AUTH_MODE=password');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a kept password .env when ALLOW_LOCAL_OUTBOX is set but transport is smtp without SMTP', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-install-'));
+    try {
+      const dest = path.join(dir, '.env');
+      const existing = [
+        'AUTH_MODE=password',
+        'MAIL_TRANSPORT=smtp',
+        'ALLOW_LOCAL_OUTBOX=1',
+        '',
+      ].join('\n');
+      fs.writeFileSync(dest, existing, { mode: 0o600 });
+      const result = spawnSync('bash', [SCRIPT, '--write-env-only'], {
+        cwd: dir,
+        env: installEnv({ AUTH_MODE: 'password' }),
+        encoding: 'utf8',
+      });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('did not enable an outbox');
+      expect(fs.readFileSync(dest, 'utf8')).toBe(existing);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a kept .env when .env.local selects password without a mail path', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-install-'));
+    try {
+      fs.writeFileSync(path.join(dir, '.env'), 'AUTH_MODE=magic-link\nMAIL_TRANSPORT=auto\n', {
+        mode: 0o600,
+      });
+      fs.writeFileSync(path.join(dir, '.env.local'), 'AUTH_MODE=password\nMAIL_TRANSPORT=auto\n', {
+        mode: 0o600,
+      });
+      const env = installEnv();
+      delete env.AUTH_MODE;
+      const result = spawnSync('bash', [SCRIPT, '--write-env-only'], {
+        cwd: dir,
+        env,
+        encoding: 'utf8',
+      });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('did not enable an outbox');
+      expect(fs.readFileSync(path.join(dir, '.env'), 'utf8')).toContain('AUTH_MODE=magic-link');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('treats omitted AUTH_MODE on a kept .env as magic-link (runtime default), not password', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-install-'));
+    try {
+      const dest = path.join(dir, '.env');
+      fs.writeFileSync(dest, 'KEEP_ME=1\nMAIL_TRANSPORT=auto\n', { mode: 0o600 });
+      const env = installEnv();
+      delete env.AUTH_MODE;
+      const result = spawnSync('bash', [SCRIPT, '--write-env-only'], {
+        cwd: dir,
+        env,
+        encoding: 'utf8',
+      });
+      expect(result.status).toBe(0);
+      expect(fs.readFileSync(dest, 'utf8')).toBe('KEEP_ME=1\nMAIL_TRANSPORT=auto\n');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses auto+SMTP_HOST without SMTP_FROM even when an outbox is allowed', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-install-'));
+    try {
+      const dest = path.join(dir, '.env');
+      const existing = [
+        'AUTH_MODE=password',
+        'MAIL_TRANSPORT=auto',
+        'SMTP_HOST=smtp.example.com',
+        'ALLOW_LOCAL_OUTBOX=1',
+        '',
+      ].join('\n');
+      fs.writeFileSync(dest, existing, { mode: 0o600 });
+      const result = spawnSync('bash', [SCRIPT, '--write-env-only'], {
+        cwd: dir,
+        env: installEnv({ AUTH_MODE: 'password' }),
+        encoding: 'utf8',
+      });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('did not enable an outbox');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps a password .env whose AUTH_MODE line has an unquoted comment', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-install-'));
+    try {
+      const dest = path.join(dir, '.env');
+      const existing = [
+        'AUTH_MODE=password # dogfood',
+        'MAIL_TRANSPORT=outbox',
+        'ALLOW_LOCAL_OUTBOX=1',
+        '',
+      ].join('\n');
+      fs.writeFileSync(dest, existing, { mode: 0o600 });
+      const result = spawnSync('bash', [SCRIPT, '--write-env-only'], {
+        cwd: dir,
+        env: installEnv({ AUTH_MODE: 'password' }),
+        encoding: 'utf8',
+      });
+      expect(result.status).toBe(0);
+      expect(fs.readFileSync(dest, 'utf8')).toBe(existing);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

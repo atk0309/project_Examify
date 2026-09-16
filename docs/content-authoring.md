@@ -28,7 +28,13 @@ first-run `/setup`, the admin wizard at `/onboarding` can add subjects, attach
 local PDFs (under `content/source-pdfs/<subject>/` only), optionally generate
 BankIR on the AI step (`examify-ingest/generate`, IR only), and run the same
 directory emit (validate, Review / dry-run HITL with planned deletes, then apply). The
-wizard does **not** auto-emit or auto-apply after generate. Cancel POSTs
+wizard does **not** auto-emit or auto-apply after generate. An existing
+`bank.ir.json` is never silently replaced: the generate preview names
+`would overwrite content/subjects/<id>/bank.ir.json`, then the wizard
+asks “Replace existing BankIR for {label}?” before any write (generate-all
+uses a named batch, not an opaque count). Decline keeps the prior file
+(`skipped` or cancelled, not invalid). Confirm writes through shared
+`writeBankIrAtomic` (CLI `--force` for that subject). Cancel POSTs
 `/api/onboarding/cancel-generate` (a Route Handler, not a queued Server
 Action) so the token can land mid-generate, then aborts provider HTTP/CMD
 via AbortSignal and discards the preview so prior `bank.ir.json` is
@@ -45,15 +51,31 @@ An empty subjects tree is refused and never wipes generated files. Uploaded
 PDFs must start with `%PDF`. `--replace-sample` is off unless the admin enables
 the advanced toggle.
 
-Generate writes IR only. It never silently emits or applies:
+Generate writes IR only. It never silently emits or applies. Existing
+`bank.ir.json` is not overwritten unless you pass `--force` (dry-run says
+**would overwrite**). Sample-bank ids fail at generate unless
+`--replace-sample`.
+
+**Hand-authored biology** (`content/subjects/biology/bank.ir.json`) has no
+source file. Skip generate; validate / emit only. Generate needs a source
+file first.
 
 1. Drop sources in `content/source-pdfs/<subject-id>/` (gitignored) and/or the
    subject folder. Optional: author `content/subjects/<id>/bank.ir.json` by
-   hand (see the biology sample) instead of generating.
-2. From the repo root:
+   hand (see the biology sample) instead of generating. A committed generate
+   fixture lives at `content/subjects/demo/notes.txt`.
+2. From the repo root (fresh-clone generate fixture):
 
    ```bash
-   pnpm examify-ingest generate --provider test --seed 0 content/subjects/<id>
+   pnpm examify-ingest generate --provider test --seed 0 content/subjects/demo
+   pnpm examify-ingest validate content/subjects
+   pnpm examify-ingest emit content/subjects --dry-run
+   pnpm examify-ingest emit content/subjects --apply
+   ```
+
+   Biology (skip generate):
+
+   ```bash
    pnpm examify-ingest validate content/subjects
    pnpm examify-ingest emit content/subjects --dry-run
    pnpm examify-ingest emit content/subjects --apply
@@ -63,8 +85,8 @@ Generate writes IR only. It never silently emits or applies:
    / `OPENAI_API_KEY` from the environment or repo `.env` / `.env.local` (existing
    env vars win) and fails closed on a cache miss if
    the key is missing or is the `test` sentinel. The `/onboarding` AI step
-   and `install.sh` can write `OPENAI_API_KEY` into that same repo-root
-   `.env` store (`findRepoRoot`, not `process.cwd()`);
+   and `install.sh` can write `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` into
+   that same repo-root `.env` store (`findRepoRoot`, not `process.cwd()`);
    the wizard never echoes the value. A host-injected key (Docker /
    systemd / parent exec environ — not live-vs-file equality) cannot be
    rotated or cleared from the wizard.
@@ -73,7 +95,9 @@ Generate writes IR only. It never silently emits or applies:
    network). `--provider local` uses quoted `EXAMIFY_INGEST_LOCAL_CMD` (stdin
    JSON includes full source text/bytes, not hashes-only) or
    `EXAMIFY_LLM_BASE_URL` (same multimodal payload as OpenAI — source text and
-   page images, not hashes-only). `--dry-run-ir` writes nothing durable.
+   page images, not hashes-only). `--dry-run-ir` writes nothing durable;
+   when IR already exists it says **would overwrite**. Persist over existing
+   IR requires `--force`.
    Sources are framed as untrusted data (`promptVersion` v2) with static
    `UNTRUSTED SOURCE MATERIAL` fences; still review IR before emit. Run
    manifests land in gitignored `.examify-ingest/`.
@@ -201,8 +225,13 @@ type Verdict = {
 
 Behaviour you can rely on:
 
-- **`ANTHROPIC_API_KEY=test`** (the dev/test default) routes to a deterministic
-  full-score stub — no network, no key needed for local development or CI.
+- **`ANTHROPIC_API_KEY=test`** (the live `process.env` value — never the
+  boot-frozen `env.ts` snapshot) routes to a deterministic full-score stub —
+  no network, no key needed for local development or CI. A wizard set /
+  rotate is used on the next grade; clear fails closed (`needs_review`, no
+  stub) so the Configured badge and the grader stay twins. Blank / missing
+  is never treated as `test`. The key is optional in `env.ts` — a
+  production restart after clear will not brick boot.
 - **It never throws.** A fetch error, non-2xx, or unparseable model reply resolves to
   `{ status: 'needs_review' }`; the attempt persists with `score: null` and renders as
   "Saved for review" (counted as incorrect, never lost).
@@ -216,7 +245,8 @@ Behaviour you can rely on:
 Phase 2 `examify-ingest generate` can draft BankIR from those files (vision-first
 when `pdftoppm` can rasterize pages; images are cached under
 `.examify-ingest/cache/pages/<pdf-sha256>/`). You still review the IR, then
-`validate` and `emit --dry-run` / `emit --apply`. The original 13-subject
+`validate content/subjects` and `emit content/subjects --dry-run` /
+`emit content/subjects --apply`. The original 13-subject
 deployment was produced from school study guides with this same grounding rule.
 
 1. Drop your source PDFs in `content/source-pdfs/<subject-id>/`. The directory is
@@ -235,8 +265,10 @@ deployment was produced from school study guides with this same grounding rule.
 4. Keep questions grounded: stay close to what the source actually says (a good
    rule of thumb is ~80% direct grounding, ~20% reasonable application of it),
    and record each item's `provenance { pdf, locator }` as you go.
-5. Run `pnpm examify-ingest validate` then `pnpm test` — the guards below catch
-   most authoring mistakes immediately. Generate never writes `content/generated/`.
+5. Run `pnpm examify-ingest validate content/subjects` then `pnpm test` — the
+   guards below catch most authoring mistakes immediately. Generate never
+   writes `content/generated/`. Bare `validate` / `emit` (no path) exit 2
+   and are not the happy path.
 
 ## Guards & test-coupled ids
 

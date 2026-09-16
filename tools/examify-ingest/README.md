@@ -6,10 +6,24 @@ split public / server-only files the app merges onto the hand-authored sample
 bank.
 
 `generate` writes `content/subjects/<id>/bank.ir.json` only. It never emits or
-applies. Human-in-the-loop is still required:
+applies. Human-in-the-loop is still required.
+
+**Hand-authored biology** (`content/subjects/biology/bank.ir.json`) has no
+source file. Skip generate; validate / emit only. Generate needs a source
+file first.
+
+Fresh-clone generate fixture (committed `content/subjects/demo/notes.txt`):
 
 ```bash
-pnpm examify-ingest generate --provider test --seed 0 content/subjects/<id>
+pnpm examify-ingest generate --provider test --seed 0 content/subjects/demo
+pnpm examify-ingest validate content/subjects
+pnpm examify-ingest emit content/subjects --dry-run
+pnpm examify-ingest emit content/subjects --apply
+```
+
+Biology (skip generate):
+
+```bash
 pnpm examify-ingest validate content/subjects
 pnpm examify-ingest emit content/subjects --dry-run
 pnpm examify-ingest emit content/subjects --apply
@@ -44,8 +58,9 @@ from the **repo root**.
 ## Commands
 
 ```bash
-pnpm examify-ingest generate --provider test --seed 0 content/subjects
-pnpm examify-ingest generate --provider anthropic --subject biology content/subjects
+pnpm examify-ingest generate --provider test --seed 0 content/subjects/demo
+pnpm examify-ingest generate --provider test --seed 0 content/subjects/demo --dry-run-ir
+pnpm examify-ingest generate --provider test --seed 0 content/subjects/demo --force
 pnpm examify-ingest validate content/subjects
 pnpm examify-ingest emit content/subjects --dry-run
 pnpm examify-ingest emit content/subjects --apply
@@ -57,8 +72,25 @@ file). It reads source files from `content/source-pdfs/<id>/` and standalone
 `content/source-pdfs/<id>.{pdf,png,jpg,jpeg,webp,txt,md}` plus any of those
 extensions in the subject folder except `bank.ir.json`. `--provider` is required
 (`anthropic` / `openai` / `local` / `test`). Default `--seed` is `0` and is
-recorded in the run manifest. `--dry-run-ir` prints the would-write path and
-writes nothing durable (no IR, cache, or manifest). It still rasterizes missing
+recorded in the run manifest. A tree generate of `content/subjects` still needs
+a source file per subject — biology is hand-authored and has none, so target
+`content/subjects/demo` (or add sources) instead of claiming biology generate
+works on a fresh clone. Tree generate is **all-or-nothing for BankIR**: it
+preflights sources and overwrite, drafts every subject (`dry-run-ir` — SAMPLE
+freeze and provider fail closed here), then commits only if every draft
+succeeds. Abort is checked before that commit; a later filesystem write rolls
+back earlier artifacts. A sourceless or frozen sibling lists the problem and
+leaves **no** partial BankIR.
+
+`--dry-run-ir` prints the would-write path and writes nothing durable (no IR,
+cache, or manifest). If `bank.ir.json` already exists, dry-run says
+**would overwrite**. Persist over existing IR requires `--force`; without it
+generate fails closed (non-zero, no write). Sample-bank ids (`SAMPLE_QUESTIONS`,
+the same frozen set as validate/emit) fail closed **before** the IR write
+unless `--replace-sample`. `--provider test` on a sample subject such as
+`maths` would emit `maths-easy-1` and is refused without that flag.
+
+It still rasterizes missing
 PDF pages into a temp directory when `pdftoppm` is available so the preview
 matches a persist run; it does not populate `.examify-ingest/cache/pages/`.
 The locked generate prompt is `prompts/v2/generate-bank.md`. The unused v1
@@ -70,7 +102,10 @@ the repo `.env` then `.env.local` (already-set env vars, including an empty
 string, win). Repo root is the `package.json` name `project-examify` walk
 (`findRepoRoot`), not `process.cwd()`, so a generate from a subdirectory
 still reads the `.env` the wizard / `install.sh` wrote. `/onboarding` and
-`install.sh` write `OPENAI_API_KEY` into that same store. Host-injected
+`install.sh` write `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` into that same
+store. Next `env.ts` optionalizes Anthropic so a wizard clear + production
+restart does not brick boot (grading / generate fail closed without a key).
+Host-injected
 keys (process exec environ) win after restart and are not rotatable from
 the wizard even when `.env` happens to match. A matching
 `cacheKey` reuses the cached
@@ -109,8 +144,8 @@ Source blobs are wrapped as `UNTRUSTED SOURCE MATERIAL` with static
 `BEGIN`/`END` markers. Those delimiters stay fixed on prompt v2 on purpose:
 a per-run nonce would bust every `cacheKey` and would not stop a hostile PDF
 from emitting the same label. The fence is a model-facing reminder, not a
-capability boundary. A human still runs validate → emit --dry-run →
-emit --apply.
+capability boundary. A human still runs validate content/subjects →
+emit content/subjects --dry-run → emit content/subjects --apply.
 
 `validate` and `emit` accept a subjects directory (scans `*/bank.ir.json`) or
 one or more explicit IR file paths. Generate does not change those commands.
@@ -214,7 +249,7 @@ the client. Do not import `content/generated/keys/` from client code.
 Generated files are meant to be committed. Source PDFs stay in the gitignored
 `content/source-pdfs/` directory.
 
-After `emit --apply`, `planEmit` rewrites
+After `emit content/subjects --apply`, `planEmit` rewrites
 `src/lib/exam/generated-public.ts` and
 `src/lib/exam/generated-keys.server.ts` from the merged catalog as a
 committed / missing-catalog fallback. Do not add those imports by hand. The
@@ -229,8 +264,9 @@ import { generateSubject } from 'examify-ingest/generate';
 
 `generateSubject` is the library entry the Setup Wizard can call later
 (`examify-ingest/generate`, not the Phase 0 emit graph). It still only writes
-BankIR (+ gitignored run/cache files). Callers must run validate → emit
-dry-run → emit apply themselves.
+BankIR (+ gitignored run/cache files). Callers must run
+validate content/subjects → emit content/subjects --dry-run →
+emit content/subjects --apply themselves.
 
 Optional `signal?: AbortSignal` is forwarded to Anthropic / OpenAI / local HTTP
 `fetch` and to the local CMD subprocess. Abort/timeout kill the POSIX process

@@ -1,6 +1,5 @@
-import { SAMPLE_QUESTIONS } from '../../../src/lib/exam/data';
 import { applyEmit, formatEmitPlan, planEmit } from './emit';
-import { collectQuestionIds } from './ids';
+import { sampleBankFrozenIds } from './frozen-ids';
 import { findRepoRoot, isAuthoritativeCatalogInput, loadIrFiles, resolveIrFiles } from './load';
 import { DEFAULT_GENERATE_SEED, GENERATE_PROVIDERS, type GenerateProviderId } from './schema';
 import { validateIrCollection } from './validate';
@@ -9,7 +8,7 @@ export const USAGE = `Usage:
   examify-ingest validate <subjects-dir|ir.json...> [--replace-sample]
   examify-ingest emit <subjects-dir|ir.json...> [--dry-run] [--apply] [--replace-sample]
   examify-ingest generate [--provider anthropic|openai|local|test] [--seed <n>]
-      [--subject <id>] [--model <name>] [--dry-run-ir]
+      [--subject <id>] [--model <name>] [--dry-run-ir] [--force] [--replace-sample]
       <subjects-dir|content/subjects/<id>>
 
 emit is dry-run by default. Writes only with --apply.
@@ -20,13 +19,18 @@ Explicit IR files never prune; mixed file+directory argv is partial-safe and
 never prunes.
 
 generate writes BankIR only (content/subjects/<id>/bank.ir.json). It never
-emits or applies. After generate, run validate then emit --dry-run then
-emit --apply. Default seed is 0. Cloud providers require ANTHROPIC_API_KEY
+emits or applies. After generate, run validate content/subjects then
+emit content/subjects --dry-run then emit content/subjects --apply.
+Default seed is 0. Cloud providers require ANTHROPIC_API_KEY
 or OPENAI_API_KEY from the environment or repo .env / .env.local
 (never the CLI; existing env vars win) unless a matching
 cacheKey IR is already cached. Use --provider test in CI. --dry-run-ir
-writes nothing durable. Run manifests live under .examify-ingest/runs/
-(gitignored).
+writes nothing durable. Existing bank.ir.json is not overwritten unless
+--force (dry-run says "would overwrite"). Sample-bank ids fail closed
+unless --replace-sample. Tree generate preflights sources and overwrite,
+drafts every subject (SAMPLE freeze / provider) before the first IR write,
+and commits BankIR only if every draft succeeds. Run manifests live under
+.examify-ingest/runs/ (gitignored).
 `;
 
 export type CliIo = {
@@ -47,6 +51,7 @@ export type ParsedCli = {
   subject: string | null;
   model: string | null;
   dryRunIr: boolean;
+  force: boolean;
 };
 
 const BOOLEAN_FLAGS = new Set([
@@ -55,10 +60,11 @@ const BOOLEAN_FLAGS = new Set([
   '--replace-sample',
   '--help',
   '--dry-run-ir',
+  '--force',
 ]);
 const VALUE_FLAGS = new Set(['--provider', '--seed', '--subject', '--model']);
 const GENERATE_VALUE_FLAGS = VALUE_FLAGS;
-const GENERATE_BOOL_FLAGS = new Set(['--dry-run-ir', '--dry-run']);
+const GENERATE_BOOL_FLAGS = new Set(['--dry-run-ir', '--dry-run', '--force', '--replace-sample']);
 
 function isGenerateProvider(value: string): value is GenerateProviderId {
   return (GENERATE_PROVIDERS as readonly string[]).includes(value);
@@ -109,6 +115,7 @@ export function parseArgs(argv: readonly string[]): ParsedCli | { error: string 
       subject: null,
       model: null,
       dryRunIr: false,
+      force: false,
     };
   }
 
@@ -132,12 +139,10 @@ export function parseArgs(argv: readonly string[]): ParsedCli | { error: string 
       if (values.has(flag)) return { error: `${flag} is only valid for generate` };
     }
     if (flags.has('--dry-run-ir')) return { error: '--dry-run-ir is only valid for generate' };
+    if (flags.has('--force')) return { error: '--force is only valid for generate' };
   } else {
     if (flags.has('--apply')) {
       return { error: 'generate never emits; use validate then emit --apply' };
-    }
-    if (flags.has('--replace-sample')) {
-      return { error: '--replace-sample is an emit/validate flag, not generate' };
     }
     for (const flag of flags) {
       if (!GENERATE_BOOL_FLAGS.has(flag) && flag !== '--help') {
@@ -181,6 +186,7 @@ export function parseArgs(argv: readonly string[]): ParsedCli | { error: string 
     subject: values.get('--subject') ?? null,
     model: values.get('--model') ?? null,
     dryRunIr: flags.has('--dry-run-ir') || (command === 'generate' && flags.has('--dry-run')),
+    force: flags.has('--force'),
   };
 }
 
@@ -224,7 +230,7 @@ function runValidateOrEmit(parsed: ParsedCli, io: CliIo): number {
 
   const result = validateIrCollection(files, {
     replaceSample: parsed.replaceSample,
-    frozenIds: collectQuestionIds(SAMPLE_QUESTIONS),
+    frozenIds: sampleBankFrozenIds(),
   });
   if (!result.ok) {
     printIssues(io, result.errors);

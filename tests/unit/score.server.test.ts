@@ -1,8 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { scoreAttempt } from '@/lib/exam/score.server';
 import { ANSWER_KEYS } from '@/lib/exam/answer-keys.server';
 import type { AttemptInput } from '@/lib/exam/attempts';
 import { QUESTIONS } from '@/lib/exam/data';
+import { env } from '@/lib/env';
 
 /**
  * Build MCQ submit items from the maths/easy bank, choosing `correctCount`
@@ -190,5 +194,146 @@ describe('scoreAttempt — free-text (test sentinel stub → full marks)', () =>
       items,
     });
     expect(res).toEqual({ ok: false, reason: 'invalid_items' });
+  });
+});
+
+describe('scoreAttempt — wizard write, no restart', () => {
+  const stubVerdict = 'Looks good.';
+  const liveVerdict = 'Live path, not stub.';
+
+  function geographyMediumItems(): AttemptInput['items'] {
+    return QUESTIONS.geography!.medium!.map((q) => {
+      if (q.type === 'free') {
+        return {
+          type: 'free' as const,
+          id: q.id,
+          response:
+            q.id === 'geography-medium-free-1'
+              ? 'Weather is day-to-day; climate is the long-term pattern.'
+              : 'Cities grew near rivers for fresh water and moving goods by boat.',
+        };
+      }
+      return {
+        type: 'mcq' as const,
+        id: q.id,
+        chosen: (ANSWER_KEYS[q.id] as { answer: number }).answer,
+      };
+    });
+  }
+
+  afterEach(async () => {
+    const { setEnvStoreRootForTests } = await import('@/lib/env-store');
+    setEnvStoreRootForTests(null);
+    vi.restoreAllMocks();
+  });
+
+  it('boot ANTHROPIC_API_KEY=test then wizard set is not the stub path; clear fails closed', async () => {
+    expect(env.ANTHROPIC_API_KEY).toBe('test');
+    const {
+      setEnvStoreRootForTests,
+      setEnvStoreSecret,
+      clearEnvStoreSecret,
+      envStoreSecretConfigured,
+    } = await import('@/lib/env-store');
+    const root = mkdtempSync(path.join(tmpdir(), 'examify-score-live-'));
+    writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'project-examify' }));
+    setEnvStoreRootForTests(root);
+    const secret = 'sk-anth-score-boot-set-never-echo';
+    const previous = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = 'test';
+    const okBody = JSON.stringify({
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({
+            score: 1,
+            verdict: liveVerdict,
+            gotRight: [],
+            toReview: [],
+            spelling: [],
+          }),
+        },
+      ],
+    });
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockImplementation(async () => new Response(okBody, { status: 200 }));
+    try {
+      const items = geographyMediumItems();
+      const stubbed = await scoreAttempt({
+        subject: 'geography',
+        difficulty: 'medium',
+        items,
+      });
+      expect(stubbed.ok).toBe(true);
+      if (!stubbed.ok) return;
+      const stubItem = stubbed.items.find(
+        (candidate) => candidate.id === 'geography-medium-free-1',
+      );
+      expect(stubItem).toMatchObject({
+        type: 'free',
+        status: 'graded',
+        verdict: { verdict: stubVerdict },
+      });
+      expect(envStoreSecretConfigured('ANTHROPIC_API_KEY')).toBe(false);
+      expect(fetchSpy).not.toHaveBeenCalled();
+
+      expect(setEnvStoreSecret('ANTHROPIC_API_KEY', secret, root)).toEqual({ ok: true });
+      expect(env.ANTHROPIC_API_KEY).toBe('test');
+      expect(envStoreSecretConfigured('ANTHROPIC_API_KEY')).toBe(true);
+
+      const written = await scoreAttempt({
+        subject: 'geography',
+        difficulty: 'medium',
+        items,
+      });
+      expect(written.ok).toBe(true);
+      if (!written.ok) return;
+      const liveFrees = written.items.filter((candidate) => candidate.type === 'free');
+      expect(liveFrees.length).toBeGreaterThan(0);
+      for (const liveItem of liveFrees) {
+        expect(liveItem).toMatchObject({
+          status: 'graded',
+          score: 1,
+          verdict: { verdict: liveVerdict },
+        });
+        expect(liveItem.verdict?.verdict).not.toBe(stubVerdict);
+      }
+      expect(fetchSpy).toHaveBeenCalledTimes(liveFrees.length);
+      expect((fetchSpy.mock.calls[0]?.[1] as RequestInit).headers).toMatchObject({
+        'x-api-key': secret,
+      });
+      const fetchCountAfterSet = fetchSpy.mock.calls.length;
+
+      expect(clearEnvStoreSecret('ANTHROPIC_API_KEY', root)).toEqual({ ok: true });
+      expect(env.ANTHROPIC_API_KEY).toBe('test');
+      expect(envStoreSecretConfigured('ANTHROPIC_API_KEY')).toBe(false);
+      expect(process.env.ANTHROPIC_API_KEY).toBeUndefined();
+
+      const cleared = await scoreAttempt({
+        subject: 'geography',
+        difficulty: 'medium',
+        items,
+      });
+      expect(cleared.ok).toBe(true);
+      if (!cleared.ok) return;
+      const clearedFrees = cleared.items.filter((candidate) => candidate.type === 'free');
+      expect(clearedFrees.length).toBeGreaterThan(0);
+      for (const clearedItem of clearedFrees) {
+        expect(clearedItem).toMatchObject({
+          status: 'needs_review',
+          score: null,
+          verdict: null,
+        });
+        expect(clearedItem).not.toMatchObject({
+          status: 'graded',
+          verdict: { verdict: stubVerdict },
+        });
+      }
+      expect(fetchSpy).toHaveBeenCalledTimes(fetchCountAfterSet);
+    } finally {
+      if (previous === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = previous;
+    }
   });
 });

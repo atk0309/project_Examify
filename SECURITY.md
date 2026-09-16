@@ -45,8 +45,10 @@ get an initial response within a week.
   production. The writer creates the directory as `0700` and each message as `0600`.
 - Prefer `AUTH_MODE=password` on a tiny self-host if you do not want to run
   email for **sign-in**. Password-mode invite accept still needs SMTP, Resend,
-  or an allowed outbox (and fails closed if none can deliver). `AUTH_SECRET`
-  and `SETUP_BOOTSTRAP_SECRET` remain the host secrets.
+  or an allowed outbox (and fails closed if none can deliver). `install.sh`
+  default password mode enables that outbox when no SMTP / Resend is set so
+  kid invites are not stranded. `AUTH_SECRET` and `SETUP_BOOTSTRAP_SECRET`
+  remain the host secrets.
 
 ## Password-mode invite links are secrets
 

@@ -48,7 +48,8 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   `{ id, type, q, choices? }` in `data.ts` **plus** a matching `ANSWER_KEYS[id]`
   (with provenance) in `answer-keys.server.ts`, **or** author
   `content/subjects/<id>/bank.ir.json` (by hand or `pnpm examify-ingest generate`)
-  then `pnpm examify-ingest validate` → `emit --dry-run` → `emit --apply`
+  then `pnpm examify-ingest validate content/subjects` →
+  `emit content/subjects --dry-run` → `emit content/subjects --apply`
   (emit is dry-run by default; never clobbers any sample-bank id without
   `--replace-sample`; partial emit (explicit IR files or mixed file+dir argv)
   merges `subjects.json`; a whole-tree emit of subjects directories only
@@ -56,17 +57,32 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   reads `content/generated/` at request time so a production Apply is visible
   without rebuilding. Guide: `docs/content-authoring.md` and
   `tools/examify-ingest/README.md`. Generate writes IR only — still
-  validate → emit --dry-run → emit --apply. It never auto-applies.
+  `validate content/subjects` → `emit content/subjects --dry-run` →
+  `emit content/subjects --apply`. It never auto-applies.
+  Hand-authored biology has no source file (skip generate; validate/emit only).
+  Fresh-clone generate: `content/subjects/demo/notes.txt`. Existing
+  `bank.ir.json` requires `--force` (dry-run says **would overwrite**).
+  Frozen sample-bank ids fail at generate unless `--replace-sample`.
+  Tree generate drafts every subject before the first IR write (sources,
+  overwrite, SAMPLE freeze, provider); a mid-list or persist failure writes
+  no BankIR (commit rolls back earlier writes; abort is gated before persist).
+  Persist uses shared `writeBankIrAtomic`. The wizard never silently
+  replaces existing `bank.ir.json` (named confirm, or skip/cancel;
+  confirm is that same `--force` for the subject).
   `generateSubject` accepts optional `AbortSignal` (forwarded to provider
   HTTP/CMD; abort throws and writes no IR, IR cache, page-raster cache, or
   run manifest). Cloud
   providers fail closed without an env key (generate also reads repo `.env` /
   `.env.local` for unset keys); `--provider test` is the CI
   fixture. OpenAI-compatible generate refuses PDF-only input when no page
-  images were rasterized. Run cache/manifests are gitignored under
+  images were rasterized (`pdftoppm` from poppler-utils). Run cache/manifests are gitignored under
   `.examify-ingest/`.
 - **Free-text is LLM-graded server-side** (`src/lib/grading/index.ts`,
-  `ANTHROPIC_API_KEY`; `test` → deterministic stub). Grading never throws — failures
+  live `ANTHROPIC_API_KEY` from `process.env` only so a wizard set / rotate /
+  clear is visible without restart; `test` → deterministic stub; missing
+  after clear → `needs_review`, no stub; blank is never treated as `test`;
+  same usable-key rule as the Configured badge; optional in `env.ts` so a
+  production restart after clear does not brick boot). Grading never throws — failures
   fall to `needs_review`. A free item is "correct" at `PASS_THRESHOLD` (0.6). The UI
   renders only the bounded `Verdict` fields, never the rubric. Results are
   server-driven (a "Marking…" state covers the submit round-trip). Full design:
@@ -89,9 +105,18 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   oldest-first) rather than the 50-capped `getProgressForUser`.
 - Access is invite-only. First-run `/setup` (`bootstrapHousehold`) creates the admin
   when no household exists, and only after `SETUP_BOOTSTRAP_SECRET` matches (required
-  in production; captcha is not identity). After bootstrap, `/onboarding` lets the
+  in production; captcha is not identity). `SetupForm` reads submitted FormData
+  (autofill-safe), keeps inputs uncontrolled, and re-reads / restores a
+  FormData snapshot if a Turnstile remount wipes values. It never silently
+  disables Create household. Field-level / `aria-invalid` errors drop on the
+  next successful edit of that field or on resubmit. Email is the required
+  admin account id in every `AUTH_MODE` (including password). After bootstrap, `/onboarding` lets the
   household admin add subjects, attach local PDFs, choose an AI mode, optionally
-  run `examify-ingest generate` (BankIR only; never emit/apply; cancel
+  run `examify-ingest generate` (BankIR only; never emit/apply; existing
+  `bank.ir.json` needs a calm confirm — preview names `would overwrite`,
+  decline is skipped/cancelled not invalid, confirm is CLI `--force` for
+  that subject; generate-all confirms per colliding subject or one named
+  batch; persist is shared `writeBankIrAtomic`; cancel
   POSTs `/api/onboarding/cancel-generate` so the token is not queued
   behind generate, then aborts provider HTTP/CMD via AbortSignal and
   discards the preview (no IR write; prior IR unchanged); the wizard
@@ -100,10 +125,11 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   the provider is still unwinding; cancelled is a
   calm status, not an error toast; delete/rename wait on the generate
   lock and re-check the admin gate after the wait; subject
-  ids must be in the wizard catalog; OpenAI mode can set / rotate / clear
-  `OPENAI_API_KEY` in the same repo-root `.env` as `install.sh` and
-  `examify-ingest generate` (shared `findRepoRoot`; never echoed; host-injected
-  keys — exec environ assignment, including empty / `test` — are not rotatable in the wizard); skip / Back / desktop rail lock while
+  ids must be in the wizard catalog; Anthropic / OpenAI modes can set /
+  rotate / clear `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` in the same
+  repo-root `.env` as `install.sh` and `examify-ingest generate` (shared
+  `findRepoRoot`; never echoed; host-injected keys — exec environ
+  assignment, including empty / `test` — are not rotatable in the wizard); skip / Back / desktop rail lock while
   generate is in flight so Cancel stays reachable), and emit
   BankIR via `examify-ingest` (directory-only, Review / dry-run HITL before apply,
   empty catalog fail-closed; `--replace-sample` only behind an explicit advanced
@@ -130,8 +156,13 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   if the DB has no households. Production boot fails if `FAMILIES` is set and invalid.
 - **Auth mode** is `AUTH_MODE` (`password` | `magic-link` | `local-otp`, default
   `magic-link`). `install.sh` writes it. Password sign-in needs no mail;
-  password-mode invite accept still sends a mailbox OTP. Magic-link /
+  password-mode invite accept still sends a mailbox OTP (never skipped).
+  Interactive / default `install.sh` prompts for mail or enables a local
+  outbox when it writes `.env` so kid invites are not stranded. A kept
+  password-mode `.env` with no mail path is refused. Magic-link /
   local-otp use `MAIL_TRANSPORT` (`auto` / `resend` / `smtp` / `outbox`).
+  `pnpm db:migrate` fills `DATABASE_URL` from the repo-root `.env` /
+  `.env.local` via `findRepoRoot` (same walk as env-store / ingest).
   Production `local-otp` or explicit `outbox` requires `ALLOW_LOCAL_OUTBOX=1`.
   SMTP AUTH/DATA requires TLS (STARTTLS or `SMTP_SECURE`) unless
   `SMTP_ALLOW_INSECURE=1`. `SMTP_FROM` is required only when SMTP is the
