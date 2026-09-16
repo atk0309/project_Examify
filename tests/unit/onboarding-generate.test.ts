@@ -291,7 +291,10 @@ describe('onboarding generate graph', () => {
 
     expect(flags).toMatch(/anthropicConfigured: envStoreSecretConfigured\('ANTHROPIC_API_KEY'\)/);
     expect(flags).toMatch(/anthropicPresent: envStoreSecretPresent\('ANTHROPIC_API_KEY'\)/);
+    expect(flags).toMatch(/anthropicLiveTest: envStoreSecretLiveTest\('ANTHROPIC_API_KEY'\)/);
     expect(flags).toMatch(/anthropicHostManaged: envStoreSecretHostManaged\('ANTHROPIC_API_KEY'\)/);
+    expect(wizard).toMatch(/liveTest=\{snapshot\.anthropicLiveTest\}/);
+    expect(wizard).not.toMatch(/present && !configured/);
     expect(flags).not.toMatch(/ANTHROPIC_API_KEY: env\.ANTHROPIC_API_KEY/);
 
     // Grader + Configured badge stay twins: live process.env / env-store, never
@@ -518,8 +521,22 @@ describe('generateOnboardingSubject', () => {
     );
     expect(listOnboardingSubjects(root)[0]?.hasIr).toBe(false);
 
+    const irPath = path.join(root, 'content/subjects/history/bank.ir.json');
+    writeFileSync(irPath, '');
+    expect(listOnboardingSubjects(root)[0]?.hasIr).toBe(false);
+    const empty = await generateOnboardingSubject({
+      subjectId: 'history',
+      provider: 'test',
+      seed: 0,
+      root,
+    });
+    expect(empty.ok).toBe(true);
+    if (!empty.ok) throw new Error('expected generate over empty IR');
+    expect(empty.result.overwrite).toBe(false);
+    rmSync(irPath);
+
     writeFileSync(
-      path.join(root, 'content/subjects/history/bank.ir.json'),
+      irPath,
       JSON.stringify({
         version: 1,
         subject: { id: 'history', label: 'History', icon: 'geography', l: 0.6, c: 0.08, h: 40 },
@@ -561,7 +578,7 @@ describe('generateOnboardingSubject', () => {
       }),
     );
     const irPath = path.join(root, 'content/subjects/history/bank.ir.json');
-    const prior = '{ "stale": true }\n';
+    const prior = 'not-json{\n';
     writeFileSync(irPath, prior);
     expect(listOnboardingSubjects(root)[0]?.hasIr).toBe(true);
 

@@ -316,6 +316,14 @@ export function envStoreSecretConfigured(
  * True when live env or the `.env` store has a value — including `test`.
  * Empty is not present. Never returns the value.
  */
+/** True only when live process.env is the `test` sentinel (never echoed). */
+export function envStoreSecretLiveTest(
+  key: EnvStoreKey,
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  return env[key]?.trim() === 'test';
+}
+
 export function envStoreSecretPresent(
   key: EnvStoreKey,
   env: Record<string, string | undefined> = process.env,

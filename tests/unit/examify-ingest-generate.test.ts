@@ -507,6 +507,50 @@ describe('examify-ingest generate P0 gates', () => {
     expect(ir.difficulties.easy[0]?.id).toBe('plants-easy-1');
   });
 
+  it('generate --force replaces unparseable IR using subject.json meta', async () => {
+    const root = examifyRepo();
+    const irPath = path.join(root, 'content/subjects/plants/bank.ir.json');
+    writeFileSync(irPath, 'not-json{\n');
+    const refused = io();
+    refused.handle.cwd = root;
+    expect(
+      await runCliAsync(
+        ['generate', '--provider', 'test', 'content/subjects/plants'],
+        refused.handle,
+      ),
+    ).toBe(1);
+    expect(refused.err()).toMatch(/corrupt/);
+    expect(readFileSync(irPath, 'utf8')).toBe('not-json{\n');
+
+    const forced = io();
+    forced.handle.cwd = root;
+    expect(
+      await runCliAsync(
+        ['generate', '--provider', 'test', '--force', 'content/subjects/plants'],
+        forced.handle,
+      ),
+    ).toBe(0);
+    const ir = JSON.parse(readFileSync(irPath, 'utf8')) as BankIR;
+    expect(ir.subject.id).toBe('plants');
+    expect(ir.difficulties.easy[0]?.id).toBe('plants-easy-1');
+  });
+
+  it('generate writes over an empty BankIR without --force', async () => {
+    const root = examifyRepo();
+    const irPath = path.join(root, 'content/subjects/plants/bank.ir.json');
+    writeFileSync(irPath, '');
+    const streams = io();
+    streams.handle.cwd = root;
+    expect(
+      await runCliAsync(
+        ['generate', '--provider', 'test', 'content/subjects/plants'],
+        streams.handle,
+      ),
+    ).toBe(0);
+    const ir = JSON.parse(readFileSync(irPath, 'utf8')) as BankIR;
+    expect(ir.difficulties.easy[0]?.id).toBe('plants-easy-1');
+  });
+
   it('tree generate SAMPLE freeze after a sourced sibling writes no BankIR', async () => {
     const root = examifyRepo();
     const mathsDir = path.join(root, 'content/subjects/maths');

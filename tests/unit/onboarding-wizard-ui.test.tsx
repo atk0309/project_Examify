@@ -60,6 +60,8 @@ function snapshot(overrides: Partial<OnboardingSnapshot> = {}): OnboardingSnapsh
     openaiConfigured: false,
     anthropicPresent: true,
     openaiPresent: false,
+    anthropicLiveTest: true,
+    openaiLiveTest: false,
     anthropicHostManaged: true,
     openaiHostManaged: false,
     localAgentConfigured: false,
@@ -136,6 +138,43 @@ describe('OnboardingWizard majors UI', () => {
     expect(screen.getByTestId('wizard-generate-no-sources-biology')).toHaveTextContent(
       'Hand-authored BankIR can skip generate',
     );
+  });
+
+  it('does not treat a host-empty key with a stored fallback as a mutable sentinel', async () => {
+    setOnboardingAiModeAction.mockResolvedValue({
+      ok: true,
+      snapshot: snapshot({
+        aiMode: 'cloud',
+        anthropicPresent: true,
+        anthropicLiveTest: false,
+        anthropicHostManaged: true,
+        anthropicConfigured: false,
+      }),
+    });
+    render(
+      <OnboardingWizard
+        snapshot={snapshot({
+          anthropicPresent: true,
+          anthropicLiveTest: false,
+          anthropicHostManaged: true,
+          anthropicConfigured: false,
+        })}
+        pendingInvites={[]}
+        members={[]}
+        canInvite={false}
+        authMode="magic-link"
+      />,
+    );
+    fireEvent.click(screen.getByTestId('wizard-get-started'));
+    fireEvent.click(screen.getByTestId('wizard-next'));
+    fireEvent.click(screen.getByTestId('wizard-next'));
+    fireEvent.click(screen.getByTestId('wizard-ai-cloud'));
+    expect(await screen.findByTestId('wizard-anthropic-key')).toHaveTextContent(
+      'set by the host environment',
+    );
+    expect(screen.queryByTestId('wizard-anthropic-key-clear')).toBeNull();
+    expect(screen.queryByTestId('wizard-anthropic-key-rotate')).toBeNull();
+    expect(screen.getByTestId('wizard-anthropic-key')).not.toHaveTextContent('test sentinel');
   });
 
   it('cancels prune confirm with zero apply writes', async () => {

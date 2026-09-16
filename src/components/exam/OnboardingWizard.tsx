@@ -1345,7 +1345,7 @@ function EnvKeyPanel({
   label,
   hostName,
   configured,
-  present,
+  liveTest,
   hostManaged,
   pending,
   onSave,
@@ -1355,7 +1355,7 @@ function EnvKeyPanel({
   label: string;
   hostName: string;
   configured: boolean;
-  present: boolean;
+  liveTest: boolean;
   hostManaged: boolean;
   pending: boolean;
   onSave: (key: string) => Promise<boolean>;
@@ -1365,9 +1365,9 @@ function EnvKeyPanel({
   const [value, setValue] = useState('');
   const [saving, setSaving] = useState(false);
   const busy = pending || saving;
-  const sentinel = present && !configured;
-  const locked = hostManaged && configured;
-  const canMutate = !hostManaged || sentinel;
+  const sentinel = liveTest;
+  const locked = hostManaged && !liveTest;
+  const canMutate = !hostManaged || liveTest;
   const showField = canMutate && (!configured || rotating);
   const inputId = `${testId}-input`;
 
@@ -1576,7 +1576,7 @@ function AiStep({
           label="Anthropic API key"
           hostName="Anthropic"
           configured={snapshot.anthropicConfigured}
-          present={snapshot.anthropicPresent}
+          liveTest={snapshot.anthropicLiveTest}
           hostManaged={snapshot.anthropicHostManaged}
           pending={busy}
           onSave={async (key) => {
@@ -1599,7 +1599,7 @@ function AiStep({
           label="OpenAI API key"
           hostName="OpenAI"
           configured={snapshot.openaiConfigured}
-          present={snapshot.openaiPresent}
+          liveTest={snapshot.openaiLiveTest}
           hostManaged={snapshot.openaiHostManaged}
           pending={busy}
           onSave={async (key) => {

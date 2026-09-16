@@ -39,6 +39,7 @@ import { env } from '@/lib/env';
 import {
   envStoreSecretConfigured,
   envStoreSecretHostManaged,
+  envStoreSecretLiveTest,
   envStoreSecretPresent,
 } from '@/lib/env-store';
 import { getMembershipForUser } from '@/lib/households';
@@ -392,6 +393,8 @@ function aiFlags(): {
   openaiConfigured: boolean;
   anthropicPresent: boolean;
   openaiPresent: boolean;
+  anthropicLiveTest: boolean;
+  openaiLiveTest: boolean;
   anthropicHostManaged: boolean;
   openaiHostManaged: boolean;
   localAgentConfigured: boolean;
@@ -405,6 +408,8 @@ function aiFlags(): {
     openaiConfigured: envStoreSecretConfigured('OPENAI_API_KEY'),
     anthropicPresent: envStoreSecretPresent('ANTHROPIC_API_KEY'),
     openaiPresent: envStoreSecretPresent('OPENAI_API_KEY'),
+    anthropicLiveTest: envStoreSecretLiveTest('ANTHROPIC_API_KEY'),
+    openaiLiveTest: envStoreSecretLiveTest('OPENAI_API_KEY'),
     anthropicHostManaged: envStoreSecretHostManaged('ANTHROPIC_API_KEY'),
     openaiHostManaged: envStoreSecretHostManaged('OPENAI_API_KEY'),
     localAgentConfigured: Boolean(

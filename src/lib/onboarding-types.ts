@@ -141,16 +141,18 @@ export type OnboardingSnapshot = {
   openaiConfigured: boolean;
   /**
    * Live or `.env` store has a value (including the `test` sentinel).
-   * Never the key itself. Used so Clear/Rotate stay reachable when the
-   * badge is “not configured”.
+   * Never the key itself. Clear/Rotate use `*LiveTest`, not this flag.
    */
   anthropicPresent: boolean;
   openaiPresent: boolean;
+  /** Live process.env is exactly `test`. Never the value. */
+  anthropicLiveTest: boolean;
+  openaiLiveTest: boolean;
   /**
    * Host (Docker / systemd / parent exec environ) assigned the key —
    * including empty / `test`. A matching `.env` value is not enough.
-   * Wizard write/clear of a usable host key is refused. A boot `test`
-   * sentinel can still be cleared.
+   * Wizard write/clear of a usable or empty host key is refused. A boot
+   * `test` sentinel (`*LiveTest`) can still be cleared.
    */
   anthropicHostManaged: boolean;
   openaiHostManaged: boolean;

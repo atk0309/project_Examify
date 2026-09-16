@@ -575,7 +575,7 @@ describe('onboarding actions', () => {
     const irPath = path.join(root, 'content/subjects/history/bank.ir.json');
     fs.mkdirSync(path.join(root, 'content/subjects/history'), { recursive: true });
     fs.mkdirSync(path.join(root, 'content/source-pdfs/history'), { recursive: true });
-    const prior = '{ "stale": true }\n';
+    const prior = 'not-json{\n';
     writeFileSync(irPath, prior);
     writeFileSync(path.join(root, 'content/source-pdfs/history/notes.txt'), 'A source note.\n');
 

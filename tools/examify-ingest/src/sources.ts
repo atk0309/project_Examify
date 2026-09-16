@@ -101,8 +101,23 @@ function readJsonIfPresent(absPath: string): unknown | null {
   }
 }
 
+/**
+ * BankIR may be empty / unparseable (placeholder or corrupt). Metadata
+ * then comes from subject.json or the default — generate --force can
+ * still replace the file.
+ */
+function readBankIrJsonIfPresent(absPath: string): unknown | null {
+  try {
+    const raw = readFileSync(absPath, 'utf8');
+    if (raw.trim() === '') return null;
+    return JSON.parse(raw) as unknown;
+  } catch {
+    return null;
+  }
+}
+
 export function loadSubjectMeta(subjectDir: string, subjectId: string): BankIrSubject {
-  const ir = readJsonIfPresent(path.join(subjectDir, BANK_IR_FILE));
+  const ir = readBankIrJsonIfPresent(path.join(subjectDir, BANK_IR_FILE));
   if (ir && typeof ir === 'object' && ir !== null && 'subject' in ir) {
     const parsed = subjectSchema.safeParse((ir as { subject: unknown }).subject);
     if (parsed.success) {

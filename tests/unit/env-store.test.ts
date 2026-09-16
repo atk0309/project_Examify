@@ -439,6 +439,7 @@ describe('env-store', () => {
     const {
       clearEnvStoreSecret,
       envStoreSecretConfigured,
+      envStoreSecretLiveTest,
       envStoreSecretPresent,
       setEnvStoreRootForTests,
       setInitialEnvironForTests,
@@ -452,6 +453,7 @@ describe('env-store', () => {
     try {
       expect(envStoreSecretConfigured('ANTHROPIC_API_KEY')).toBe(false);
       expect(envStoreSecretPresent('ANTHROPIC_API_KEY')).toBe(true);
+      expect(envStoreSecretLiveTest('ANTHROPIC_API_KEY')).toBe(true);
       const cleared = clearEnvStoreSecret('ANTHROPIC_API_KEY', root);
       expect(cleared).toEqual({ ok: true });
       expect(JSON.stringify(cleared)).not.toContain('test');
