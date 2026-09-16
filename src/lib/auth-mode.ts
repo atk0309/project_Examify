@@ -7,7 +7,9 @@
  * session shape `{ userId, role, email, studentMode? }` after verifying the
  * person.
  *
- * - `password` — email + password; no mail delivery required
+ * - `password` — email + password; sign-in needs no mail. Invite accept
+ *   still sends a mailbox OTP (SMTP / Resend / allowed outbox) and fails
+ *   closed if none can deliver. `install.sh` configures that path.
  * - `magic-link` — one-time URL via Resend, SMTP, or the local outbox
  * - `local-otp` — one-time 6-digit code written to the outbox (and emailed
  *   when a transport is configured). Production requires ALLOW_LOCAL_OUTBOX.

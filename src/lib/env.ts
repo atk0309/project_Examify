@@ -89,8 +89,9 @@ function buildEnvSchema(isProd: boolean) {
       // no households. Production boot fails if FAMILIES is set and invalid.
 
       // How people sign in. Default magic-link keeps existing #56 hosts working.
-      // `password` needs no mail. `local-otp` writes a 6-digit code to the
-      // outbox (prod requires ALLOW_LOCAL_OUTBOX).
+      // `password` sign-in needs no mail; invite accept still sends a mailbox
+      // OTP. `local-otp` writes a 6-digit code to the outbox (prod requires
+      // ALLOW_LOCAL_OUTBOX).
       AUTH_MODE: z.preprocess((v) => emptyToUndef(v) ?? 'magic-link', z.enum(AUTH_MODES)),
 
       // How magic-link / OTP messages are delivered. `auto` picks SMTP when

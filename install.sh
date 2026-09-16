@@ -5,17 +5,62 @@
 #
 # From a clone:
 #   ./install.sh
+#   ./install.sh --help
+#
+# Piped help (do not use `bash --help` — that is bash's own flag):
+#   curl -fsSL …/install.sh | bash -s -- --help
 #
 # Non-interactive (CI / automation):
 #   EXAMIFY_NONINTERACTIVE=1 SITE_URL=https://exam.example.com ./install.sh
 #   Existing .env is never overwritten in non-interactive mode. Remove it first
-#   to regenerate.
+#   to regenerate. A kept password-mode .env with no SMTP / Resend / allowed
+#   outbox is refused (invite accept would fail closed; this run does not
+#   claim to enable an outbox).
+#   Default AUTH_MODE=password enables a local outbox so invite-accept OTP
+#   (mailbox proof) can be read from data/outbox — only when this run writes
+#   .env. Set SMTP_* / RESEND_* to use real mail instead. Invite accept never
+#   skips that OTP.
 #
 # Flags:
 #   --write-env-only   write .env and exit (used by tests)
 #   --skip-build       install + migrate, skip pnpm build
 #   --yes              same as EXAMIFY_NONINTERACTIVE=1
+#   --help             print this usage (safe when $0 is bash)
 set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Examify installer — curl|bash friendly.
+
+  curl -fsSL https://raw.githubusercontent.com/atk0309/project_Examify/main/install.sh | bash
+
+From a clone:
+  ./install.sh
+  ./install.sh --help
+
+Piped help (do not use `bash --help` — that is bash's own flag):
+  curl -fsSL …/install.sh | bash -s -- --help
+
+Non-interactive (CI / automation):
+  EXAMIFY_NONINTERACTIVE=1 SITE_URL=https://exam.example.com ./install.sh
+  Existing .env is never overwritten in non-interactive mode. Remove it first
+  to regenerate. A kept password-mode .env with no SMTP / Resend / allowed
+  outbox is refused (invite accept would fail closed; this run does not
+  claim to enable an outbox).
+  Default AUTH_MODE=password enables a local outbox so invite-accept OTP
+  (mailbox proof) can be read from data/outbox — only when this run writes
+  .env. Set SMTP_* / RESEND_* to use real mail instead. Invite accept never
+  skips that OTP.
+
+Flags:
+  --write-env-only   write .env and exit (used by tests)
+  --skip-build       install + migrate, skip pnpm build
+  --yes              same as EXAMIFY_NONINTERACTIVE=1
+  --help             print this usage (safe when $0 is bash)
+
+OpenAI / PDF generate needs pdftoppm (poppler-utils) on PATH.
+EOF
+}
 
 REPO_URL="${EXAMIFY_REPO_URL:-https://github.com/atk0309/project_Examify.git}"
 PNPM_VERSION="${EXAMIFY_PNPM_VERSION:-10.33.0}"
@@ -25,6 +70,7 @@ MAX_NODE_MAJOR=23
 WRITE_ENV_ONLY=0
 SKIP_BUILD=0
 NONINTERACTIVE="${EXAMIFY_NONINTERACTIVE:-0}"
+ENABLED_PASSWORD_OUTBOX=0
 
 for arg in "$@"; do
   case "$arg" in
@@ -32,7 +78,7 @@ for arg in "$@"; do
     --skip-build) SKIP_BUILD=1 ;;
     --yes|-y) NONINTERACTIVE=1 ;;
     --help|-h)
-      sed -n '2,20p' "$0"
+      usage
       exit 0
       ;;
     *)
@@ -77,6 +123,113 @@ prompt() {
     reply="$default"
   fi
   printf -v "$var" '%s' "$reply"
+}
+
+# Password sign-in needs no mail. Password-mode invite accept still sends a
+# mailbox OTP (#61) and fails closed if nothing can deliver it. True when
+# SMTP / Resend are usable or an outbox is explicitly allowed.
+has_invite_mail_path() {
+  if [ "${ALLOW_LOCAL_OUTBOX-}" = "1" ]; then
+    return 0
+  fi
+  if [ -n "${SMTP_HOST-}" ] && [ -n "${SMTP_FROM-}" ]; then
+    case "${MAIL_TRANSPORT:-auto}" in
+      smtp|auto) return 0 ;;
+    esac
+  fi
+  if [ -n "${RESEND_API_KEY-}" ] && [ "${RESEND_API_KEY}" != "test" ] && [ -n "${RESEND_FROM-}" ]; then
+    case "${MAIL_TRANSPORT:-auto}" in
+      resend|auto) return 0 ;;
+    esac
+  fi
+  return 1
+}
+
+# Last KEY=VALUE in a dotenv file. Does not eval / expand. Empty if missing.
+env_file_get() {
+  local file="$1"
+  local key="$2"
+  local line="" body="" value=""
+  [ -f "$file" ] || return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    body="${line#"${line%%[![:space:]]*}"}"
+    [ -z "$body" ] && continue
+    [ "${body#\#}" != "$body" ] && continue
+    if [ "${body#export }" != "$body" ]; then
+      body="${body#export }"
+      body="${body#"${body%%[![:space:]]*}"}"
+    fi
+    case "$body" in
+      "${key}="*)
+        value="${body#"${key}="}"
+        value="${value#"${value%%[![:space:]]*}"}"
+        value="${value%"${value##*[![:space:]]}"}"
+        if [ "${#value}" -ge 2 ]; then
+          case "$value" in
+            \"*\") value="${value#\"}"; value="${value%\"}" ;;
+            \'*\') value="${value#\'}"; value="${value%\'}" ;;
+          esac
+        fi
+        ;;
+    esac
+  done < "$file"
+  printf '%s' "$value"
+}
+
+env_file_has_invite_mail_path() {
+  local file="$1"
+  local allow transport smtp_host smtp_from resend_key resend_from
+  allow="$(env_file_get "$file" ALLOW_LOCAL_OUTBOX)"
+  transport="$(env_file_get "$file" MAIL_TRANSPORT)"
+  transport="${transport:-auto}"
+  if [ "$allow" = "1" ]; then
+    return 0
+  fi
+  smtp_host="$(env_file_get "$file" SMTP_HOST)"
+  smtp_from="$(env_file_get "$file" SMTP_FROM)"
+  if [ -n "$smtp_host" ] && [ -n "$smtp_from" ]; then
+    case "$transport" in
+      smtp|auto) return 0 ;;
+    esac
+  fi
+  resend_key="$(env_file_get "$file" RESEND_API_KEY)"
+  resend_from="$(env_file_get "$file" RESEND_FROM)"
+  if [ -n "$resend_key" ] && [ "$resend_key" != "test" ] && [ -n "$resend_from" ]; then
+    case "$transport" in
+      resend|auto) return 0 ;;
+    esac
+  fi
+  return 1
+}
+
+# Prepare in-memory outbox for a write. Do not claim enable here — keep/write
+# happens later, and a kept file must not be described as enabled.
+ensure_password_invite_mail() {
+  if [ "$AUTH_MODE" != "password" ]; then
+    return 0
+  fi
+  if has_invite_mail_path; then
+    return 0
+  fi
+  MAIL_TRANSPORT="outbox"
+  ALLOW_LOCAL_OUTBOX=1
+  ENABLED_PASSWORD_OUTBOX=1
+}
+
+claim_password_outbox_enable() {
+  echo "Password sign-in needs no mail. Invite accept still requires mailbox proof (OTP)." >&2
+  echo "No SMTP / Resend is configured. Enabling MAIL_TRANSPORT=outbox and ALLOW_LOCAL_OUTBOX=1" >&2
+  echo "so kid invite codes land in data/outbox (treat that directory as secret)." >&2
+  echo "To use real mail, set SMTP_HOST+SMTP_FROM or RESEND_API_KEY+RESEND_FROM and re-run." >&2
+}
+
+# Kept file was not written. Do not claim enable. Password without a delivery
+# path would strand kid invites — refuse instead of warning and ignoring.
+refuse_kept_password_without_mail() {
+  echo "Keeping existing .env, but it is AUTH_MODE=password with no SMTP / Resend / allowed outbox." >&2
+  echo "Invite accept still requires mailbox proof and will fail closed. This run did not enable an outbox." >&2
+  echo "Add SMTP_* or RESEND_* (or MAIL_TRANSPORT=outbox and ALLOW_LOCAL_OUTBOX=1), or remove .env and re-run." >&2
+  exit 1
 }
 
 confirm() {
@@ -255,6 +408,10 @@ AUTH_SECRET="${AUTH_SECRET:-}"
 SETUP_BOOTSTRAP_SECRET="${SETUP_BOOTSTRAP_SECRET:-}"
 AUTH_MODE="${AUTH_MODE:-}"
 DATABASE_URL="${DATABASE_URL:-}"
+MAIL_WAS_SET=0
+if [ -n "${MAIL_TRANSPORT-}" ]; then
+  MAIL_WAS_SET=1
+fi
 MAIL_TRANSPORT="${MAIL_TRANSPORT:-auto}"
 # Interactive: do not pre-fill `test` or prompt() skips. Non-interactive
 # keeps the grader/boot sentinel when the host did not inject a key.
@@ -288,7 +445,7 @@ if [ -z "${AUTH_MODE}" ]; then
   else
     echo
     echo "How should people sign in?"
-    echo "  1) password     — email + password; invite accept still needs mail or an outbox"
+    echo "  1) password     — email + password; invite accept still emails a mailbox OTP"
     echo "  2) magic-link   — one-time URL via Resend, SMTP, or a local outbox"
     echo "  3) local-otp    — 6-digit code written to the host outbox (tiny / LAN installs)"
     prompt AUTH_MODE_CHOICE "Choose 1, 2, or 3" "1"
@@ -308,10 +465,16 @@ case "$AUTH_MODE" in
     ;;
 esac
 
-if [ "$AUTH_MODE" != "password" ] && [ "$NONINTERACTIVE" != "1" ]; then
+# Mail is required for magic-link / local-otp sign-in AND password-mode
+# invite accept (mailbox OTP). Do not skip this prompt for password.
+if [ "$NONINTERACTIVE" != "1" ] && [ "$MAIL_WAS_SET" != "1" ]; then
   echo
   echo "Email delivery for ${AUTH_MODE}:"
-  echo "  1) none / local outbox  (dev, or prod with ALLOW_LOCAL_OUTBOX=1)"
+  if [ "$AUTH_MODE" = "password" ]; then
+    echo "Password sign-in itself needs no mail. Invite accept still sends a mailbox OTP"
+    echo "and fails closed if nothing can deliver it. Do not skip that proof."
+  fi
+  echo "  1) local outbox  — write codes to data/outbox (dogfood / LAN; treat as secret)"
   echo "  2) Resend"
   echo "  3) SMTP"
   prompt MAIL_CHOICE "Choose 1, 2, or 3" "1"
@@ -331,7 +494,10 @@ if [ "$AUTH_MODE" != "password" ] && [ "$NONINTERACTIVE" != "1" ]; then
       ;;
     *)
       MAIL_TRANSPORT="outbox"
-      if [ "$AUTH_MODE" = "local-otp" ] || confirm "Allow writing sign-in tokens to a local outbox in production?" "n"; then
+      if [ "$AUTH_MODE" = "password" ] || [ "$AUTH_MODE" = "local-otp" ]; then
+        ALLOW_LOCAL_OUTBOX=1
+        echo "Invite / sign-in codes will be written to data/outbox. Treat that directory as secret."
+      elif confirm "Allow writing sign-in tokens to a local outbox in production?" "n"; then
         ALLOW_LOCAL_OUTBOX=1
       fi
       ;;
@@ -341,6 +507,8 @@ fi
 if [ "$AUTH_MODE" = "local-otp" ] && [ "${ALLOW_LOCAL_OUTBOX-}" != "1" ]; then
   ALLOW_LOCAL_OUTBOX=1
 fi
+
+ensure_password_invite_mail
 
 if [ "$NONINTERACTIVE" != "1" ] && confirm "Enable Cloudflare Turnstile (captcha)?" "n"; then
   prompt NEXT_PUBLIC_TURNSTILE_SITE_KEY "Turnstile site key"
@@ -356,6 +524,8 @@ if [ "$NONINTERACTIVE" != "1" ]; then
   echo
   echo "Optional: OPENAI_API_KEY for /onboarding Cloud (OpenAI) generate."
   echo "Same .env store as the wizard. Leave blank to skip (you can set it later)."
+  echo "OpenAI generate from PDFs needs pdftoppm (poppler-utils) on PATH; without it,"
+  echo "PDF-only generate fails closed. Install: apt install poppler-utils  (or brew install poppler)"
   prompt OPENAI_API_KEY "OpenAI API key" "" secret
 fi
 
@@ -386,6 +556,15 @@ if [ "$WROTE_ENV" = "1" ] && [ "$NONINTERACTIVE" != "1" ]; then
   if [ "$GENERATED_SETUP_SECRET" = "1" ]; then
     echo "Generated SETUP_BOOTSTRAP_SECRET (you will type this at /setup)."
     echo "  ${SETUP_BOOTSTRAP_SECRET}"
+  fi
+fi
+
+if [ "$WROTE_ENV" = "1" ] && [ "$ENABLED_PASSWORD_OUTBOX" = "1" ]; then
+  claim_password_outbox_enable
+elif [ "$KEPT_EXISTING_ENV" = "1" ]; then
+  kept_mode="$(env_file_get .env AUTH_MODE)"
+  if [ "$kept_mode" = "password" ] && ! env_file_has_invite_mail_path .env; then
+    refuse_kept_password_without_mail
   fi
 fi
 
@@ -422,9 +601,17 @@ else
   echo "     Auth mode:          ${AUTH_MODE}"
   echo
   echo "Invite family from the parent dashboard after setup."
+  if [ "$AUTH_MODE" = "password" ]; then
+    echo "Password sign-in needs no mail. Invite accept still sends a mailbox OTP"
+    echo "(never skipped) via ${MAIL_TRANSPORT}."
+  fi
   echo "Edit .env and restart to change AUTH_MODE, mail, or Turnstile."
   echo
   if [ "$AUTH_MODE" = "local-otp" ] || [ "${MAIL_TRANSPORT}" = "outbox" ]; then
     echo "Local outbox path: data/outbox (or MAIL_OUTBOX_DIR). Treat it as secret."
+    if [ "$AUTH_MODE" = "password" ]; then
+      echo "Kid invite OTP codes are read from that directory."
+    fi
   fi
+  echo "OpenAI / PDF generate: install pdftoppm (poppler-utils) before using Cloud generate."
 fi

@@ -22,6 +22,8 @@ public issue. Security problems must use the private process in
 
 - Node 22 LTS (`.nvmrc`)
 - pnpm 10 (`corepack enable` is the easiest way)
+- Optional: `pdftoppm` from **poppler** (`poppler-utils`) for OpenAI / PDF
+  generate (`examify-ingest generate --provider openai` and `/onboarding`)
 
 ## Setup
 
