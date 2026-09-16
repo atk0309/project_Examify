@@ -5,9 +5,13 @@ import 'server-only';
    ----------------------------------------------------------------------------
    Grades a child's short free-text answer against a server-only rubric using
    Claude. Two paths:
-   - `ANTHROPIC_API_KEY === 'test'` → a deterministic full-score stub, no
-     network. This mirrors the Resend outbox stub so `pnpm dev`, unit tests and
+   - live `ANTHROPIC_API_KEY === 'test'` (process.env only, never the boot-frozen
+     `env.ts` snapshot) → a deterministic full-score stub, no network. This
+     is the intentional sentinel only — blank / missing / whitespace are not
+     `test`. Mirrors the Resend outbox stub so `pnpm dev`, unit tests and
      Playwright (which inject the `test` sentinel) never hit the API.
+   - live key missing / empty / whitespace (wizard clear) → `{ status: 'needs_review' }`
+     fail-closed. No stub. Same “usable?” rule as the wizard Configured badge.
    - otherwise → a single `fetch` to the Anthropic Messages API.
 
    Fail-safe (I4): any failure — network error, non-2xx, unparseable or
@@ -17,7 +21,7 @@ import 'server-only';
    Only the bounded `Verdict` fields ever leave this module; the rubric and the
    raw model text are never returned to callers (and so never reach the client).
    ========================================================================== */
-import { env } from '@/lib/env';
+import { ANTHROPIC_ENV_KEY, envStoreSecretConfigured } from '@/lib/env-store';
 import type { Verdict } from '@/lib/db/schema';
 
 export type GradeResult = { status: 'graded'; verdict: Verdict } | { status: 'needs_review' };
@@ -104,12 +108,26 @@ function userPrompt(args: GradeArgs): string {
 }
 
 /**
+ * Wizard / install writes update `process.env` and `.env`. Computed
+ * `process.env[ANTHROPIC_ENV_KEY]` so Next cannot inline a boot snapshot.
+ * Never read env.ts — after clear that would stub on leftover `test`.
+ * Same usable-key rule as the wizard Configured badge (`anthropicConfigured`).
+ */
+function liveAnthropicApiKey(): string | undefined {
+  const live = process.env[ANTHROPIC_ENV_KEY];
+  if (typeof live !== 'string') return undefined;
+  const trimmed = live.trim();
+  return trimmed === '' ? undefined : trimmed;
+}
+
+/**
  * Grade one free-text answer. Returns `{ status: 'graded', verdict }` on success
  * or `{ status: 'needs_review' }` on any failure (never throws).
  */
 export async function gradeFreeText(args: GradeArgs): Promise<GradeResult> {
-  // Deterministic stub for dev / test — full marks, no network.
-  if (env.ANTHROPIC_API_KEY === 'test') {
+  const apiKey = liveAnthropicApiKey();
+  // Deterministic stub only when the live store still holds the sentinel.
+  if (apiKey === 'test') {
     return {
       status: 'graded',
       verdict: {
@@ -121,13 +139,16 @@ export async function gradeFreeText(args: GradeArgs): Promise<GradeResult> {
       },
     };
   }
+  if (!envStoreSecretConfigured('ANTHROPIC_API_KEY') || !apiKey) {
+    return { status: 'needs_review' };
+  }
 
   try {
     const res = await fetch(ANTHROPIC_URL, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'x-api-key': env.ANTHROPIC_API_KEY,
+        'x-api-key': apiKey,
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({

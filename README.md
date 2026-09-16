@@ -34,9 +34,9 @@ no env-JSON allowlist to hand-edit.
 1. **`/setup`** (first run) or **`/signin`** — on a fresh install, the first visitor
    creates the household and becomes admin (and sets a password when `AUTH_MODE=password`).
    After bootstrap, **`/onboarding`** lets the household admin add subjects, attach
-   local study PDFs, choose an AI mode (OpenAI keys write the same repo-root `.env`
-   as `install.sh` / `examify-ingest generate`; host-injected keys stay
-   host-managed via the process exec environment), optionally generate BankIR from those
+   local study PDFs, choose an AI mode (Anthropic / OpenAI keys write the same
+   repo-root `.env` as `install.sh` / `examify-ingest generate`; host-injected
+   keys stay host-managed via the process exec environment), optionally generate BankIR from those
    files, and emit through `examify-ingest` (validate + Review / dry-run HITL, then apply;
    desktop uses a step rail, mobile a compact progress bar; one stage at a time;
    generate never auto-applies; existing BankIR needs a confirm before
@@ -249,9 +249,12 @@ generating a question bank from your own study-material PDFs — is in
 Free-text answers are graded server-side by the Anthropic Messages API
 (`claude-sonnet-4-6`), strictly against the rubric you wrote for that question:
 
-- Configure `ANTHROPIC_API_KEY`. The `test` sentinel (the dev default) swaps in a
+- Configure `ANTHROPIC_API_KEY` (optional in production — wizard clear +
+  restart will not brick boot). The grader reads the live key from
+  `process.env` (updated by `/onboarding` set / rotate / clear), never a
+  boot-frozen snapshot. The `test` sentinel (the dev default) swaps in a
   deterministic full-score stub with no network calls — the same pattern as the Resend
-  email outbox.
+  email outbox. Clear fails closed (`needs_review`, no stub).
 - Grading is **fail-safe**: requests have a 15-second deadline, and any timeout, network
   error, non-2xx, or malformed model output resolves to `needs_review` instead of throwing,
   so a finished exam is never lost. A `needs_review` item renders as "Saved for review" and
@@ -288,7 +291,8 @@ applied at runtime via `accentCSS()`.
 
 Defined and validated by zod in `src/lib/env.ts`; the canonical reference is
 `.env.example`. Required in production: `SITE_URL`, `AUTH_SECRET`, `DATABASE_URL`,
-`ANTHROPIC_API_KEY`, `SETUP_BOOTSTRAP_SECRET`. `AUTH_MODE` defaults to
+`SETUP_BOOTSTRAP_SECRET`. `ANTHROPIC_API_KEY` is optional (wizard clear +
+restart will not brick boot; grading fail-closes without a key). `AUTH_MODE` defaults to
 `magic-link`. Documented placeholder `AUTH_SECRET` / `SETUP_BOOTSTRAP_SECRET`
 values fail production boot. A leftover `FAMILIES` value that is set but invalid
 also crashes production boot. Mail is optional when `AUTH_MODE=password`.

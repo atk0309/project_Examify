@@ -101,7 +101,10 @@ the repo `.env` then `.env.local` (already-set env vars, including an empty
 string, win). Repo root is the `package.json` name `project-examify` walk
 (`findRepoRoot`), not `process.cwd()`, so a generate from a subdirectory
 still reads the `.env` the wizard / `install.sh` wrote. `/onboarding` and
-`install.sh` write `OPENAI_API_KEY` into that same store. Host-injected
+`install.sh` write `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` into that same
+store. Next `env.ts` optionalizes Anthropic so a wizard clear + production
+restart does not brick boot (grading / generate fail closed without a key).
+Host-injected
 keys (process exec environ) win after restart and are not rotatable from
 the wizard even when `.env` happens to match. A matching
 `cacheKey` reuses the cached

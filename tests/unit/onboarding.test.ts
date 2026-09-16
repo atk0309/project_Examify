@@ -640,6 +640,50 @@ describe('onboarding household gate', () => {
     }
   });
 
+  it('exposes AI configured flags including Anthropic env detection', async () => {
+    const { bootstrapHousehold } = await import('@/lib/households');
+    const { getOnboardingSnapshot } = await import('@/lib/onboarding');
+    const { setEnvStoreRootForTests, setInitialEnvironForTests } = await import('@/lib/env-store');
+    const host = bootstrapHousehold({ email: 'pat@example.com', householdName: 'Ours' });
+    expect(host.ok).toBe(true);
+    if (!host.ok) throw new Error('bootstrap');
+    const root = mkdtempSync(path.join(tmpdir(), 'examify-onboarding-anthropic-'));
+    writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'project-examify' }));
+    writeFileSync(path.join(root, '.env'), 'OPENAI_API_KEY=\n');
+    setEnvStoreRootForTests(root);
+    const previous = process.env.ANTHROPIC_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+    try {
+      const snap = getOnboardingSnapshot(host.householdId);
+      expect(snap.anthropicConfigured).toBe(false);
+      expect(snap.anthropicHostManaged).toBe(false);
+    } finally {
+      if (previous === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = previous;
+    }
+    process.env.ANTHROPIC_API_KEY = 'sk-anth-test-not-a-sentinel';
+    try {
+      const injected = getOnboardingSnapshot(host.householdId);
+      expect(injected.anthropicConfigured).toBe(true);
+      expect(injected.anthropicHostManaged).toBe(true);
+      writeFileSync(path.join(root, '.env'), 'ANTHROPIC_API_KEY=sk-anth-test-not-a-sentinel\n');
+      const matched = getOnboardingSnapshot(host.householdId);
+      expect(matched.anthropicConfigured).toBe(true);
+      expect(matched.anthropicHostManaged).toBe(false);
+      setInitialEnvironForTests({ ANTHROPIC_API_KEY: 'sk-anth-test-not-a-sentinel' });
+      const execOwned = getOnboardingSnapshot(host.householdId);
+      expect(execOwned.anthropicConfigured).toBe(true);
+      expect(execOwned.anthropicHostManaged).toBe(true);
+      setInitialEnvironForTests({ ANTHROPIC_API_KEY: '' });
+      expect(getOnboardingSnapshot(host.householdId).anthropicHostManaged).toBe(true);
+      setInitialEnvironForTests({ ANTHROPIC_API_KEY: 'test' });
+      expect(getOnboardingSnapshot(host.householdId).anthropicHostManaged).toBe(true);
+    } finally {
+      if (previous === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = previous;
+    }
+  });
+
   it('marks finish eligibility on apply and clears it on catalog invalidation', async () => {
     const { bootstrapHousehold } = await import('@/lib/households');
     const {

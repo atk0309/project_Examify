@@ -85,8 +85,8 @@ file first.
    / `OPENAI_API_KEY` from the environment or repo `.env` / `.env.local` (existing
    env vars win) and fails closed on a cache miss if
    the key is missing or is the `test` sentinel. The `/onboarding` AI step
-   and `install.sh` can write `OPENAI_API_KEY` into that same repo-root
-   `.env` store (`findRepoRoot`, not `process.cwd()`);
+   and `install.sh` can write `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` into
+   that same repo-root `.env` store (`findRepoRoot`, not `process.cwd()`);
    the wizard never echoes the value. A host-injected key (Docker /
    systemd / parent exec environ — not live-vs-file equality) cannot be
    rotated or cleared from the wizard.
@@ -225,8 +225,13 @@ type Verdict = {
 
 Behaviour you can rely on:
 
-- **`ANTHROPIC_API_KEY=test`** (the dev/test default) routes to a deterministic
-  full-score stub — no network, no key needed for local development or CI.
+- **`ANTHROPIC_API_KEY=test`** (the live `process.env` value — never the
+  boot-frozen `env.ts` snapshot) routes to a deterministic full-score stub —
+  no network, no key needed for local development or CI. A wizard set /
+  rotate is used on the next grade; clear fails closed (`needs_review`, no
+  stub) so the Configured badge and the grader stay twins. Blank / missing
+  is never treated as `test`. The key is optional in `env.ts` — a
+  production restart after clear will not brick boot.
 - **It never throws.** A fetch error, non-2xx, or unparseable model reply resolves to
   `{ status: 'needs_review' }`; the attempt persists with `score: null` and renders as
   "Saved for review" (counted as incorrect, never lost).

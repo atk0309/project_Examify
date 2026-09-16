@@ -145,11 +145,12 @@ function buildEnvSchema(isProd: boolean) {
         return v;
       }, z.boolean().optional()),
 
-      // Anthropic key for free-text grading. The `test` sentinel (dev/test default)
-      // routes the grader to a deterministic full-score stub — no network — exactly
-      // like the Resend outbox stub above. A missing key in production fails closed
-      // so an exam never silently scores every free-text answer as full marks.
-      ANTHROPIC_API_KEY: z.preprocess((v) => v ?? dev('test'), z.string().min(1)),
+      // Anthropic key for free-text grading and /onboarding Cloud generate.
+      // Optional — same spirit as OPENAI_API_KEY (not in this schema). Wizard
+      // clear deletes the store line; production restart must not crash.
+      // Missing / empty / whitespace stay unset — never coerced to the `test`
+      // sentinel. Only an explicit live `test` stubs the grader.
+      ANTHROPIC_API_KEY: z.preprocess(emptyToUndef, z.string().min(1).optional()),
 
       // Optional local-agent endpoint for examify-ingest generate --provider local
       // (CLI and /onboarding AI step). Not a secret. Never expose via NEXT_PUBLIC_*.

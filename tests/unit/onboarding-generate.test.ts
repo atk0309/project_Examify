@@ -194,7 +194,9 @@ describe('onboarding generate graph', () => {
     expect(wizard).toMatch(/case 'skipped':\n      return 'Generate skipped\.'/);
     expect(wizard).toMatch(/case 'needs_confirm':/);
     expect(wizard).toMatch(/case 'rate_limited':/);
-    expect(wizard).toMatch(/Clear the OpenAI API key from this host/);
+    expect(wizard).toMatch(/Clear the \$\{label\} from this host/);
+    expect(wizard).toContain('label="Anthropic API key"');
+    expect(wizard).toContain('label="OpenAI API key"');
     expect(wizard).toMatch(/Replace existing BankIR for \$\{/);
     expect(wizard).toMatch(/wizard-generate-skipped/);
     expect(wizard).toMatch(/data-testid="wizard-generate-overwrite-batch"/);
@@ -204,6 +206,72 @@ describe('onboarding generate graph', () => {
     expect(types).toMatch(
       /Replace \$\{colliding\.length\} existing BankIR files \(\$\{names\}\)\?/,
     );
+  });
+
+  it('locks Anthropic key UI to cloud mode and the OpenAI #69 bars', () => {
+    const wizard = readFileSync(
+      path.join(process.cwd(), 'src/components/exam/OnboardingWizard.tsx'),
+      'utf8',
+    );
+    const actions = readFileSync(path.join(process.cwd(), 'src/actions/onboarding.ts'), 'utf8');
+    const store = readFileSync(path.join(process.cwd(), 'src/lib/env-store.ts'), 'utf8');
+    const flags = readFileSync(path.join(process.cwd(), 'src/lib/onboarding.ts'), 'utf8');
+    const grading = readFileSync(path.join(process.cwd(), 'src/lib/grading/index.ts'), 'utf8');
+
+    const anthropicPanelAt = wizard.indexOf('testId="wizard-anthropic-key"');
+    expect(anthropicPanelAt).toBeGreaterThan(-1);
+    const cloudGate = wizard.lastIndexOf("snapshot.aiMode === 'cloud'", anthropicPanelAt);
+    expect(cloudGate).toBeGreaterThan(-1);
+    expect(wizard.slice(cloudGate, anthropicPanelAt)).not.toMatch(/cloud-openai/);
+    expect(wizard).toMatch(/snapshot\.aiMode === 'cloud-openai'/);
+
+    expect(wizard).toMatch(/type="password"/);
+    expect(wizard).toMatch(/autoComplete="off"/);
+    expect(wizard).toMatch(/window\.confirm\(/);
+    expect(wizard).toMatch(
+      /Generate and grading that need this key fail closed until you set a new one\. A restart will not brick the app/,
+    );
+    expect(wizard).toMatch(/className="btn btn-ghost"/);
+    expect(wizard).toMatch(/data-testid=\{\`\$\{testId\}-rotate\`\}/);
+    expect(wizard).toMatch(/data-testid=\{\`\$\{testId\}-clear\`\}/);
+    expect(wizard).toContain(
+      '{configured ? <span className="wizard-mode-badge">Configured</span> : null}',
+    );
+    expect(wizard).not.toMatch(/NEXT_PUBLIC_ANTHROPIC|NEXT_PUBLIC_OPENAI/);
+
+    expect(actions).toMatch(/checkRateLimit\(ip, 'env_write'\)/);
+    expect(actions).toMatch(/ANTHROPIC_ENV_KEY/);
+    expect(actions).toMatch(/setOnboardingAnthropicKeyAction/);
+    expect(actions).not.toMatch(/NEXT_PUBLIC_/);
+
+    expect(store).toMatch(/findRepoRoot/);
+    expect(store).toMatch(/Never NEXT_PUBLIC_\*/);
+    expect(store).toMatch(/raw\.includes\('\\0'\)/);
+    expect(store).toMatch(/envStoreSecretHostManaged/);
+
+    expect(flags).toMatch(/anthropicConfigured: envStoreSecretConfigured\('ANTHROPIC_API_KEY'\)/);
+    expect(flags).toMatch(/anthropicHostManaged: envStoreSecretHostManaged\('ANTHROPIC_API_KEY'\)/);
+    expect(flags).not.toMatch(/ANTHROPIC_API_KEY: env\.ANTHROPIC_API_KEY/);
+
+    // Grader + Configured badge stay twins: live process.env / env-store, never
+    // the boot-frozen env.ts snapshot (clear must fail closed, not restub).
+    // OpenAI is not in the Next grader; CLI generate already re-merges .env.
+    expect(grading).not.toMatch(/from ['"]@\/lib\/env['"]/);
+    expect(grading).not.toMatch(/(?<!process\.)env\.ANTHROPIC_API_KEY/);
+    expect(grading).toMatch(/process\.env\[ANTHROPIC_ENV_KEY\]/);
+    expect(grading).toMatch(/envStoreSecretConfigured\('ANTHROPIC_API_KEY'\)/);
+    expect(grading).not.toMatch(/OPENAI_API_KEY/);
+    const generateCli = readFileSync(
+      path.join(process.cwd(), 'tools/examify-ingest/src/generate-cli.ts'),
+      'utf8',
+    );
+    expect(generateCli).toMatch(/mergeRepoEnvFiles\(repoRoot, io\.env \?\? process\.env\)/);
+    const envSchema = readFileSync(path.join(process.cwd(), 'src/lib/env.ts'), 'utf8');
+    expect(envSchema).toMatch(
+      /ANTHROPIC_API_KEY: z\.preprocess\(emptyToUndef, z\.string\(\)\.min\(1\)\.optional\(\)\)/,
+    );
+    expect(envSchema).not.toMatch(/ANTHROPIC_API_KEY:[\s\S]*?\?\? dev\('test'\)/);
+    expect(envSchema).not.toMatch(/OPENAI_API_KEY:/);
   });
 
   it('locks Welcome skip, Back, and rail while generateBusy so Cancel stays reachable', () => {

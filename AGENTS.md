@@ -77,7 +77,11 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   images were rasterized. Run cache/manifests are gitignored under
   `.examify-ingest/`.
 - **Free-text is LLM-graded server-side** (`src/lib/grading/index.ts`,
-  `ANTHROPIC_API_KEY`; `test` → deterministic stub). Grading never throws — failures
+  live `ANTHROPIC_API_KEY` from `process.env` only so a wizard set / rotate /
+  clear is visible without restart; `test` → deterministic stub; missing
+  after clear → `needs_review`, no stub; blank is never treated as `test`;
+  same usable-key rule as the Configured badge; optional in `env.ts` so a
+  production restart after clear does not brick boot). Grading never throws — failures
   fall to `needs_review`. A free item is "correct" at `PASS_THRESHOLD` (0.6). The UI
   renders only the bounded `Verdict` fields, never the rubric. Results are
   server-driven (a "Marking…" state covers the submit round-trip). Full design:
@@ -120,10 +124,11 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   the provider is still unwinding; cancelled is a
   calm status, not an error toast; delete/rename wait on the generate
   lock and re-check the admin gate after the wait; subject
-  ids must be in the wizard catalog; OpenAI mode can set / rotate / clear
-  `OPENAI_API_KEY` in the same repo-root `.env` as `install.sh` and
-  `examify-ingest generate` (shared `findRepoRoot`; never echoed; host-injected
-  keys — exec environ assignment, including empty / `test` — are not rotatable in the wizard); skip / Back / desktop rail lock while
+  ids must be in the wizard catalog; Anthropic / OpenAI modes can set /
+  rotate / clear `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` in the same
+  repo-root `.env` as `install.sh` and `examify-ingest generate` (shared
+  `findRepoRoot`; never echoed; host-injected keys — exec environ
+  assignment, including empty / `test` — are not rotatable in the wizard); skip / Back / desktop rail lock while
   generate is in flight so Cancel stays reachable), and emit
   BankIR via `examify-ingest` (directory-only, Review / dry-run HITL before apply,
   empty catalog fail-closed; `--replace-sample` only behind an explicit advanced

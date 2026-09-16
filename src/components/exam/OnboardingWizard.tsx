@@ -12,6 +12,7 @@ import {
   previewOnboardingEmitAction,
   renameOnboardingSubjectAction,
   setOnboardingAiModeAction,
+  setOnboardingAnthropicKeyAction,
   setOnboardingOpenAiKeyAction,
   setReplaceSampleAction,
   skipOnboardingAction,
@@ -70,7 +71,7 @@ const STAGE_HELP: Record<StepId, string> = {
 const AI_COPY: Record<OnboardingAiMode, { title: string; body: string }> = {
   cloud: {
     title: 'Cloud (Anthropic)',
-    body: 'Uses ANTHROPIC_API_KEY from the existing env store. Generate writes BankIR only — validate and apply stay HITL.',
+    body: 'Uses ANTHROPIC_API_KEY from the env store (same .env as install.sh). Never NEXT_PUBLIC_*. Generate writes BankIR only.',
   },
   'cloud-openai': {
     title: 'Cloud (OpenAI)',
@@ -422,6 +423,16 @@ export function OnboardingWizard({
                     applyResult(await setOnboardingAiModeAction(data));
                   })
                 }
+                onAnthropicKey={async (data) => {
+                  try {
+                    const result = await setOnboardingAnthropicKeyAction(data);
+                    return applyResult(result);
+                  } catch (caught) {
+                    if (caught && typeof caught === 'object' && 'digest' in caught) throw caught;
+                    setError('Something went wrong.');
+                    return false;
+                  }
+                }}
                 onOpenAiKey={async (data) => {
                   try {
                     const result = await setOnboardingOpenAiKeyAction(data);
@@ -1296,13 +1307,19 @@ function SubjectDropzone({
   );
 }
 
-function OpenAiKeyPanel({
+function EnvKeyPanel({
+  testId,
+  label,
+  hostName,
   configured,
   hostManaged,
   pending,
   onSave,
   onClear,
 }: {
+  testId: string;
+  label: string;
+  hostName: string;
   configured: boolean;
   hostManaged: boolean;
   pending: boolean;
@@ -1314,12 +1331,13 @@ function OpenAiKeyPanel({
   const [saving, setSaving] = useState(false);
   const busy = pending || saving;
   const showField = !hostManaged && (!configured || rotating);
+  const inputId = `${testId}-input`;
 
   return (
-    <div className="wizard-secret" data-testid="wizard-openai-key">
+    <div className="wizard-secret" data-testid={testId}>
       <p className="login-fine">
         {hostManaged
-          ? 'OpenAI is set by the host environment (Docker, systemd, or a parent process). Rotate or clear it there — a .env write will not survive restart.'
+          ? `${hostName} is set by the host environment (Docker, systemd, or a parent process). Rotate or clear it there — a .env write will not survive restart.`
           : 'Saved on this host in the same .env store as install.sh. The value is never shown again.'}
       </p>
       {hostManaged ? null : showField ? (
@@ -1341,17 +1359,17 @@ function OpenAiKeyPanel({
             })();
           }}
         >
-          <label className="field-label" htmlFor="wizard-openai-key-input">
-            OpenAI API key
+          <label className="field-label" htmlFor={inputId}>
+            {label}
           </label>
           <input
-            id="wizard-openai-key-input"
+            id={inputId}
             className="text-input"
             type="password"
             autoComplete="off"
             value={value}
             disabled={busy}
-            data-testid="wizard-openai-key-input"
+            data-testid={`${testId}-input`}
             onChange={(event) => setValue(event.target.value)}
           />
           <div className="wizard-secret-actions">
@@ -1359,7 +1377,7 @@ function OpenAiKeyPanel({
               className="btn btn-primary"
               type="submit"
               disabled={busy || value.trim().length < 1}
-              data-testid="wizard-openai-key-save"
+              data-testid={`${testId}-save`}
             >
               Save key
             </button>
@@ -1368,7 +1386,7 @@ function OpenAiKeyPanel({
                 className="btn btn-ghost"
                 type="button"
                 disabled={busy}
-                data-testid="wizard-openai-key-cancel"
+                data-testid={`${testId}-cancel`}
                 onClick={() => {
                   setRotating(false);
                   setValue('');
@@ -1385,7 +1403,7 @@ function OpenAiKeyPanel({
             className="btn btn-ghost"
             type="button"
             disabled={busy}
-            data-testid="wizard-openai-key-rotate"
+            data-testid={`${testId}-rotate`}
             onClick={() => setRotating(true)}
           >
             Rotate
@@ -1394,11 +1412,11 @@ function OpenAiKeyPanel({
             className="btn btn-ghost"
             type="button"
             disabled={busy}
-            data-testid="wizard-openai-key-clear"
+            data-testid={`${testId}-clear`}
             onClick={() => {
               if (
                 !window.confirm(
-                  'Clear the OpenAI API key from this host’s .env store? Generate will fail closed until you set a new key.',
+                  `Clear the ${label} from this host’s .env store? Generate and grading that need this key fail closed until you set a new one. A restart will not brick the app.`,
                 )
               ) {
                 return;
@@ -1424,6 +1442,7 @@ function AiStep({
   irReady,
   onSeed,
   onSelect,
+  onAnthropicKey,
   onOpenAiKey,
   onGenerate,
   onCancel,
@@ -1438,6 +1457,7 @@ function AiStep({
   irReady: boolean;
   onSeed: (seed: number) => void;
   onSelect: (mode: OnboardingAiMode) => void;
+  onAnthropicKey: (data: FormData) => Promise<boolean>;
   onOpenAiKey: (data: FormData) => Promise<boolean>;
   onGenerate: (subjectIds: string[]) => void;
   onCancel: () => void;
@@ -1479,8 +1499,33 @@ function AiStep({
         })}
       </div>
 
+      {snapshot.aiMode === 'cloud' ? (
+        <EnvKeyPanel
+          testId="wizard-anthropic-key"
+          label="Anthropic API key"
+          hostName="Anthropic"
+          configured={snapshot.anthropicConfigured}
+          hostManaged={snapshot.anthropicHostManaged}
+          pending={busy}
+          onSave={async (key) => {
+            const data = new FormData();
+            data.set('intent', 'set');
+            data.set('anthropicApiKey', key);
+            return onAnthropicKey(data);
+          }}
+          onClear={() => {
+            const data = new FormData();
+            data.set('intent', 'clear');
+            onAnthropicKey(data);
+          }}
+        />
+      ) : null}
+
       {snapshot.aiMode === 'cloud-openai' ? (
-        <OpenAiKeyPanel
+        <EnvKeyPanel
+          testId="wizard-openai-key"
+          label="OpenAI API key"
+          hostName="OpenAI"
           configured={snapshot.openaiConfigured}
           hostManaged={snapshot.openaiHostManaged}
           pending={busy}
