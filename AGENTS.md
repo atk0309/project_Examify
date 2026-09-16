@@ -64,8 +64,10 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   notes/text (`.txt` / `.md`) and images in the subject folder plus PDFs
   under `content/source-pdfs/<id>/` (PDF magic-byte checks for actual PDFs
   stay fail-closed). A real BankIR with questions requires `--force`
-  (dry-run says **would overwrite**). Empty / invalid / placeholder IR
-  (empty file, `{}`, schema-fail, zero items) is non-existing for that gate.
+  (dry-run says **would overwrite**). Empty / placeholder IR (empty file,
+  valid zero-item schema) is non-existing for that gate. Corrupt /
+  unparseable / invalid-schema IR requires `--force` (error names
+  corruption, not empty).
   Frozen sample-bank ids fail at generate unless `--replace-sample` (**no
   BankIR written**; do not imply the file already exists). Missing cloud
   keys are refused before overwrite messaging when a real key is required;

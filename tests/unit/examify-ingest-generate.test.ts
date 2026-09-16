@@ -34,7 +34,9 @@ import {
   generateSubject,
   generateTargets,
   writeBankIrAtomic,
+  BankIrCorruptError,
   BankIrOverwriteError,
+  classifyBankIr,
   hasExistingBankIr,
   irCachePath,
   loadGeneratePrompt,
@@ -391,7 +393,7 @@ describe('examify-ingest generate P0 gates', () => {
     expect(readFileSync(irPath, 'utf8')).toBe('{ "ok": true }\n');
   });
 
-  it('S6: empty / invalid / placeholder IR is non-existing; real IR still needs force', async () => {
+  it('S6: empty / placeholder IR is non-existing; real IR still needs force', async () => {
     const root = examifyRepo();
     const irPath = path.join(root, 'content/subjects/plants/bank.ir.json');
     const zeroItem = {
@@ -400,24 +402,19 @@ describe('examify-ingest generate P0 gates', () => {
       difficulties: { easy: [], medium: [], hard: [] },
     };
 
+    expect(classifyBankIr(irPath)).toEqual({ kind: 'missing' });
     expect(hasExistingBankIr(irPath)).toBe(false);
     writeFileSync(irPath, '');
-    expect(hasExistingBankIr(irPath)).toBe(false);
-    writeFileSync(irPath, '{}\n');
-    expect(hasExistingBankIr(irPath)).toBe(false);
-    writeFileSync(irPath, '{ "stale": true }\n');
+    expect(classifyBankIr(irPath)).toEqual({ kind: 'placeholder' });
     expect(hasExistingBankIr(irPath)).toBe(false);
     writeFileSync(irPath, `${JSON.stringify(zeroItem)}\n`);
+    expect(classifyBankIr(irPath)).toEqual({ kind: 'placeholder' });
     expect(hasExistingBankIr(irPath)).toBe(false);
     writeFileSync(irPath, `${JSON.stringify(realBankIr('plants'))}\n`);
+    expect(classifyBankIr(irPath)).toEqual({ kind: 'existing' });
     expect(hasExistingBankIr(irPath)).toBe(true);
 
-    for (const placeholder of [
-      '',
-      '{}\n',
-      '{ "stale": true }\n',
-      `${JSON.stringify(zeroItem)}\n`,
-    ]) {
+    for (const placeholder of ['', `${JSON.stringify(zeroItem)}\n`]) {
       writeFileSync(irPath, placeholder);
       expect(writeBankIrAtomic(irPath, '{ "ok": true }\n')).toEqual({ existed: false });
       expect(readFileSync(irPath, 'utf8')).toBe('{ "ok": true }\n');
@@ -425,6 +422,7 @@ describe('examify-ingest generate P0 gates', () => {
 
     writeFileSync(irPath, `${JSON.stringify(realBankIr('plants'))}\n`);
     expect(() => writeBankIrAtomic(irPath, '{ "ok": true }\n')).toThrow(BankIrOverwriteError);
+    expect(() => writeBankIrAtomic(irPath, '{ "ok": true }\n')).not.toThrow(BankIrCorruptError);
 
     writeFileSync(irPath, `${JSON.stringify(zeroItem)}\n`);
     const streams = io();
@@ -447,7 +445,70 @@ describe('examify-ingest generate P0 gates', () => {
     );
     expect(blockedCode).toBe(1);
     expect(blocked.err()).toMatch(/refusing to overwrite existing .*bank\.ir\.json/);
+    expect(blocked.err()).not.toMatch(/corrupt/);
     expect(blocked.err()).toContain('--force');
+  });
+
+  it('S6 residual: corrupt IR requires --force and names corruption, not empty', async () => {
+    const root = examifyRepo();
+    const irPath = path.join(root, 'content/subjects/plants/bank.ir.json');
+    const priorCorrupt = '{ "stale": true }\n';
+
+    writeFileSync(irPath, '{}\n');
+    expect(classifyBankIr(irPath)).toEqual({
+      kind: 'corrupt',
+      reason: 'invalid BankIR schema',
+    });
+    expect(hasExistingBankIr(irPath)).toBe(true);
+
+    writeFileSync(irPath, priorCorrupt);
+    expect(classifyBankIr(irPath)).toEqual({
+      kind: 'corrupt',
+      reason: 'invalid BankIR schema',
+    });
+    expect(() => writeBankIrAtomic(irPath, '{ "ok": true }\n')).toThrow(BankIrCorruptError);
+    expect(readFileSync(irPath, 'utf8')).toBe(priorCorrupt);
+
+    writeFileSync(irPath, 'not-json{\n');
+    expect(classifyBankIr(irPath)).toEqual({
+      kind: 'corrupt',
+      reason: 'unparseable JSON',
+    });
+    try {
+      writeBankIrAtomic(irPath, '{ "ok": true }\n');
+      throw new Error('expected BankIrCorruptError');
+    } catch (error) {
+      expect(error).toBeInstanceOf(BankIrCorruptError);
+      expect(error).toBeInstanceOf(BankIrOverwriteError);
+      expect((error as Error).message).toMatch(/corrupt/);
+      expect((error as Error).message).toMatch(/unparseable JSON/);
+      expect((error as Error).message).not.toMatch(/empty/);
+    }
+    expect(readFileSync(irPath, 'utf8')).toBe('not-json{\n');
+
+    writeFileSync(irPath, priorCorrupt);
+    const refused = io();
+    refused.handle.cwd = root;
+    const refusedCode = await runCliAsync(
+      ['generate', '--provider', 'test', 'content/subjects/plants'],
+      refused.handle,
+    );
+    expect(refusedCode).toBe(1);
+    expect(refused.err()).toMatch(/corrupt/);
+    expect(refused.err()).toMatch(/invalid BankIR schema/);
+    expect(refused.err()).toContain('--force');
+    expect(refused.err()).not.toMatch(/empty/);
+    expect(readFileSync(irPath, 'utf8')).toBe(priorCorrupt);
+
+    const forced = io();
+    forced.handle.cwd = root;
+    const forcedCode = await runCliAsync(
+      ['generate', '--provider', 'test', '--force', 'content/subjects/plants'],
+      forced.handle,
+    );
+    expect(forcedCode).toBe(0);
+    const ir = JSON.parse(readFileSync(irPath, 'utf8')) as BankIR;
+    expect(ir.difficulties.easy[0]?.id).toBe('plants-easy-1');
   });
 
   it('tree generate SAMPLE freeze after a sourced sibling writes no BankIR', async () => {

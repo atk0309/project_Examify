@@ -52,9 +52,12 @@ export { resolveSubjectSources } from './sources';
 export { parseArgs, runCli, USAGE, type CliIo, type ParsedCli } from './cli';
 export {
   assertCanWriteBankIr,
+  BankIrCorruptError,
   BankIrOverwriteError,
+  classifyBankIr,
   hasExistingBankIr,
   writeBankIrAtomic,
   writeFileAtomic,
+  type BankIrPresence,
   type WriteBankIrOptions,
 } from './write-atomic';

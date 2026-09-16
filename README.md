@@ -252,7 +252,8 @@ hand or `pnpm examify-ingest generate`) and emit the split with
 fresh-clone generate fixture is `content/subjects/demo` (`notes.txt` in the
 subject folder; generate also reads `.txt` / `.md` / images there plus PDFs
 under `content/source-pdfs/<id>/`). A real BankIR with questions needs
-`--force`; empty / placeholder IR does not. Sample-bank ids fail at generate
+`--force`; empty / placeholder IR does not. Corrupt / invalid-schema IR
+also needs `--force` (named as corrupt, not empty). Sample-bank ids fail at generate
 unless `--replace-sample`. The full guide — adding subjects and difficulties, writing
 rubrics the LLM grader marks well, the ingest CLI, and a workflow for
 generating a question bank from your own study-material PDFs and notes — is in

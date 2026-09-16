@@ -29,9 +29,10 @@ require ANTHROPIC_API_KEY or OPENAI_API_KEY from the environment or repo
 .env / .env.local (never the CLI; existing env vars win) unless a matching
 cacheKey IR is already cached. Use --provider test in CI. --dry-run-ir
 writes nothing durable. A real BankIR with questions is not overwritten
-unless --force (dry-run says "would overwrite"). Empty / invalid /
-placeholder IR (empty file, {}, schema-fail, zero items) is treated as
-missing. Sample-bank ids fail closed unless --replace-sample (no BankIR
+unless --force (dry-run says "would overwrite"). Empty / placeholder IR
+(empty file, valid zero-item schema) is treated as missing. Corrupt /
+unparseable / invalid-schema IR requires --force; the error names
+corruption, not empty. Sample-bank ids fail closed unless --replace-sample (no BankIR
 written; the path is not implied to exist). Tree generate preflights
 sources and overwrite, drafts every subject (SAMPLE freeze / provider)
 before the first IR write, and commits BankIR only if every draft succeeds.

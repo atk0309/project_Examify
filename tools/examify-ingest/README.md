@@ -88,9 +88,11 @@ leaves **no** partial BankIR.
 `--dry-run-ir` prints the would-write path and writes nothing durable (no IR,
 cache, or manifest). A real BankIR **with questions** is treated as existing:
 dry-run says **would overwrite**, and persist requires `--force` (fail closed,
-no write). Empty / invalid / placeholder IR (empty file, `{}`, schema-fail,
-zero items — the shape addSubject can leave) is **non-existing** for that
-gate; first real generate does not need `--force`. Sample-bank ids
+no write). Empty / placeholder IR (empty file, valid zero-item schema —
+the shape addSubject can leave) is **non-existing** for that gate; first
+real generate does not need `--force`. Corrupt / unparseable / invalid-schema
+IR is overwrite-protected: persist requires `--force` and the error names
+**corrupt** (not empty). Sample-bank ids
 (`SAMPLE_QUESTIONS`, the same frozen set as validate/emit) fail closed
 **before** the IR write unless `--replace-sample` and say **no BankIR written**
 (they do not imply `bank.ir.json` already exists). `--provider test` on a

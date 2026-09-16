@@ -46,9 +46,10 @@ Surface:
   (≥900px) uses a left step rail + stage + sticky footer; mobile uses compact
   “Step N of M · Label” progress and a sticky bottom bar. Generate writes BankIR
   only and never auto-applies. An existing real BankIR (questions present) is
-  never silently clobbered: empty / invalid / placeholder IR is non-existing
+  never silently clobbered: empty / placeholder IR is non-existing
   for the shared overwrite gate (`hasExistingBankIr` / `writeBankIrAtomic`;
-  onboarding should use that helper). The dry-run/preview names `would overwrite <rel>`
+  onboarding should use that helper). Corrupt / unparseable / invalid-schema
+  IR still requires `--force` (error names corruption). The dry-run/preview names `would overwrite <rel>`
   and the wizard asks a calm confirm before any write (“Replace existing
   BankIR for {label}?” or a named generate-all batch). Decline
   keeps prior bytes (`skipped` / cancelled — not `invalid`); confirm
@@ -260,8 +261,9 @@ plus PDFs under `content/source-pdfs/<id>/`; uploaded PDF magic-byte checks
 stay `%PDF`. Generate never auto-applies; it writes IR + gitignored
 `.examify-ingest/` run/cache files only. A real BankIR with questions is
 not overwritten unless `--force` (`--dry-run-ir` says **would overwrite**).
-Empty / invalid / placeholder IR (empty file, `{}`, schema-fail, zero items)
-is non-existing for that gate. Frozen sample-bank ids fail closed at
+Empty / placeholder IR (empty file, valid zero-item schema) is
+non-existing for that gate. Corrupt / unparseable / invalid-schema IR
+requires `--force` (error names corruption, not empty). Frozen sample-bank ids fail closed at
 generate (same set as validate) unless `--replace-sample` — **no BankIR
 written** (do not imply `bank.ir.json` already exists) —
 `--provider test` must not write `maths-easy-1` / other SAMPLE ids without

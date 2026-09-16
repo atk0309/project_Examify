@@ -54,8 +54,9 @@ the advanced toggle.
 
 Generate writes IR only. It never silently emits or applies. A real BankIR
 with questions is not overwritten unless you pass `--force` (dry-run says
-**would overwrite**). Empty / invalid / placeholder IR (empty file, `{}`,
-schema-fail, zero items) is treated as missing — no `--force` needed.
+**would overwrite**). Empty / placeholder IR (empty file, valid zero-item
+schema) is treated as missing — no `--force` needed. Corrupt / unparseable /
+invalid-schema IR requires `--force`; the error names corruption, not empty.
 Sample-bank ids fail at generate unless `--replace-sample` (**no BankIR
 written**; that copy does not imply the file already exists).
 

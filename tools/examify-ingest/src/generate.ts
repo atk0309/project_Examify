@@ -25,7 +25,12 @@ import {
   type ProviderDeps,
   type ProviderEnv,
 } from './providers';
-import { assertCanWriteBankIr, hasExistingBankIr, writeBankIrAtomic } from './write-atomic';
+import {
+  assertCanWriteBankIr,
+  classifyBankIr,
+  hasExistingBankIr,
+  writeBankIrAtomic,
+} from './write-atomic';
 import {
   GENERATE_TEMPERATURE,
   bankIrSchema,
@@ -433,13 +438,24 @@ export function assertGenerateTargetsCanPersist(
   force: boolean,
 ): void {
   if (force) return;
-  const existing = targets
-    .filter((target) => hasExistingBankIr(path.join(target.subjectDir, BANK_IR_FILE)))
-    .map((target) => pathFromRoot(repoRoot, path.join(target.subjectDir, BANK_IR_FILE)));
-  if (existing.length === 0) return;
-  throw new Error(
-    `refusing to overwrite existing ${existing.join(', ')}; pass --force to replace it; no BankIR written`,
-  );
+  const existing: string[] = [];
+  const corrupt: string[] = [];
+  for (const target of targets) {
+    const irPath = path.join(target.subjectDir, BANK_IR_FILE);
+    const display = pathFromRoot(repoRoot, irPath);
+    const presence = classifyBankIr(irPath);
+    if (presence.kind === 'existing') existing.push(display);
+    if (presence.kind === 'corrupt') corrupt.push(`${display} (${presence.reason})`);
+  }
+  if (existing.length === 0 && corrupt.length === 0) return;
+  const parts: string[] = [];
+  if (existing.length > 0) {
+    parts.push(`refusing to overwrite existing ${existing.join(', ')}`);
+  }
+  if (corrupt.length > 0) {
+    parts.push(`refusing to overwrite corrupt ${corrupt.join(', ')}`);
+  }
+  throw new Error(`${parts.join('; ')}; pass --force to replace it; no BankIR written`);
 }
 
 function commitGeneratedDraft(
