@@ -105,6 +105,13 @@ describe('SetupForm autofill desync', () => {
       );
     });
 
+    fireEvent.input(screen.getByTestId('setup-email-input'), {
+      target: { value: 'other@example.com' },
+    });
+    expect(screen.getByTestId('setup-secret-error')).toHaveTextContent(
+      'That setup code is not valid.',
+    );
+
     fireEvent.input(screen.getByTestId('setup-secret-input'), {
       target: { value: 'corrected-setup-secret' },
     });
@@ -131,6 +138,24 @@ describe('SetupForm autofill desync', () => {
     const formData = bootstrapHouseholdAction.mock.calls[0]?.[1];
     expect(formData?.get('email')).toBe('autofill@example.com');
     expect(formData?.get('setupSecret')).toBe('instance-secret');
+  });
+
+  it('re-reads the FormData snapshot after a remount wipe', async () => {
+    const { rerender } = render(<SetupForm authMode="magic-link" />);
+    autofillWithoutEvents('household-name-input', 'Autofill family');
+    autofillWithoutEvents('setup-secret-input', 'instance-secret');
+    autofillWithoutEvents('setup-email-input', 'autofill@example.com');
+    fireEvent.submit(screen.getByTestId('setup-form'));
+    expect(bootstrapHouseholdAction).toHaveBeenCalledOnce();
+
+    autofillWithoutEvents('setup-secret-input', '');
+    autofillWithoutEvents('setup-email-input', '');
+    rerender(<SetupForm authMode="magic-link" siteKey="1x00000000000000000000AA" />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('setup-email-input')).toHaveValue('autofill@example.com');
+    });
+    expect(screen.getByTestId('setup-secret-input')).toHaveValue('instance-secret');
   });
 
   it('syncs onInput after a failed submit and clears the field error', () => {

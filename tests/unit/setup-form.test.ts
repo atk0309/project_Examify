@@ -6,6 +6,8 @@ import {
   isFieldMappedBootstrapReason,
   isSetupEmailValid,
   readSetupFields,
+  recoverSetupFieldsAfterRemount,
+  resolveSetupFieldErrors,
   SETUP_FIELD_ERROR,
   SETUP_HOUSEHOLD_NAME_MAX,
   setupFieldErrorsFromServer,
@@ -126,5 +128,50 @@ describe('readSetupFields / validateSetupFields', () => {
     expect(isFieldMappedBootstrapReason('forbidden')).toBe(true);
     expect(isFieldMappedBootstrapReason('invalid')).toBe(true);
     expect(isFieldMappedBootstrapReason('captcha')).toBe(false);
+  });
+
+  it('drops a server field error only after a successful edit of that field', () => {
+    const server = setupFieldErrorsFromServer('forbidden', 'magic-link');
+    expect(resolveSetupFieldErrors({ local: {}, server, successfullyEdited: {} }).setupSecret).toBe(
+      'That setup code is not valid.',
+    );
+    expect(
+      resolveSetupFieldErrors({
+        local: {},
+        server,
+        successfullyEdited: { email: true },
+      }).setupSecret,
+    ).toBe('That setup code is not valid.');
+    expect(
+      resolveSetupFieldErrors({
+        local: {},
+        server,
+        successfullyEdited: { setupSecret: true },
+      }),
+    ).toEqual({});
+    expect(
+      resolveSetupFieldErrors({
+        local: { setupSecret: SETUP_FIELD_ERROR.setupSecret },
+        server,
+        successfullyEdited: {},
+      }).setupSecret,
+    ).toBe(SETUP_FIELD_ERROR.setupSecret);
+  });
+
+  it('re-reads a remount wipe back from the FormData snapshot', () => {
+    const snapshot = fields({
+      householdName: 'Autofill family',
+      setupSecret: 'instance-secret',
+      email: 'autofill@example.com',
+    });
+    const wiped = fields({ householdName: 'Our family', setupSecret: '', email: '' });
+    expect(recoverSetupFieldsAfterRemount(wiped, snapshot)).toEqual({
+      householdName: 'Our family',
+      setupSecret: 'instance-secret',
+      email: 'autofill@example.com',
+      password: '',
+    });
+    expect(recoverSetupFieldsAfterRemount(snapshot, snapshot)).toEqual(snapshot);
+    expect(recoverSetupFieldsAfterRemount(wiped, null)).toEqual(wiped);
   });
 });

@@ -29,6 +29,14 @@ export type SetupFormFields = {
 
 export type SetupFieldKey = keyof SetupFormFields;
 export type SetupFieldErrors = Partial<Record<SetupFieldKey, string>>;
+export type SetupFieldEdited = Partial<Record<SetupFieldKey, boolean>>;
+
+export const SETUP_FIELD_KEYS = [
+  'householdName',
+  'setupSecret',
+  'email',
+  'password',
+] as const satisfies readonly SetupFieldKey[];
 
 export function isSetupEmailValid(email: string): boolean {
   return EMAIL_RE.test(email.trim());
@@ -106,4 +114,52 @@ export function setupFieldErrorsFromServer(
     };
   }
   return {};
+}
+
+/**
+ * UX lock: a sticky server field error drops on the next successful local
+ * edit of that field (or a resubmit, which resets `successfullyEdited`).
+ */
+export function resolveSetupFieldErrors(input: {
+  local: SetupFieldErrors;
+  server: SetupFieldErrors;
+  successfullyEdited: SetupFieldEdited;
+}): SetupFieldErrors {
+  const errors: SetupFieldErrors = {};
+  for (const key of SETUP_FIELD_KEYS) {
+    if (input.local[key]) {
+      errors[key] = input.local[key];
+      continue;
+    }
+    if (input.successfullyEdited[key]) continue;
+    if (input.server[key]) errors[key] = input.server[key];
+  }
+  return errors;
+}
+
+export function setupFieldsEqual(a: SetupFormFields, b: SetupFormFields): boolean {
+  return SETUP_FIELD_KEYS.every((key) => a[key] === b[key]);
+}
+
+/**
+ * UX lock: if a remount (Turnstile / Script) wipes filled FormData-backed
+ * values, restore the snapshot. Live values win when they are at least as
+ * complete as the snapshot (a user edit, not a wipe).
+ */
+export function recoverSetupFieldsAfterRemount(
+  live: SetupFormFields,
+  snapshot: SetupFormFields | null,
+): SetupFormFields {
+  if (!snapshot) return live;
+  const snapshotFilled = SETUP_FIELD_KEYS.filter((key) => snapshot[key] !== '').length;
+  const liveFilled = SETUP_FIELD_KEYS.filter((key) => live[key] !== '').length;
+  if (snapshotFilled > 0 && liveFilled < snapshotFilled) {
+    return {
+      householdName: live.householdName || snapshot.householdName,
+      setupSecret: live.setupSecret || snapshot.setupSecret,
+      email: live.email || snapshot.email,
+      password: live.password || snapshot.password,
+    };
+  }
+  return live;
 }

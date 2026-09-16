@@ -9,9 +9,14 @@ import {
   hasSetupFieldErrors,
   isFieldMappedBootstrapReason,
   readSetupFields,
+  recoverSetupFieldsAfterRemount,
+  resolveSetupFieldErrors,
   SETUP_HOUSEHOLD_NAME_MAX,
   setupFieldErrorsFromServer,
+  setupFieldsEqual,
+  type SetupFieldEdited,
   type SetupFieldErrors,
+  type SetupFieldKey,
   type SetupFormFields,
   validateSetupFields,
   writeSetupFields,
@@ -50,39 +55,58 @@ export function SetupForm({ siteKey, authMode }: { siteKey?: string; authMode: A
   );
   const formRef = useRef<HTMLFormElement>(null);
   const lastFieldsRef = useRef<SetupFormFields | null>(null);
+  const inputTickRef = useRef(0);
+  const appliedInputTickRef = useRef(0);
   const dispatchIdRef = useRef(0);
   const appliedIdRef = useRef(0);
   const [attempted, setAttempted] = useState(false);
   const [localErrors, setLocalErrors] = useState<SetupFieldErrors>({});
-  const [hideServerFields, setHideServerFields] = useState(false);
+  const [successfullyEdited, setSuccessfullyEdited] = useState<SetupFieldEdited>({});
 
   useLayoutEffect(() => {
+    const form = formRef.current;
+    if (!form) return;
+    const live = readSetupFields(new FormData(form));
+    if (inputTickRef.current !== appliedInputTickRef.current) {
+      appliedInputTickRef.current = inputTickRef.current;
+      lastFieldsRef.current = live;
+    } else {
+      const recovered = recoverSetupFieldsAfterRemount(live, lastFieldsRef.current);
+      if (!setupFieldsEqual(recovered, live)) {
+        writeSetupFields(form, recovered);
+        lastFieldsRef.current = recovered;
+      } else {
+        lastFieldsRef.current = live;
+      }
+    }
     if (pending) return;
     if (dispatchIdRef.current === appliedIdRef.current) return;
     appliedIdRef.current = dispatchIdRef.current;
-    const form = formRef.current;
-    const fields = lastFieldsRef.current;
-    if (form && fields) writeSetupFields(form, fields);
-  }, [pending, state]);
+    if (lastFieldsRef.current) writeSetupFields(form, lastFieldsRef.current);
+  }, [pending, state, siteKey]);
 
-  const fieldErrors: SetupFieldErrors = {
-    ...(state.status === 'error' && !pending && !hideServerFields
-      ? setupFieldErrorsFromServer(state.reason, authMode)
-      : {}),
-    ...localErrors,
-  };
-
-  function refreshErrorsFromDom(form: HTMLFormElement) {
-    const fields = readSetupFields(new FormData(form));
-    lastFieldsRef.current = fields;
-    if (!attempted) return;
-    setHideServerFields(true);
-    setLocalErrors(validateSetupFields(fields, authMode));
-  }
+  const fieldErrors = resolveSetupFieldErrors({
+    local: localErrors,
+    server:
+      state.status === 'error' && !pending
+        ? setupFieldErrorsFromServer(state.reason, authMode)
+        : {},
+    successfullyEdited,
+  });
 
   function onFieldInput(event: FormEvent<HTMLInputElement>) {
     const form = event.currentTarget.form ?? formRef.current;
-    if (form) refreshErrorsFromDom(form);
+    if (!form) return;
+    inputTickRef.current += 1;
+    const fields = readSetupFields(new FormData(form));
+    lastFieldsRef.current = fields;
+    const name = event.currentTarget.name as SetupFieldKey;
+    if (!attempted) return;
+    const nextLocal = validateSetupFields(fields, authMode);
+    setLocalErrors(nextLocal);
+    if (!nextLocal[name]) {
+      setSuccessfullyEdited((prev) => ({ ...prev, [name]: true }));
+    }
   }
 
   function submit(formData: FormData) {
@@ -90,7 +114,7 @@ export function SetupForm({ siteKey, authMode }: { siteKey?: string; authMode: A
     lastFieldsRef.current = fields;
     const nextErrors = validateSetupFields(fields, authMode);
     setAttempted(true);
-    setHideServerFields(false);
+    setSuccessfullyEdited({});
     setLocalErrors(nextErrors);
     if (hasSetupFieldErrors(nextErrors)) return;
     dispatchIdRef.current += 1;
@@ -111,14 +135,16 @@ export function SetupForm({ siteKey, authMode }: { siteKey?: string; authMode: A
       noValidate
       data-testid="setup-form"
     >
-      {siteKey ? (
-        <Script
-          src="https://challenges.cloudflare.com/turnstile/v0/api.js"
-          async
-          defer
-          strategy="afterInteractive"
-        />
-      ) : null}
+      <div hidden={!siteKey} aria-hidden={!siteKey || undefined}>
+        {siteKey ? (
+          <Script
+            src="https://challenges.cloudflare.com/turnstile/v0/api.js"
+            async
+            defer
+            strategy="afterInteractive"
+          />
+        ) : null}
+      </div>
       <div className="login-head">
         <span className="brand-mark">E</span>
         <h1 className="brand-word">Set up Examify</h1>
@@ -222,14 +248,16 @@ export function SetupForm({ siteKey, authMode }: { siteKey?: string; authMode: A
         </div>
       ) : null}
 
-      {siteKey ? (
-        <div
-          className="cf-turnstile"
-          data-sitekey={siteKey}
-          data-theme="auto"
-          data-testid="turnstile"
-        />
-      ) : null}
+      <div data-testid="setup-turnstile-slot">
+        {siteKey ? (
+          <div
+            className="cf-turnstile"
+            data-sitekey={siteKey}
+            data-theme="auto"
+            data-testid="turnstile"
+          />
+        ) : null}
+      </div>
 
       <button
         className="btn btn-primary"
