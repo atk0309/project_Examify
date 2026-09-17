@@ -68,14 +68,17 @@ pnpm examify-ingest emit content/subjects --apply --replace-sample
 ```
 
 `generate` accepts `content/subjects` or `content/subjects/<id>` (not an IR
-file). It reads source files from `content/source-pdfs/<id>/` and standalone
-`content/source-pdfs/<id>.{pdf,png,jpg,jpeg,webp,txt,md}` plus any of those
-extensions in the subject folder except `bank.ir.json`. `--provider` is required
+file). Sources include notes/text (`.txt` / `.md`, including `notes.txt`) and
+images in the subject folder, plus PDFs and those same extensions under
+`content/source-pdfs/<id>/` and standalone `content/source-pdfs/<id>.{pdf,png,jpg,jpeg,webp,txt,md}`
+(`bank.ir.json` / `subject.json` are skipped). Uploaded PDF magic-byte checks
+stay `%PDF` — notes are text sources, not PDFs. `--provider` is required
 (`anthropic` / `openai` / `local` / `test`). Default `--seed` is `0` and is
 recorded in the run manifest. A tree generate of `content/subjects` still needs
-a source file per subject — biology is hand-authored and has none, so target
-`content/subjects/demo` (or add sources) instead of claiming biology generate
-works on a fresh clone. Tree generate is **all-or-nothing for BankIR**: it
+a source file per subject — biology is hand-authored and has none, so a tree
+generate of `content/subjects` fails closed and hints to target
+`content/subjects/<id>` or `--subject <id>` (e.g. demo) instead of inventing
+sources. Tree generate is **all-or-nothing for BankIR**: it
 preflights sources and overwrite, drafts every subject (`dry-run-ir` — SAMPLE
 freeze and provider fail closed here), then commits only if every draft
 succeeds. Abort is checked before that commit; a later filesystem write rolls
@@ -83,12 +86,20 @@ back earlier artifacts. A sourceless or frozen sibling lists the problem and
 leaves **no** partial BankIR.
 
 `--dry-run-ir` prints the would-write path and writes nothing durable (no IR,
-cache, or manifest). If `bank.ir.json` already exists, dry-run says
-**would overwrite**. Persist over existing IR requires `--force`; without it
-generate fails closed (non-zero, no write). Sample-bank ids (`SAMPLE_QUESTIONS`,
-the same frozen set as validate/emit) fail closed **before** the IR write
-unless `--replace-sample`. `--provider test` on a sample subject such as
-`maths` would emit `maths-easy-1` and is refused without that flag.
+cache, or manifest). A real BankIR **with questions** is treated as existing:
+dry-run says **would overwrite**, and persist requires `--force` (fail closed,
+no write). Empty / placeholder IR (empty file, valid zero-item schema —
+the shape addSubject can leave) is **non-existing** for that gate; first
+real generate does not need `--force`. Corrupt / unparseable / invalid-schema
+IR is overwrite-protected: persist requires `--force` and the error names
+**corrupt** (not empty). Sample-bank ids
+(`SAMPLE_QUESTIONS`, the same frozen set as validate/emit) fail closed
+**before** the IR write unless `--replace-sample` and say **no BankIR written**
+(they do not imply `bank.ir.json` already exists). `--provider test` on a
+sample subject such as `maths` would emit `maths-easy-1` and is refused
+without that flag. Missing cloud API keys are refused before overwrite
+messaging when a real key is required; `--force` stays fail-closed. The test
+provider still runs without keys.
 
 It still rasterizes missing
 PDF pages into a temp directory when `pdftoppm` is available so the preview
