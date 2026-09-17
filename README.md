@@ -249,10 +249,14 @@ hand or `pnpm examify-ingest generate`) and emit the split with
 `content/generated/`). Generate writes IR only — still
 `pnpm examify-ingest validate content/subjects`, then
 `emit content/subjects --dry-run`, then `emit content/subjects --apply`. Hand-authored biology has no source file (skip generate). A
-fresh-clone generate fixture is `content/subjects/demo`. Existing IR needs
-`--force`; sample-bank ids fail at generate unless `--replace-sample`. The full guide — adding subjects and difficulties, writing
+fresh-clone generate fixture is `content/subjects/demo` (`notes.txt` in the
+subject folder; generate also reads `.txt` / `.md` / images there plus PDFs
+under `content/source-pdfs/<id>/`). A real BankIR with questions needs
+`--force`; empty / placeholder IR does not. Corrupt / invalid-schema IR
+also needs `--force` (named as corrupt, not empty). Sample-bank ids fail at generate
+unless `--replace-sample`. The full guide — adding subjects and difficulties, writing
 rubrics the LLM grader marks well, the ingest CLI, and a workflow for
-generating a question bank from your own study-material PDFs — is in
+generating a question bank from your own study-material PDFs and notes — is in
 [`docs/content-authoring.md`](docs/content-authoring.md) and
 [`tools/examify-ingest/README.md`](tools/examify-ingest/README.md).
 

@@ -60,9 +60,20 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   `validate content/subjects` → `emit content/subjects --dry-run` →
   `emit content/subjects --apply`. It never auto-applies.
   Hand-authored biology has no source file (skip generate; validate/emit only).
-  Fresh-clone generate: `content/subjects/demo/notes.txt`. Existing
-  `bank.ir.json` requires `--force` (dry-run says **would overwrite**).
-  Frozen sample-bank ids fail at generate unless `--replace-sample`.
+  Fresh-clone generate: `content/subjects/demo/notes.txt`. Generate scans
+  notes/text (`.txt` / `.md`) and images in the subject folder plus PDFs
+  under `content/source-pdfs/<id>/` (PDF magic-byte checks for actual PDFs
+  stay fail-closed). A real BankIR with questions requires `--force`
+  (dry-run says **would overwrite**). Empty / placeholder IR (empty file,
+  valid zero-item schema) is non-existing for that gate. Corrupt /
+  unparseable / invalid-schema IR requires `--force` (error names
+  corruption, not empty).
+  Frozen sample-bank ids fail at generate unless `--replace-sample` (**no
+  BankIR written**; do not imply the file already exists). Missing cloud
+  keys are refused before overwrite messaging when a real key is required;
+  `--provider test` still runs without keys. A sourceless sibling blocks
+  `generate content/subjects` (hint: `content/subjects/<id>` or
+  `--subject <id>`, e.g. demo) — do not invent sources.
   Tree generate drafts every subject before the first IR write (sources,
   overwrite, SAMPLE freeze, provider); a mid-list or persist failure writes
   no BankIR (commit rolls back earlier writes; abort is gated before persist).

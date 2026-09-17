@@ -424,7 +424,8 @@ describe('onboarding actions', () => {
     );
     expect(result.snapshot.hasDryRun).toBe(false);
     expect(result.snapshot.hasApplied).toBe(false);
-    expect(result.result.overwrite).toBe(true);
+    // Empty / placeholder IR is non-existing for the shared overwrite gate.
+    expect(result.result.overwrite).toBe(false);
     expect((await validateOnboardingAction()).ok).toBe(true);
   });
 
@@ -439,7 +440,20 @@ describe('onboarding actions', () => {
     const prior = `${JSON.stringify({
       version: 1,
       subject: { id: 'history', label: 'History', icon: 'geography', l: 0.6, c: 0.08, h: 40 },
-      difficulties: { easy: [], medium: [], hard: [] },
+      difficulties: {
+        easy: [
+          {
+            id: 'history-easy-1',
+            type: 'mcq',
+            q: 'Prior history item?',
+            choices: ['A', 'B', 'C', 'D'],
+            answer: 0,
+            provenance: { pdf: 'hand-authored', locator: 'prior' },
+          },
+        ],
+        medium: [],
+        hard: [],
+      },
     })}\n`;
     writeFileSync(irPath, prior);
     writeFileSync(path.join(root, 'content/source-pdfs/history/notes.txt'), 'A source note.\n');

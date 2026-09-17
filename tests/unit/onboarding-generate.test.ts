@@ -44,7 +44,20 @@ function seedSubject(root: string) {
     JSON.stringify({
       version: 1,
       subject: { id: 'history', label: 'History', icon: 'geography', l: 0.6, c: 0.08, h: 40 },
-      difficulties: { easy: [], medium: [], hard: [] },
+      difficulties: {
+        easy: [
+          {
+            id: 'history-easy-1',
+            type: 'mcq',
+            q: 'Prior history item?',
+            choices: ['A', 'B', 'C', 'D'],
+            answer: 0,
+            provenance: { pdf: 'hand-authored', locator: 'prior' },
+          },
+        ],
+        medium: [],
+        hard: [],
+      },
     }),
   );
   writeFileSync(path.join(root, 'content/subjects/history/notes.md'), 'A primary source note.\n');
@@ -989,7 +1002,20 @@ describe('generateOnboardingSubject', () => {
     const sneaked = `${JSON.stringify({
       version: 1,
       subject: { id: 'history', label: 'History', icon: 'geography', l: 0.6, c: 0.08, h: 40 },
-      difficulties: { easy: [], medium: [], hard: [] },
+      difficulties: {
+        easy: [
+          {
+            id: 'history-easy-1',
+            type: 'mcq',
+            q: 'Sneaked in during generate?',
+            choices: ['A', 'B', 'C', 'D'],
+            answer: 0,
+            provenance: { pdf: 'hand-authored', locator: 'toctou' },
+          },
+        ],
+        medium: [],
+        hard: [],
+      },
     })}\n`;
     const { generateSubject: actualGenerateSubject } =
       await vi.importActual<typeof ingest>('examify-ingest/generate');
