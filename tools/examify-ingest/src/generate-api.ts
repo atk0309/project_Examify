@@ -40,6 +40,7 @@ export {
   resolveSubjectSources,
   sourceHashesOf,
   defaultSubjectMeta,
+  loadSubjectMeta,
   isAllowedSourceRel,
   hasStandaloneSourceFile,
   SOURCE_EXT,

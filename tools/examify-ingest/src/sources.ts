@@ -91,18 +91,34 @@ export function defaultSubjectMeta(id: string): BankIrSubject {
   };
 }
 
-function readJsonIfPresent(absPath: string): unknown | null {
+function readJsonIfPresent(
+  absPath: string,
+  options: { tolerateInvalid?: boolean } = {},
+): unknown | null {
+  let raw: string;
   try {
-    return JSON.parse(readFileSync(absPath, 'utf8')) as unknown;
+    raw = readFileSync(absPath, 'utf8');
   } catch (error) {
     if (isEnoent(error)) return null;
+    if (options.tolerateInvalid) return null;
+    throw error;
+  }
+  if (raw.trim() === '') {
+    if (options.tolerateInvalid) return null;
+    throw new Error(`invalid JSON in ${absPath}: empty file`);
+  }
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch (error) {
+    if (options.tolerateInvalid) return null;
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`invalid JSON in ${absPath}: ${message}`);
   }
 }
 
+/** BankIR meta is best-effort: empty/corrupt IR must not block generate target resolve. */
 export function loadSubjectMeta(subjectDir: string, subjectId: string): BankIrSubject {
-  const ir = readJsonIfPresent(path.join(subjectDir, BANK_IR_FILE));
+  const ir = readJsonIfPresent(path.join(subjectDir, BANK_IR_FILE), { tolerateInvalid: true });
   if (ir && typeof ir === 'object' && ir !== null && 'subject' in ir) {
     const parsed = subjectSchema.safeParse((ir as { subject: unknown }).subject);
     if (parsed.success) {
