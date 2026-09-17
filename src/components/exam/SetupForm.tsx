@@ -97,18 +97,32 @@ export function SetupForm({ siteKey, authMode }: { siteKey?: string; authMode: A
   useEffect(() => {
     const form = formRef.current;
     if (!form) return;
-    let frames = 0;
-    let raf = 0;
-    const tick = () => {
+    const capture = () => {
       lastFieldsRef.current = captureSilentSetupSnapshot(
         readSetupFields(new FormData(form)),
         lastFieldsRef.current,
       );
+    };
+    capture();
+    let frames = 0;
+    let raf = 0;
+    const tick = () => {
+      capture();
       frames += 1;
       if (frames < 16) raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
+    // Keep watching after the first-paint rAF window — password managers
+    // often fill after Turnstile's script/site-key delay.
+    const interval = window.setInterval(capture, 250);
+    form.addEventListener('animationstart', capture);
+    form.addEventListener('focusin', capture);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.clearInterval(interval);
+      form.removeEventListener('animationstart', capture);
+      form.removeEventListener('focusin', capture);
+    };
   }, [siteKey]);
 
   const fieldErrors = resolveSetupFieldErrors({

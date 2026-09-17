@@ -475,6 +475,70 @@ describe('install.sh', () => {
     }
   });
 
+  it('lets an empty .env.local ALLOW_LOCAL_OUTBOX shadow a kept password outbox', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-install-'));
+    try {
+      const dest = path.join(dir, '.env');
+      const existing = [
+        'AUTH_MODE=password',
+        'MAIL_TRANSPORT=outbox',
+        'ALLOW_LOCAL_OUTBOX=1',
+        '',
+      ].join('\n');
+      fs.writeFileSync(dest, existing, { mode: 0o600 });
+      fs.writeFileSync(path.join(dir, '.env.local'), 'ALLOW_LOCAL_OUTBOX=\n', { mode: 0o600 });
+      const result = spawnSync('bash', [SCRIPT, '--write-env-only'], {
+        cwd: dir,
+        env: installEnv({ AUTH_MODE: 'password' }),
+        encoding: 'utf8',
+      });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('did not enable an outbox');
+      expect(result.stderr).not.toContain('Enabling MAIL_TRANSPORT=outbox');
+      expect(fs.readFileSync(dest, 'utf8')).toBe(existing);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('treats an empty .env.local AUTH_MODE as a magic-link override of a password .env', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-install-'));
+    try {
+      const dest = path.join(dir, '.env');
+      const existing = [
+        'AUTH_MODE=password',
+        'MAIL_TRANSPORT=outbox',
+        'ALLOW_LOCAL_OUTBOX=1',
+        '',
+      ].join('\n');
+      fs.writeFileSync(dest, existing, { mode: 0o600 });
+      fs.writeFileSync(path.join(dir, '.env.local'), 'AUTH_MODE=\n', { mode: 0o600 });
+      const keep = spawnSync('bash', [SCRIPT, '--write-env-only'], {
+        cwd: dir,
+        env: installEnv({ AUTH_MODE: 'magic-link' }),
+        encoding: 'utf8',
+      });
+      expect(keep.status).toBe(0);
+      expect(keep.stderr).not.toContain('Host AUTH_MODE=');
+      expect(keep.stderr).not.toContain('did not enable an outbox');
+      expect(fs.readFileSync(dest, 'utf8')).toBe(existing);
+
+      const conflict = spawnSync('bash', [SCRIPT, '--write-env-only'], {
+        cwd: dir,
+        env: installEnv({ AUTH_MODE: 'password' }),
+        encoding: 'utf8',
+      });
+      expect(conflict.status).toBe(1);
+      expect(conflict.stderr).toContain('Host AUTH_MODE=password');
+      expect(conflict.stderr).toContain('on-disk AUTH_MODE=magic-link');
+      expect(conflict.stderr).toContain('.env.local overrides .env AUTH_MODE=password');
+      expect(conflict.stderr).not.toContain('the kept file is AUTH_MODE=password');
+      expect(fs.readFileSync(dest, 'utf8')).toBe(existing);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('does not treat host AUTH_MODE as a conflict when it matches .env.local over .env', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-install-'));
     try {

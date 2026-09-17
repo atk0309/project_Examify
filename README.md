@@ -138,7 +138,8 @@ judged from on-disk `.env` (and `.env.local` if present), not a transient
 host env: `ALLOW_LOCAL_OUTBOX=1` on the installer process does not
 greenlight a broken password file. A kept password-mode `.env` with no
 mail path is refused (not described as enabled). A host `AUTH_MODE` that
-differs from effective on-disk `AUTH_MODE` (`.env.local` wins over `.env`)
+differs from effective on-disk `AUTH_MODE` (`.env.local` wins over `.env`,
+including an empty `AUTH_MODE=` that Next treats as the magic-link default)
 is refused with copy that names that effective mode, not the host and
 not `.env` alone when local wins. `RESEND_API_KEY=test` is not a mail path.
 Invite accept

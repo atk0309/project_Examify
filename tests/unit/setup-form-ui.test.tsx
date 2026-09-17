@@ -219,6 +219,28 @@ describe('SetupForm autofill desync', () => {
     expect(screen.getByTestId('setup-submit')).toBeEnabled();
   });
 
+  it('keeps a late silent autofill after the first-paint poll window', async () => {
+    const { rerender } = render(<SetupForm authMode="magic-link" />);
+    await act(async () => {
+      await new Promise((resolve) => {
+        setTimeout(resolve, 400);
+      });
+    });
+    autofillWithoutEvents('household-name-input', 'Late family');
+    await act(async () => {
+      await new Promise((resolve) => {
+        setTimeout(resolve, 300);
+      });
+    });
+    autofillWithoutEvents('household-name-input', SETUP_DEFAULT_HOUSEHOLD_NAME);
+    rerender(<SetupForm authMode="magic-link" siteKey="1x00000000000000000000AA" />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('household-name-input')).toHaveValue('Late family');
+    });
+    expect(screen.getByTestId('setup-submit')).toBeEnabled();
+  });
+
   it('does not resurrect a user-cleared password after remount', async () => {
     const { rerender } = render(<SetupForm authMode="password" />);
     fireEvent.input(screen.getByTestId('setup-password-input'), {

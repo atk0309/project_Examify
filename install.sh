@@ -19,8 +19,9 @@
 #   A kept password-mode file with no SMTP / Resend / allowed outbox is
 #   refused (invite accept would fail closed; this run does not claim to
 #   enable an outbox). Host AUTH_MODE that differs from effective on-disk
-#   AUTH_MODE (.env.local wins over .env) is refused with copy that names
-#   that effective mode, not the host's and not .env alone when local wins.
+#   AUTH_MODE (.env.local wins over .env, including an empty AUTH_MODE=)
+#   is refused with copy that names that effective mode, not the host's
+#   and not .env alone when local wins.
 #   Default AUTH_MODE=password enables a local outbox so invite-accept OTP
 #   (mailbox proof) can be read from data/outbox — only when this run writes
 #   .env. Set SMTP_* / RESEND_* to use real mail instead. Invite accept never
@@ -55,8 +56,9 @@ Non-interactive (CI / automation):
   A kept password-mode file with no SMTP / Resend / allowed outbox is
   refused (invite accept would fail closed; this run does not claim to
   enable an outbox). Host AUTH_MODE that differs from effective on-disk
-  AUTH_MODE (.env.local wins over .env) is refused with copy that names
-  that effective mode, not the host's and not .env alone when local wins.
+  AUTH_MODE (.env.local wins over .env, including an empty AUTH_MODE=)
+  is refused with copy that names that effective mode, not the host's
+  and not .env alone when local wins.
   Default AUTH_MODE=password enables a local outbox so invite-accept OTP
   (mailbox proof) can be read from data/outbox — only when this run writes
   .env. Set SMTP_* / RESEND_* to use real mail instead. Invite accept never
@@ -177,12 +179,15 @@ has_invite_mail_path() {
   esac
 }
 
-# Last KEY=VALUE in a dotenv file. Does not eval / expand. Empty if missing.
+# Last KEY=VALUE in a dotenv file. Does not eval / expand.
+# Prints the value (empty if the assignment is empty). Exit 0 if the key is
+# present — including AUTH_MODE= — so an empty .env.local can shadow .env.
+# Exit 1 if the file or key is missing.
 env_file_get() {
   local file="$1"
   local key="$2"
-  local line="" body="" value="" quoted=0
-  [ -f "$file" ] || return 0
+  local line="" body="" value="" quoted=0 found=0
+  [ -f "$file" ] || return 1
   while IFS= read -r line || [ -n "$line" ]; do
     body="${line#"${line%%[![:space:]]*}"}"
     [ -z "$body" ] && continue
@@ -193,6 +198,7 @@ env_file_get() {
     fi
     case "$body" in
       "${key}="*)
+        found=1
         value="${body#"${key}="}"
         value="${value#"${value%%[![:space:]]*}"}"
         value="${value%"${value##*[![:space:]]}"}"
@@ -218,20 +224,26 @@ env_file_get() {
     esac
   done < "$file"
   printf '%s' "$value"
+  [ "$found" -eq 1 ]
+}
+
+env_file_has() {
+  env_file_get "$1" "$2" >/dev/null
 }
 
 # On-disk dotenv only: .env.local wins over .env (same file order Next.js
-# loads). Host process env is ignored so a transient ALLOW_LOCAL_OUTBOX=1
-# on the installer cannot greenlight a broken file.
+# loads), including an empty assignment that shadows .env. Host process
+# env is ignored so a transient ALLOW_LOCAL_OUTBOX=1 on the installer
+# cannot greenlight a broken file.
 disk_env_get() {
   local key="$1"
-  local from_local
-  from_local="$(env_file_get .env.local "$key")"
-  if [ -n "$from_local" ]; then
-    printf '%s' "$from_local"
+  local value=""
+  if value="$(env_file_get .env.local "$key")"; then
+    printf '%s' "$value"
     return 0
   fi
-  env_file_get .env "$key"
+  value="$(env_file_get .env "$key")" || true
+  printf '%s' "$value"
 }
 
 # AUTH_MODE written in the kept `.env` only (not host, not .env.local).
@@ -312,10 +324,9 @@ refuse_kept_password_without_mail() {
 refuse_kept_auth_mode_conflict() {
   local disk_mode="$1"
   local host_mode="$2"
-  local env_mode local_mode
+  local env_mode
   env_mode="$(kept_env_auth_mode)"
-  local_mode="$(env_file_get .env.local AUTH_MODE)"
-  if [ -n "$local_mode" ] && [ "$local_mode" != "$env_mode" ]; then
+  if env_file_has .env.local AUTH_MODE && [ "$disk_mode" != "$env_mode" ]; then
     echo "Keeping existing .env. Host AUTH_MODE=${host_mode}, but on-disk AUTH_MODE=${disk_mode} (.env.local overrides .env AUTH_MODE=${env_mode})." >&2
   else
     echo "Keeping existing .env. Host AUTH_MODE=${host_mode}, but the kept file is AUTH_MODE=${disk_mode}." >&2
