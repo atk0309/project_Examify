@@ -1,16 +1,25 @@
 'use client';
 
 import Script from 'next/script';
-import { useActionState, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
+import {
+  useActionState,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type FormEvent,
+} from 'react';
 import { bootstrapHouseholdAction, type BootstrapState } from '@/actions/bootstrapHousehold';
 import type { AuthMode } from '@/lib/auth-mode';
 import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from '@/lib/password-policy';
 import {
+  captureSilentSetupSnapshot,
   hasSetupFieldErrors,
   isFieldMappedBootstrapReason,
   readSetupFields,
   recoverSetupFieldsAfterRemount,
   resolveSetupFieldErrors,
+  SETUP_DEFAULT_HOUSEHOLD_NAME,
   SETUP_HOUSEHOLD_NAME_MAX,
   setupFieldErrorsFromServer,
   setupFieldsEqual,
@@ -76,7 +85,7 @@ export function SetupForm({ siteKey, authMode }: { siteKey?: string; authMode: A
         writeSetupFields(form, recovered);
         lastFieldsRef.current = recovered;
       } else {
-        lastFieldsRef.current = live;
+        lastFieldsRef.current = captureSilentSetupSnapshot(live, lastFieldsRef.current);
       }
     }
     if (pending) return;
@@ -84,6 +93,37 @@ export function SetupForm({ siteKey, authMode }: { siteKey?: string; authMode: A
     appliedIdRef.current = dispatchIdRef.current;
     if (lastFieldsRef.current) writeSetupFields(form, lastFieldsRef.current);
   }, [pending, state, siteKey]);
+
+  useEffect(() => {
+    const form = formRef.current;
+    if (!form) return;
+    const capture = () => {
+      lastFieldsRef.current = captureSilentSetupSnapshot(
+        readSetupFields(new FormData(form)),
+        lastFieldsRef.current,
+      );
+    };
+    capture();
+    let frames = 0;
+    let raf = 0;
+    const tick = () => {
+      capture();
+      frames += 1;
+      if (frames < 16) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    // Keep watching after the first-paint rAF window — password managers
+    // often fill after Turnstile's script/site-key delay.
+    const interval = window.setInterval(capture, 250);
+    form.addEventListener('animationstart', capture);
+    form.addEventListener('focusin', capture);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.clearInterval(interval);
+      form.removeEventListener('animationstart', capture);
+      form.removeEventListener('focusin', capture);
+    };
+  }, [siteKey]);
 
   const fieldErrors = resolveSetupFieldErrors({
     local: localErrors,
@@ -169,8 +209,9 @@ export function SetupForm({ siteKey, authMode }: { siteKey?: string; authMode: A
           type="text"
           required
           maxLength={SETUP_HOUSEHOLD_NAME_MAX}
-          defaultValue="Our family"
+          defaultValue={SETUP_DEFAULT_HOUSEHOLD_NAME}
           onInput={onFieldInput}
+          onChange={onFieldInput}
           aria-invalid={nameInvalid || undefined}
           aria-describedby={nameInvalid ? 'setup-household-error' : undefined}
           data-testid="household-name-input"
@@ -190,6 +231,7 @@ export function SetupForm({ siteKey, authMode }: { siteKey?: string; authMode: A
           autoComplete="off"
           required
           onInput={onFieldInput}
+          onChange={onFieldInput}
           aria-invalid={secretInvalid || undefined}
           aria-describedby={secretInvalid ? 'setup-secret-error' : undefined}
           data-testid="setup-secret-input"
@@ -211,6 +253,7 @@ export function SetupForm({ siteKey, authMode }: { siteKey?: string; authMode: A
           required
           placeholder="you@example.com"
           onInput={onFieldInput}
+          onChange={onFieldInput}
           aria-invalid={emailInvalid || undefined}
           aria-describedby={emailInvalid ? 'setup-email-error' : undefined}
           data-testid="setup-email-input"
@@ -238,6 +281,7 @@ export function SetupForm({ siteKey, authMode }: { siteKey?: string; authMode: A
             minLength={PASSWORD_MIN_LENGTH}
             maxLength={PASSWORD_MAX_LENGTH}
             onInput={onFieldInput}
+            onChange={onFieldInput}
             aria-invalid={passwordInvalid || undefined}
             aria-describedby={passwordInvalid ? 'setup-password-error' : undefined}
             data-testid="setup-password-input"
