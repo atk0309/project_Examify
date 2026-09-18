@@ -94,6 +94,13 @@ export type OnboardingSubject = {
   generateSources: string[];
 };
 
+/** Live bank row shown on Ready — ids + names, not a count alone. */
+export type OnboardingLiveSubject = {
+  id: string;
+  label: string;
+  questionCount: number;
+};
+
 export type OnboardingIssue = {
   file: string;
   message: string;
@@ -133,13 +140,32 @@ export type OnboardingSnapshot = {
   anthropicConfigured: boolean;
   openaiConfigured: boolean;
   /**
+   * Live or `.env` store has a value (including the `test` sentinel).
+   * Never the key itself. Clear/Rotate use `*LiveTest`, not this flag.
+   */
+  anthropicPresent: boolean;
+  openaiPresent: boolean;
+  /** Live process.env is exactly `test`. Never the value. */
+  anthropicLiveTest: boolean;
+  openaiLiveTest: boolean;
+  /**
    * Host (Docker / systemd / parent exec environ) assigned the key —
    * including empty / `test`. A matching `.env` value is not enough.
-   * Wizard write/clear refused.
+   * Wizard write/clear of a usable or empty host key is refused. A boot
+   * `test` sentinel (`*LiveTest` or `!*WriteBlocked`) can still be
+   * cleared / rotated, including after the first Save.
    */
   anthropicHostManaged: boolean;
   openaiHostManaged: boolean;
+  /**
+   * True when set / clear is refused (`host_managed`). Inverse of the
+   * wizard lock: a boot `test` sentinel stays writable after rotation.
+   */
+  anthropicWriteBlocked: boolean;
+  openaiWriteBlocked: boolean;
   localAgentConfigured: boolean;
+  /** Sample + generated live bank (Ready). Silent wrong bank stays visible. */
+  liveSubjects: OnboardingLiveSubject[];
 };
 
 /** Public generate progress — never includes BankIR / answers / keys. */
@@ -239,3 +265,59 @@ export function onboardingGenerateBatchIds(
 
 export const EMPTY_AUTHORITATIVE_EMIT =
   'authoritative emit refused: no BankIR files in the subjects tree (will not wipe generated content)';
+
+/** Filenames generate already reads (PDFs plus notes.txt / CLI sources). */
+export function onboardingSourceFileNames(
+  subject: Pick<OnboardingSubject, 'sourceFiles' | 'generateSources'>,
+): string[] {
+  const names = new Set<string>(subject.sourceFiles);
+  for (const rel of subject.generateSources) {
+    const base = rel.split('/').pop();
+    if (base) names.add(base);
+  }
+  return [...names].sort();
+}
+
+/** Files-step tab label — never a “0 PDFs” dead-end when notes.txt exists. */
+export function onboardingSourceCountLabel(
+  subject: Pick<OnboardingSubject, 'sourceFiles' | 'generateSources'>,
+): string {
+  const sources = subject.generateSources.length;
+  if (sources > 0) return `${sources} source${sources === 1 ? '' : 's'}`;
+  const pdfs = subject.sourceFiles.length;
+  if (pdfs > 0) return `${pdfs} PDF${pdfs === 1 ? '' : 's'}`;
+  return 'No files yet';
+}
+
+export function onboardingPruneEntries(
+  plan: readonly Pick<OnboardingPlanEntry, 'action' | 'path'>[],
+): OnboardingPlanEntry[] {
+  return plan
+    .filter((entry) => entry.action === 'delete')
+    .map((entry) => ({ path: entry.path, action: 'delete' as const }));
+}
+
+/** Subject ids named by leftover generated JSON that Apply would delete. */
+export function onboardingPruneSubjectIds(
+  deletes: readonly Pick<OnboardingPlanEntry, 'path'>[],
+): string[] {
+  const ids = new Set<string>();
+  for (const entry of deletes) {
+    const normalized = entry.path.replaceAll('\\', '/');
+    const match = /content\/generated\/(?:questions|keys)\/([^/]+)\.json$/.exec(normalized);
+    if (match?.[1]) ids.add(match[1]);
+  }
+  return [...ids].sort();
+}
+
+/** Calm prune confirm. Names leftovers — never an opaque count alone. Cancel = no apply. */
+export function onboardingPruneConfirmMessage(
+  deletes: readonly Pick<OnboardingPlanEntry, 'path'>[],
+): string | null {
+  if (deletes.length === 0) return null;
+  const subjects = onboardingPruneSubjectIds(deletes);
+  const named =
+    subjects.length > 0 ? subjects.join(', ') : deletes.map((row) => row.path).join(', ');
+  const files = deletes.map((row) => row.path).join(', ');
+  return `Apply will remove leftover generated files for ${named} (${files}). Cancel keeps everything.`;
+}

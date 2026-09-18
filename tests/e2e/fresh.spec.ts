@@ -48,6 +48,19 @@ test('first-run bootstrap creates the admin without Turnstile', async ({ page })
   await expect(page.getByTestId('wizard-subjects')).toContainText('history');
   await page.getByTestId('wizard-next').click();
   await expect(page.getByTestId('wizard-files')).toBeVisible();
+  await expect(page.getByTestId('wizard-files')).not.toContainText('0 PDFs');
+  await page.getByRole('button', { name: /Generate demo/ }).click();
+  await expect(page.getByTestId('wizard-file-sources-demo')).toContainText('notes.txt');
+  await page.getByTestId('wizard-next').click();
+  await expect(page.getByTestId('wizard-ai')).toBeVisible();
+  await page.getByTestId('wizard-ai-cloud').click();
+  await expect(page.getByTestId('wizard-ai-store')).toContainText('not configured');
+  await expect(page.getByTestId('wizard-anthropic-key-clear')).toBeVisible();
+  await expect(page.getByTestId('wizard-anthropic-key-rotate')).toBeVisible();
+  await expect(page.getByTestId('wizard-generate')).toContainText('Generate from local sources');
+  await expect(page.getByTestId('wizard-generate-sources-demo')).toContainText('notes.txt');
+  await page.getByTestId('wizard-back').click();
+  await expect(page.getByTestId('wizard-files')).toBeVisible();
 
   await page.setViewportSize({ width: 1100, height: 800 });
   await expect(page.getByTestId('wizard-rail')).toBeVisible();

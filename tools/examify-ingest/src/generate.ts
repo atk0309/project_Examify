@@ -431,7 +431,7 @@ export function assertGenerateTargetsHaveSources(
   );
 }
 
-/** Persist-only: existing IR without force fails before any generate write. */
+/** Persist-only: existing or corrupt IR without force fails before any generate write. */
 export function assertGenerateTargetsCanPersist(
   repoRoot: string,
   targets: readonly GenerateTarget[],

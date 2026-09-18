@@ -43,16 +43,18 @@ Surface:
   modes can set / rotate / clear `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` in
   the same repo-root `.env` as `install.sh` and `examify-ingest generate`
   (shared `findRepoRoot`, never `process.cwd()`), never echoed; a
-  host-injected key (exec environ assignment, including empty / `test`) is
-  not rotatable in the wizard) → validate → Review
+  host-injected usable key is not rotatable in the wizard; a boot
+  `ANTHROPIC_API_KEY=test` sentinel stays “not configured” but Clear/Rotate
+  remain available after the first Save) → validate → Review
   (dry-run HITL) → apply → ready. The wizard is one stage at a time: desktop
   (≥900px) uses a left step rail + stage + sticky footer; mobile uses compact
   “Step N of M · Label” progress and a sticky bottom bar. Generate writes BankIR
-  only and never auto-applies. An existing real BankIR (questions present) is
-  never silently clobbered: empty / placeholder IR is non-existing
-  for the shared overwrite gate (`hasExistingBankIr` / `writeBankIrAtomic`;
-  onboarding should use that helper). Corrupt / unparseable / invalid-schema
-  IR still requires `--force` (error names corruption). The dry-run/preview names `would overwrite <rel>`
+  only and never auto-applies. Adding a subject writes `subject.json`
+  only — no empty/placeholder `bank.ir.json`. Overwrite / skip / generate
+  use shared `hasExistingBankIr` (empty / valid zero-item ≠ existing;
+  corrupt / unparseable / invalid schema needs force; never `existsSync`
+  on the IR path). A real existing `bank.ir.json` is never
+  silently clobbered: the dry-run/preview names `would overwrite <rel>`
   and the wizard asks a calm confirm before any write (“Replace existing
   BankIR for {label}?” or a named generate-all batch). Decline
   keeps prior bytes (`skipped` / cancelled — not `invalid`); confirm
@@ -78,7 +80,8 @@ Surface:
   “Finish content setup” chip remains. Invited students and parents never see
   it. Directory-only `examify-ingest` emit (dry-run before apply, empty catalog
   refused). Delete removes IR/source dirs only; prune of leftover generated JSON
-  waits for confirmed directory apply (#62). Not a replacement for `install.sh`
+  waits for a named HITL confirm on Apply (cancel = no deletes/writes). Ready
+  lists live bank subject ids/names and question counts. Not a replacement for `install.sh`
   auth-mode picking. Existing households are backfilled complete.
   `/setup/wizard` redirects here.
 - **`/invite/[token]`** — accept a household invite (password, magic-link, or local OTP).
@@ -263,12 +266,13 @@ Generate scans notes/text (`.txt` / `.md`) and images in the subject folder
 plus PDFs under `content/source-pdfs/<id>/`; uploaded PDF magic-byte checks
 stay `%PDF`. Generate never auto-applies; it writes IR + gitignored
 `.examify-ingest/` run/cache files only. A real BankIR with questions is
-not overwritten unless `--force` (`--dry-run-ir` says **would overwrite**).
-Empty / placeholder IR (empty file, valid zero-item schema) is
-non-existing for that gate. Corrupt / unparseable / invalid-schema IR
-requires `--force` (error names corruption, not empty). Frozen sample-bank ids fail closed at
-generate (same set as validate) unless `--replace-sample` — **no BankIR
-written** (do not imply `bank.ir.json` already exists) —
+not overwritten unless `--force` (`--dry-run-ir` says **would overwrite**)
+when `hasExistingBankIr` is true. Empty / placeholder IR (empty file, valid
+zero-item schema) is non-existing for that gate. Corrupt / unparseable /
+invalid-schema IR requires `--force` (error names corruption, not empty).
+Frozen sample-bank ids fail closed at generate (same set as validate) unless
+`--replace-sample` — **no BankIR written** (do not imply `bank.ir.json`
+already exists) —
 `--provider test` must not write `maths-easy-1` / other SAMPLE ids without
 that flag. Missing cloud keys are refused before overwrite messaging when
 a real key is required; `--provider test` still runs without keys. Persist

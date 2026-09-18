@@ -64,6 +64,7 @@ export type OnboardingActionError = {
     | 'empty_catalog'
     | 'dry_run_required'
     | 'stale_preview'
+    | 'prune_confirm_required'
     | 'emit_required'
     | 'already_complete'
     | 'missing_provider'
@@ -349,7 +350,7 @@ export async function previewOnboardingEmitAction(): Promise<
   };
 }
 
-export async function applyOnboardingEmitAction(): Promise<
+export async function applyOnboardingEmitAction(formData?: FormData): Promise<
   | {
       ok: true;
       snapshot: OnboardingSnapshot;
@@ -364,12 +365,14 @@ export async function applyOnboardingEmitAction(): Promise<
   const state = getHouseholdOnboarding(gate.householdId).state;
   if (!state.dryRunHash) return { ok: false, reason: 'dry_run_required' };
   const replaceSample = state.replaceSample === true;
+  const confirmPrune = formData?.get('confirmPrune') === '1';
   // Single re-preview lives inside applyOnboardingEmit: hash must match the
   // confirmed dry-run, then that same planned list is applied. A second
   // preview here would race and could apply an unconfirmed plan.
   const applied = applyOnboardingEmit({
     replaceSample,
     expectedHash: state.dryRunHash,
+    confirmPrune,
   });
   if (!applied.ok) {
     return { ok: false, reason: applied.reason, message: applied.message, issues: applied.issues };
