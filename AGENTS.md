@@ -60,11 +60,20 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   `validate content/subjects` → `emit content/subjects --dry-run` →
   `emit content/subjects --apply`. It never auto-applies.
   Hand-authored biology has no source file (skip generate; validate/emit only).
-  Fresh-clone generate: `content/subjects/demo/notes.txt`. Existing
-  `bank.ir.json` requires `--force` (dry-run says **would overwrite**)
-  when `hasExistingBankIr` is true (real IR or corrupt); empty /
-  valid zero-item placeholder IR does not.
-  Frozen sample-bank ids fail at generate unless `--replace-sample`.
+  Fresh-clone generate: `content/subjects/demo/notes.txt`. Generate scans
+  notes/text (`.txt` / `.md`) and images in the subject folder plus PDFs
+  under `content/source-pdfs/<id>/` (PDF magic-byte checks for actual PDFs
+  stay fail-closed). A real BankIR with questions requires `--force`
+  (dry-run says **would overwrite**) when `hasExistingBankIr` is true.
+  Empty / placeholder IR (empty file, valid zero-item schema) is
+  non-existing for that gate. Corrupt / unparseable / invalid-schema IR
+  requires `--force` (error names corruption, not empty).
+  Frozen sample-bank ids fail at generate unless `--replace-sample` (**no
+  BankIR written**; do not imply the file already exists). Missing cloud
+  keys are refused before overwrite messaging when a real key is required;
+  `--provider test` still runs without keys. A sourceless sibling blocks
+  `generate content/subjects` (hint: `content/subjects/<id>` or
+  `--subject <id>`, e.g. demo) — do not invent sources.
   Tree generate drafts every subject before the first IR write (sources,
   overwrite, SAMPLE freeze, provider); a mid-list or persist failure writes
   no BankIR (commit rolls back earlier writes; abort is gated before persist).
@@ -110,7 +119,10 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   when no household exists, and only after `SETUP_BOOTSTRAP_SECRET` matches (required
   in production; captcha is not identity). `SetupForm` reads submitted FormData
   (autofill-safe), keeps inputs uncontrolled, and re-reads / restores a
-  FormData snapshot if a Turnstile remount wipes values. It never silently
+  FormData snapshot if a Turnstile remount wipes values. First-paint
+  default household name does not seed that snapshot; silent autofill is
+  captured so a remount can restore it. A user-cleared password is never
+  resurrected from an old snapshot. It never silently
   disables Create household. Field-level / `aria-invalid` errors drop on the
   next successful edit of that field or on resubmit. Email is the required
   admin account id in every `AUTH_MODE` (including password). After bootstrap, `/onboarding` lets the
@@ -170,7 +182,12 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   password-mode invite accept still sends a mailbox OTP (never skipped).
   Interactive / default `install.sh` prompts for mail or enables a local
   outbox when it writes `.env` so kid invites are not stranded. A kept
-  password-mode `.env` with no mail path is refused. Magic-link /
+  password-mode `.env` with no mail path is refused (judged from on-disk
+  `.env` / `.env.local`, not a transient host `ALLOW_LOCAL_OUTBOX`). A
+  host `AUTH_MODE` that differs from effective on-disk `AUTH_MODE`
+  (`.env.local` wins over `.env`, including an empty `AUTH_MODE=` that
+  Next treats as the magic-link default) is refused with copy that names
+  that effective mode. Magic-link /
   local-otp use `MAIL_TRANSPORT` (`auto` / `resend` / `smtp` / `outbox`).
   `pnpm db:migrate` fills `DATABASE_URL` from the repo-root `.env` /
   `.env.local` via `findRepoRoot` (same walk as env-store / ingest).

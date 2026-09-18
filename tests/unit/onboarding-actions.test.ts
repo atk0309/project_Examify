@@ -507,6 +507,7 @@ describe('onboarding actions', () => {
     );
     expect(result.snapshot.hasDryRun).toBe(false);
     expect(result.snapshot.hasApplied).toBe(false);
+    // Empty / placeholder IR is non-existing for the shared overwrite gate.
     expect(result.result.overwrite).toBe(false);
     expect((await validateOnboardingAction()).ok).toBe(true);
   });

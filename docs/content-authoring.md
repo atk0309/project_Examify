@@ -25,8 +25,8 @@ the build fails if it ever ends up in the client graph. A unit-test guard
 You can author a **BankIR** JSON document by hand, or generate one from local
 source files, then emit the two-file split with `examify-ingest`. After
 first-run `/setup`, the admin wizard at `/onboarding` can add subjects, attach
-local PDFs (under `content/source-pdfs/<subject>/` only; generate also reads
-`notes.txt` and other CLI sources already in the subject folder), optionally generate
+local PDFs (under `content/source-pdfs/<subject>/` only) or notes/text in the
+subject folder, optionally generate
 BankIR on the AI step (`examify-ingest/generate`, IR only), and run the same
 directory emit (validate, Review / dry-run HITL with planned deletes, then apply). The
 wizard does **not** auto-emit or auto-apply after generate. Adding a subject
@@ -58,19 +58,25 @@ An empty subjects tree is refused and never wipes generated files. Uploaded
 PDFs must start with `%PDF`. `--replace-sample` is off unless the admin enables
 the advanced toggle.
 
-Generate writes IR only. It never silently emits or applies. Existing
-`bank.ir.json` is not overwritten unless you pass `--force` (dry-run says
-**would overwrite**). Sample-bank ids fail at generate unless
-`--replace-sample`.
+Generate writes IR only. It never silently emits or applies. A real BankIR
+with questions is not overwritten unless you pass `--force` (dry-run says
+**would overwrite**). Empty / placeholder IR (empty file, valid zero-item
+schema) is treated as missing — no `--force` needed. Corrupt / unparseable /
+invalid-schema IR requires `--force`; the error names corruption, not empty.
+Sample-bank ids fail at generate unless `--replace-sample` (**no BankIR
+written**; that copy does not imply the file already exists).
 
 **Hand-authored biology** (`content/subjects/biology/bank.ir.json`) has no
 source file. Skip generate; validate / emit only. Generate needs a source
 file first.
 
 1. Drop sources in `content/source-pdfs/<subject-id>/` (gitignored) and/or the
-   subject folder. Optional: author `content/subjects/<id>/bank.ir.json` by
-   hand (see the biology sample) instead of generating. A committed generate
-   fixture lives at `content/subjects/demo/notes.txt`.
+   subject folder (`notes.txt` / `.md` / images / PDFs — generate scans the
+   same extensions the CLI accepts). Optional: author
+   `content/subjects/<id>/bank.ir.json` by hand (see the biology sample)
+   instead of generating. A committed generate fixture lives at
+   `content/subjects/demo/notes.txt`. Uploaded PDFs still need `%PDF` magic
+   bytes; notes are text sources, not PDFs.
 2. From the repo root (fresh-clone generate fixture):
 
    ```bash
@@ -103,8 +109,11 @@ file first.
    JSON includes full source text/bytes, not hashes-only) or
    `EXAMIFY_LLM_BASE_URL` (same multimodal payload as OpenAI — source text and
    page images, not hashes-only). `--dry-run-ir` writes nothing durable;
-   when IR already exists it says **would overwrite**. Persist over existing
-   IR requires `--force`.
+   when a real BankIR with questions already exists it says **would overwrite**.
+   Persist over that IR requires `--force`. A sourceless sibling (biology on a
+   fresh clone) blocks `generate content/subjects` — target
+   `content/subjects/<id>` or `--subject <id>` (e.g. demo); generate does not
+   invent sources.
    Sources are framed as untrusted data (`promptVersion` v2) with static
    `UNTRUSTED SOURCE MATERIAL` fences; still review IR before emit. Run
    manifests land in gitignored `.examify-ingest/`.
@@ -247,19 +256,23 @@ Behaviour you can rely on:
 - Items in one exam are graded concurrently, so a mixed paper marks in roughly one
   model round-trip.
 
-## Generating a bank from your own PDFs
+## Generating a bank from your own PDFs and notes
 
 Phase 2 `examify-ingest generate` can draft BankIR from those files (vision-first
 when `pdftoppm` can rasterize pages; images are cached under
-`.examify-ingest/cache/pages/<pdf-sha256>/`). You still review the IR, then
+`.examify-ingest/cache/pages/<pdf-sha256>/`). Notes/text (`.txt` / `.md`,
+including `notes.txt`) and images in the subject folder are first-class
+sources too — the same set generate actually scans. You still review the IR, then
 `validate content/subjects` and `emit content/subjects --dry-run` /
 `emit content/subjects --apply`. The original 13-subject
 deployment was produced from school study guides with this same grounding rule.
 
-1. Drop your source PDFs in `content/source-pdfs/<subject-id>/`. The directory is
+1. Drop your source PDFs in `content/source-pdfs/<subject-id>/` and/or
+   notes/text/images in `content/subjects/<subject-id>/`. The PDF directory is
    **gitignored** — source material often can't be redistributed, so it stays
    local-only; only the questions you author or generate from it (with
-   `provenance`) get committed.
+   `provenance`) get committed. Uploaded PDFs must start with `%PDF`; a
+   `notes.txt` is a text source, not a PDF.
 2. Ingest **vision-first**: `generate` reuses cached page images when the PDF
    hash matches, and otherwise shells out to `pdftoppm` when it is installed.
    You can still render pages yourself (`pdftoppm -r 200`) and read them as the

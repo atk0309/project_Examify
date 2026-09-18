@@ -50,6 +50,7 @@ import {
   splitCommandLine,
   writeFileAtomic,
   defaultSubjectMeta,
+  loadSubjectMeta,
 } from '../../tools/examify-ingest/src/generate-api';
 
 function realBankIr(id: string): BankIR {
@@ -239,6 +240,8 @@ describe('examify-ingest generate P0 gates', () => {
     expect(code).toBe(1);
     expect(streams.err()).toContain('maths-easy-1');
     expect(streams.err()).toMatch(/sample-bank|--replace-sample/);
+    expect(streams.err()).toContain('no BankIR written');
+    expect(streams.err()).not.toMatch(/refusing to overwrite|already exists/);
     expect(existsSync(path.join(mathsDir, 'bank.ir.json'))).toBe(false);
     expect(existsSync(path.join(root, '.examify-ingest'))).toBe(false);
   });
@@ -297,6 +300,8 @@ describe('examify-ingest generate P0 gates', () => {
     expect(streams.err()).toContain('empty');
     expect(streams.err()).toMatch(/no source files/);
     expect(streams.err()).toMatch(/no BankIR written/);
+    expect(streams.err()).toMatch(/content\/subjects\/<id>|--subject <id>/);
+    expect(streams.err()).toContain('demo');
     expect(existsSync(path.join(root, 'content/subjects/plants/bank.ir.json'))).toBe(false);
     expect(existsSync(path.join(root, 'content/subjects/empty/bank.ir.json'))).toBe(false);
     expect(existsSync(path.join(root, '.examify-ingest'))).toBe(false);
@@ -507,48 +512,58 @@ describe('examify-ingest generate P0 gates', () => {
     expect(ir.difficulties.easy[0]?.id).toBe('plants-easy-1');
   });
 
-  it('generate --force replaces unparseable IR using subject.json meta', async () => {
+  it('loadSubjectMeta tolerates empty/unparseable BankIR so the overwrite gate runs', async () => {
     const root = examifyRepo();
-    const irPath = path.join(root, 'content/subjects/plants/bank.ir.json');
+    const plantsDir = path.join(root, 'content/subjects/plants');
+    const irPath = path.join(plantsDir, 'bank.ir.json');
+
+    writeFileSync(irPath, '');
+    expect(loadSubjectMeta(plantsDir, 'plants')).toEqual({
+      id: 'plants',
+      label: 'Plants',
+      icon: 'biology',
+      l: 0.58,
+      c: 0.09,
+      h: 142,
+    });
+    expect(resolveGenerateTargets([plantsDir], root, root, null)).toHaveLength(1);
+
+    const empty = io();
+    empty.handle.cwd = root;
+    const emptyCode = await runCliAsync(
+      ['generate', '--provider', 'test', 'content/subjects/plants'],
+      empty.handle,
+    );
+    expect(emptyCode).toBe(0);
+    expect(empty.out()).toMatch(/wrote content\/subjects\/plants\/bank\.ir\.json/);
+    expect(empty.err()).not.toMatch(/invalid JSON/);
+
     writeFileSync(irPath, 'not-json{\n');
+    expect(loadSubjectMeta(plantsDir, 'plants').id).toBe('plants');
     const refused = io();
     refused.handle.cwd = root;
-    expect(
-      await runCliAsync(
-        ['generate', '--provider', 'test', 'content/subjects/plants'],
-        refused.handle,
-      ),
-    ).toBe(1);
+    const refusedCode = await runCliAsync(
+      ['generate', '--provider', 'test', 'content/subjects/plants'],
+      refused.handle,
+    );
+    expect(refusedCode).toBe(1);
     expect(refused.err()).toMatch(/corrupt/);
+    expect(refused.err()).toMatch(/unparseable JSON/);
+    expect(refused.err()).not.toMatch(/invalid JSON/);
     expect(readFileSync(irPath, 'utf8')).toBe('not-json{\n');
 
     const forced = io();
     forced.handle.cwd = root;
-    expect(
-      await runCliAsync(
-        ['generate', '--provider', 'test', '--force', 'content/subjects/plants'],
-        forced.handle,
-      ),
-    ).toBe(0);
-    const ir = JSON.parse(readFileSync(irPath, 'utf8')) as BankIR;
-    expect(ir.subject.id).toBe('plants');
-    expect(ir.difficulties.easy[0]?.id).toBe('plants-easy-1');
-  });
+    const forcedCode = await runCliAsync(
+      ['generate', '--provider', 'test', '--force', 'content/subjects/plants'],
+      forced.handle,
+    );
+    expect(forcedCode).toBe(0);
+    expect(JSON.parse(readFileSync(irPath, 'utf8')).difficulties.easy[0]?.id).toBe('plants-easy-1');
 
-  it('generate writes over an empty BankIR without --force', async () => {
-    const root = examifyRepo();
-    const irPath = path.join(root, 'content/subjects/plants/bank.ir.json');
     writeFileSync(irPath, '');
-    const streams = io();
-    streams.handle.cwd = root;
-    expect(
-      await runCliAsync(
-        ['generate', '--provider', 'test', 'content/subjects/plants'],
-        streams.handle,
-      ),
-    ).toBe(0);
-    const ir = JSON.parse(readFileSync(irPath, 'utf8')) as BankIR;
-    expect(ir.difficulties.easy[0]?.id).toBe('plants-easy-1');
+    writeFileSync(path.join(plantsDir, 'subject.json'), 'not-json{\n');
+    expect(() => loadSubjectMeta(plantsDir, 'plants')).toThrow(/invalid JSON/);
   });
 
   it('tree generate SAMPLE freeze after a sourced sibling writes no BankIR', async () => {
@@ -828,6 +843,44 @@ describe('examify-ingest generate', () => {
       expect(streams.err()).toMatch(/missing ANTHROPIC_API_KEY|sentinel/);
       expect(existsSync(path.join(root, 'content/subjects/plants/bank.ir.json'))).toBe(false);
     }
+  });
+
+  it('refuses a missing API key before overwrite messaging; test provider still works', async () => {
+    const root = examifyRepo();
+    const irPath = path.join(root, 'content/subjects/plants/bank.ir.json');
+    writeFileSync(irPath, `${JSON.stringify(realBankIr('plants'), null, 2)}\n`);
+
+    const missing = io();
+    missing.handle.cwd = root;
+    missing.handle.env = { ANTHROPIC_API_KEY: '', OPENAI_API_KEY: '' };
+    const missingCode = await runCliAsync(
+      ['generate', '--provider', 'anthropic', 'content/subjects/plants'],
+      missing.handle,
+    );
+    expect(missingCode).toBe(1);
+    expect(missing.err()).toMatch(/missing ANTHROPIC_API_KEY/);
+    expect(missing.err()).not.toMatch(/refusing to overwrite/);
+
+    const forced = io();
+    forced.handle.cwd = root;
+    forced.handle.env = { ANTHROPIC_API_KEY: '' };
+    const forcedCode = await runCliAsync(
+      ['generate', '--provider', 'anthropic', '--force', 'content/subjects/plants'],
+      forced.handle,
+    );
+    expect(forcedCode).toBe(1);
+    expect(forced.err()).toMatch(/missing ANTHROPIC_API_KEY/);
+    expect(readFileSync(irPath, 'utf8')).toContain('Prior question?');
+
+    const testProvider = io();
+    testProvider.handle.cwd = root;
+    const testCode = await runCliAsync(
+      ['generate', '--provider', 'test', 'content/subjects/plants'],
+      testProvider.handle,
+    );
+    expect(testCode).toBe(1);
+    expect(testProvider.err()).toMatch(/refusing to overwrite existing .*bank\.ir\.json/);
+    expect(testProvider.err()).toContain('--force');
   });
 
   it('treats the ANTHROPIC_API_KEY=test sentinel as missing for --provider anthropic', async () => {

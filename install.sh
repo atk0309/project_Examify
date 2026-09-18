@@ -13,13 +13,19 @@
 # Non-interactive (CI / automation):
 #   EXAMIFY_NONINTERACTIVE=1 SITE_URL=https://exam.example.com ./install.sh
 #   Existing .env is never overwritten in non-interactive mode. Remove it first
-#   to regenerate. A kept password-mode .env with no SMTP / Resend / allowed
-#   outbox is refused (invite accept would fail closed; this run does not
-#   claim to enable an outbox).
+#   to regenerate. Keep-broken / keep-good / heal is judged from on-disk
+#   .env (and .env.local when present) — never a transient host process env.
+#   Host ALLOW_LOCAL_OUTBOX=1 must not greenlight a broken password file.
+#   A kept password-mode file with no SMTP / Resend / allowed outbox is
+#   refused (invite accept would fail closed; this run does not claim to
+#   enable an outbox). Host AUTH_MODE that differs from effective on-disk
+#   AUTH_MODE (.env.local wins over .env, including an empty AUTH_MODE=)
+#   is refused with copy that names that effective mode, not the host's
+#   and not .env alone when local wins.
 #   Default AUTH_MODE=password enables a local outbox so invite-accept OTP
 #   (mailbox proof) can be read from data/outbox — only when this run writes
 #   .env. Set SMTP_* / RESEND_* to use real mail instead. Invite accept never
-#   skips that OTP.
+#   skips that OTP. RESEND_API_KEY=test is not a mail path.
 #
 # Flags:
 #   --write-env-only   write .env and exit (used by tests)
@@ -44,13 +50,19 @@ Piped help (do not use `bash --help` — that is bash's own flag):
 Non-interactive (CI / automation):
   EXAMIFY_NONINTERACTIVE=1 SITE_URL=https://exam.example.com ./install.sh
   Existing .env is never overwritten in non-interactive mode. Remove it first
-  to regenerate. A kept password-mode .env with no SMTP / Resend / allowed
-  outbox is refused (invite accept would fail closed; this run does not
-  claim to enable an outbox).
+  to regenerate. Keep-broken / keep-good / heal is judged from on-disk
+  .env (and .env.local when present) — never a transient host process env.
+  Host ALLOW_LOCAL_OUTBOX=1 must not greenlight a broken password file.
+  A kept password-mode file with no SMTP / Resend / allowed outbox is
+  refused (invite accept would fail closed; this run does not claim to
+  enable an outbox). Host AUTH_MODE that differs from effective on-disk
+  AUTH_MODE (.env.local wins over .env, including an empty AUTH_MODE=)
+  is refused with copy that names that effective mode, not the host's
+  and not .env alone when local wins.
   Default AUTH_MODE=password enables a local outbox so invite-accept OTP
   (mailbox proof) can be read from data/outbox — only when this run writes
   .env. Set SMTP_* / RESEND_* to use real mail instead. Invite accept never
-  skips that OTP.
+  skips that OTP. RESEND_API_KEY=test is not a mail path.
 
 Flags:
   --write-env-only   write .env and exit (used by tests)
@@ -72,16 +84,9 @@ SKIP_BUILD=0
 NONINTERACTIVE="${EXAMIFY_NONINTERACTIVE:-0}"
 ENABLED_PASSWORD_OUTBOX=0
 
-# Host-injected process env (Next.js does not override these). Installer
-# prompts only fill shell locals and must not count as runtime config when
-# validating a kept .env.
+# Host AUTH_MODE at invoke time (before installer defaults). Used only to
+# refuse a conflict with effective on-disk AUTH_MODE — never to judge mail.
 HOST_AUTH_MODE="${AUTH_MODE-}"
-HOST_MAIL_TRANSPORT="${MAIL_TRANSPORT-}"
-HOST_ALLOW_LOCAL_OUTBOX="${ALLOW_LOCAL_OUTBOX-}"
-HOST_SMTP_HOST="${SMTP_HOST-}"
-HOST_SMTP_FROM="${SMTP_FROM-}"
-HOST_RESEND_API_KEY="${RESEND_API_KEY-}"
-HOST_RESEND_FROM="${RESEND_FROM-}"
 
 for arg in "$@"; do
   case "$arg" in
@@ -174,12 +179,15 @@ has_invite_mail_path() {
   esac
 }
 
-# Last KEY=VALUE in a dotenv file. Does not eval / expand. Empty if missing.
+# Last KEY=VALUE in a dotenv file. Does not eval / expand.
+# Prints the value (empty if the assignment is empty). Exit 0 if the key is
+# present — including AUTH_MODE= — so an empty .env.local can shadow .env.
+# Exit 1 if the file or key is missing.
 env_file_get() {
   local file="$1"
   local key="$2"
-  local line="" body="" value="" quoted=0
-  [ -f "$file" ] || return 0
+  local line="" body="" value="" quoted=0 found=0
+  [ -f "$file" ] || return 1
   while IFS= read -r line || [ -n "$line" ]; do
     body="${line#"${line%%[![:space:]]*}"}"
     [ -z "$body" ] && continue
@@ -190,6 +198,7 @@ env_file_get() {
     fi
     case "$body" in
       "${key}="*)
+        found=1
         value="${body#"${key}="}"
         value="${value#"${value%%[![:space:]]*}"}"
         value="${value%"${value##*[![:space:]]}"}"
@@ -215,39 +224,59 @@ env_file_get() {
     esac
   done < "$file"
   printf '%s' "$value"
+  [ "$found" -eq 1 ]
 }
 
-# Process env (host snapshot) > .env.local > .env. Empty host value is unset.
-effective_env_get() {
+env_file_has() {
+  env_file_get "$1" "$2" >/dev/null
+}
+
+# On-disk dotenv only: .env.local wins over .env (same file order Next.js
+# loads), including an empty assignment that shadows .env. Host process
+# env is ignored so a transient ALLOW_LOCAL_OUTBOX=1 on the installer
+# cannot greenlight a broken file.
+disk_env_get() {
   local key="$1"
-  local host="$2"
-  if [ -n "$host" ]; then
-    printf '%s' "$host"
+  local value=""
+  if value="$(env_file_get .env.local "$key")"; then
+    printf '%s' "$value"
     return 0
   fi
-  local from_local
-  from_local="$(env_file_get .env.local "$key")"
-  if [ -n "$from_local" ]; then
-    printf '%s' "$from_local"
-    return 0
-  fi
-  env_file_get .env "$key"
+  value="$(env_file_get .env "$key")" || true
+  printf '%s' "$value"
 }
 
-# Kept-file check uses runtime defaults (AUTH_MODE=magic-link, MAIL_TRANSPORT=auto)
-# and Next.js precedence — not this run's installer prompt defaults.
+# AUTH_MODE written in the kept `.env` only (not host, not .env.local).
+# Omitted line is the runtime default (magic-link). Used to name an override.
+kept_env_auth_mode() {
+  local mode
+  mode="$(env_file_get .env AUTH_MODE)"
+  printf '%s' "${mode:-magic-link}"
+}
+
+# Effective on-disk AUTH_MODE: .env.local wins over .env (Next.js load order).
+# Omitted everywhere is the runtime default (magic-link).
+disk_auth_mode() {
+  local mode
+  mode="$(disk_env_get AUTH_MODE)"
+  printf '%s' "${mode:-magic-link}"
+}
+
+# Kept-file mail check uses on-disk files and runtime defaults
+# (AUTH_MODE=magic-link, MAIL_TRANSPORT=auto) — not host process env,
+# not this run's installer prompt defaults.
 kept_password_has_mail() {
   local AUTH_MODE MAIL_TRANSPORT ALLOW_LOCAL_OUTBOX SMTP_HOST SMTP_FROM RESEND_API_KEY RESEND_FROM
-  AUTH_MODE="$(effective_env_get AUTH_MODE "$HOST_AUTH_MODE")"
+  AUTH_MODE="$(disk_env_get AUTH_MODE)"
   AUTH_MODE="${AUTH_MODE:-magic-link}"
   [ "$AUTH_MODE" = "password" ] || return 0
-  MAIL_TRANSPORT="$(effective_env_get MAIL_TRANSPORT "$HOST_MAIL_TRANSPORT")"
+  MAIL_TRANSPORT="$(disk_env_get MAIL_TRANSPORT)"
   MAIL_TRANSPORT="${MAIL_TRANSPORT:-auto}"
-  ALLOW_LOCAL_OUTBOX="$(effective_env_get ALLOW_LOCAL_OUTBOX "$HOST_ALLOW_LOCAL_OUTBOX")"
-  SMTP_HOST="$(effective_env_get SMTP_HOST "$HOST_SMTP_HOST")"
-  SMTP_FROM="$(effective_env_get SMTP_FROM "$HOST_SMTP_FROM")"
-  RESEND_API_KEY="$(effective_env_get RESEND_API_KEY "$HOST_RESEND_API_KEY")"
-  RESEND_FROM="$(effective_env_get RESEND_FROM "$HOST_RESEND_FROM")"
+  ALLOW_LOCAL_OUTBOX="$(disk_env_get ALLOW_LOCAL_OUTBOX)"
+  SMTP_HOST="$(disk_env_get SMTP_HOST)"
+  SMTP_FROM="$(disk_env_get SMTP_FROM)"
+  RESEND_API_KEY="$(disk_env_get RESEND_API_KEY)"
+  RESEND_FROM="$(disk_env_get RESEND_FROM)"
   has_invite_mail_path
 }
 
@@ -274,10 +303,35 @@ claim_password_outbox_enable() {
 
 # Kept file was not written. Do not claim enable. Password without a delivery
 # path would strand kid invites — refuse instead of warning and ignoring.
+# Copy names on-disk AUTH_MODE (effective .env / .env.local), never host env.
 refuse_kept_password_without_mail() {
-  echo "Keeping existing .env, but it is AUTH_MODE=password with no SMTP / Resend / allowed outbox." >&2
+  local disk_mode env_mode
+  disk_mode="$(disk_env_get AUTH_MODE)"
+  disk_mode="${disk_mode:-magic-link}"
+  env_mode="$(kept_env_auth_mode)"
+  if [ "$env_mode" != "$disk_mode" ]; then
+    echo "Keeping existing .env (AUTH_MODE=${env_mode}); on-disk config is AUTH_MODE=${disk_mode} with no SMTP / Resend / allowed outbox." >&2
+  else
+    echo "Keeping existing .env, but it is AUTH_MODE=${disk_mode} with no SMTP / Resend / allowed outbox." >&2
+  fi
   echo "Invite accept still requires mailbox proof and will fail closed. This run did not enable an outbox." >&2
   echo "Add SMTP_* or RESEND_* (or MAIL_TRANSPORT=outbox and ALLOW_LOCAL_OUTBOX=1), or remove .env and re-run." >&2
+  exit 1
+}
+
+# Host AUTH_MODE is this run's intent; effective on-disk mode is what would boot.
+# Never claim .env alone when .env.local wins, and never claim the host value.
+refuse_kept_auth_mode_conflict() {
+  local disk_mode="$1"
+  local host_mode="$2"
+  local env_mode
+  env_mode="$(kept_env_auth_mode)"
+  if env_file_has .env.local AUTH_MODE && [ "$disk_mode" != "$env_mode" ]; then
+    echo "Keeping existing .env. Host AUTH_MODE=${host_mode}, but on-disk AUTH_MODE=${disk_mode} (.env.local overrides .env AUTH_MODE=${env_mode})." >&2
+  else
+    echo "Keeping existing .env. Host AUTH_MODE=${host_mode}, but the kept file is AUTH_MODE=${disk_mode}." >&2
+  fi
+  echo "This run did not overwrite .env. Unset AUTH_MODE to keep this file, or remove .env and re-run." >&2
   exit 1
 }
 
@@ -611,6 +665,12 @@ fi
 if [ "$WROTE_ENV" = "1" ] && [ "$ENABLED_PASSWORD_OUTBOX" = "1" ]; then
   claim_password_outbox_enable
 elif [ "$KEPT_EXISTING_ENV" = "1" ]; then
+  if [ -n "$HOST_AUTH_MODE" ]; then
+    kept_mode="$(disk_auth_mode)"
+    if [ "$HOST_AUTH_MODE" != "$kept_mode" ]; then
+      refuse_kept_auth_mode_conflict "$kept_mode" "$HOST_AUTH_MODE"
+    fi
+  fi
   if ! kept_password_has_mail; then
     refuse_kept_password_without_mail
   fi

@@ -11,6 +11,9 @@ export const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 /** Matches `HOUSEHOLD_NAME_MAX` in `households.ts` (server-only). */
 export const SETUP_HOUSEHOLD_NAME_MAX = 80;
 
+/** First-paint `defaultValue` on `/setup`. Not a user/autofill value. */
+export const SETUP_DEFAULT_HOUSEHOLD_NAME = 'Our family';
+
 export const SETUP_FIELD_ERROR = {
   householdName: 'Enter a household name.',
   householdNameLong: `Household name must be at most ${SETUP_HOUSEHOLD_NAME_MAX} characters.`,
@@ -141,25 +144,69 @@ export function setupFieldsEqual(a: SetupFormFields, b: SetupFormFields): boolea
   return SETUP_FIELD_KEYS.every((key) => a[key] === b[key]);
 }
 
+export function isSetupDefaultHouseholdName(name: string): boolean {
+  return name.trim() === SETUP_DEFAULT_HOUSEHOLD_NAME;
+}
+
+/** First-paint default name only — must not seed the remount snapshot. */
+export function isDefaultOnlySetupSnapshot(fields: SetupFormFields): boolean {
+  return (
+    (fields.householdName === '' || isSetupDefaultHouseholdName(fields.householdName)) &&
+    fields.setupSecret === '' &&
+    fields.email === '' &&
+    fields.password === ''
+  );
+}
+
+/**
+ * Silent autofill never fires `input`. Adopt richer live FormData into the
+ * remount snapshot. First-paint default household name does not seed it.
+ * Password is upgrade-only; recover never copies snapshot password onto
+ * an empty live field.
+ */
+export function captureSilentSetupSnapshot(
+  live: SetupFormFields,
+  snapshot: SetupFormFields | null,
+): SetupFormFields | null {
+  if (isDefaultOnlySetupSnapshot(live)) return snapshot;
+  if (!snapshot) return live;
+  const householdName =
+    isSetupDefaultHouseholdName(snapshot.householdName) &&
+    !isSetupDefaultHouseholdName(live.householdName)
+      ? live.householdName
+      : snapshot.householdName || live.householdName;
+  return {
+    householdName,
+    setupSecret: snapshot.setupSecret || live.setupSecret,
+    email: snapshot.email || live.email,
+    password: snapshot.password || live.password,
+  };
+}
+
 /**
  * UX lock: if a remount (Turnstile / Script) wipes filled FormData-backed
- * values, restore the snapshot. Live values win when they are at least as
- * complete as the snapshot (a user edit, not a wipe).
+ * values, restore the snapshot. Default household name is a remount wipe,
+ * not a user value. Live password always wins — never resurrect a clear.
  */
 export function recoverSetupFieldsAfterRemount(
   live: SetupFormFields,
   snapshot: SetupFormFields | null,
 ): SetupFormFields {
   if (!snapshot) return live;
-  const snapshotFilled = SETUP_FIELD_KEYS.filter((key) => snapshot[key] !== '').length;
-  const liveFilled = SETUP_FIELD_KEYS.filter((key) => live[key] !== '').length;
-  if (snapshotFilled > 0 && liveFilled < snapshotFilled) {
-    return {
-      householdName: live.householdName || snapshot.householdName,
-      setupSecret: live.setupSecret || snapshot.setupSecret,
-      email: live.email || snapshot.email,
-      password: live.password || snapshot.password,
-    };
+
+  let householdName = live.householdName;
+  if (
+    (householdName === '' || isSetupDefaultHouseholdName(householdName)) &&
+    snapshot.householdName !== '' &&
+    !isSetupDefaultHouseholdName(snapshot.householdName)
+  ) {
+    householdName = snapshot.householdName;
   }
-  return live;
+
+  return {
+    householdName,
+    setupSecret: live.setupSecret || snapshot.setupSecret,
+    email: live.email || snapshot.email,
+    password: live.password,
+  };
 }

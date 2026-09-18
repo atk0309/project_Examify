@@ -30,7 +30,10 @@ Surface:
 - **`/setup`** — first-run household bootstrap (only when no household exists).
   `SetupForm` reads submitted FormData (autofill-safe), keeps inputs
   uncontrolled, and re-reads / restores a FormData snapshot if a Turnstile
-  remount wipes values. It never silently disables Create household.
+  remount wipes values. First-paint default household name (“Our family”)
+  does not seed that snapshot; silent autofill is captured so a remount
+  can restore it. A user-cleared password is never resurrected from an
+  old snapshot. It never silently disables Create household.
   Field-level / `aria-invalid` errors explain what failed and drop on the
   next successful edit of that field or on resubmit. Email is the required
   admin account id in every `AUTH_MODE` (including password).
@@ -248,7 +251,8 @@ from `content/subjects/biology/bank.ir.json`. `docs/content-authoring.md` is the
 full guide: question/key formats, rubric style, the `examify-ingest` generate →
 validate → emit path, adding subjects (all 13 original duotone icons remain in
 `icons.tsx`, reusable), and the vision-first workflow for generating a grounded
-bank from source PDFs kept local-only in the gitignored `content/source-pdfs/`.
+bank from source PDFs (and notes/text in the subject folder) kept local-only
+in the gitignored `content/source-pdfs/` / subject directory.
 
 Automated path: author or `pnpm examify-ingest generate` a
 `content/subjects/<id>/bank.ir.json`, then `pnpm examify-ingest validate content/subjects`,
@@ -258,17 +262,25 @@ then the same directory emit, HITL dry-run before apply, empty tree refused).
 Hand-authored biology has no source file — skip generate (validate/emit only).
 A committed generate fixture is `content/subjects/demo/notes.txt`
 (`pnpm examify-ingest generate --provider test --seed 0 content/subjects/demo`).
-Generate never auto-applies; it writes IR + gitignored `.examify-ingest/`
-run/cache files only. Existing `bank.ir.json` is not overwritten unless
-`--force` (`--dry-run-ir` says **would overwrite**) when
-`hasExistingBankIr` is true (real IR or corrupt). Empty / valid
-zero-item placeholder IR does not require `--force`. Frozen sample-bank ids
-fail closed at generate (same set as validate) unless `--replace-sample` —
+Generate scans notes/text (`.txt` / `.md`) and images in the subject folder
+plus PDFs under `content/source-pdfs/<id>/`; uploaded PDF magic-byte checks
+stay `%PDF`. Generate never auto-applies; it writes IR + gitignored
+`.examify-ingest/` run/cache files only. A real BankIR with questions is
+not overwritten unless `--force` (`--dry-run-ir` says **would overwrite**)
+when `hasExistingBankIr` is true. Empty / placeholder IR (empty file, valid
+zero-item schema) is non-existing for that gate. Corrupt / unparseable /
+invalid-schema IR requires `--force` (error names corruption, not empty).
+Frozen sample-bank ids fail closed at generate (same set as validate) unless
+`--replace-sample` — **no BankIR written** (do not imply `bank.ir.json`
+already exists) —
 `--provider test` must not write `maths-easy-1` / other SAMPLE ids without
-that flag. Persist uses shared `writeBankIrAtomic` (force required to
-clobber). Tree generate drafts every subject before the first IR write
-(sources, overwrite, SAMPLE freeze, provider) so a mid-list failure leaves
-no BankIR. Persist of a tree is one abort gate then a transactional commit
+that flag. Missing cloud keys are refused before overwrite messaging when
+a real key is required; `--provider test` still runs without keys. Persist
+uses shared `writeBankIrAtomic` (force required to clobber real IR). Tree
+generate drafts every subject before the first IR write (sources, overwrite,
+SAMPLE freeze, provider) so a mid-list failure leaves no BankIR. A
+sourceless sibling blocks `generate content/subjects` and hints to target
+`content/subjects/<id>` or `--subject <id>` (e.g. demo). Persist of a tree is one abort gate then a transactional commit
 (any later write rolls back earlier BankIR / IR cache / manifest / page cache). The `/onboarding` generate path calls that same helper: named
 confirm supplies `force`; decline/cancel keeps prior bytes. `generateSubject` accepts optional `AbortSignal` (forwarded
 to provider HTTP/CMD; abort throws and writes no IR, IR cache, page-raster
@@ -526,7 +538,14 @@ default `install.sh` (`AUTH_MODE=password`) prompts for mail or enables a
 local outbox (`ALLOW_LOCAL_OUTBOX=1`) when it **writes** `.env` so kid
 invites are not stranded — it does not skip mailbox proof. A kept
 password-mode `.env` with no mail path is refused (no false “enabled
-outbox” claim). `local-otp` in production requires
+outbox” claim). Keep-broken / keep-good is judged from on-disk `.env`
+(and `.env.local` if present), not a transient host process env —
+`ALLOW_LOCAL_OUTBOX=1` on the installer must not greenlight a broken
+file. A host `AUTH_MODE` that differs from effective on-disk `AUTH_MODE`
+(`.env.local` wins over `.env`, including an empty `AUTH_MODE=` that
+Next treats as the magic-link default) is refused with copy that names
+that effective mode. `RESEND_API_KEY=test` is not a
+mail path. `local-otp` in production requires
 `ALLOW_LOCAL_OUTBOX=1`. `MAIL_TRANSPORT` is `auto` (SMTP if `SMTP_HOST`, else
 Resend if a real key, else outbox). Explicit `MAIL_TRANSPORT=smtp` needs
 `SMTP_HOST` + `SMTP_FROM`; `auto` + `SMTP_HOST` also needs `SMTP_FROM`. A

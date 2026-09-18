@@ -137,8 +137,16 @@ From a clone: `./install.sh`. Help: `./install.sh --help` (piped:
 Non-interactive: `EXAMIFY_NONINTERACTIVE=1 ./install.sh` (defaults to
 `AUTH_MODE=password` and a local outbox at `data/outbox` so kid invite
 accept can deliver the mailbox OTP — only when this run writes `.env`;
-set `SMTP_*` / `RESEND_*` for real mail). A kept password-mode `.env`
-with no mail path is refused (not described as enabled). Invite accept
+set `SMTP_*` / `RESEND_*` for real mail). Keep-broken / keep-good is
+judged from on-disk `.env` (and `.env.local` if present), not a transient
+host env: `ALLOW_LOCAL_OUTBOX=1` on the installer process does not
+greenlight a broken password file. A kept password-mode `.env` with no
+mail path is refused (not described as enabled). A host `AUTH_MODE` that
+differs from effective on-disk `AUTH_MODE` (`.env.local` wins over `.env`,
+including an empty `AUTH_MODE=` that Next treats as the magic-link default)
+is refused with copy that names that effective mode, not the host and
+not `.env` alone when local wins. `RESEND_API_KEY=test` is not a mail path.
+Invite accept
 never skips that OTP.
 
 Then `pnpm start` (or `pnpm dev`), open `SITE_URL`, and complete **`/setup`**
@@ -253,10 +261,14 @@ hand or `pnpm examify-ingest generate`) and emit the split with
 `content/generated/`). Generate writes IR only — still
 `pnpm examify-ingest validate content/subjects`, then
 `emit content/subjects --dry-run`, then `emit content/subjects --apply`. Hand-authored biology has no source file (skip generate). A
-fresh-clone generate fixture is `content/subjects/demo`. Existing IR needs
-`--force`; sample-bank ids fail at generate unless `--replace-sample`. The full guide — adding subjects and difficulties, writing
+fresh-clone generate fixture is `content/subjects/demo` (`notes.txt` in the
+subject folder; generate also reads `.txt` / `.md` / images there plus PDFs
+under `content/source-pdfs/<id>/`). A real BankIR with questions needs
+`--force`; empty / placeholder IR does not. Corrupt / invalid-schema IR
+also needs `--force` (named as corrupt, not empty). Sample-bank ids fail at generate
+unless `--replace-sample`. The full guide — adding subjects and difficulties, writing
 rubrics the LLM grader marks well, the ingest CLI, and a workflow for
-generating a question bank from your own study-material PDFs — is in
+generating a question bank from your own study-material PDFs and notes — is in
 [`docs/content-authoring.md`](docs/content-authoring.md) and
 [`tools/examify-ingest/README.md`](tools/examify-ingest/README.md).
 
