@@ -100,9 +100,10 @@ file first.
    the key is missing or is the `test` sentinel. The `/onboarding` AI step
    and `install.sh` can write `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` into
    that same repo-root `.env` store (`findRepoRoot`, not `process.cwd()`);
-   the wizard never echoes the value. A host-injected key (Docker /
+   the wizard never echoes the value. A host-injected usable key (Docker /
    systemd / parent exec environ — not live-vs-file equality) cannot be
-   rotated or cleared from the wizard.
+   rotated or cleared from the wizard. A boot `test` sentinel can still
+   be cleared / rotated, including after the first Save.
    A cache hit returns the prior
    IR without a network call. `--provider test` is the CI fixture (no
    network). `--provider local` uses quoted `EXAMIFY_INGEST_LOCAL_CMD` (stdin

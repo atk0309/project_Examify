@@ -40,6 +40,7 @@ import {
   envStoreSecretConfigured,
   envStoreSecretHostManaged,
   envStoreSecretLiveTest,
+  envStoreSecretWriteBlocked,
   envStoreSecretPresent,
 } from '@/lib/env-store';
 import { getMembershipForUser } from '@/lib/households';
@@ -397,6 +398,8 @@ function aiFlags(): {
   openaiLiveTest: boolean;
   anthropicHostManaged: boolean;
   openaiHostManaged: boolean;
+  anthropicWriteBlocked: boolean;
+  openaiWriteBlocked: boolean;
   localAgentConfigured: boolean;
 } {
   return {
@@ -412,6 +415,8 @@ function aiFlags(): {
     openaiLiveTest: envStoreSecretLiveTest('OPENAI_API_KEY'),
     anthropicHostManaged: envStoreSecretHostManaged('ANTHROPIC_API_KEY'),
     openaiHostManaged: envStoreSecretHostManaged('OPENAI_API_KEY'),
+    anthropicWriteBlocked: envStoreSecretWriteBlocked('ANTHROPIC_API_KEY'),
+    openaiWriteBlocked: envStoreSecretWriteBlocked('OPENAI_API_KEY'),
     localAgentConfigured: Boolean(
       env.EXAMIFY_LLM_BASE_URL || process.env.EXAMIFY_INGEST_LOCAL_CMD?.trim(),
     ),

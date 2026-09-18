@@ -152,10 +152,17 @@ export type OnboardingSnapshot = {
    * Host (Docker / systemd / parent exec environ) assigned the key —
    * including empty / `test`. A matching `.env` value is not enough.
    * Wizard write/clear of a usable or empty host key is refused. A boot
-   * `test` sentinel (`*LiveTest`) can still be cleared.
+   * `test` sentinel (`*LiveTest` or `!*WriteBlocked`) can still be
+   * cleared / rotated, including after the first Save.
    */
   anthropicHostManaged: boolean;
   openaiHostManaged: boolean;
+  /**
+   * True when set / clear is refused (`host_managed`). Inverse of the
+   * wizard lock: a boot `test` sentinel stays writable after rotation.
+   */
+  anthropicWriteBlocked: boolean;
+  openaiWriteBlocked: boolean;
   localAgentConfigured: boolean;
   /** Sample + generated live bank (Ready). Silent wrong bank stays visible. */
   liveSubjects: OnboardingLiveSubject[];

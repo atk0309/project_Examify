@@ -1346,7 +1346,7 @@ function EnvKeyPanel({
   hostName,
   configured,
   liveTest,
-  hostManaged,
+  writeBlocked,
   pending,
   onSave,
   onClear,
@@ -1356,7 +1356,7 @@ function EnvKeyPanel({
   hostName: string;
   configured: boolean;
   liveTest: boolean;
-  hostManaged: boolean;
+  writeBlocked: boolean;
   pending: boolean;
   onSave: (key: string) => Promise<boolean>;
   onClear: () => void;
@@ -1366,8 +1366,8 @@ function EnvKeyPanel({
   const [saving, setSaving] = useState(false);
   const busy = pending || saving;
   const sentinel = liveTest;
-  const locked = hostManaged && !liveTest;
-  const canMutate = !hostManaged || liveTest;
+  const locked = writeBlocked;
+  const canMutate = !writeBlocked;
   const showField = canMutate && (!configured || rotating);
   const inputId = `${testId}-input`;
 
@@ -1577,7 +1577,7 @@ function AiStep({
           hostName="Anthropic"
           configured={snapshot.anthropicConfigured}
           liveTest={snapshot.anthropicLiveTest}
-          hostManaged={snapshot.anthropicHostManaged}
+          writeBlocked={snapshot.anthropicWriteBlocked}
           pending={busy}
           onSave={async (key) => {
             const data = new FormData();
@@ -1600,7 +1600,7 @@ function AiStep({
           hostName="OpenAI"
           configured={snapshot.openaiConfigured}
           liveTest={snapshot.openaiLiveTest}
-          hostManaged={snapshot.openaiHostManaged}
+          writeBlocked={snapshot.openaiWriteBlocked}
           pending={busy}
           onSave={async (key) => {
             const data = new FormData();

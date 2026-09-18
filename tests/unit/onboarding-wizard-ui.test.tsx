@@ -64,6 +64,8 @@ function snapshot(overrides: Partial<OnboardingSnapshot> = {}): OnboardingSnapsh
     openaiLiveTest: false,
     anthropicHostManaged: true,
     openaiHostManaged: false,
+    anthropicWriteBlocked: false,
+    openaiWriteBlocked: false,
     localAgentConfigured: false,
     liveSubjects: [
       { id: 'maths', label: 'Maths', questionCount: 12 },
@@ -148,6 +150,7 @@ describe('OnboardingWizard majors UI', () => {
         anthropicPresent: true,
         anthropicLiveTest: false,
         anthropicHostManaged: true,
+        anthropicWriteBlocked: true,
         anthropicConfigured: false,
       }),
     });
@@ -157,6 +160,7 @@ describe('OnboardingWizard majors UI', () => {
           anthropicPresent: true,
           anthropicLiveTest: false,
           anthropicHostManaged: true,
+          anthropicWriteBlocked: true,
           anthropicConfigured: false,
         })}
         pendingInvites={[]}
@@ -174,6 +178,49 @@ describe('OnboardingWizard majors UI', () => {
     );
     expect(screen.queryByTestId('wizard-anthropic-key-clear')).toBeNull();
     expect(screen.queryByTestId('wizard-anthropic-key-rotate')).toBeNull();
+    expect(screen.getByTestId('wizard-anthropic-key')).not.toHaveTextContent('test sentinel');
+  });
+
+  it('keeps Clear and Rotate after replacing a boot test sentinel', async () => {
+    setOnboardingAiModeAction.mockResolvedValue({
+      ok: true,
+      snapshot: snapshot({
+        aiMode: 'cloud',
+        anthropicConfigured: true,
+        anthropicPresent: true,
+        anthropicLiveTest: false,
+        anthropicHostManaged: true,
+        anthropicWriteBlocked: false,
+      }),
+    });
+    render(
+      <OnboardingWizard
+        snapshot={snapshot({
+          anthropicConfigured: true,
+          anthropicPresent: true,
+          anthropicLiveTest: false,
+          anthropicHostManaged: true,
+          anthropicWriteBlocked: false,
+        })}
+        pendingInvites={[]}
+        members={[]}
+        canInvite={false}
+        authMode="magic-link"
+      />,
+    );
+    fireEvent.click(screen.getByTestId('wizard-get-started'));
+    fireEvent.click(screen.getByTestId('wizard-next'));
+    fireEvent.click(screen.getByTestId('wizard-next'));
+    fireEvent.click(screen.getByTestId('wizard-ai-cloud'));
+    expect(await screen.findByTestId('wizard-ai-store')).toHaveTextContent('configured');
+    expect(screen.getByTestId('wizard-anthropic-key-clear')).toBeVisible();
+    expect(screen.getByTestId('wizard-anthropic-key-rotate')).toBeVisible();
+    expect(screen.getByTestId('wizard-anthropic-key')).toHaveTextContent(
+      'Saved on this host in the same .env store',
+    );
+    expect(screen.getByTestId('wizard-anthropic-key')).not.toHaveTextContent(
+      'set by the host environment',
+    );
     expect(screen.getByTestId('wizard-anthropic-key')).not.toHaveTextContent('test sentinel');
   });
 

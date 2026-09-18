@@ -150,7 +150,8 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   repo-root `.env` as `install.sh` and `examify-ingest generate` (shared
   `findRepoRoot`; never echoed; host-injected usable keys are not rotatable
   in the wizard; a boot `ANTHROPIC_API_KEY=test` sentinel stays “not
-  configured” but Clear/Rotate remain available); skip / Back / desktop rail lock while
+  configured” but Clear/Rotate remain available after the first Save);
+  skip / Back / desktop rail lock while
   generate is in flight so Cancel stays reachable), and emit
   BankIR via `examify-ingest` (directory-only, Review / dry-run HITL before apply,
   empty catalog fail-closed; `--replace-sample` only behind an explicit advanced

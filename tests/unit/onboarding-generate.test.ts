@@ -293,7 +293,11 @@ describe('onboarding generate graph', () => {
     expect(flags).toMatch(/anthropicPresent: envStoreSecretPresent\('ANTHROPIC_API_KEY'\)/);
     expect(flags).toMatch(/anthropicLiveTest: envStoreSecretLiveTest\('ANTHROPIC_API_KEY'\)/);
     expect(flags).toMatch(/anthropicHostManaged: envStoreSecretHostManaged\('ANTHROPIC_API_KEY'\)/);
+    expect(flags).toMatch(
+      /anthropicWriteBlocked: envStoreSecretWriteBlocked\('ANTHROPIC_API_KEY'\)/,
+    );
     expect(wizard).toMatch(/liveTest=\{snapshot\.anthropicLiveTest\}/);
+    expect(wizard).toMatch(/writeBlocked=\{snapshot\.anthropicWriteBlocked\}/);
     expect(wizard).not.toMatch(/present && !configured/);
     expect(flags).not.toMatch(/ANTHROPIC_API_KEY: env\.ANTHROPIC_API_KEY/);
 

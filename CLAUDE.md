@@ -45,7 +45,7 @@ Surface:
   (shared `findRepoRoot`, never `process.cwd()`), never echoed; a
   host-injected usable key is not rotatable in the wizard; a boot
   `ANTHROPIC_API_KEY=test` sentinel stays “not configured” but Clear/Rotate
-  remain available) → validate → Review
+  remain available after the first Save) → validate → Review
   (dry-run HITL) → apply → ready. The wizard is one stage at a time: desktop
   (≥900px) uses a left step rail + stage + sticky footer; mobile uses compact
   “Step N of M · Label” progress and a sticky bottom bar. Generate writes BankIR

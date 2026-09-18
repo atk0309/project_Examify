@@ -1408,7 +1408,7 @@ describe('onboarding actions', () => {
     }
   });
 
-  it('refuses set / clear when exec environ assigns OPENAI_API_KEY as empty or test', async () => {
+  it('refuses set / clear when exec environ assigns OPENAI_API_KEY as empty', async () => {
     const { setEnvStoreRootForTests, setInitialEnvironForTests } = await import('@/lib/env-store');
     const root = tempRoot();
     setEnvStoreRootForTests(root);
@@ -1419,22 +1419,20 @@ describe('onboarding actions', () => {
     const attempted = 'sk-wizard-unusable-inject-never-echo';
     try {
       const { setOnboardingOpenAiKeyAction } = await import('@/actions/onboarding');
-      for (const injected of ['', 'test'] as const) {
-        setInitialEnvironForTests({ OPENAI_API_KEY: injected });
-        const set = new FormData();
-        set.set('intent', 'set');
-        set.set('openaiApiKey', attempted);
-        const written = await setOnboardingOpenAiKeyAction(set);
-        expect(written).toEqual({ ok: false, reason: 'host_managed' });
-        expect(JSON.stringify(written)).not.toContain(attempted);
+      setInitialEnvironForTests({ OPENAI_API_KEY: '' });
+      const set = new FormData();
+      set.set('intent', 'set');
+      set.set('openaiApiKey', attempted);
+      const written = await setOnboardingOpenAiKeyAction(set);
+      expect(written).toEqual({ ok: false, reason: 'host_managed' });
+      expect(JSON.stringify(written)).not.toContain(attempted);
 
-        const clear = new FormData();
-        clear.set('intent', 'clear');
-        const cleared = await setOnboardingOpenAiKeyAction(clear);
-        expect(cleared).toEqual({ ok: false, reason: 'host_managed' });
-        expect(readFileSync(path.join(root, '.env'), 'utf8')).toBe('ANTHROPIC_API_KEY=test\n');
-        expect(process.env.OPENAI_API_KEY).toBeUndefined();
-      }
+      const clear = new FormData();
+      clear.set('intent', 'clear');
+      const cleared = await setOnboardingOpenAiKeyAction(clear);
+      expect(cleared).toEqual({ ok: false, reason: 'host_managed' });
+      expect(readFileSync(path.join(root, '.env'), 'utf8')).toBe('ANTHROPIC_API_KEY=test\n');
+      expect(process.env.OPENAI_API_KEY).toBeUndefined();
     } finally {
       if (previous === undefined) delete process.env.OPENAI_API_KEY;
       else process.env.OPENAI_API_KEY = previous;
@@ -1664,7 +1662,7 @@ describe('onboarding actions', () => {
     }
   });
 
-  it('refuses set / clear when exec environ assigns ANTHROPIC_API_KEY as empty or test', async () => {
+  it('refuses set / clear when exec environ assigns ANTHROPIC_API_KEY as empty', async () => {
     const { setEnvStoreRootForTests, setInitialEnvironForTests } = await import('@/lib/env-store');
     const root = tempRoot();
     setEnvStoreRootForTests(root);
@@ -1675,22 +1673,72 @@ describe('onboarding actions', () => {
     const attempted = 'sk-anth-wizard-unusable-inject-never-echo';
     try {
       const { setOnboardingAnthropicKeyAction } = await import('@/actions/onboarding');
-      for (const injected of ['', 'test'] as const) {
-        setInitialEnvironForTests({ ANTHROPIC_API_KEY: injected });
-        const set = new FormData();
-        set.set('intent', 'set');
-        set.set('anthropicApiKey', attempted);
-        const written = await setOnboardingAnthropicKeyAction(set);
-        expect(written).toEqual({ ok: false, reason: 'host_managed' });
-        expect(JSON.stringify(written)).not.toContain(attempted);
+      setInitialEnvironForTests({ ANTHROPIC_API_KEY: '' });
+      const set = new FormData();
+      set.set('intent', 'set');
+      set.set('anthropicApiKey', attempted);
+      const written = await setOnboardingAnthropicKeyAction(set);
+      expect(written).toEqual({ ok: false, reason: 'host_managed' });
+      expect(JSON.stringify(written)).not.toContain(attempted);
 
-        const clear = new FormData();
-        clear.set('intent', 'clear');
-        const cleared = await setOnboardingAnthropicKeyAction(clear);
-        expect(cleared).toEqual({ ok: false, reason: 'host_managed' });
-        expect(readFileSync(path.join(root, '.env'), 'utf8')).toBe('OPENAI_API_KEY=keep-openai\n');
-        expect(process.env.ANTHROPIC_API_KEY).toBeUndefined();
-      }
+      const clear = new FormData();
+      clear.set('intent', 'clear');
+      const cleared = await setOnboardingAnthropicKeyAction(clear);
+      expect(cleared).toEqual({ ok: false, reason: 'host_managed' });
+      expect(readFileSync(path.join(root, '.env'), 'utf8')).toBe('OPENAI_API_KEY=keep-openai\n');
+      expect(process.env.ANTHROPIC_API_KEY).toBeUndefined();
+    } finally {
+      if (previous === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = previous;
+    }
+  });
+
+  it('lets the admin rotate and clear after replacing a boot Anthropic test sentinel', async () => {
+    const { setEnvStoreRootForTests, setInitialEnvironForTests } = await import('@/lib/env-store');
+    const root = tempRoot();
+    setEnvStoreRootForTests(root);
+    writeFileSync(path.join(root, '.env'), 'ANTHROPIC_API_KEY=test\nOPENAI_API_KEY=keep-openai\n');
+    setInitialEnvironForTests({ ANTHROPIC_API_KEY: 'test' });
+    await signInHost();
+    const secret = 'sk-anth-after-sentinel-never-echo';
+    const rotated = 'sk-anth-after-sentinel-rotated-never-echo';
+    const previous = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = 'test';
+    try {
+      const { setOnboardingAnthropicKeyAction } = await import('@/actions/onboarding');
+      const set = new FormData();
+      set.set('intent', 'set');
+      set.set('anthropicApiKey', secret);
+      const written = await setOnboardingAnthropicKeyAction(set);
+      expect(written.ok).toBe(true);
+      if (!written.ok) throw new Error('expected set');
+      expect(written.snapshot.anthropicConfigured).toBe(true);
+      expect(written.snapshot.anthropicLiveTest).toBe(false);
+      expect(written.snapshot.anthropicHostManaged).toBe(true);
+      expect(written.snapshot.anthropicWriteBlocked).toBe(false);
+      expect(JSON.stringify(written)).not.toContain(secret);
+
+      const rotate = new FormData();
+      rotate.set('intent', 'set');
+      rotate.set('anthropicApiKey', rotated);
+      const rotatedResult = await setOnboardingAnthropicKeyAction(rotate);
+      expect(rotatedResult.ok).toBe(true);
+      if (!rotatedResult.ok) throw new Error('expected rotate');
+      expect(rotatedResult.snapshot.anthropicWriteBlocked).toBe(false);
+      expect(JSON.stringify(rotatedResult)).not.toContain(rotated);
+      expect(readFileSync(path.join(root, '.env'), 'utf8')).toContain(
+        `ANTHROPIC_API_KEY=${rotated}`,
+      );
+
+      const clear = new FormData();
+      clear.set('intent', 'clear');
+      const cleared = await setOnboardingAnthropicKeyAction(clear);
+      expect(cleared.ok).toBe(true);
+      if (!cleared.ok) throw new Error('expected clear');
+      expect(cleared.snapshot.anthropicConfigured).toBe(false);
+      expect(cleared.snapshot.anthropicWriteBlocked).toBe(false);
+      expect(JSON.stringify(cleared)).not.toContain(rotated);
+      expect(readFileSync(path.join(root, '.env'), 'utf8')).not.toMatch(/ANTHROPIC_API_KEY=/);
     } finally {
       if (previous === undefined) delete process.env.ANTHROPIC_API_KEY;
       else process.env.ANTHROPIC_API_KEY = previous;

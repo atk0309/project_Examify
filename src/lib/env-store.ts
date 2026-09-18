@@ -335,9 +335,20 @@ export function envStoreSecretPresent(
   return typeof stored === 'string' && stored.trim() !== '';
 }
 
+/** True when the exec environ assigned the `test` sentinel (never echoed). */
+function envStoreSecretInitialTest(
+  key: EnvStoreKey,
+  initialEnv?: Record<string, string | undefined>,
+): boolean {
+  const initial = resolveInitialEnviron(initialEnv)[key];
+  return typeof initial === 'string' && initial.trim() === 'test';
+}
+
 /**
  * Host-injected usable keys stay locked. A boot `test` sentinel can still
- * be cleared / replaced so the wizard does not require saving a dummy key.
+ * be cleared / replaced so the wizard does not require saving a dummy key,
+ * and later Clear / Rotate stay allowed after that first write (the live
+ * value is then a real key, but the injected provenance is still `test`).
  * Host-injected empty stays locked (not a sentinel the admin can clear).
  */
 export function envStoreSecretWriteBlocked(
@@ -347,6 +358,7 @@ export function envStoreSecretWriteBlocked(
   initialEnv?: Record<string, string | undefined>,
 ): boolean {
   if (!envStoreSecretHostManaged(key, root, env, initialEnv)) return false;
+  if (envStoreSecretInitialTest(key, initialEnv)) return false;
   const live = env[key]?.trim() ?? '';
   return live !== 'test';
 }

@@ -794,6 +794,7 @@ describe('onboarding household gate', () => {
       process.env.ANTHROPIC_API_KEY = 'test';
       const sentinel = getOnboardingSnapshot(host.householdId);
       expect(sentinel.anthropicHostManaged).toBe(true);
+      expect(sentinel.anthropicWriteBlocked).toBe(false);
       expect(sentinel.anthropicConfigured).toBe(false);
       expect(sentinel.anthropicPresent).toBe(true);
       expect(sentinel.anthropicLiveTest).toBe(true);
@@ -802,6 +803,7 @@ describe('onboarding household gate', () => {
       writeFileSync(path.join(root, '.env'), 'ANTHROPIC_API_KEY=sk-from-store\n');
       const emptyHost = getOnboardingSnapshot(host.householdId);
       expect(emptyHost.anthropicHostManaged).toBe(true);
+      expect(emptyHost.anthropicWriteBlocked).toBe(true);
       expect(emptyHost.anthropicConfigured).toBe(false);
       expect(emptyHost.anthropicPresent).toBe(true);
       expect(emptyHost.anthropicLiveTest).toBe(false);

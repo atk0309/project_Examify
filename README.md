@@ -38,7 +38,7 @@ no env-JSON allowlist to hand-edit.
    local study files (PDFs plus notes.txt and other CLI sources), choose an AI mode (Anthropic / OpenAI keys write the same
    repo-root `.env` as `install.sh` / `examify-ingest generate`; host-injected
    usable keys stay host-managed; a boot `test` sentinel stays “not configured”
-   but Clear/Rotate remain available), optionally generate BankIR from those
+   but Clear/Rotate remain available after the first Save), optionally generate BankIR from those
    files, and emit through `examify-ingest` (validate + Review / dry-run HITL, then apply;
    desktop uses a step rail, mobile a compact progress bar; one stage at a time;
    generate never auto-applies; adding a subject does not write empty BankIR;
