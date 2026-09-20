@@ -240,7 +240,8 @@ Before merge, ensure these pass in CI:
 - Keep sign-in role-gated by household membership (student = student member,
   parent = parent or admin member), derived via `isAllowedEmail`; never leak
   whether an email is a member (no enumeration). Challenge modes keep the
-  generic `sent` response (including when mail delivery fails; log server-side).
+  generic `sent` response (including when mail delivery fails; log `{ error }`
+  only, no email, and invalidate the unused magic-link / OTP token).
   Password mode uses a generic `invalid` for unknown email / wrong password /
   wrong role.
 - Re-check household membership on every `getSession()` load; a removed member
@@ -248,7 +249,8 @@ Before merge, ensure these pass in CI:
   cleared (RSC cannot persist `session.destroy()`). Invite revoke sets
   `revoked_at` (never DELETE while `magic_tokens.invite_id` still references
   the row; `consumed_at` means accepted).
-- Keep magic-link tokens hashed at rest and single-use; the token carries the role. Token
+- Keep magic-link tokens hashed at rest and single-use; the token carries the role.
+  A failed send after issue invalidates that unused token (row-id consume). Token
   verification lives in a **Route Handler** (`src/app/signin/verify/route.ts`), never a
   Server Component page — clicking the email link is a GET that writes the session cookie,
   and cookie mutation is illegal during a render. Failures redirect to `/signin/verify/error`.

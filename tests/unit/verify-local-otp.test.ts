@@ -218,6 +218,14 @@ describe('local-otp auth', () => {
       email: 'pat@example.com',
     });
     expect(errorSpy).toHaveBeenCalled();
+    for (const args of errorSpy.mock.calls) {
+      expect(JSON.stringify(args)).not.toContain('pat@example.com');
+      expect(JSON.stringify(args)).not.toMatch(/"email"\s*:/);
+    }
+    const payload = errorSpy.mock.calls.find((args) =>
+      args.some((arg) => typeof arg === 'string' && arg.includes('local-otp delivery failed')),
+    );
+    expect(payload?.[1]).toEqual({ error: 'boom' });
     const code = send.mock.calls[0]?.[0].code;
     expect(code).toMatch(/^\d{6}$/);
 
@@ -230,12 +238,24 @@ describe('local-otp auth', () => {
     errorSpy.mockRestore();
   });
 
+  it('invalidates only the issued magic-link id, not a later unused token', async () => {
+    await seedParent();
+    const { env } = await import('@/lib/env');
+    const { issueMagicLink, invalidateIssuedToken, consumeMagicToken } = await import('@/lib/auth');
+    (env as { AUTH_MODE: typeof env.AUTH_MODE }).AUTH_MODE = 'magic-link';
+    const first = await issueMagicLink('pat@example.com', 'parent');
+    const second = await issueMagicLink('pat@example.com', 'parent');
+    invalidateIssuedToken(first.id);
+    expect(consumeMagicToken(first.token)).toEqual({ ok: false, reason: 'used' });
+    expect(consumeMagicToken(second.token).ok).toBe(true);
+  });
+
   it('invalidates only the issued OTP id, not a later unused code', async () => {
     await seedParent();
-    const { issueLocalOtp, invalidateIssuedOtp, consumeLocalOtp } = await import('@/lib/auth');
+    const { issueLocalOtp, invalidateIssuedToken, consumeLocalOtp } = await import('@/lib/auth');
     const first = issueLocalOtp('pat@example.com', 'parent');
     const second = issueLocalOtp('pat@example.com', 'parent');
-    invalidateIssuedOtp(first.id);
+    invalidateIssuedToken(first.id);
     expect(consumeLocalOtp('pat@example.com', 'parent', first.code).ok).toBe(false);
     expect(consumeLocalOtp('pat@example.com', 'parent', second.code).ok).toBe(true);
   });

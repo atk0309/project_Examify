@@ -353,7 +353,9 @@ These are non-negotiable. Don't "fix" them out.
   always returns the generic `sent` state once Turnstile (when enabled) + rate-limit
   pass; it only issues a link/code when the email is a household member for that
   role. Don't add a branch that reveals whether an email has been invited —
-  including delivery failure (log server-side, still return `sent`). Email-locked
+  including delivery failure (log `{ error }` only — no email or other
+  identifiers — still return `sent`; invalidate the unused token so it cannot
+  complete sign-in). Email-locked
   invites use the same generic `sent` copy when the address does not match.
   Password mode: `signInWithPassword` always returns generic `invalid` for unknown
   email, wrong password, wrong role, or a user with no hash (after a dummy scrypt).
@@ -385,7 +387,9 @@ These are non-negotiable. Don't "fix" them out.
 - Magic-link tokens are stored **hashed** at rest (`sha256`), single-use (a `consumed_at`
   timestamp marks them spent inside the same transaction that resolves the user), and 15
   minutes long. The token carries the **role** so verify can set `session.role` without
-  re-checking env. `/signin/verify` and `consumeMagicToken` only succeed when
+  re-checking env. If `sendEmail` fails after issue, that unused token is
+  invalidated (same row-id consume as invite / local OTP) so a dangling bearer
+  cannot complete sign-in. `/signin/verify` and `consumeMagicToken` only succeed when
   `AUTH_MODE` is `magic-link`. They refuse `otp:` bearers (those are
   `verifyLocalOtp` only). After a mode switch, leftover magic-link tokens are
   ignored, not consumed.
