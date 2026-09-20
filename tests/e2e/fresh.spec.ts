@@ -1,14 +1,171 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
+import {
+  DESKTOP_AI_VIEWPORT,
+  DESKTOP_FOOTER_CLEARANCE_PX,
+  DESKTOP_FRAME_MARGIN_Y_PX,
+  TABLET_AI_VIEWPORT,
+  TABLET_FRAME_MARGIN_Y_PX,
+  evaluateSecretActionClearance,
+  wizardFrameFitsViewport,
+  type LayoutBox,
+} from '../helpers/wizard-footer-clearance';
 
 const OUTBOX =
   process.env.MAIL_OUTBOX_DIR ?? path.join(process.cwd(), 'tests', '.tmp', 'e2e-fresh-outbox');
 
+const SECRET_ACTION_IDS = [
+  'wizard-anthropic-key-save',
+  'wizard-anthropic-key-rotate',
+  'wizard-anthropic-key-clear',
+] as const;
+
+type MeasuredSecretClearance = {
+  footer: LayoutBox;
+  viewport: { width: number; height: number };
+  controls: Array<{
+    id: (typeof SECRET_ACTION_IDS)[number];
+    missing: boolean;
+    box: LayoutBox | null;
+    hitIsControl: boolean;
+    hitTestId: string | null;
+  }>;
+  computed: {
+    footerPosition: string;
+    footerZ: string;
+    actionsPosition: string;
+    actionsZ: string;
+    actionsBottom: string;
+    actionsScrollMarginBottom: string;
+    clearance: string;
+  };
+};
+
+async function measureAiSecretClearance(page: Page): Promise<MeasuredSecretClearance> {
+  return page.evaluate((ids) => {
+    const toBox = (r: DOMRect) => ({
+      top: r.top,
+      right: r.right,
+      bottom: r.bottom,
+      left: r.left,
+      width: r.width,
+      height: r.height,
+    });
+    const footer = document.querySelector('[data-testid="wizard-footer"]');
+    if (!footer) {
+      throw new Error('wizard-footer missing');
+    }
+    const actions = document.querySelector('[data-testid="wizard-anthropic-key-actions"]');
+    const shell = document.querySelector('.wizard-shell');
+    const footerStyle = getComputedStyle(footer);
+    const actionsStyle = actions ? getComputedStyle(actions) : null;
+    return {
+      footer: toBox(footer.getBoundingClientRect()),
+      viewport: { width: window.innerWidth, height: window.innerHeight },
+      controls: ids.map((id) => {
+        const el = document.querySelector(`[data-testid="${id}"]`);
+        if (!el) {
+          return { id, missing: true, box: null, hitIsControl: false, hitTestId: null };
+        }
+        const box = el.getBoundingClientRect();
+        const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+        return {
+          id,
+          missing: false,
+          box: toBox(box),
+          hitIsControl: Boolean(hit && (el === hit || el.contains(hit))),
+          hitTestId: hit?.closest('[data-testid]')?.getAttribute('data-testid') ?? null,
+        };
+      }),
+      computed: {
+        footerPosition: footerStyle.position,
+        footerZ: footerStyle.zIndex,
+        actionsPosition: actionsStyle?.position ?? '',
+        actionsZ: actionsStyle?.zIndex ?? '',
+        actionsBottom: actionsStyle?.bottom ?? '',
+        actionsScrollMarginBottom: actionsStyle?.scrollMarginBottom ?? '',
+        clearance: shell
+          ? getComputedStyle(shell).getPropertyValue('--wizard-footer-clearance').trim()
+          : '',
+      },
+    };
+  }, SECRET_ACTION_IDS);
+}
+
+async function assertAiSecretActionsClearOfFooter(page: Page) {
+  await expect(page.getByTestId('wizard-ai')).toBeVisible();
+  await expect(page.getByTestId('wizard-anthropic-key-actions')).toBeVisible();
+  const measured = await measureAiSecretClearance(page);
+  expect(measured.viewport.width).toBe(DESKTOP_AI_VIEWPORT.width);
+  expect(measured.viewport.height).toBe(DESKTOP_AI_VIEWPORT.height);
+  expect(measured.computed.footerPosition).toBe('sticky');
+  expect(Number(measured.computed.footerZ)).toBeGreaterThanOrEqual(5);
+  expect(measured.computed.actionsPosition).toBe('sticky');
+  expect(measured.computed.actionsBottom).toBe('0px');
+  expect(Number(measured.computed.actionsZ)).toBeGreaterThan(Number(measured.computed.footerZ));
+  const scrollMargin = Number.parseFloat(measured.computed.actionsScrollMarginBottom);
+  expect(scrollMargin).toBeGreaterThanOrEqual(DESKTOP_FOOTER_CLEARANCE_PX - 0.5);
+  expect(measured.footer.height).toBeGreaterThan(0);
+  expect(measured.footer.height).toBeLessThanOrEqual(scrollMargin + 24);
+
+  for (const control of measured.controls) {
+    expect(control.missing, `${control.id} missing`).toBe(false);
+    expect(control.box, `${control.id} empty box`).not.toBeNull();
+    const proof = evaluateSecretActionClearance({
+      control: control.box!,
+      footer: measured.footer,
+      viewport: measured.viewport,
+      hitIsControl: control.hitIsControl,
+    });
+    expect(proof, `${control.id} ${JSON.stringify({ proof, hit: control.hitTestId })}`).toEqual({
+      ok: true,
+      overlap: false,
+      aboveFooter: true,
+      inViewport: true,
+      hitControl: true,
+    });
+    await expect(page.getByTestId(control.id)).toBeInViewport();
+    await page.getByTestId(control.id).click({ trial: true });
+  }
+}
+
+async function assertWizardFrameFitsFirstViewport(
+  page: Page,
+  viewport: { width: number; height: number },
+  marginY: number,
+) {
+  await expect(page.getByTestId('wizard-footer')).toBeInViewport();
+  await expect(page.getByTestId('wizard-next')).toBeInViewport();
+  const frame = await page.locator('.app-frame-wizard').evaluate((el) => {
+    const rect = el.getBoundingClientRect();
+    const style = getComputedStyle(el);
+    return {
+      height: rect.height,
+      top: rect.top,
+      bottom: rect.bottom,
+      maxHeight: style.maxHeight,
+      marginTop: Number.parseFloat(style.marginTop) || 0,
+      marginBottom: Number.parseFloat(style.marginBottom) || 0,
+    };
+  });
+  expect(frame.marginTop).toBeCloseTo(marginY, 0);
+  expect(frame.marginBottom).toBeCloseTo(marginY, 0);
+  expect(
+    wizardFrameFitsViewport({
+      frameHeight: frame.height,
+      marginTop: frame.marginTop,
+      marginBottom: frame.marginBottom,
+      viewportHeight: viewport.height,
+    }),
+  ).toBe(true);
+  expect(frame.bottom).toBeLessThanOrEqual(viewport.height + 0.5);
+}
+
 test.describe.configure({ mode: 'serial' });
 
 test('setup Create household stays in the first desktop viewport', async ({ page }) => {
-  await page.setViewportSize({ width: 1100, height: 800 });
+  await page.setViewportSize(DESKTOP_AI_VIEWPORT);
   await page.goto('/signin');
   await expect(page).toHaveURL(/\/setup/);
   await expect(page.getByTestId('setup-submit')).toBeInViewport();
@@ -62,10 +219,32 @@ test('first-run bootstrap creates the admin without Turnstile', async ({ page })
   await page.getByTestId('wizard-back').click();
   await expect(page.getByTestId('wizard-files')).toBeVisible();
 
-  await page.setViewportSize({ width: 1100, height: 800 });
+  await page.setViewportSize(DESKTOP_AI_VIEWPORT);
   await expect(page.getByTestId('wizard-rail')).toBeVisible();
   await expect(page.getByTestId('wizard-progress')).toBeHidden();
   await expect(page.getByTestId('wizard-rail')).toContainText('Review');
+  await page.getByTestId('wizard-next').click();
+  await expect(page.getByTestId('wizard-ai')).toBeVisible();
+  await page.getByTestId('wizard-ai-cloud').click();
+  await expect(page.getByTestId('wizard-anthropic-key-clear')).toBeVisible();
+  await assertAiSecretActionsClearOfFooter(page);
+  await page.getByTestId('wizard-stage').evaluate((el) => {
+    el.scrollTop = el.scrollHeight;
+  });
+  await assertAiSecretActionsClearOfFooter(page);
+  await assertWizardFrameFitsFirstViewport(page, DESKTOP_AI_VIEWPORT, DESKTOP_FRAME_MARGIN_Y_PX);
+
+  await page.setViewportSize(TABLET_AI_VIEWPORT);
+  await expect(page.getByTestId('wizard-rail')).toBeHidden();
+  await expect(page.getByTestId('wizard-anthropic-key-clear')).toBeVisible();
+  await expect(page.getByTestId('wizard-anthropic-key-clear')).toBeInViewport();
+  await page.getByTestId('wizard-anthropic-key-clear').click({ trial: true });
+  await assertWizardFrameFitsFirstViewport(page, TABLET_AI_VIEWPORT, TABLET_FRAME_MARGIN_Y_PX);
+
+  await page.setViewportSize(DESKTOP_AI_VIEWPORT);
+  await expect(page.getByTestId('wizard-rail')).toBeVisible();
+  await page.getByTestId('wizard-back').click();
+  await expect(page.getByTestId('wizard-files')).toBeVisible();
   await page.getByTestId('wizard-back').click();
   await expect(page.getByTestId('wizard-subjects')).toBeVisible();
   await expect(page.getByTestId('wizard-subjects')).toContainText('History');

@@ -32,6 +32,22 @@ vi.mock('@/actions/onboarding', () => ({
 }));
 
 import { OnboardingWizard } from '@/components/exam/OnboardingWizard';
+import {
+  evaluateSecretActionClearance,
+  isEmptyLayoutBox,
+  type LayoutBox,
+} from '../helpers/wizard-footer-clearance';
+
+function toLayoutBox(rect: DOMRect): LayoutBox {
+  return {
+    top: rect.top,
+    right: rect.right,
+    bottom: rect.bottom,
+    left: rect.left,
+    width: rect.width,
+    height: rect.height,
+  };
+}
 
 function snapshot(overrides: Partial<OnboardingSnapshot> = {}): OnboardingSnapshot {
   return {
@@ -329,6 +345,7 @@ describe('OnboardingWizard majors UI', () => {
   });
 
   it('reserves sticky-footer clearance for AI secret actions', () => {
+    // Structure only — live 1100×800 boxes are asserted in tests/e2e/fresh.spec.ts.
     const css = readFileSync(path.join(process.cwd(), 'src/app/globals.css'), 'utf8');
     expect(css).toMatch(/--wizard-footer-clearance:/);
     expect(css).toMatch(/\.wizard-stage \{[\s\S]*overflow-y: auto;/);
@@ -372,6 +389,32 @@ describe('OnboardingWizard majors UI', () => {
     expect(screen.getByTestId('wizard-anthropic-key-clear')).toBeVisible();
     expect(screen.getByTestId('wizard-footer')).toBeVisible();
     expect(screen.getByTestId('wizard-anthropic-key')).not.toHaveTextContent('ANTHROPIC_API_KEY=');
+
+    // jsdom does not lay out. Presence / toBeVisible is not S8 proof.
+    // When a layout engine supplies boxes (browser-mode / Playwright), the
+    // same helper the 1100×800 e2e uses must pass — empty rects must not.
+    const footerBox = toLayoutBox(screen.getByTestId('wizard-footer').getBoundingClientRect());
+    const viewport = { width: window.innerWidth || 1100, height: window.innerHeight || 800 };
+    for (const id of [
+      'wizard-anthropic-key-save',
+      'wizard-anthropic-key-rotate',
+      'wizard-anthropic-key-clear',
+    ] as const) {
+      const control = screen.getByTestId(id);
+      const controlBox = toLayoutBox(control.getBoundingClientRect());
+      if (isEmptyLayoutBox(controlBox) || isEmptyLayoutBox(footerBox)) {
+        expect(isEmptyLayoutBox(controlBox) || isEmptyLayoutBox(footerBox)).toBe(true);
+        continue;
+      }
+      expect(
+        evaluateSecretActionClearance({
+          control: controlBox,
+          footer: footerBox,
+          viewport,
+          hitIsControl: true,
+        }).ok,
+      ).toBe(true);
+    }
   });
 
   it('uses one wizard-validate testid on the Validate button', () => {
