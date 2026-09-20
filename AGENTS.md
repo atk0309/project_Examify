@@ -64,10 +64,10 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   notes/text (`.txt` / `.md`) and images in the subject folder plus PDFs
   under `content/source-pdfs/<id>/` (PDF magic-byte checks for actual PDFs
   stay fail-closed). A real BankIR with questions requires `--force`
-  (dry-run says **would overwrite**). Empty / placeholder IR (empty file,
-  valid zero-item schema) is non-existing for that gate. Corrupt /
-  unparseable / invalid-schema IR requires `--force` (error names
-  corruption, not empty).
+  (dry-run says **would overwrite**) when `hasExistingBankIr` is true.
+  Empty / placeholder IR (empty file, valid zero-item schema) is
+  non-existing for that gate. Corrupt / unparseable / invalid-schema IR
+  requires `--force` (error names corruption, not empty).
   Frozen sample-bank ids fail at generate unless `--replace-sample` (**no
   BankIR written**; do not imply the file already exists). Missing cloud
   keys are refused before overwrite messaging when a real key is required;
@@ -77,7 +77,8 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   Tree generate drafts every subject before the first IR write (sources,
   overwrite, SAMPLE freeze, provider); a mid-list or persist failure writes
   no BankIR (commit rolls back earlier writes; abort is gated before persist).
-  Persist uses shared `writeBankIrAtomic`. The wizard never silently
+  Persist uses shared `writeBankIrAtomic` + `hasExistingBankIr`. Empty /
+  placeholder IR does not require force; corrupt IR does. The wizard never silently
   replaces existing `bank.ir.json` (named confirm, or skip/cancel;
   confirm is that same `--force` for the subject).
   `generateSubject` accepts optional `AbortSignal` (forwarded to provider
@@ -125,9 +126,14 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   disables Create household. Field-level / `aria-invalid` errors drop on the
   next successful edit of that field or on resubmit. Email is the required
   admin account id in every `AUTH_MODE` (including password). After bootstrap, `/onboarding` lets the
-  household admin add subjects, attach local PDFs, choose an AI mode, optionally
-  run `examify-ingest generate` (BankIR only; never emit/apply; existing
-  `bank.ir.json` needs a calm confirm — preview names `would overwrite`,
+  household admin add subjects, attach local study files (PDFs plus notes.txt
+  and other CLI sources generate already reads), choose an AI mode, optionally
+  run `examify-ingest generate` (BankIR only; never emit/apply; adding a
+  subject writes `subject.json` only — no empty/placeholder `bank.ir.json`;
+  overwrite / skip / generate use shared `hasExistingBankIr` (empty /
+  valid zero-item ≠ existing; corrupt / unparseable / invalid schema is
+  existing and needs force; never `existsSync` on the IR path); real
+  existing `bank.ir.json` needs a calm confirm — preview names `would overwrite`,
   decline is skipped/cancelled not invalid, confirm is CLI `--force` for
   that subject; generate-all confirms per colliding subject or one named
   batch; persist is shared `writeBankIrAtomic`; cancel
@@ -142,8 +148,10 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   ids must be in the wizard catalog; Anthropic / OpenAI modes can set /
   rotate / clear `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` in the same
   repo-root `.env` as `install.sh` and `examify-ingest generate` (shared
-  `findRepoRoot`; never echoed; host-injected keys — exec environ
-  assignment, including empty / `test` — are not rotatable in the wizard); skip / Back / desktop rail lock while
+  `findRepoRoot`; never echoed; host-injected usable keys are not rotatable
+  in the wizard; a boot `ANTHROPIC_API_KEY=test` sentinel stays “not
+  configured” but Clear/Rotate remain available after the first Save);
+  skip / Back / desktop rail lock while
   generate is in flight so Cancel stays reachable), and emit
   BankIR via `examify-ingest` (directory-only, Review / dry-run HITL before apply,
   empty catalog fail-closed; `--replace-sample` only behind an explicit advanced
@@ -151,8 +159,10 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   rail + stage + sticky footer; mobile uses compact “Step N of M · Label”
   progress and a sticky bottom bar.
   Apply re-hashes the current plan and refuses if it differs from the confirmed
-  dry-run (never applies an unconfirmed plan). Finish requires that confirmed
-  apply; skip-without-emit matches Welcome skip (sample bank + dashboard chip).
+  dry-run (never applies an unconfirmed plan). Leftover generated subject files
+  need a named prune confirm before Apply deletes them; cancel is zero
+  writes. Ready lists live bank subject ids/names and question counts.
+  Finish requires that confirmed apply; skip-without-emit matches Welcome skip (sample bank + dashboard chip).
   Delete does not write generated files; prune runs on confirmed apply.
   Invited members never see it.
   Existing households are migrated as already complete.

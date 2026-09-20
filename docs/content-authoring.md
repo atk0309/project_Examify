@@ -29,7 +29,11 @@ local PDFs (under `content/source-pdfs/<subject>/` only) or notes/text in the
 subject folder, optionally generate
 BankIR on the AI step (`examify-ingest/generate`, IR only), and run the same
 directory emit (validate, Review / dry-run HITL with planned deletes, then apply). The
-wizard does **not** auto-emit or auto-apply after generate. An existing
+wizard does **not** auto-emit or auto-apply after generate. Adding a subject
+writes `subject.json` only — no empty/placeholder `bank.ir.json`. Overwrite /
+skip / generate use shared `hasExistingBankIr` (empty / valid zero-item ≠
+existing; corrupt / unparseable / invalid schema needs force; never
+`existsSync` on the IR path). A real existing
 `bank.ir.json` is never silently replaced: the generate preview names
 `would overwrite content/subjects/<id>/bank.ir.json`, then the wizard
 asks “Replace existing BankIR for {label}?” before any write (generate-all
@@ -47,7 +51,9 @@ after the wait. Generate is limited to subjects in the wizard catalog. Hand-auth
 can skip generate. Apply refuses if the plan hash no longer
 matches the confirmed dry-run. Finish requires that confirmed apply; skip is
 the no-emit exit (sample bank). Deleting a subject removes its IR/source dirs;
-leftover generated JSON is pruned only on the confirmed whole-tree apply (#62).
+leftover generated JSON is pruned only after a named HITL confirm on Apply
+(cancel keeps those files). Ready lists live bank subject ids/names and
+question counts.
 An empty subjects tree is refused and never wipes generated files. Uploaded
 PDFs must start with `%PDF`. `--replace-sample` is off unless the admin enables
 the advanced toggle.
@@ -94,9 +100,10 @@ file first.
    the key is missing or is the `test` sentinel. The `/onboarding` AI step
    and `install.sh` can write `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` into
    that same repo-root `.env` store (`findRepoRoot`, not `process.cwd()`);
-   the wizard never echoes the value. A host-injected key (Docker /
+   the wizard never echoes the value. A host-injected usable key (Docker /
    systemd / parent exec environ — not live-vs-file equality) cannot be
-   rotated or cleared from the wizard.
+   rotated or cleared from the wizard. A boot `test` sentinel can still
+   be cleared / rotated, including after the first Save.
    A cache hit returns the prior
    IR without a network call. `--provider test` is the CI fixture (no
    network). `--provider local` uses quoted `EXAMIFY_INGEST_LOCAL_CMD` (stdin

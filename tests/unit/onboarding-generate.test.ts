@@ -167,6 +167,21 @@ describe('onboarding generate mapping', () => {
     expect(asked).toEqual(['Replace 2 existing BankIR files (History, Biology)?']);
     expect(confirmOnboardingIrOverwrite([], () => false)).toBe('force');
   });
+
+  it('names leftover prune subjects and cancel copy', async () => {
+    const { onboardingPruneConfirmMessage, onboardingPruneEntries, onboardingPruneSubjectIds } =
+      await import('@/lib/onboarding-types');
+    const plan = [
+      { path: 'content/generated/questions/history.json', action: 'add' as const },
+      { path: 'content/generated/questions/chemistry.json', action: 'delete' as const },
+      { path: 'content/generated/keys/chemistry.json', action: 'delete' as const },
+    ];
+    const deletes = onboardingPruneEntries(plan);
+    expect(onboardingPruneSubjectIds(deletes)).toEqual(['chemistry']);
+    expect(onboardingPruneConfirmMessage(deletes)).toMatch(/chemistry/);
+    expect(onboardingPruneConfirmMessage(deletes)).toMatch(/Cancel keeps everything/);
+    expect(onboardingPruneConfirmMessage([])).toBeNull();
+  });
 });
 
 describe('onboarding generate graph', () => {
@@ -174,6 +189,8 @@ describe('onboarding generate graph', () => {
     const emit = readFileSync(path.join(process.cwd(), 'src/lib/onboarding.ts'), 'utf8');
     expect(emit).not.toMatch(/examify-ingest\/generate/);
     expect(emit).not.toMatch(/generateSubject/);
+    expect(emit).toMatch(/hasExistingBankIr/);
+    expect(emit).not.toMatch(/existsSync\(irPath\)/);
     expect(emit).toMatch(/resolveSubjectSources/);
     const generate = readFileSync(
       path.join(process.cwd(), 'src/lib/onboarding-generate.ts'),
@@ -184,6 +201,9 @@ describe('onboarding generate graph', () => {
     expect(generate).toMatch(/dryRunIr: true/);
     expect(generate).toMatch(/needs_confirm/);
     expect(generate).toMatch(/overwrite === 'skip'/);
+    expect(generate).toMatch(/hasExistingBankIr/);
+    expect(generate).not.toMatch(/existsSync\(/);
+    expect(generate).not.toMatch(/isExistingBankIr|isPlaceholderBankIr/);
     expect(generate).toMatch(/writeBankIrAtomic/);
     expect(generate).toMatch(/assertCanWriteBankIr/);
     expect(generate).toMatch(/BankIrOverwriteError/);
@@ -213,6 +233,13 @@ describe('onboarding generate graph', () => {
     expect(wizard).toMatch(/Replace existing BankIR for \$\{/);
     expect(wizard).toMatch(/wizard-generate-skipped/);
     expect(wizard).toMatch(/data-testid="wizard-generate-overwrite-batch"/);
+    expect(wizard).toMatch(/Generate from local sources/);
+    expect(wizard).not.toMatch(/Generate from PDFs/);
+    expect(wizard).toMatch(/notes\.txt/);
+    expect(wizard).toMatch(/wizard-ready-subjects/);
+    expect(wizard).toMatch(/wizard-apply-prune/);
+    expect(wizard).toMatch(/confirmPrune/);
+    expect(wizard).toMatch(/A test sentinel is present/);
     expect(wizard).toMatch(/data\.set\('force', '1'\)/);
     const types = readFileSync(path.join(process.cwd(), 'src/lib/onboarding-types.ts'), 'utf8');
     expect(types).toMatch(/Replace existing BankIR for \$\{colliding\[0\]!\.label\}\?/);
@@ -263,7 +290,15 @@ describe('onboarding generate graph', () => {
     expect(store).toMatch(/envStoreSecretHostManaged/);
 
     expect(flags).toMatch(/anthropicConfigured: envStoreSecretConfigured\('ANTHROPIC_API_KEY'\)/);
+    expect(flags).toMatch(/anthropicPresent: envStoreSecretPresent\('ANTHROPIC_API_KEY'\)/);
+    expect(flags).toMatch(/anthropicLiveTest: envStoreSecretLiveTest\('ANTHROPIC_API_KEY'\)/);
     expect(flags).toMatch(/anthropicHostManaged: envStoreSecretHostManaged\('ANTHROPIC_API_KEY'\)/);
+    expect(flags).toMatch(
+      /anthropicWriteBlocked: envStoreSecretWriteBlocked\('ANTHROPIC_API_KEY'\)/,
+    );
+    expect(wizard).toMatch(/liveTest=\{snapshot\.anthropicLiveTest\}/);
+    expect(wizard).toMatch(/writeBlocked=\{snapshot\.anthropicWriteBlocked\}/);
+    expect(wizard).not.toMatch(/present && !configured/);
     expect(flags).not.toMatch(/ANTHROPIC_API_KEY: env\.ANTHROPIC_API_KEY/);
 
     // Grader + Configured badge stay twins: live process.env / env-store, never
@@ -468,6 +503,136 @@ describe('generateOnboardingSubject', () => {
     expect(generateSpy).not.toHaveBeenCalled();
     expect(writeSpy).not.toHaveBeenCalled();
     expect(readFileSync(irPath, 'utf8')).toBe(prior);
+  });
+
+  it('does not require overwrite confirm for empty or placeholder BankIR', async () => {
+    const { generateOnboardingSubject } = await import('@/lib/onboarding-generate');
+    const { listOnboardingSubjects, setOnboardingContentRootForTests } =
+      await import('@/lib/onboarding');
+    const root = tempRoot();
+    setOnboardingContentRootForTests(root);
+    writeFileSync(path.join(root, 'content/subjects/history/notes.txt'), 'A source note.\n');
+    writeFileSync(
+      path.join(root, 'content/subjects/history/subject.json'),
+      JSON.stringify({
+        id: 'history',
+        label: 'History',
+        icon: 'geography',
+        l: 0.6,
+        c: 0.08,
+        h: 40,
+      }),
+    );
+    expect(listOnboardingSubjects(root)[0]?.hasIr).toBe(false);
+
+    const irPath = path.join(root, 'content/subjects/history/bank.ir.json');
+    writeFileSync(irPath, '');
+    expect(listOnboardingSubjects(root)[0]?.hasIr).toBe(false);
+    const empty = await generateOnboardingSubject({
+      subjectId: 'history',
+      provider: 'test',
+      seed: 0,
+      root,
+    });
+    expect(empty.ok).toBe(true);
+    if (!empty.ok) throw new Error('expected generate over empty IR');
+    expect(empty.result.overwrite).toBe(false);
+    rmSync(irPath);
+
+    writeFileSync(
+      irPath,
+      JSON.stringify({
+        version: 1,
+        subject: { id: 'history', label: 'History', icon: 'geography', l: 0.6, c: 0.08, h: 40 },
+        difficulties: { easy: [], medium: [], hard: [] },
+      }),
+    );
+    expect(listOnboardingSubjects(root)[0]?.hasIr).toBe(false);
+
+    const result = await generateOnboardingSubject({
+      subjectId: 'history',
+      provider: 'test',
+      seed: 0,
+      root,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected generate without confirm');
+    expect(result.result.wroteIr).toBe(true);
+    expect(result.result.overwrite).toBe(false);
+    expect(listOnboardingSubjects(root)[0]?.hasIr).toBe(true);
+  });
+
+  it('requires overwrite confirm for corrupt BankIR and keeps bytes on skip', async () => {
+    const { generateOnboardingSubject } = await import('@/lib/onboarding-generate');
+    const { listOnboardingSubjects, setOnboardingContentRootForTests } =
+      await import('@/lib/onboarding');
+    const ingest = await import('examify-ingest/generate');
+    const root = tempRoot();
+    setOnboardingContentRootForTests(root);
+    writeFileSync(path.join(root, 'content/subjects/history/notes.txt'), 'A source note.\n');
+    writeFileSync(
+      path.join(root, 'content/subjects/history/subject.json'),
+      JSON.stringify({
+        id: 'history',
+        label: 'History',
+        icon: 'geography',
+        l: 0.6,
+        c: 0.08,
+        h: 40,
+      }),
+    );
+    const irPath = path.join(root, 'content/subjects/history/bank.ir.json');
+    const prior = 'not-json{\n';
+    writeFileSync(irPath, prior);
+    expect(listOnboardingSubjects(root)[0]?.hasIr).toBe(true);
+
+    const writeSpy = vi.spyOn(ingest, 'writeBankIrAtomic');
+    const generateSpy = vi.spyOn(ingest, 'generateSubject');
+    const refused = await generateOnboardingSubject({
+      subjectId: 'history',
+      provider: 'test',
+      seed: 0,
+      root,
+    });
+    expect(refused.ok).toBe(false);
+    if (refused.ok) throw new Error('expected needs_confirm for corrupt IR');
+    expect(refused.reason).toBe('needs_confirm');
+    expect(refused.message).toBe('would overwrite content/subjects/history/bank.ir.json');
+    expect(refused.message).not.toMatch(/--force/);
+    expect(generateSpy).not.toHaveBeenCalled();
+    expect(writeSpy).not.toHaveBeenCalled();
+    expect(readFileSync(irPath, 'utf8')).toBe(prior);
+
+    const skipped = await generateOnboardingSubject({
+      subjectId: 'history',
+      provider: 'test',
+      seed: 0,
+      root,
+      overwrite: 'skip',
+    });
+    expect(skipped.ok).toBe(false);
+    if (skipped.ok) throw new Error('expected skipped for corrupt IR');
+    expect(skipped.reason).toBe('skipped');
+    expect(generateSpy).not.toHaveBeenCalled();
+    expect(writeSpy).not.toHaveBeenCalled();
+    expect(readFileSync(irPath, 'utf8')).toBe(prior);
+    writeSpy.mockRestore();
+    generateSpy.mockRestore();
+
+    const forced = await generateOnboardingSubject({
+      subjectId: 'history',
+      provider: 'test',
+      seed: 0,
+      root,
+      force: true,
+    });
+    expect(forced.ok).toBe(true);
+    if (!forced.ok) throw new Error('expected generate over corrupt IR with force');
+    expect(forced.result.wroteIr).toBe(true);
+    expect(forced.result.overwrite).toBe(true);
+    expect(JSON.parse(readFileSync(irPath, 'utf8')).difficulties.easy[0]?.id).toBe(
+      'history-easy-1',
+    );
   });
 
   it('writes over existing IR when confirm/force is set', async () => {

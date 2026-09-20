@@ -1,6 +1,5 @@
 import 'server-only';
 
-import { existsSync } from 'node:fs';
 import path from 'node:path';
 import * as ingestGenerate from 'examify-ingest/generate';
 import { getOnboardingContentRoot } from '@/lib/content-root';
@@ -254,7 +253,9 @@ async function generateOnboardingSubjectUnlocked(input: {
   const existingIrPath = path.join(root, SUBJECTS_REL, subjectId, BANK_IR_FILE);
   const existingIrRel = posixRel(root, existingIrPath);
   const force = input.force === true || input.overwrite === 'force';
-  if (existsSync(existingIrPath) && input.overwrite === 'skip') {
+  // Shared empty≠existing predicate — never existsSync on the IR path.
+  // Corrupt IR is existing (confirm / force); empty + zero-item are not.
+  if (ingestGenerate.hasExistingBankIr(existingIrPath) && input.overwrite === 'skip') {
     return skippedResult(existingIrRel);
   }
   // Confirm before generate: existing IR without force never starts a

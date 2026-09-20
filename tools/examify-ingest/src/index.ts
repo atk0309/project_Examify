@@ -61,3 +61,4 @@ export {
   type BankIrPresence,
   type WriteBankIrOptions,
 } from './write-atomic';
+export { SUBJECT_META_FILE, BANK_IR_FILE } from './sources';

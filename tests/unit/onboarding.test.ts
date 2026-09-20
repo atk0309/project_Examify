@@ -200,8 +200,20 @@ describe('onboarding catalog emit', () => {
     expect(preview.dryRun.diff).toContain('would delete content/generated/keys/chemistry.json');
     expect(preview.dryRun.diff).not.toContain('do-not-leak');
 
-    const applied = applyOnboardingEmit(
+    const refused = applyOnboardingEmit(
       { replaceSample: false, expectedHash: preview.dryRun.hash },
+      root,
+    );
+    expect(refused.ok).toBe(false);
+    if (refused.ok) throw new Error('expected prune confirm');
+    expect(refused.reason).toBe('prune_confirm_required');
+    expect(refused.message).toMatch(/chemistry/);
+    expect(refused.deletes?.some((row) => row.path.includes('chemistry'))).toBe(true);
+    expect(existsSync(leftover.questionsPath)).toBe(true);
+    expect(existsSync(leftover.keysPath)).toBe(true);
+
+    const applied = applyOnboardingEmit(
+      { replaceSample: false, expectedHash: preview.dryRun.hash, confirmPrune: true },
       root,
     );
     expect(applied.ok).toBe(true);
@@ -291,8 +303,10 @@ describe('onboarding subjects and files', () => {
     expect(added.ok).toBe(true);
     if (!added.ok) throw new Error('add');
     expect(added.subject.icon).toBe('maths');
+    expect(added.subject.hasIr).toBe(false);
     expect(listOnboardingSubjects(root).map((row) => row.id)).toEqual(['history']);
-    expect(existsSync(path.join(root, 'content/subjects/history/bank.ir.json'))).toBe(true);
+    expect(existsSync(path.join(root, 'content/subjects/history/bank.ir.json'))).toBe(false);
+    expect(existsSync(path.join(root, 'content/subjects/history/subject.json'))).toBe(true);
 
     const renamed = renameOnboardingSubject(
       { id: 'history', nextId: 'world-history', label: 'World History', icon: 'geography' },
@@ -369,6 +383,103 @@ describe('onboarding subjects and files', () => {
     expect(hasPdfMagic(Buffer.alloc(0))).toBe(false);
   });
 
+  it('lists notes.txt generate sources without treating them as uploaded PDFs', async () => {
+    const { addOnboardingSubject, listOnboardingSubjects, setOnboardingContentRootForTests } =
+      await import('@/lib/onboarding');
+    const { onboardingSourceCountLabel, onboardingSourceFileNames } =
+      await import('@/lib/onboarding-types');
+    const root = tempRoot();
+    setOnboardingContentRootForTests(root);
+    expect(
+      addOnboardingSubject({ id: 'demo', label: 'Generate demo', icon: 'biology' }, root).ok,
+    ).toBe(true);
+    writeFileSync(path.join(root, 'content/subjects/demo/notes.txt'), 'A generate fixture.\n');
+    const demo = listOnboardingSubjects(root).find((row) => row.id === 'demo');
+    expect(demo?.sourceFiles).toEqual([]);
+    expect(demo?.generateSources).toEqual(['content/subjects/demo/notes.txt']);
+    expect(demo?.hasIr).toBe(false);
+    expect(onboardingSourceCountLabel(demo!)).toBe('1 source');
+    expect(onboardingSourceFileNames(demo!)).toEqual(['notes.txt']);
+    expect(onboardingSourceCountLabel({ sourceFiles: [], generateSources: [] })).toBe(
+      'No files yet',
+    );
+  });
+
+  it('exposes live bank subject names and question counts on the snapshot', async () => {
+    const { bootstrapHousehold } = await import('@/lib/households');
+    const { applyOnboardingEmit, getOnboardingSnapshot, setOnboardingContentRootForTests } =
+      await import('@/lib/onboarding');
+    const host = bootstrapHousehold({ email: 'pat@example.com', householdName: 'Ours' });
+    expect(host.ok).toBe(true);
+    if (!host.ok) throw new Error('bootstrap');
+    const root = tempRoot();
+    mkdirSync(path.join(root, 'content/subjects/history'), { recursive: true });
+    writeFileSync(
+      path.join(root, 'content/subjects/history/bank.ir.json'),
+      JSON.stringify(fixtureIr('history', 'History')),
+    );
+    setOnboardingContentRootForTests(root);
+    const { previewOnboardingEmit } = await import('@/lib/onboarding');
+    const preview = previewOnboardingEmit(false, root);
+    expect(preview.ok).toBe(true);
+    if (!preview.ok) throw new Error('expected preview');
+    expect(
+      applyOnboardingEmit({ replaceSample: false, expectedHash: preview.dryRun.hash }, root).ok,
+    ).toBe(true);
+    const snap = getOnboardingSnapshot(host.householdId, root);
+    const history = snap.liveSubjects.find((row) => row.id === 'history');
+    expect(history).toMatchObject({ id: 'history', label: 'History', questionCount: 1 });
+    expect(snap.liveSubjects.some((row) => row.label && row.id)).toBe(true);
+  });
+
+  it('treats leftover empty / zero-item BankIR as not existing for overwrite', async () => {
+    const { listOnboardingSubjects, setOnboardingContentRootForTests } =
+      await import('@/lib/onboarding');
+    const { classifyBankIr, hasExistingBankIr } = await import('examify-ingest');
+    const root = tempRoot();
+    const irPath = path.join(root, 'content/subjects/history/bank.ir.json');
+    mkdirSync(path.join(root, 'content/subjects/history'), { recursive: true });
+    setOnboardingContentRootForTests(root);
+
+    writeFileSync(irPath, '');
+    expect(classifyBankIr(irPath)).toEqual({ kind: 'placeholder' });
+    expect(hasExistingBankIr(irPath)).toBe(false);
+    expect(listOnboardingSubjects(root)[0]).toMatchObject({ id: 'history', hasIr: false });
+
+    writeFileSync(
+      irPath,
+      JSON.stringify({
+        version: 1,
+        subject: { id: 'history', label: 'History', icon: 'geography', l: 0.6, c: 0.08, h: 40 },
+        difficulties: { easy: [], medium: [], hard: [] },
+      }),
+    );
+    expect(classifyBankIr(irPath)).toEqual({ kind: 'placeholder' });
+    expect(hasExistingBankIr(irPath)).toBe(false);
+    expect(listOnboardingSubjects(root)[0]).toMatchObject({ id: 'history', hasIr: false });
+  });
+
+  it('treats leftover corrupt BankIR as existing for overwrite', async () => {
+    const { listOnboardingSubjects, setOnboardingContentRootForTests } =
+      await import('@/lib/onboarding');
+    const { classifyBankIr, hasExistingBankIr } = await import('examify-ingest');
+    const root = tempRoot();
+    const irPath = path.join(root, 'content/subjects/history/bank.ir.json');
+    mkdirSync(path.join(root, 'content/subjects/history'), { recursive: true });
+    setOnboardingContentRootForTests(root);
+
+    for (const [body, reason] of [
+      ['{}\n', 'invalid BankIR schema'],
+      ['{ "stale": true }\n', 'invalid BankIR schema'],
+      ['not-json{\n', 'unparseable JSON'],
+    ] as const) {
+      writeFileSync(irPath, body);
+      expect(classifyBankIr(irPath)).toEqual({ kind: 'corrupt', reason });
+      expect(hasExistingBankIr(irPath)).toBe(true);
+      expect(listOnboardingSubjects(root)[0]).toMatchObject({ id: 'history', hasIr: true });
+    }
+  });
+
   it('does not leave the IR dir renamed when the destination PDF dir already exists', async () => {
     const {
       addOnboardingSubject,
@@ -401,7 +512,8 @@ describe('onboarding subjects and files', () => {
     );
     expect(renamed).toEqual({ ok: false, reason: 'duplicate' });
     expect(listOnboardingSubjects(root).map((row) => row.id)).toEqual(['history']);
-    expect(existsSync(path.join(root, 'content/subjects/history/bank.ir.json'))).toBe(true);
+    expect(existsSync(path.join(root, 'content/subjects/history/bank.ir.json'))).toBe(false);
+    expect(existsSync(path.join(root, 'content/subjects/history/subject.json'))).toBe(true);
     expect(existsSync(path.join(root, 'content/subjects/world-history'))).toBe(false);
     expect(existsSync(path.join(root, 'content/source-pdfs/history/notes.pdf'))).toBe(true);
     expect(existsSync(path.join(root, 'content/source-pdfs/world-history/other.pdf'))).toBe(true);
@@ -610,6 +722,7 @@ describe('onboarding household gate', () => {
       expect(snap.openaiConfigured).toBe(false);
       expect(snap.openaiHostManaged).toBe(false);
       expect(snap.anthropicConfigured).toBe(false);
+      expect(snap.anthropicPresent).toBe(true);
     } finally {
       if (previous === undefined) delete process.env.OPENAI_API_KEY;
       else process.env.OPENAI_API_KEY = previous;
@@ -656,6 +769,7 @@ describe('onboarding household gate', () => {
     try {
       const snap = getOnboardingSnapshot(host.householdId);
       expect(snap.anthropicConfigured).toBe(false);
+      expect(snap.anthropicPresent).toBe(false);
       expect(snap.anthropicHostManaged).toBe(false);
     } finally {
       if (previous === undefined) delete process.env.ANTHROPIC_API_KEY;
@@ -677,7 +791,22 @@ describe('onboarding household gate', () => {
       setInitialEnvironForTests({ ANTHROPIC_API_KEY: '' });
       expect(getOnboardingSnapshot(host.householdId).anthropicHostManaged).toBe(true);
       setInitialEnvironForTests({ ANTHROPIC_API_KEY: 'test' });
-      expect(getOnboardingSnapshot(host.householdId).anthropicHostManaged).toBe(true);
+      process.env.ANTHROPIC_API_KEY = 'test';
+      const sentinel = getOnboardingSnapshot(host.householdId);
+      expect(sentinel.anthropicHostManaged).toBe(true);
+      expect(sentinel.anthropicWriteBlocked).toBe(false);
+      expect(sentinel.anthropicConfigured).toBe(false);
+      expect(sentinel.anthropicPresent).toBe(true);
+      expect(sentinel.anthropicLiveTest).toBe(true);
+      setInitialEnvironForTests({ ANTHROPIC_API_KEY: '' });
+      process.env.ANTHROPIC_API_KEY = '';
+      writeFileSync(path.join(root, '.env'), 'ANTHROPIC_API_KEY=sk-from-store\n');
+      const emptyHost = getOnboardingSnapshot(host.householdId);
+      expect(emptyHost.anthropicHostManaged).toBe(true);
+      expect(emptyHost.anthropicWriteBlocked).toBe(true);
+      expect(emptyHost.anthropicConfigured).toBe(false);
+      expect(emptyHost.anthropicPresent).toBe(true);
+      expect(emptyHost.anthropicLiveTest).toBe(false);
     } finally {
       if (previous === undefined) delete process.env.ANTHROPIC_API_KEY;
       else process.env.ANTHROPIC_API_KEY = previous;

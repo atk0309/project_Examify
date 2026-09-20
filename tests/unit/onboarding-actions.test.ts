@@ -37,6 +37,27 @@ vi.mock('next/navigation', () => ({
   },
 }));
 
+function populatedIr(id = 'history', label = 'History') {
+  return {
+    version: 1,
+    subject: { id, label, icon: 'geography', l: 0.6, c: 0.08, h: 40 },
+    difficulties: {
+      easy: [
+        {
+          id: `${id}-easy-1`,
+          type: 'mcq',
+          q: 'A prior question?',
+          choices: ['A', 'B', 'C', 'D'],
+          answer: 1,
+          provenance: { pdf: 'hand-authored', locator: 'unit' },
+        },
+      ],
+      medium: [],
+      hard: [],
+    },
+  };
+}
+
 function tempRoot(): string {
   const root = mkdtempSync(path.join(tmpdir(), 'examify-onboarding-act-'));
   writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'project-examify' }));
@@ -210,6 +231,68 @@ describe('onboarding actions', () => {
     expect(SUBJECTS.some((subject) => subject.id === 'history')).toBe(false);
     expect(live.questions.history?.easy?.[0]?.id).toBe('history-easy-1');
     expect(loadLiveAnswerKeys()['history-easy-1']?.type).toBe('mcq');
+    expect(applied.ok).toBe(true);
+    if (!applied.ok) throw new Error('expected apply');
+    expect(
+      applied.snapshot.liveSubjects.some((row) => row.id === 'history' && row.label === 'History'),
+    ).toBe(true);
+  });
+
+  it('refuses apply prune without confirm and writes nothing', async () => {
+    const root = tempRoot();
+    const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
+    setOnboardingContentRootForTests(root);
+    await signInHost();
+    fs.mkdirSync(path.join(root, 'content/subjects/history'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'content/generated/questions'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'content/generated/keys'), { recursive: true });
+    writeFileSync(
+      path.join(root, 'content/subjects/history/bank.ir.json'),
+      JSON.stringify({
+        version: 1,
+        subject: { id: 'history', label: 'History', icon: 'geography', l: 0.6, c: 0.08, h: 40 },
+        difficulties: {
+          easy: [
+            {
+              id: 'history-easy-1',
+              type: 'mcq',
+              q: 'A fixture question?',
+              choices: ['A', 'B', 'C', 'D'],
+              answer: 1,
+              provenance: { pdf: 'hand-authored', locator: 'unit' },
+            },
+          ],
+          medium: [],
+          hard: [],
+        },
+      }),
+    );
+    writeFileSync(
+      path.join(root, 'content/generated/subjects.json'),
+      JSON.stringify([
+        { id: 'chemistry', label: 'Chemistry', icon: 'chemistry', l: 0.6, c: 0.1, h: 30 },
+      ]),
+    );
+    writeFileSync(path.join(root, 'content/generated/questions/chemistry.json'), '{}\n');
+    writeFileSync(path.join(root, 'content/generated/keys/chemistry.json'), '{}\n');
+    const { previewOnboardingEmitAction, applyOnboardingEmitAction } =
+      await import('@/actions/onboarding');
+    expect((await previewOnboardingEmitAction()).ok).toBe(true);
+    const refused = await applyOnboardingEmitAction();
+    expect(refused.ok).toBe(false);
+    if (refused.ok) throw new Error('expected prune confirm');
+    expect(refused.reason).toBe('prune_confirm_required');
+    expect(refused.message).toMatch(/chemistry/);
+    expect(fs.existsSync(path.join(root, 'content/generated/questions/chemistry.json'))).toBe(true);
+    expect(fs.existsSync(path.join(root, 'content/generated/keys/chemistry.json'))).toBe(true);
+
+    const data = new FormData();
+    data.set('confirmPrune', '1');
+    const applied = await applyOnboardingEmitAction(data);
+    expect(applied.ok).toBe(true);
+    expect(fs.existsSync(path.join(root, 'content/generated/questions/chemistry.json'))).toBe(
+      false,
+    );
   });
 
   it('validates with the persisted replace-sample setting', async () => {
@@ -437,24 +520,7 @@ describe('onboarding actions', () => {
     const irPath = path.join(root, 'content/subjects/history/bank.ir.json');
     fs.mkdirSync(path.join(root, 'content/subjects/history'), { recursive: true });
     fs.mkdirSync(path.join(root, 'content/source-pdfs/history'), { recursive: true });
-    const prior = `${JSON.stringify({
-      version: 1,
-      subject: { id: 'history', label: 'History', icon: 'geography', l: 0.6, c: 0.08, h: 40 },
-      difficulties: {
-        easy: [
-          {
-            id: 'history-easy-1',
-            type: 'mcq',
-            q: 'Prior history item?',
-            choices: ['A', 'B', 'C', 'D'],
-            answer: 0,
-            provenance: { pdf: 'hand-authored', locator: 'prior' },
-          },
-        ],
-        medium: [],
-        hard: [],
-      },
-    })}\n`;
+    const prior = `${JSON.stringify(populatedIr())}\n`;
     writeFileSync(irPath, prior);
     writeFileSync(path.join(root, 'content/source-pdfs/history/notes.txt'), 'A source note.\n');
 
@@ -483,11 +549,7 @@ describe('onboarding actions', () => {
     const irPath = path.join(root, 'content/subjects/history/bank.ir.json');
     fs.mkdirSync(path.join(root, 'content/subjects/history'), { recursive: true });
     fs.mkdirSync(path.join(root, 'content/source-pdfs/history'), { recursive: true });
-    const prior = `${JSON.stringify({
-      version: 1,
-      subject: { id: 'history', label: 'History', icon: 'geography', l: 0.6, c: 0.08, h: 40 },
-      difficulties: { easy: [], medium: [], hard: [] },
-    })}\n`;
+    const prior = `${JSON.stringify(populatedIr())}\n`;
     writeFileSync(irPath, prior);
     writeFileSync(path.join(root, 'content/source-pdfs/history/notes.txt'), 'A source note.\n');
 
@@ -504,6 +566,49 @@ describe('onboarding actions', () => {
       reason: 'skipped',
     });
     expect(fs.readFileSync(irPath, 'utf8')).toBe(prior);
+  });
+
+  it('refuses to clobber corrupt IR without force and keeps bytes on skip', async () => {
+    const root = tempRoot();
+    const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
+    setOnboardingContentRootForTests(root);
+    await signInHost();
+    const irPath = path.join(root, 'content/subjects/history/bank.ir.json');
+    fs.mkdirSync(path.join(root, 'content/subjects/history'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'content/source-pdfs/history'), { recursive: true });
+    const prior = 'not-json{\n';
+    writeFileSync(irPath, prior);
+    writeFileSync(path.join(root, 'content/source-pdfs/history/notes.txt'), 'A source note.\n');
+
+    const { generateOnboardingSubjectAction, setOnboardingAiModeAction } =
+      await import('@/actions/onboarding');
+    const mode = new FormData();
+    mode.set('aiMode', 'skip-stub');
+    expect((await setOnboardingAiModeAction(mode)).ok).toBe(true);
+    const generate = new FormData();
+    generate.set('subjectId', 'history');
+    expect(await generateOnboardingSubjectAction(generate)).toEqual({
+      ok: false,
+      reason: 'needs_confirm',
+      irRel: 'content/subjects/history/bank.ir.json',
+    });
+    expect(fs.readFileSync(irPath, 'utf8')).toBe(prior);
+
+    generate.set('overwrite', 'skip');
+    expect(await generateOnboardingSubjectAction(generate)).toEqual({
+      ok: false,
+      reason: 'skipped',
+    });
+    expect(fs.readFileSync(irPath, 'utf8')).toBe(prior);
+
+    generate.set('overwrite', 'force');
+    const forced = await generateOnboardingSubjectAction(generate);
+    expect(forced.ok).toBe(true);
+    if (!forced.ok) throw new Error('expected generate over corrupt IR');
+    expect(forced.result.overwrite).toBe(true);
+    expect(JSON.parse(fs.readFileSync(irPath, 'utf8')).difficulties.easy[0]?.id).toBe(
+      'history-easy-1',
+    );
   });
 
   it('refuses generate for a kebab-case id that is not in the wizard catalog', async () => {
@@ -1303,7 +1408,7 @@ describe('onboarding actions', () => {
     }
   });
 
-  it('refuses set / clear when exec environ assigns OPENAI_API_KEY as empty or test', async () => {
+  it('refuses set / clear when exec environ assigns OPENAI_API_KEY as empty', async () => {
     const { setEnvStoreRootForTests, setInitialEnvironForTests } = await import('@/lib/env-store');
     const root = tempRoot();
     setEnvStoreRootForTests(root);
@@ -1314,22 +1419,20 @@ describe('onboarding actions', () => {
     const attempted = 'sk-wizard-unusable-inject-never-echo';
     try {
       const { setOnboardingOpenAiKeyAction } = await import('@/actions/onboarding');
-      for (const injected of ['', 'test'] as const) {
-        setInitialEnvironForTests({ OPENAI_API_KEY: injected });
-        const set = new FormData();
-        set.set('intent', 'set');
-        set.set('openaiApiKey', attempted);
-        const written = await setOnboardingOpenAiKeyAction(set);
-        expect(written).toEqual({ ok: false, reason: 'host_managed' });
-        expect(JSON.stringify(written)).not.toContain(attempted);
+      setInitialEnvironForTests({ OPENAI_API_KEY: '' });
+      const set = new FormData();
+      set.set('intent', 'set');
+      set.set('openaiApiKey', attempted);
+      const written = await setOnboardingOpenAiKeyAction(set);
+      expect(written).toEqual({ ok: false, reason: 'host_managed' });
+      expect(JSON.stringify(written)).not.toContain(attempted);
 
-        const clear = new FormData();
-        clear.set('intent', 'clear');
-        const cleared = await setOnboardingOpenAiKeyAction(clear);
-        expect(cleared).toEqual({ ok: false, reason: 'host_managed' });
-        expect(readFileSync(path.join(root, '.env'), 'utf8')).toBe('ANTHROPIC_API_KEY=test\n');
-        expect(process.env.OPENAI_API_KEY).toBeUndefined();
-      }
+      const clear = new FormData();
+      clear.set('intent', 'clear');
+      const cleared = await setOnboardingOpenAiKeyAction(clear);
+      expect(cleared).toEqual({ ok: false, reason: 'host_managed' });
+      expect(readFileSync(path.join(root, '.env'), 'utf8')).toBe('ANTHROPIC_API_KEY=test\n');
+      expect(process.env.OPENAI_API_KEY).toBeUndefined();
     } finally {
       if (previous === undefined) delete process.env.OPENAI_API_KEY;
       else process.env.OPENAI_API_KEY = previous;
@@ -1559,7 +1662,7 @@ describe('onboarding actions', () => {
     }
   });
 
-  it('refuses set / clear when exec environ assigns ANTHROPIC_API_KEY as empty or test', async () => {
+  it('refuses set / clear when exec environ assigns ANTHROPIC_API_KEY as empty', async () => {
     const { setEnvStoreRootForTests, setInitialEnvironForTests } = await import('@/lib/env-store');
     const root = tempRoot();
     setEnvStoreRootForTests(root);
@@ -1570,22 +1673,72 @@ describe('onboarding actions', () => {
     const attempted = 'sk-anth-wizard-unusable-inject-never-echo';
     try {
       const { setOnboardingAnthropicKeyAction } = await import('@/actions/onboarding');
-      for (const injected of ['', 'test'] as const) {
-        setInitialEnvironForTests({ ANTHROPIC_API_KEY: injected });
-        const set = new FormData();
-        set.set('intent', 'set');
-        set.set('anthropicApiKey', attempted);
-        const written = await setOnboardingAnthropicKeyAction(set);
-        expect(written).toEqual({ ok: false, reason: 'host_managed' });
-        expect(JSON.stringify(written)).not.toContain(attempted);
+      setInitialEnvironForTests({ ANTHROPIC_API_KEY: '' });
+      const set = new FormData();
+      set.set('intent', 'set');
+      set.set('anthropicApiKey', attempted);
+      const written = await setOnboardingAnthropicKeyAction(set);
+      expect(written).toEqual({ ok: false, reason: 'host_managed' });
+      expect(JSON.stringify(written)).not.toContain(attempted);
 
-        const clear = new FormData();
-        clear.set('intent', 'clear');
-        const cleared = await setOnboardingAnthropicKeyAction(clear);
-        expect(cleared).toEqual({ ok: false, reason: 'host_managed' });
-        expect(readFileSync(path.join(root, '.env'), 'utf8')).toBe('OPENAI_API_KEY=keep-openai\n');
-        expect(process.env.ANTHROPIC_API_KEY).toBeUndefined();
-      }
+      const clear = new FormData();
+      clear.set('intent', 'clear');
+      const cleared = await setOnboardingAnthropicKeyAction(clear);
+      expect(cleared).toEqual({ ok: false, reason: 'host_managed' });
+      expect(readFileSync(path.join(root, '.env'), 'utf8')).toBe('OPENAI_API_KEY=keep-openai\n');
+      expect(process.env.ANTHROPIC_API_KEY).toBeUndefined();
+    } finally {
+      if (previous === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = previous;
+    }
+  });
+
+  it('lets the admin rotate and clear after replacing a boot Anthropic test sentinel', async () => {
+    const { setEnvStoreRootForTests, setInitialEnvironForTests } = await import('@/lib/env-store');
+    const root = tempRoot();
+    setEnvStoreRootForTests(root);
+    writeFileSync(path.join(root, '.env'), 'ANTHROPIC_API_KEY=test\nOPENAI_API_KEY=keep-openai\n');
+    setInitialEnvironForTests({ ANTHROPIC_API_KEY: 'test' });
+    await signInHost();
+    const secret = 'sk-anth-after-sentinel-never-echo';
+    const rotated = 'sk-anth-after-sentinel-rotated-never-echo';
+    const previous = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = 'test';
+    try {
+      const { setOnboardingAnthropicKeyAction } = await import('@/actions/onboarding');
+      const set = new FormData();
+      set.set('intent', 'set');
+      set.set('anthropicApiKey', secret);
+      const written = await setOnboardingAnthropicKeyAction(set);
+      expect(written.ok).toBe(true);
+      if (!written.ok) throw new Error('expected set');
+      expect(written.snapshot.anthropicConfigured).toBe(true);
+      expect(written.snapshot.anthropicLiveTest).toBe(false);
+      expect(written.snapshot.anthropicHostManaged).toBe(true);
+      expect(written.snapshot.anthropicWriteBlocked).toBe(false);
+      expect(JSON.stringify(written)).not.toContain(secret);
+
+      const rotate = new FormData();
+      rotate.set('intent', 'set');
+      rotate.set('anthropicApiKey', rotated);
+      const rotatedResult = await setOnboardingAnthropicKeyAction(rotate);
+      expect(rotatedResult.ok).toBe(true);
+      if (!rotatedResult.ok) throw new Error('expected rotate');
+      expect(rotatedResult.snapshot.anthropicWriteBlocked).toBe(false);
+      expect(JSON.stringify(rotatedResult)).not.toContain(rotated);
+      expect(readFileSync(path.join(root, '.env'), 'utf8')).toContain(
+        `ANTHROPIC_API_KEY=${rotated}`,
+      );
+
+      const clear = new FormData();
+      clear.set('intent', 'clear');
+      const cleared = await setOnboardingAnthropicKeyAction(clear);
+      expect(cleared.ok).toBe(true);
+      if (!cleared.ok) throw new Error('expected clear');
+      expect(cleared.snapshot.anthropicConfigured).toBe(false);
+      expect(cleared.snapshot.anthropicWriteBlocked).toBe(false);
+      expect(JSON.stringify(cleared)).not.toContain(rotated);
+      expect(readFileSync(path.join(root, '.env'), 'utf8')).not.toMatch(/ANTHROPIC_API_KEY=/);
     } finally {
       if (previous === undefined) delete process.env.ANTHROPIC_API_KEY;
       else process.env.ANTHROPIC_API_KEY = previous;
