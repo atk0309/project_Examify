@@ -339,6 +339,12 @@ describe('OnboardingWizard majors UI', () => {
       /\.wizard-secret-actions \{[\s\S]*position: sticky;[\s\S]*scroll-margin-bottom: var\(--wizard-footer-clearance\)/,
     );
     expect(css).toMatch(/\.wizard-footer \{[\s\S]*flex: none;/);
+    expect(css).toMatch(
+      /@media \(min-width: 540px\) \{[\s\S]*\.app-frame-wizard \{[\s\S]*max-height: calc\(100dvh - \(2 \* var\(--sp-8\)\)\)/,
+    );
+    expect(css).toMatch(
+      /@media \(min-width: 900px\) \{[\s\S]*\.app-frame-wizard \{[\s\S]*max-height: calc\(100dvh - \(2 \* var\(--sp-6\)\)\)/,
+    );
   });
 
   it('keeps AI secret actions in the footer-clearance slot', async () => {

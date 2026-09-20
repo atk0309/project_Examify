@@ -2100,6 +2100,12 @@
     width: 100%;
   }
   @media (min-width: 540px) {
+    /* .app-frame adds margin: var(--sp-8) 0. Subtract both sides so the
+       locked wizard + margins fit the viewport and Back/Next stay on-screen. */
+    .app-frame-wizard {
+      min-height: calc(100dvh - (2 * var(--sp-8)));
+      max-height: calc(100dvh - (2 * var(--sp-8)));
+    }
     .wizard-topbar,
     .wizard-footer {
       background: linear-gradient(transparent, var(--surface) 32%);
@@ -2113,13 +2119,13 @@
       max-width: 1080px;
       width: calc(100% - 48px);
       margin: var(--sp-6) 0;
-      min-height: calc(100dvh - 48px);
-      max-height: calc(100dvh - 48px);
+      min-height: calc(100dvh - (2 * var(--sp-6)));
+      max-height: calc(100dvh - (2 * var(--sp-6)));
       padding: 0;
     }
     .wizard-shell {
       --wizard-footer-clearance: calc(var(--tap-min) + var(--sp-4) + var(--sp-6));
-      min-height: calc(100dvh - 48px);
+      min-height: calc(100dvh - (2 * var(--sp-6)));
       max-height: 100%;
       height: 100%;
     }
