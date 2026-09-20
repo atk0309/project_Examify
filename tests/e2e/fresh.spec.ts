@@ -6,6 +6,7 @@ import {
   DESKTOP_FOOTER_CLEARANCE_PX,
   DESKTOP_FRAME_MARGIN_Y_PX,
   TABLET_AI_VIEWPORT,
+  TABLET_FOOTER_CLEARANCE_PX,
   TABLET_FRAME_MARGIN_Y_PX,
   evaluateSecretActionClearance,
   wizardFrameFitsViewport,
@@ -93,19 +94,26 @@ async function measureAiSecretClearance(page: Page): Promise<MeasuredSecretClear
   }, SECRET_ACTION_IDS);
 }
 
-async function assertAiSecretActionsClearOfFooter(page: Page) {
+async function assertAiSecretActionsClearOfFooter(
+  page: Page,
+  viewport: { width: number; height: number } = DESKTOP_AI_VIEWPORT,
+) {
   await expect(page.getByTestId('wizard-ai')).toBeVisible();
   await expect(page.getByTestId('wizard-anthropic-key-actions')).toBeVisible();
+  // Mode cards fill the first paint. Scroll the secret-action row into the
+  // stage scrollport — scroll-margin-bottom must keep it above the footer.
+  await page.getByTestId('wizard-anthropic-key-actions').scrollIntoViewIfNeeded();
   const measured = await measureAiSecretClearance(page);
-  expect(measured.viewport.width).toBe(DESKTOP_AI_VIEWPORT.width);
-  expect(measured.viewport.height).toBe(DESKTOP_AI_VIEWPORT.height);
+  expect(measured.viewport).toEqual(viewport);
   expect(measured.computed.footerPosition).toBe('sticky');
   expect(Number(measured.computed.footerZ)).toBeGreaterThanOrEqual(5);
   expect(measured.computed.actionsPosition).toBe('sticky');
   expect(measured.computed.actionsBottom).toBe('0px');
   expect(Number(measured.computed.actionsZ)).toBeGreaterThan(Number(measured.computed.footerZ));
+  const minClearance =
+    viewport.width >= 900 ? DESKTOP_FOOTER_CLEARANCE_PX : TABLET_FOOTER_CLEARANCE_PX;
   const scrollMargin = Number.parseFloat(measured.computed.actionsScrollMarginBottom);
-  expect(scrollMargin).toBeGreaterThanOrEqual(DESKTOP_FOOTER_CLEARANCE_PX - 0.5);
+  expect(scrollMargin).toBeGreaterThanOrEqual(minClearance - 0.5);
   expect(measured.footer.height).toBeGreaterThan(0);
   expect(measured.footer.height).toBeLessThanOrEqual(scrollMargin + 24);
 
@@ -118,7 +126,10 @@ async function assertAiSecretActionsClearOfFooter(page: Page) {
       viewport: measured.viewport,
       hitIsControl: control.hitIsControl,
     });
-    expect(proof, `${control.id} ${JSON.stringify({ proof, hit: control.hitTestId })}`).toEqual({
+    expect(
+      proof,
+      `${control.id} ${JSON.stringify({ proof, hit: control.hitTestId, box: control.box, footer: measured.footer })}`,
+    ).toEqual({
       ok: true,
       overlap: false,
       aboveFooter: true,
@@ -126,6 +137,10 @@ async function assertAiSecretActionsClearOfFooter(page: Page) {
       hitControl: true,
     });
     await expect(page.getByTestId(control.id)).toBeInViewport();
+    if (control.id === 'wizard-anthropic-key-save') {
+      await page.getByTestId('wizard-anthropic-key-input').fill('sk-e2e-not-submitted');
+    }
+    await expect(page.getByTestId(control.id)).toBeEnabled();
     await page.getByTestId(control.id).click({ trial: true });
   }
 }
@@ -227,18 +242,16 @@ test('first-run bootstrap creates the admin without Turnstile', async ({ page })
   await expect(page.getByTestId('wizard-ai')).toBeVisible();
   await page.getByTestId('wizard-ai-cloud').click();
   await expect(page.getByTestId('wizard-anthropic-key-clear')).toBeVisible();
-  await assertAiSecretActionsClearOfFooter(page);
+  await assertAiSecretActionsClearOfFooter(page, DESKTOP_AI_VIEWPORT);
   await page.getByTestId('wizard-stage').evaluate((el) => {
     el.scrollTop = el.scrollHeight;
   });
-  await assertAiSecretActionsClearOfFooter(page);
+  await assertAiSecretActionsClearOfFooter(page, DESKTOP_AI_VIEWPORT);
   await assertWizardFrameFitsFirstViewport(page, DESKTOP_AI_VIEWPORT, DESKTOP_FRAME_MARGIN_Y_PX);
 
   await page.setViewportSize(TABLET_AI_VIEWPORT);
   await expect(page.getByTestId('wizard-rail')).toBeHidden();
-  await expect(page.getByTestId('wizard-anthropic-key-clear')).toBeVisible();
-  await expect(page.getByTestId('wizard-anthropic-key-clear')).toBeInViewport();
-  await page.getByTestId('wizard-anthropic-key-clear').click({ trial: true });
+  await assertAiSecretActionsClearOfFooter(page, TABLET_AI_VIEWPORT);
   await assertWizardFrameFitsFirstViewport(page, TABLET_AI_VIEWPORT, TABLET_FRAME_MARGIN_Y_PX);
 
   await page.setViewportSize(DESKTOP_AI_VIEWPORT);
