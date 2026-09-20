@@ -1642,12 +1642,20 @@
   /* ---- First-run setup wizard ---- */
   .app-frame-wizard {
     padding-bottom: 0;
+    max-height: 100dvh;
+    min-height: 100dvh;
+    overflow: hidden;
   }
   .wizard-shell {
+    --wizard-footer-clearance: calc(
+      var(--tap-min) + var(--sp-4) + var(--sp-5) + env(safe-area-inset-bottom, 0px)
+    );
     display: flex;
     flex-direction: column;
     flex: 1;
     min-height: 0;
+    height: 100%;
+    max-height: 100%;
   }
   .wizard-topbar {
     display: flex;
@@ -1658,6 +1666,7 @@
     position: sticky;
     top: 0;
     z-index: 6;
+    flex: none;
     background: linear-gradient(var(--bg) 72%, transparent);
   }
   .wizard-brand {
@@ -1706,6 +1715,7 @@
     flex-direction: column;
     flex: 1;
     min-height: 0;
+    overflow: hidden;
   }
   .wizard-rail {
     display: none;
@@ -1715,6 +1725,7 @@
     flex-direction: column;
     flex: 1;
     min-height: 0;
+    overflow: hidden;
   }
   .wizard-progress {
     display: flex;
@@ -1748,7 +1759,10 @@
     display: flex;
     flex-direction: column;
     gap: var(--sp-5);
+    min-height: 0;
+    overflow-y: auto;
     padding-bottom: var(--sp-4);
+    scroll-padding-bottom: var(--sp-4);
   }
   .wizard-stage-head {
     display: flex;
@@ -1768,6 +1782,7 @@
     position: sticky;
     bottom: 0;
     z-index: 5;
+    flex: none;
     display: flex;
     flex-direction: column;
     gap: var(--sp-2);
@@ -2008,6 +2023,7 @@
     border: 1px solid var(--border);
     border-radius: var(--r-md);
     background: var(--surface);
+    scroll-margin-bottom: var(--wizard-footer-clearance);
   }
   .wizard-secret-form {
     display: flex;
@@ -2018,6 +2034,14 @@
     display: flex;
     flex-wrap: wrap;
     gap: var(--sp-2);
+    position: sticky;
+    bottom: 0;
+    z-index: 6;
+    margin-top: var(--sp-1);
+    padding-top: var(--sp-2);
+    padding-bottom: var(--sp-2);
+    background: var(--surface);
+    scroll-margin-bottom: var(--wizard-footer-clearance);
   }
   .wizard-secret-actions .btn {
     width: auto;
@@ -2076,6 +2100,12 @@
     width: 100%;
   }
   @media (min-width: 540px) {
+    /* .app-frame adds margin: var(--sp-8) 0. Subtract both sides so the
+       locked wizard + margins fit the viewport and Back/Next stay on-screen. */
+    .app-frame-wizard {
+      min-height: calc(100dvh - (2 * var(--sp-8)));
+      max-height: calc(100dvh - (2 * var(--sp-8)));
+    }
     .wizard-topbar,
     .wizard-footer {
       background: linear-gradient(transparent, var(--surface) 32%);
@@ -2089,11 +2119,15 @@
       max-width: 1080px;
       width: calc(100% - 48px);
       margin: var(--sp-6) 0;
-      min-height: calc(100dvh - 48px);
+      min-height: calc(100dvh - (2 * var(--sp-6)));
+      max-height: calc(100dvh - (2 * var(--sp-6)));
       padding: 0;
     }
     .wizard-shell {
-      min-height: calc(100dvh - 48px);
+      --wizard-footer-clearance: calc(var(--tap-min) + var(--sp-4) + var(--sp-6));
+      min-height: calc(100dvh - (2 * var(--sp-6)));
+      max-height: 100%;
+      height: 100%;
     }
     .wizard-topbar {
       padding: var(--sp-5) var(--sp-6) var(--sp-4);
@@ -2182,11 +2216,13 @@
     .wizard-column {
       min-width: 0;
       padding: 0 var(--sp-6);
+      overflow: hidden;
     }
     .wizard-stage {
       max-width: 640px;
       margin: 0 auto;
       padding: var(--sp-4) 0 var(--sp-6);
+      overflow-y: auto;
     }
     .wizard-stage-wide {
       max-width: none;
@@ -2194,6 +2230,7 @@
     .wizard-footer {
       position: sticky;
       bottom: 0;
+      flex: none;
       padding: var(--sp-4) 0 var(--sp-6);
       background: linear-gradient(transparent, var(--surface) 36%);
     }
@@ -2392,6 +2429,11 @@
     display: flex;
     flex-wrap: wrap;
     gap: var(--sp-3);
+  }
+  .wizard-generate-sources {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-1);
   }
   .wizard-generate-row {
     display: flex;

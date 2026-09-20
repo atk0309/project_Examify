@@ -403,6 +403,12 @@ describe('onboarding subjects and files', () => {
     expect(onboardingSourceCountLabel({ sourceFiles: [], generateSources: [] })).toBe(
       'No files yet',
     );
+    expect(onboardingSourceCountLabel({ sourceFiles: [], generateSources: [], hasIr: false })).toBe(
+      'No files yet',
+    );
+    expect(onboardingSourceCountLabel({ sourceFiles: [], generateSources: [], hasIr: true })).toBe(
+      'Hand-authored',
+    );
   });
 
   it('exposes live bank subject names and question counts on the snapshot', async () => {

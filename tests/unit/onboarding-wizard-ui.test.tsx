@@ -1,5 +1,7 @@
 /** @vitest-environment jsdom */
 
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -106,10 +108,14 @@ describe('OnboardingWizard majors UI', () => {
     expect(screen.getByTestId('wizard-files')).toHaveTextContent('1 source');
     expect(screen.getByTestId('wizard-files')).not.toHaveTextContent('0 PDFs');
     expect(screen.getByTestId('wizard-file-sources-demo')).toHaveTextContent('notes.txt');
-    fireEvent.click(screen.getByRole('button', { name: /Biology/ }));
+    expect(screen.getByTestId('wizard-file-tab-demo')).toHaveTextContent('1 source');
+    expect(screen.getByTestId('wizard-file-tab-biology')).toHaveTextContent('Hand-authored');
+    expect(screen.getByTestId('wizard-file-tab-biology')).not.toHaveTextContent('No files yet');
+    fireEvent.click(screen.getByTestId('wizard-file-tab-biology'));
     expect(screen.getByTestId('wizard-files-authored-biology')).toHaveTextContent(
       'Hand-authored BankIR',
     );
+    expect(screen.queryByTestId('wizard-file-sources-biology')).toBeNull();
   });
 
   it('keeps Clear and Rotate visible for a boot test sentinel', async () => {
@@ -257,7 +263,7 @@ describe('OnboardingWizard majors UI', () => {
     fireEvent.click(screen.getByTestId('wizard-next'));
     fireEvent.click(screen.getByTestId('wizard-next'));
     fireEvent.click(screen.getByTestId('wizard-next'));
-    fireEvent.click(document.querySelector('.wizard-validate-btn')!);
+    fireEvent.click(screen.getByTestId('wizard-validate'));
     await waitFor(() => expect(screen.getByTestId('wizard-next')).toBeEnabled());
     fireEvent.click(screen.getByTestId('wizard-next'));
     fireEvent.click(await screen.findByTestId('wizard-preview'));
@@ -307,7 +313,7 @@ describe('OnboardingWizard majors UI', () => {
     fireEvent.click(screen.getByTestId('wizard-next'));
     fireEvent.click(screen.getByTestId('wizard-next'));
     fireEvent.click(screen.getByTestId('wizard-next'));
-    fireEvent.click(document.querySelector('.wizard-validate-btn')!);
+    fireEvent.click(screen.getByTestId('wizard-validate'));
     await waitFor(() => expect(screen.getByTestId('wizard-next')).toBeEnabled());
     fireEvent.click(screen.getByTestId('wizard-next'));
     fireEvent.click(await screen.findByTestId('wizard-preview'));
@@ -320,5 +326,236 @@ describe('OnboardingWizard majors UI', () => {
     expect(screen.getByTestId('wizard-ready-subject-biology')).toHaveTextContent(
       'Biology (biology) · 6 questions',
     );
+  });
+
+  it('reserves sticky-footer clearance for AI secret actions', () => {
+    const css = readFileSync(path.join(process.cwd(), 'src/app/globals.css'), 'utf8');
+    expect(css).toMatch(/--wizard-footer-clearance:/);
+    expect(css).toMatch(/\.wizard-stage \{[\s\S]*overflow-y: auto;/);
+    expect(css).toMatch(
+      /\.wizard-secret \{[\s\S]*scroll-margin-bottom: var\(--wizard-footer-clearance\)/,
+    );
+    expect(css).toMatch(
+      /\.wizard-secret-actions \{[\s\S]*position: sticky;[\s\S]*scroll-margin-bottom: var\(--wizard-footer-clearance\)/,
+    );
+    expect(css).toMatch(/\.wizard-footer \{[\s\S]*flex: none;/);
+    expect(css).toMatch(
+      /@media \(min-width: 540px\) \{[\s\S]*\.app-frame-wizard \{[\s\S]*max-height: calc\(100dvh - \(2 \* var\(--sp-8\)\)\)/,
+    );
+    expect(css).toMatch(
+      /@media \(min-width: 900px\) \{[\s\S]*\.app-frame-wizard \{[\s\S]*max-height: calc\(100dvh - \(2 \* var\(--sp-6\)\)\)/,
+    );
+  });
+
+  it('keeps AI secret actions in the footer-clearance slot', async () => {
+    setOnboardingAiModeAction.mockResolvedValue({
+      ok: true,
+      snapshot: snapshot({ aiMode: 'cloud' }),
+    });
+    render(
+      <OnboardingWizard
+        snapshot={snapshot()}
+        pendingInvites={[]}
+        members={[]}
+        canInvite={false}
+        authMode="magic-link"
+      />,
+    );
+    fireEvent.click(screen.getByTestId('wizard-get-started'));
+    fireEvent.click(screen.getByTestId('wizard-next'));
+    fireEvent.click(screen.getByTestId('wizard-next'));
+    fireEvent.click(screen.getByTestId('wizard-ai-cloud'));
+    expect(await screen.findByTestId('wizard-anthropic-key-actions')).toBeVisible();
+    expect(screen.getByTestId('wizard-anthropic-key-actions')).toHaveClass('wizard-secret-actions');
+    expect(screen.getByTestId('wizard-anthropic-key-save')).toBeVisible();
+    expect(screen.getByTestId('wizard-anthropic-key-rotate')).toBeVisible();
+    expect(screen.getByTestId('wizard-anthropic-key-clear')).toBeVisible();
+    expect(screen.getByTestId('wizard-footer')).toBeVisible();
+    expect(screen.getByTestId('wizard-anthropic-key')).not.toHaveTextContent('ANTHROPIC_API_KEY=');
+  });
+
+  it('uses one wizard-validate testid on the Validate button', () => {
+    render(
+      <OnboardingWizard
+        snapshot={snapshot()}
+        pendingInvites={[]}
+        members={[]}
+        canInvite={false}
+        authMode="magic-link"
+      />,
+    );
+    fireEvent.click(screen.getByTestId('wizard-get-started'));
+    fireEvent.click(screen.getByTestId('wizard-next'));
+    fireEvent.click(screen.getByTestId('wizard-next'));
+    fireEvent.click(screen.getByTestId('wizard-next'));
+    expect(screen.getByTestId('wizard-validate-panel')).toBeVisible();
+    expect(screen.getAllByTestId('wizard-validate')).toHaveLength(1);
+    expect(screen.getByTestId('wizard-validate')).toHaveTextContent('Validate');
+    expect(screen.getByTestId('wizard-validate')).toHaveClass('wizard-validate-btn');
+  });
+
+  it('keeps generate and notes.txt visible when BankIR already exists', async () => {
+    setOnboardingAiModeAction.mockResolvedValue({
+      ok: true,
+      snapshot: snapshot({
+        aiMode: 'skip-stub',
+        subjects: [
+          {
+            id: 'demo',
+            label: 'Generate demo',
+            icon: 'biology',
+            hasIr: true,
+            sourceFiles: [],
+            generateSources: ['content/subjects/demo/notes.txt'],
+          },
+          {
+            id: 'biology',
+            label: 'Biology',
+            icon: 'biology',
+            hasIr: true,
+            sourceFiles: [],
+            generateSources: [],
+          },
+        ],
+      }),
+    });
+    render(
+      <OnboardingWizard
+        snapshot={snapshot({
+          subjects: [
+            {
+              id: 'demo',
+              label: 'Generate demo',
+              icon: 'biology',
+              hasIr: true,
+              sourceFiles: [],
+              generateSources: ['content/subjects/demo/notes.txt'],
+            },
+            {
+              id: 'biology',
+              label: 'Biology',
+              icon: 'biology',
+              hasIr: true,
+              sourceFiles: [],
+              generateSources: [],
+            },
+          ],
+        })}
+        pendingInvites={[]}
+        members={[]}
+        canInvite={false}
+        authMode="magic-link"
+      />,
+    );
+    fireEvent.click(screen.getByTestId('wizard-get-started'));
+    fireEvent.click(screen.getByTestId('wizard-next'));
+    fireEvent.click(screen.getByTestId('wizard-next'));
+    fireEvent.click(screen.getByTestId('wizard-ai-skip-stub'));
+    expect(
+      await screen.findByRole('heading', { name: 'Generate from local sources' }),
+    ).toBeVisible();
+    expect(screen.getByTestId('wizard-generate-sources-demo').closest('details')).toBeNull();
+    expect(screen.getByTestId('wizard-generate-sources-demo')).toBeVisible();
+    expect(screen.getByTestId('wizard-generate-sources-demo')).toHaveTextContent('notes.txt');
+    expect(screen.getByTestId('wizard-generate-demo')).toBeVisible();
+    expect(screen.getByTestId('wizard-generate-overwrite-demo')).toHaveTextContent(
+      'would overwrite content/subjects/demo/bank.ir.json',
+    );
+    window.confirm = vi.fn(() => false);
+    await waitFor(() => expect(screen.getByTestId('wizard-generate-demo')).toBeEnabled());
+    fireEvent.click(screen.getByTestId('wizard-generate-demo'));
+    await waitFor(() => expect(window.confirm).toHaveBeenCalled());
+    expect(String((window.confirm as ReturnType<typeof vi.fn>).mock.calls[0]?.[0])).toMatch(
+      /Replace existing BankIR for Generate demo/,
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId('wizard-generate-skipped')).toHaveTextContent('Generate skipped'),
+    );
+  });
+
+  it('clears the Generate skipped chip after a successful apply', async () => {
+    setOnboardingAiModeAction.mockResolvedValue({
+      ok: true,
+      snapshot: snapshot({
+        aiMode: 'skip-stub',
+        subjects: [
+          {
+            id: 'demo',
+            label: 'Generate demo',
+            icon: 'biology',
+            hasIr: true,
+            sourceFiles: [],
+            generateSources: ['content/subjects/demo/notes.txt'],
+          },
+        ],
+      }),
+    });
+    validateOnboardingAction.mockResolvedValue({ ok: true, snapshot: snapshot() });
+    previewOnboardingEmitAction.mockResolvedValue({
+      ok: true,
+      snapshot: snapshot({ hasDryRun: true }),
+      dryRun: {
+        hash: 'plan-hash',
+        questionCount: 6,
+        subjectCount: 1,
+        collisions: [],
+        replaceSample: false,
+        plan: [{ path: 'content/generated/questions/biology.json', action: 'update' }],
+        diff: 'would update content/generated/questions/biology.json',
+      },
+    });
+    applyOnboardingEmitAction.mockResolvedValue({
+      ok: true,
+      snapshot: snapshot({ hasApplied: true, hasDryRun: false }),
+      written: 1,
+      questionCount: 6,
+      subjectCount: 1,
+    });
+    render(
+      <OnboardingWizard
+        snapshot={snapshot({
+          subjects: [
+            {
+              id: 'demo',
+              label: 'Generate demo',
+              icon: 'biology',
+              hasIr: true,
+              sourceFiles: [],
+              generateSources: ['content/subjects/demo/notes.txt'],
+            },
+          ],
+        })}
+        pendingInvites={[]}
+        members={[]}
+        canInvite={false}
+        authMode="magic-link"
+      />,
+    );
+    fireEvent.click(screen.getByTestId('wizard-get-started'));
+    fireEvent.click(screen.getByTestId('wizard-next'));
+    fireEvent.click(screen.getByTestId('wizard-next'));
+    fireEvent.click(screen.getByTestId('wizard-ai-skip-stub'));
+    await screen.findByTestId('wizard-generate-demo');
+    window.confirm = vi.fn(() => false);
+    await waitFor(() => expect(screen.getByTestId('wizard-generate-demo')).toBeEnabled());
+    fireEvent.click(screen.getByTestId('wizard-generate-demo'));
+    await waitFor(() =>
+      expect(screen.getByTestId('wizard-generate-skipped')).toHaveTextContent('Generate skipped'),
+    );
+    fireEvent.click(screen.getByTestId('wizard-next'));
+    expect(screen.getAllByTestId('wizard-validate')).toHaveLength(1);
+    fireEvent.click(screen.getByTestId('wizard-validate'));
+    await waitFor(() => expect(screen.getByTestId('wizard-next')).toBeEnabled());
+    expect(screen.getByTestId('wizard-generate-skipped')).toBeVisible();
+    fireEvent.click(screen.getByTestId('wizard-next'));
+    fireEvent.click(await screen.findByTestId('wizard-preview'));
+    await waitFor(() => expect(screen.getByTestId('wizard-to-apply')).toBeEnabled());
+    fireEvent.click(screen.getByTestId('wizard-to-apply'));
+    fireEvent.click(screen.getByTestId('wizard-apply-confirm'));
+    await waitFor(() => expect(screen.getByTestId('wizard-to-ready')).toBeEnabled());
+    expect(screen.queryByTestId('wizard-generate-skipped')).toBeNull();
+    fireEvent.click(screen.getByTestId('wizard-to-ready'));
+    expect(screen.queryByTestId('wizard-generate-skipped')).toBeNull();
+    expect(screen.getByTestId('wizard-ready-subjects')).toBeVisible();
   });
 });
