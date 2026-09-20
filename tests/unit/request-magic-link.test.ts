@@ -139,7 +139,7 @@ describe('requestMagicLink', () => {
     expect(await outboxCount()).toBe(1);
   });
 
-  it('returns generic sent (and logs) when delivery fails for a member', async () => {
+  it('returns generic sent and logs no identifiers when delivery fails', async () => {
     await seedStudent();
     const { env } = await import('@/lib/env');
     const email = await import('@/lib/email');
@@ -155,6 +155,45 @@ describe('requestMagicLink', () => {
     );
     expect(state).toEqual({ status: 'sent', email: 'student@example.com' });
     expect(errorSpy).toHaveBeenCalled();
+    for (const args of errorSpy.mock.calls) {
+      expect(JSON.stringify(args)).not.toContain('student@example.com');
+      expect(JSON.stringify(args)).not.toMatch(/"email"\s*:/);
+    }
+    const payload = errorSpy.mock.calls.find((args) =>
+      args.some((arg) => typeof arg === 'string' && arg.includes('magic-link delivery failed')),
+    );
+    expect(payload?.[1]).toEqual({ error: 'boom' });
+    errorSpy.mockRestore();
+  });
+
+  it('invalidates the issued magic-link token when sendEmail fails after issue', async () => {
+    await seedStudent();
+    const { env } = await import('@/lib/env');
+    const email = await import('@/lib/email');
+    const { requestMagicLink } = await import('@/actions/requestMagicLink');
+    const { consumeMagicToken } = await import('@/lib/auth');
+    (env as { TURNSTILE_SECRET_KEY?: string }).TURNSTILE_SECRET_KEY =
+      '1x0000000000000000000000000000000AA';
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const send = vi.spyOn(email, 'sendEmail').mockResolvedValueOnce({ ok: false, error: 'boom' });
+
+    const state = await requestMagicLink(
+      { status: 'idle' },
+      form('student@example.com', 'student', 'ok'),
+    );
+    expect(state).toEqual({ status: 'sent', email: 'student@example.com' });
+
+    const text = send.mock.calls[0]?.[0].text ?? '';
+    const match = text.match(/\/signin\/verify\?token=([^\s]+)/);
+    expect(match?.[1]).toBeTruthy();
+    const token = decodeURIComponent(match![1]!);
+
+    const { db, schema } = await import('@/lib/db');
+    const tokens = db.select().from(schema.magicTokens).all();
+    const unused = tokens.filter((row) => row.consumedAt == null);
+    expect(unused).toHaveLength(0);
+    expect(consumeMagicToken(token)).toEqual({ ok: false, reason: 'used' });
+
     errorSpy.mockRestore();
   });
 

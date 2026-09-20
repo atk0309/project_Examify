@@ -2,7 +2,7 @@
 
 import { headers } from 'next/headers';
 import { z } from 'zod';
-import { invalidateIssuedOtp, issueLocalOtp } from '@/lib/auth';
+import { invalidateIssuedToken, issueLocalOtp } from '@/lib/auth';
 import { verifyTurnstile } from '@/lib/captcha';
 import { renderOtpEmail, sendEmail } from '@/lib/email';
 import { canDeliverMailboxProof, getAuthMode, isTurnstileEnabled } from '@/lib/env';
@@ -86,7 +86,7 @@ export async function acceptInviteWithPassword(
     code,
   });
   if (!result.ok) {
-    invalidateIssuedOtp(id);
+    invalidateIssuedToken(id);
     console.error('[auth] password-invite OTP delivery failed', { error: result.error });
     return { status: 'error', reason: 'send_failed' };
   }
