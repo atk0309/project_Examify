@@ -489,7 +489,50 @@ describe('examify-ingest CLI', () => {
       stderr: { write: (chunk) => void chunks.push(chunk) },
     });
     expect(code).toBe(0);
-    expect(chunks.join('')).toContain('ok 1 BankIR file');
+    // Tip catalog size is not frozen — a leftover demo IR must not flake this smoke.
+    expect(chunks.join('')).toMatch(/ok \d+ BankIR files?/);
+  });
+
+  it('CLI validate reports BankIR file count from the catalog it was given', () => {
+    const tmp = mkdtempSync(path.join(tmpdir(), 'examify-cli-validate-count-'));
+    writeFileSync(path.join(tmp, 'package.json'), JSON.stringify({ name: 'project-examify' }));
+    const subjectsDir = path.join(tmp, 'content/subjects');
+    mkdirSync(path.join(subjectsDir, 'biology'), { recursive: true });
+    writeFileSync(
+      path.join(subjectsDir, 'biology/bank.ir.json'),
+      readFileSync(path.join(repoRoot, 'content/subjects/biology/bank.ir.json')),
+    );
+    mkdirSync(path.join(subjectsDir, 'demo'), { recursive: true });
+    writeFileSync(
+      path.join(subjectsDir, 'demo/bank.ir.json'),
+      JSON.stringify({
+        version: 1,
+        subject: { id: 'demo', label: 'Demo', icon: 'demo', l: 0.5, c: 0.05, h: 150 },
+        difficulties: {
+          easy: [
+            {
+              id: 'demo-easy-1',
+              type: 'mcq',
+              q: 'Fixture question?',
+              choices: ['A', 'B', 'C', 'D'],
+              answer: 0,
+              provenance: { pdf: 'hand-authored', locator: 'fixture' },
+            },
+          ],
+          medium: [],
+          hard: [],
+        },
+      } satisfies BankIR),
+    );
+
+    const chunks: string[] = [];
+    const code = runCli(['validate', 'content/subjects'], {
+      cwd: tmp,
+      stdout: { write: (chunk) => void chunks.push(chunk) },
+      stderr: { write: (chunk) => void chunks.push(chunk) },
+    });
+    expect(code).toBe(0);
+    expect(chunks.join('')).toContain('ok 2 BankIR files');
   });
 
   it('emit --dry-run prints would create / planned files', () => {
