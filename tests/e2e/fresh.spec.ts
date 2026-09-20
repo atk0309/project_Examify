@@ -131,6 +131,7 @@ async function assertAiSecretActionsClearOfFooter(
       `${control.id} ${JSON.stringify({ proof, hit: control.hitTestId, box: control.box, footer: measured.footer })}`,
     ).toEqual({
       ok: true,
+      unproven: false,
       overlap: false,
       aboveFooter: true,
       inViewport: true,

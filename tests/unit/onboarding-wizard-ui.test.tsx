@@ -390,9 +390,6 @@ describe('OnboardingWizard majors UI', () => {
     expect(screen.getByTestId('wizard-footer')).toBeVisible();
     expect(screen.getByTestId('wizard-anthropic-key')).not.toHaveTextContent('ANTHROPIC_API_KEY=');
 
-    // jsdom does not lay out. Presence / toBeVisible is not S8 proof.
-    // When a layout engine supplies boxes (browser-mode / Playwright), the
-    // same helper the 1100×800 e2e uses must pass — empty rects must not.
     const footerBox = toLayoutBox(screen.getByTestId('wizard-footer').getBoundingClientRect());
     const viewport = { width: window.innerWidth || 1100, height: window.innerHeight || 800 };
     for (const id of [
@@ -400,21 +397,72 @@ describe('OnboardingWizard majors UI', () => {
       'wizard-anthropic-key-rotate',
       'wizard-anthropic-key-clear',
     ] as const) {
-      const control = screen.getByTestId(id);
-      const controlBox = toLayoutBox(control.getBoundingClientRect());
-      if (isEmptyLayoutBox(controlBox) || isEmptyLayoutBox(footerBox)) {
-        expect(isEmptyLayoutBox(controlBox) || isEmptyLayoutBox(footerBox)).toBe(true);
-        continue;
+      const controlBox = toLayoutBox(screen.getByTestId(id).getBoundingClientRect());
+      const proof = evaluateSecretActionClearance({
+        control: controlBox,
+        footer: footerBox,
+        viewport,
+        hitIsControl: true,
+      });
+      // Fail closed: empty jsdom rects are unproven and must not pass.
+      // A layout engine that supplies real boxes must still clear the footer.
+      expect(proof.unproven).toBe(isEmptyLayoutBox(controlBox) || isEmptyLayoutBox(footerBox));
+      expect(proof.ok).toBe(!proof.unproven);
+      expect(proof.ok && proof.unproven).toBe(false);
+      if (proof.unproven) {
+        expect(proof.ok).toBe(false);
+      } else {
+        expect(proof).toMatchObject({
+          ok: true,
+          unproven: false,
+          overlap: false,
+          aboveFooter: true,
+        });
       }
-      expect(
-        evaluateSecretActionClearance({
-          control: controlBox,
-          footer: footerBox,
-          viewport,
-          hitIsControl: true,
-        }).ok,
-      ).toBe(true);
     }
+  });
+
+  it('fails closed when mounted AI secret-action rects are empty', async () => {
+    setOnboardingAiModeAction.mockResolvedValue({
+      ok: true,
+      snapshot: snapshot({ aiMode: 'cloud' }),
+    });
+    render(
+      <OnboardingWizard
+        snapshot={snapshot()}
+        pendingInvites={[]}
+        members={[]}
+        canInvite={false}
+        authMode="magic-link"
+      />,
+    );
+    fireEvent.click(screen.getByTestId('wizard-get-started'));
+    fireEvent.click(screen.getByTestId('wizard-next'));
+    fireEvent.click(screen.getByTestId('wizard-next'));
+    fireEvent.click(screen.getByTestId('wizard-ai-cloud'));
+    const footerBox = toLayoutBox(
+      (await screen.findByTestId('wizard-footer')).getBoundingClientRect(),
+    );
+    const viewport = { width: window.innerWidth || 1100, height: window.innerHeight || 800 };
+    const proofs = (
+      [
+        'wizard-anthropic-key-save',
+        'wizard-anthropic-key-rotate',
+        'wizard-anthropic-key-clear',
+      ] as const
+    ).map((id) => {
+      const controlBox = toLayoutBox(screen.getByTestId(id).getBoundingClientRect());
+      return evaluateSecretActionClearance({
+        control: controlBox,
+        footer: footerBox,
+        viewport,
+        hitIsControl: true,
+      });
+    });
+    expect(proofs.length).toBe(3);
+    expect(proofs.every((proof) => proof.ok === false)).toBe(true);
+    expect(proofs.some((proof) => proof.ok)).toBe(false);
+    expect(proofs.every((proof) => proof.unproven)).toBe(true);
   });
 
   it('uses one wizard-validate testid on the Validate button', () => {

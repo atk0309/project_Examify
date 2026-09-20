@@ -93,6 +93,7 @@ describe('S8 wizard footer clearance contract', () => {
         }),
       ).toEqual({
         ok: true,
+        unproven: false,
         overlap: false,
         aboveFooter: true,
         inViewport: true,
@@ -116,6 +117,7 @@ describe('S8 wizard footer clearance contract', () => {
       }),
     ).toEqual({
       ok: false,
+      unproven: false,
       overlap: true,
       aboveFooter: false,
       inViewport: true,
@@ -123,16 +125,27 @@ describe('S8 wizard footer clearance contract', () => {
     });
   });
 
-  it('treats jsdom empty rects as unproven layout, not a pass', () => {
+  it('fails closed when jsdom empty rects would otherwise skip-pass', () => {
     const empty = box(0, 0, 0, 0);
+    const zeroAreaElsewhere = box(640, 280, 0, 0);
     expect(isEmptyLayoutBox(empty)).toBe(true);
-    expect(
-      evaluateSecretActionClearance({
-        control: empty,
+    expect(isEmptyLayoutBox(zeroAreaElsewhere)).toBe(true);
+    for (const control of [empty, zeroAreaElsewhere]) {
+      const proof = evaluateSecretActionClearance({
+        control,
         footer: empty,
         viewport: DESKTOP_AI_VIEWPORT,
         hitIsControl: true,
-      }).ok,
-    ).toBe(false);
+      });
+      expect(proof).toEqual({
+        ok: false,
+        unproven: true,
+        overlap: false,
+        aboveFooter: false,
+        inViewport: false,
+        hitControl: false,
+      });
+      expect(proof.ok && !proof.unproven).toBe(false);
+    }
   });
 });

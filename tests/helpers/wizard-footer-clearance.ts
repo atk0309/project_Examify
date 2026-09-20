@@ -39,8 +39,9 @@ export const DESKTOP_FRAME_MARGIN_Y_PX = 24;
 export const DESKTOP_AI_VIEWPORT = { width: 1100, height: 800 } as const;
 export const TABLET_AI_VIEWPORT = { width: 720, height: 800 } as const;
 
+/** Zero-area or missing layout (jsdom / no engine) — never a clearance pass. */
 export function isEmptyLayoutBox(box: LayoutBox): boolean {
-  return box.width === 0 && box.height === 0 && box.top === 0 && box.left === 0;
+  return box.width <= 0 || box.height <= 0;
 }
 
 export function boxesOverlap(a: LayoutBox, b: LayoutBox, epsilon = LAYOUT_EPSILON_PX): boolean {
@@ -78,6 +79,8 @@ export function boxIntersectsViewport(
 
 export type SecretActionClearance = {
   ok: boolean;
+  /** Empty / zero-area boxes. Fail-closed: `ok` is always false when this is true. */
+  unproven: boolean;
   overlap: boolean;
   aboveFooter: boolean;
   inViewport: boolean;
@@ -90,11 +93,23 @@ export function evaluateSecretActionClearance(args: {
   viewport: ViewportBox;
   hitIsControl: boolean;
 }): SecretActionClearance {
+  const unproven = isEmptyLayoutBox(args.control) || isEmptyLayoutBox(args.footer);
+  if (unproven) {
+    return {
+      ok: false,
+      unproven: true,
+      overlap: false,
+      aboveFooter: false,
+      inViewport: false,
+      hitControl: false,
+    };
+  }
   const overlap = boxesOverlap(args.control, args.footer);
   const aboveFooter = boxIsAbove(args.control, args.footer);
   const inViewport = boxIntersectsViewport(args.control, args.viewport);
   return {
     ok: !overlap && aboveFooter && inViewport && args.hitIsControl,
+    unproven: false,
     overlap,
     aboveFooter,
     inViewport,
