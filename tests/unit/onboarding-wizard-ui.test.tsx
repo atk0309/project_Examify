@@ -468,7 +468,9 @@ describe('OnboardingWizard majors UI', () => {
     expect(String((window.confirm as ReturnType<typeof vi.fn>).mock.calls[0]?.[0])).toMatch(
       /Replace existing BankIR for Generate demo/,
     );
-    expect(screen.getByTestId('wizard-generate-skipped')).toHaveTextContent('Generate skipped');
+    await waitFor(() =>
+      expect(screen.getByTestId('wizard-generate-skipped')).toHaveTextContent('Generate skipped'),
+    );
   });
 
   it('clears the Generate skipped chip after a successful apply', async () => {
