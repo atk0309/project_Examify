@@ -674,6 +674,7 @@ export function OnboardingWizard({
                     const result = await applyOnboardingEmitAction(data);
                     if (result.ok) {
                       setSnapshot(result.snapshot);
+                      setGenerateNote(null);
                       setApplyState({
                         status: 'success',
                         written: result.written,
@@ -1196,6 +1197,7 @@ function FilesStep({
                   type="button"
                   aria-pressed={selected}
                   className={'wizard-file-tab' + (selected ? ' selected' : '')}
+                  data-testid={`wizard-file-tab-${subject.id}`}
                   onClick={() => setFocusId(subject.id)}
                 >
                   {subject.label}
@@ -1412,7 +1414,7 @@ function EnvKeyPanel({
             data-testid={`${testId}-input`}
             onChange={(event) => setValue(event.target.value)}
           />
-          <div className="wizard-secret-actions">
+          <div className="wizard-secret-actions" data-testid={`${testId}-actions`}>
             <button
               className="btn btn-primary"
               type="submit"
@@ -1469,7 +1471,7 @@ function EnvKeyPanel({
           </div>
         </form>
       ) : (
-        <div className="wizard-secret-actions">
+        <div className="wizard-secret-actions" data-testid={`${testId}-actions`}>
           <button
             className="btn btn-ghost"
             type="button"
@@ -1536,7 +1538,6 @@ function AiStep({
 }) {
   const provider = snapshot.aiMode ? providerForOnboardingAiMode(snapshot.aiMode) : null;
   const busy = pending || generateBusy;
-  const hasExistingIr = snapshot.subjects.some((subject) => subject.hasIr);
 
   return (
     <div className="wizard-panel" data-testid="wizard-ai">
@@ -1618,40 +1619,21 @@ function AiStep({
 
       {provider ? (
         <div className="wizard-generate" data-testid="wizard-generate">
-          {hasExistingIr ? (
-            <details className="wizard-details">
-              <summary>Generate from local sources</summary>
-              <GeneratePanel
-                snapshot={snapshot}
-                provider={provider}
-                busy={busy}
-                generateBusy={generateBusy}
-                generateSeed={generateSeed}
-                generateRuns={generateRuns}
-                activeGenerateId={activeGenerateId}
-                irReady={irReady}
-                onSeed={onSeed}
-                onGenerate={onGenerate}
-                onCancel={onCancel}
-                onGoValidate={onGoValidate}
-              />
-            </details>
-          ) : (
-            <GeneratePanel
-              snapshot={snapshot}
-              provider={provider}
-              busy={busy}
-              generateBusy={generateBusy}
-              generateSeed={generateSeed}
-              generateRuns={generateRuns}
-              activeGenerateId={activeGenerateId}
-              irReady={irReady}
-              onSeed={onSeed}
-              onGenerate={onGenerate}
-              onCancel={onCancel}
-              onGoValidate={onGoValidate}
-            />
-          )}
+          <h2 className="wizard-subhead">Generate from local sources</h2>
+          <GeneratePanel
+            snapshot={snapshot}
+            provider={provider}
+            busy={busy}
+            generateBusy={generateBusy}
+            generateSeed={generateSeed}
+            generateRuns={generateRuns}
+            activeGenerateId={activeGenerateId}
+            irReady={irReady}
+            onSeed={onSeed}
+            onGenerate={onGenerate}
+            onCancel={onCancel}
+            onGoValidate={onGoValidate}
+          />
         </div>
       ) : (
         <p className="wizard-callout" data-testid="wizard-generate-choose-mode">
@@ -1792,11 +1774,11 @@ function GeneratePanel({
                       : 'No generate sources yet. Add a PDF or a notes.txt (or other CLI source) for this subject.'}
                   </p>
                 ) : (
-                  <details className="wizard-details">
-                    <summary>
+                  <div className="wizard-generate-sources">
+                    <p className="login-fine">
                       {subject.generateSources.length} source
                       {subject.generateSources.length === 1 ? '' : 's'}
-                    </summary>
+                    </p>
                     <ul
                       className="wizard-issues"
                       data-testid={`wizard-generate-sources-${subject.id}`}
@@ -1805,7 +1787,7 @@ function GeneratePanel({
                         <li key={rel}>{rel}</li>
                       ))}
                     </ul>
-                  </details>
+                  </div>
                 )}
                 {active ? (
                   <p className="login-fine" data-testid={`wizard-generate-progress-${subject.id}`}>
@@ -1910,7 +1892,7 @@ function ValidateStep({
   onValidate: () => void;
 }) {
   return (
-    <div className="wizard-panel" data-testid="wizard-validate">
+    <div className="wizard-panel" data-testid="wizard-validate-panel">
       <PowerUserCommands testId="wizard-cli" commands={ONBOARDING_INGEST_CLI} />
       <button
         type="button"

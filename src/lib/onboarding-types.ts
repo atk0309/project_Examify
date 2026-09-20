@@ -278,14 +278,17 @@ export function onboardingSourceFileNames(
   return [...names].sort();
 }
 
-/** Files-step tab label — never a “0 PDFs” dead-end when notes.txt exists. */
+/** Glance-scan Files-tab label. Does not invent uploads that are not there. */
 export function onboardingSourceCountLabel(
-  subject: Pick<OnboardingSubject, 'sourceFiles' | 'generateSources'>,
+  subject: Pick<OnboardingSubject, 'sourceFiles' | 'generateSources'> &
+    Partial<Pick<OnboardingSubject, 'hasIr'>>,
 ): string {
   const sources = subject.generateSources.length;
   if (sources > 0) return `${sources} source${sources === 1 ? '' : 's'}`;
   const pdfs = subject.sourceFiles.length;
   if (pdfs > 0) return `${pdfs} PDF${pdfs === 1 ? '' : 's'}`;
+  // Hand-authored BankIR with no CLI sources is not an empty subject.
+  if (subject.hasIr) return 'Hand-authored';
   return 'No files yet';
 }
 

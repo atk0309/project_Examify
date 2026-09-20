@@ -241,6 +241,17 @@ describe('onboarding generate graph', () => {
     expect(wizard).toMatch(/confirmPrune/);
     expect(wizard).toMatch(/A test sentinel is present/);
     expect(wizard).toMatch(/data\.set\('force', '1'\)/);
+    expect(wizard).toMatch(/data-testid="wizard-validate-panel"/);
+    expect(
+      [...wizard.matchAll(/data-testid="([^"]+)"/g)]
+        .map((match) => match[1])
+        .filter((id) => id === 'wizard-validate'),
+    ).toHaveLength(1);
+    expect(wizard).toMatch(/setGenerateNote\(null\)/);
+    expect(wizard).not.toMatch(/hasExistingIr \?/);
+    expect(wizard).toMatch(/<h2 className="wizard-subhead">Generate from local sources<\/h2>/);
+    expect(wizard).toMatch(/wizard-generate-sources/);
+    expect(wizard).toMatch(/confirmOnboardingIrOverwrite/);
     const types = readFileSync(path.join(process.cwd(), 'src/lib/onboarding-types.ts'), 'utf8');
     expect(types).toMatch(/Replace existing BankIR for \$\{colliding\[0\]!\.label\}\?/);
     expect(types).toMatch(
