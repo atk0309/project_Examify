@@ -2,7 +2,7 @@
 
 import { headers } from 'next/headers';
 import { z } from 'zod';
-import { invalidateIssuedOtp, issueLocalOtp, issueMagicLink } from '@/lib/auth';
+import { invalidateIssuedToken, issueLocalOtp, issueMagicLink } from '@/lib/auth';
 import { verifyTurnstile } from '@/lib/captcha';
 import { renderMagicLinkEmail, renderOtpEmail, sendEmail } from '@/lib/email';
 import { env, getAuthMode, isTurnstileEnabled } from '@/lib/env';
@@ -74,11 +74,13 @@ export async function requestInviteLink(
         code,
       });
       if (!result.ok) {
-        invalidateIssuedOtp(id);
+        invalidateIssuedToken(id);
         console.error('[auth] invite local-otp delivery failed', { error: result.error });
       }
     } else {
-      const { token: magic } = await issueMagicLink(email, invite.role, { inviteId: invite.id });
+      const { id, token: magic } = await issueMagicLink(email, invite.role, {
+        inviteId: invite.id,
+      });
       const url = `${env.SITE_URL}/signin/verify?token=${encodeURIComponent(magic)}`;
       const rendered = renderMagicLinkEmail({ url, email, siteName: siteConfig.name });
       const result = await sendEmail({
@@ -88,6 +90,7 @@ export async function requestInviteLink(
         text: rendered.text,
       });
       if (!result.ok) {
+        invalidateIssuedToken(id);
         console.error('[auth] invite magic-link delivery failed', { error: result.error });
       }
     }

@@ -104,12 +104,15 @@ export async function issueMagicLink(
   email: string,
   role: SessionRole,
   opts?: { inviteId?: number },
-): Promise<{ token: string; expiresAt: Date }> {
+): Promise<{ id: number; token: string; expiresAt: Date }> {
   const { token, tokenHash, expiresAt } = generateMagicToken();
-  db.insert(schema.magicTokens)
+  const inserted = db
+    .insert(schema.magicTokens)
     .values({ email, role, tokenHash, expiresAt, inviteId: opts?.inviteId })
-    .run();
-  return { token, expiresAt };
+    .returning({ id: schema.magicTokens.id })
+    .get();
+  if (!inserted) throw new Error('failed to issue magic link');
+  return { id: inserted.id, token, expiresAt };
 }
 
 const OTP_TTL_MS = TOKEN_TTL_MS;
@@ -240,12 +243,12 @@ export function issueLocalOtp(
 }
 
 /**
- * Mark one issued OTP consumed. Used when `sendEmail` fails after issue so
- * a code that never reached the mailbox cannot be guessed or retried.
- * Targets that row only — a concurrent re-issue for the same email+role
- * must keep its own unused code.
+ * Mark one issued magic-token (link or OTP) consumed. Used when `sendEmail`
+ * fails after issue so a bearer that never reached the mailbox cannot be
+ * used later. Targets that row only — a concurrent re-issue for the same
+ * email+role must keep its own unused token.
  */
-export function invalidateIssuedOtp(id: number, now = Date.now()): void {
+export function invalidateIssuedToken(id: number, now = Date.now()): void {
   db.update(schema.magicTokens)
     .set({ consumedAt: new Date(now) })
     .where(and(eq(schema.magicTokens.id, id), isNull(schema.magicTokens.consumedAt)))

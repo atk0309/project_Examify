@@ -3,7 +3,7 @@
 import { headers } from 'next/headers';
 import { z } from 'zod';
 import { isAllowedEmail } from '@/lib/allowlist';
-import { invalidateIssuedOtp, issueLocalOtp, issueMagicLink } from '@/lib/auth';
+import { invalidateIssuedToken, issueLocalOtp, issueMagicLink } from '@/lib/auth';
 import { verifyTurnstile } from '@/lib/captcha';
 import { renderMagicLinkEmail, renderOtpEmail, sendEmail } from '@/lib/email';
 import { env, getAuthMode, isTurnstileEnabled } from '@/lib/env';
@@ -25,7 +25,8 @@ export type RequestMagicLinkState =
 /**
  * Issues the configured magic-link or local-OTP challenge to a household
  * member. Unknown emails and role mismatches still return `sent`; transport
- * failures reported by `sendEmail` are logged and return the same state.
+ * failures reported by `sendEmail` are logged without identifiers, the unused
+ * token is invalidated, and the client still sees the same generic state.
  */
 export async function requestMagicLink(
   _prev: RequestMagicLinkState,
@@ -76,11 +77,11 @@ export async function requestMagicLink(
         code,
       });
       if (!result.ok) {
-        invalidateIssuedOtp(id);
-        console.error('[auth] local-otp delivery failed', { email, error: result.error });
+        invalidateIssuedToken(id);
+        console.error('[auth] local-otp delivery failed', { error: result.error });
       }
     } else {
-      const { token } = await issueMagicLink(email, role);
+      const { id, token } = await issueMagicLink(email, role);
       const url = `${env.SITE_URL}/signin/verify?token=${encodeURIComponent(token)}`;
 
       const rendered = renderMagicLinkEmail({ url, email, siteName: siteConfig.name });
@@ -91,7 +92,8 @@ export async function requestMagicLink(
         text: rendered.text,
       });
       if (!result.ok) {
-        console.error('[auth] magic-link delivery failed', { email, error: result.error });
+        invalidateIssuedToken(id);
+        console.error('[auth] magic-link delivery failed', { error: result.error });
       }
     }
   }
