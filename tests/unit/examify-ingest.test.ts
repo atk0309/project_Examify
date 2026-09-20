@@ -20,6 +20,7 @@ import {
   sampleBankFrozenIds,
   formatFileDiff,
   isAuthoritativeCatalogInput,
+  formatValidateOk,
   parseArgs,
   planEmit,
   readGeneratedSubjects,
@@ -493,6 +494,34 @@ describe('examify-ingest CLI', () => {
     expect(chunks.join('')).toMatch(/ok \d+ BankIR files?/);
   });
 
+  it('validate ok banner is singular for one BankIR file and plural otherwise', () => {
+    expect(formatValidateOk(1)).toBe('ok 1 BankIR file');
+    expect(formatValidateOk(1)).not.toContain('files');
+    expect(formatValidateOk(2)).toBe('ok 2 BankIR files');
+    expect(formatValidateOk(3)).toBe('ok 3 BankIR files');
+  });
+
+  it('CLI validate uses singular copy for a one-file catalog', () => {
+    const tmp = mkdtempSync(path.join(tmpdir(), 'examify-cli-validate-one-'));
+    writeFileSync(path.join(tmp, 'package.json'), JSON.stringify({ name: 'project-examify' }));
+    const subjectsDir = path.join(tmp, 'content/subjects');
+    mkdirSync(path.join(subjectsDir, 'biology'), { recursive: true });
+    writeFileSync(
+      path.join(subjectsDir, 'biology/bank.ir.json'),
+      readFileSync(path.join(repoRoot, 'content/subjects/biology/bank.ir.json')),
+    );
+
+    const chunks: string[] = [];
+    const code = runCli(['validate', 'content/subjects'], {
+      cwd: tmp,
+      stdout: { write: (chunk) => void chunks.push(chunk) },
+      stderr: { write: (chunk) => void chunks.push(chunk) },
+    });
+    expect(code).toBe(0);
+    // Prefix match would also pass "ok 1 BankIR files" — require the exact singular line.
+    expect(chunks.join('')).toBe('ok 1 BankIR file\n');
+  });
+
   it('CLI validate reports BankIR file count from the catalog it was given', () => {
     const tmp = mkdtempSync(path.join(tmpdir(), 'examify-cli-validate-count-'));
     writeFileSync(path.join(tmp, 'package.json'), JSON.stringify({ name: 'project-examify' }));
@@ -532,7 +561,7 @@ describe('examify-ingest CLI', () => {
       stderr: { write: (chunk) => void chunks.push(chunk) },
     });
     expect(code).toBe(0);
-    expect(chunks.join('')).toContain('ok 2 BankIR files');
+    expect(chunks.join('')).toBe('ok 2 BankIR files\n');
   });
 
   it('emit --dry-run prints would create / planned files', () => {
