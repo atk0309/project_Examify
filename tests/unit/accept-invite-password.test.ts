@@ -18,7 +18,12 @@ const sessionHolder = vi.hoisted(() => ({
 
 const sendEmailMock = vi.hoisted(() =>
   vi.fn<
-    (opts: { to: string; code?: string }) => Promise<{ ok: boolean; error?: string; id?: string }>
+    (opts: {
+      to: string;
+      code?: string;
+      html?: string;
+      text?: string;
+    }) => Promise<{ ok: boolean; error?: string; id?: string }>
   >(async () => ({ ok: true, id: 'test' })),
 );
 
@@ -314,6 +319,35 @@ describe('requestInviteLink magic-link', () => {
       ),
     );
     expect(payload?.[1]).toEqual({ error: 'email-not-configured' });
+    errorSpy.mockRestore();
+  });
+
+  it('invalidates the issued magic-link token when sendEmail fails after issue', async () => {
+    const { env } = await import('@/lib/env');
+    (env as { AUTH_MODE: typeof env.AUTH_MODE }).AUTH_MODE = 'magic-link';
+    const invite = await seedOpenStudentInvite();
+    sendEmailMock.mockResolvedValue({ ok: false, error: 'email-not-configured' });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { requestInviteLink } = await import('@/actions/requestInviteLink');
+    const { consumeMagicToken } = await import('@/lib/auth');
+    const data = new FormData();
+    data.set('email', 'alex@example.com');
+    data.set('inviteToken', invite.token);
+    expect(await requestInviteLink({ status: 'idle' }, data)).toEqual({
+      status: 'sent',
+      email: 'alex@example.com',
+    });
+
+    const text = sendEmailMock.mock.calls[0]?.[0].text ?? '';
+    const match = text.match(/\/signin\/verify\?token=([^\s]+)/);
+    expect(match?.[1]).toBeTruthy();
+    const token = decodeURIComponent(match![1]!);
+
+    const { db, schema } = await import('@/lib/db');
+    const tokens = db.select().from(schema.magicTokens).all();
+    expect(tokens).toHaveLength(1);
+    expect(tokens[0]?.consumedAt).toBeInstanceOf(Date);
+    expect(consumeMagicToken(token)).toEqual({ ok: false, reason: 'used' });
     errorSpy.mockRestore();
   });
 });
