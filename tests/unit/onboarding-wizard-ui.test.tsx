@@ -32,6 +32,22 @@ vi.mock('@/actions/onboarding', () => ({
 }));
 
 import { OnboardingWizard } from '@/components/exam/OnboardingWizard';
+import {
+  evaluateSecretActionClearance,
+  isEmptyLayoutBox,
+  type LayoutBox,
+} from '../helpers/wizard-footer-clearance';
+
+function toLayoutBox(rect: DOMRect): LayoutBox {
+  return {
+    top: rect.top,
+    right: rect.right,
+    bottom: rect.bottom,
+    left: rect.left,
+    width: rect.width,
+    height: rect.height,
+  };
+}
 
 function snapshot(overrides: Partial<OnboardingSnapshot> = {}): OnboardingSnapshot {
   return {
@@ -329,6 +345,7 @@ describe('OnboardingWizard majors UI', () => {
   });
 
   it('reserves sticky-footer clearance for AI secret actions', () => {
+    // Structure only — live 1100×800 boxes are asserted in tests/e2e/fresh.spec.ts.
     const css = readFileSync(path.join(process.cwd(), 'src/app/globals.css'), 'utf8');
     expect(css).toMatch(/--wizard-footer-clearance:/);
     expect(css).toMatch(/\.wizard-stage \{[\s\S]*overflow-y: auto;/);
@@ -372,6 +389,80 @@ describe('OnboardingWizard majors UI', () => {
     expect(screen.getByTestId('wizard-anthropic-key-clear')).toBeVisible();
     expect(screen.getByTestId('wizard-footer')).toBeVisible();
     expect(screen.getByTestId('wizard-anthropic-key')).not.toHaveTextContent('ANTHROPIC_API_KEY=');
+
+    const footerBox = toLayoutBox(screen.getByTestId('wizard-footer').getBoundingClientRect());
+    const viewport = { width: window.innerWidth || 1100, height: window.innerHeight || 800 };
+    for (const id of [
+      'wizard-anthropic-key-save',
+      'wizard-anthropic-key-rotate',
+      'wizard-anthropic-key-clear',
+    ] as const) {
+      const controlBox = toLayoutBox(screen.getByTestId(id).getBoundingClientRect());
+      const proof = evaluateSecretActionClearance({
+        control: controlBox,
+        footer: footerBox,
+        viewport,
+        hitIsControl: true,
+      });
+      // Fail closed: empty jsdom rects are unproven and must not pass.
+      // A layout engine that supplies real boxes must still clear the footer.
+      expect(proof.unproven).toBe(isEmptyLayoutBox(controlBox) || isEmptyLayoutBox(footerBox));
+      expect(proof.ok).toBe(!proof.unproven);
+      expect(proof.ok && proof.unproven).toBe(false);
+      if (proof.unproven) {
+        expect(proof.ok).toBe(false);
+      } else {
+        expect(proof).toMatchObject({
+          ok: true,
+          unproven: false,
+          overlap: false,
+          aboveFooter: true,
+        });
+      }
+    }
+  });
+
+  it('fails closed when mounted AI secret-action rects are empty', async () => {
+    setOnboardingAiModeAction.mockResolvedValue({
+      ok: true,
+      snapshot: snapshot({ aiMode: 'cloud' }),
+    });
+    render(
+      <OnboardingWizard
+        snapshot={snapshot()}
+        pendingInvites={[]}
+        members={[]}
+        canInvite={false}
+        authMode="magic-link"
+      />,
+    );
+    fireEvent.click(screen.getByTestId('wizard-get-started'));
+    fireEvent.click(screen.getByTestId('wizard-next'));
+    fireEvent.click(screen.getByTestId('wizard-next'));
+    fireEvent.click(screen.getByTestId('wizard-ai-cloud'));
+    const footerBox = toLayoutBox(
+      (await screen.findByTestId('wizard-footer')).getBoundingClientRect(),
+    );
+    const viewport = { width: window.innerWidth || 1100, height: window.innerHeight || 800 };
+    const proofs = (
+      [
+        'wizard-anthropic-key-save',
+        'wizard-anthropic-key-rotate',
+        'wizard-anthropic-key-clear',
+      ] as const
+    ).map((id) => {
+      const controlBox = toLayoutBox(screen.getByTestId(id).getBoundingClientRect());
+      return evaluateSecretActionClearance({
+        control: controlBox,
+        footer: footerBox,
+        viewport,
+        hitIsControl: true,
+      });
+    });
+    expect(proofs.length).toBe(3);
+    expect(proofs.every((proof) => proof.ok === false)).toBe(true);
+    expect(proofs.some((proof) => proof.ok)).toBe(false);
+    expect(proofs.every((proof) => proof.unproven)).toBe(true);
   });
 
   it('uses one wizard-validate testid on the Validate button', () => {
