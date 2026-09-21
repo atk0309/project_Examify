@@ -48,6 +48,11 @@ export type CliIo = {
   env?: Record<string, string | undefined>;
 };
 
+/** Success banner for `validate`. Singular when the catalog is one BankIR file. */
+export function formatValidateOk(count: number): string {
+  return `ok ${count} BankIR file${count === 1 ? '' : 's'}`;
+}
+
 export type ParsedCli = {
   command: 'validate' | 'emit' | 'generate' | 'help';
   paths: string[];
@@ -249,9 +254,7 @@ function runValidateOrEmit(parsed: ParsedCli, io: CliIo): number {
   }
 
   if (parsed.command === 'validate') {
-    io.stdout.write(
-      `ok ${result.banks.length} BankIR file${result.banks.length === 1 ? '' : 's'}\n`,
-    );
+    io.stdout.write(`${formatValidateOk(result.banks.length)}\n`);
     return 0;
   }
 
