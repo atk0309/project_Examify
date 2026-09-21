@@ -168,7 +168,12 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   Existing households are migrated as already complete.
   Parents/admins mint invite links
   (`createInvite`); accept goes through `/invite/[token]` using the configured
-  `AUTH_MODE` (password, magic-link verify, or local OTP). In `password` mode the
+  `AUTH_MODE` (password, magic-link verify, or local OTP). Password sign-in
+  and the invite password step read submitted FormData and keep email/password
+  uncontrolled (same autofill rule as `SetupForm`): the CTA is not disabled
+  from empty React state. A short invite password shows a field error and does
+  not send a code. The OTP step and `completePasswordInvite` are unchanged.
+  In `password` mode the
   invitee must confirm a mailbox OTP before membership / `emailVerifiedAt`
   (`completePasswordInvite`); the token must carry `invite_id` (also refused
   inside `consumeHashedBearer` when a password is being set), and a failed
