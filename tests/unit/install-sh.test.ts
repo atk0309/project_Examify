@@ -284,14 +284,33 @@ describe('install.sh', () => {
 
   it('prompts for ANTHROPIC_API_KEY as an OpenAI twin (secret, same .env store)', () => {
     const script = fs.readFileSync(SCRIPT, 'utf8');
-    expect(script).toContain('ANTHROPIC_API_KEY for /onboarding Cloud (Anthropic) generate.');
+    // Honest copy: what the key does, what is sent, and what blank means.
     expect(script).toContain(
-      'Same .env store as the wizard. Leave blank to keep the test sentinel (you can set it later).',
+      'Optional: ANTHROPIC_API_KEY marks free-text answers by sending each answer, its question,',
     );
+    expect(script).toContain(
+      'and its rubric to Anthropic. It also powers /onboarding Cloud (Anthropic) generate.',
+    );
+    expect(script).toContain(
+      'Leave blank to skip: free-text answers are saved but not marked (they count as not correct).',
+    );
+    expect(script).not.toMatch(/echo "[^"]*test sentinel/);
     expect(script).toContain('prompt ANTHROPIC_API_KEY "Anthropic API key" "" secret');
     expect(script).toContain('Optional: OPENAI_API_KEY for /onboarding Cloud (OpenAI) generate.');
     expect(script).toContain('prompt OPENAI_API_KEY "OpenAI API key" "" secret');
     expect(script).toContain('ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-test}"');
+  });
+
+  it('banner does not claim all data stays on the box (AI marking / generate leave it)', () => {
+    const script = fs.readFileSync(SCRIPT, 'utf8');
+    expect(script).not.toContain('data stays on this box');
+    expect(script).toContain('Invite-only; accounts and progress stay on this server.');
+    expect(script).toContain(
+      'AI marking and cloud generate send answer text or study PDFs to the provider you choose.',
+    );
+    expect(script).toContain(
+      "That generate sends the subject's study files (PDF pages, notes) to OpenAI.",
+    );
   });
 
   it('writes ANTHROPIC_API_KEY when provided instead of the test sentinel', () => {
