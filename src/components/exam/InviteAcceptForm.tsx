@@ -12,8 +12,8 @@ import {
 } from '@/actions/completePasswordInvite';
 import { requestInviteLink, type RequestInviteLinkState } from '@/actions/requestInviteLink';
 import { verifyLocalOtp, type VerifyLocalOtpState } from '@/actions/verifyLocalOtp';
-import type { AuthMode } from '@/lib/auth-mode';
-import { mailboxWhere, type MailboxDelivery } from '@/lib/mailbox-copy';
+import type { AuthMode, ResolvedMailTransport } from '@/lib/auth-mode';
+import { inviteCodeDestination, mailboxWhere, type MailboxDelivery } from '@/lib/mailbox-copy';
 import {
   hasPasswordEntryFieldErrors,
   readPasswordEntryFields,
@@ -62,6 +62,7 @@ export function InviteAcceptForm({
   siteKey,
   authMode,
   mailboxDelivery = 'inbox',
+  codeDelivery = 'outbox',
 }: {
   inviteToken: string;
   role: 'student' | 'parent';
@@ -69,6 +70,8 @@ export function InviteAcceptForm({
   siteKey?: string;
   authMode: AuthMode;
   mailboxDelivery?: MailboxDelivery;
+  /** Effective transport from `resolveMailTransport()`. Password-invite copy only. */
+  codeDelivery?: ResolvedMailTransport;
 }) {
   if (authMode === 'password') {
     return (
@@ -77,7 +80,7 @@ export function InviteAcceptForm({
         role={role}
         lockedEmail={lockedEmail}
         siteKey={siteKey}
-        mailboxDelivery={mailboxDelivery}
+        codeDelivery={codeDelivery}
       />
     );
   }
@@ -109,13 +112,13 @@ function PasswordInviteForm({
   role,
   lockedEmail,
   siteKey,
-  mailboxDelivery,
+  codeDelivery,
 }: {
   inviteToken: string;
   role: 'student' | 'parent';
   lockedEmail: string | null;
   siteKey?: string;
-  mailboxDelivery: MailboxDelivery;
+  codeDelivery: ResolvedMailTransport;
 }) {
   const [state, formAction, pending] = useActionState<AcceptInvitePasswordState, FormData>(
     acceptInviteWithPassword,
@@ -161,7 +164,7 @@ function PasswordInviteForm({
         email={state.email}
         role={role}
         siteKey={siteKey}
-        mailboxDelivery={mailboxDelivery}
+        codeDelivery={codeDelivery}
         onBack={() => setEditing(true)}
       />
     );
@@ -199,7 +202,7 @@ function PasswordInviteForm({
       ) : null}
       <InviteHeader
         role={role}
-        subtitle="Choose a password, then confirm a one-time code we send to this email."
+        subtitle={`Choose a password. Next, enter the one-time code we send to ${inviteCodeDestination(codeDelivery)}.`}
       />
       <EmailField
         defaultEmail={lockedEmail ?? ''}
@@ -270,9 +273,9 @@ function PasswordInviteForm({
         {MailIcon.lock} {pending ? 'Sending code…' : 'Send confirmation code'}
       </button>
       {state.status === 'sent' ? (
-        <p className="login-fine">
-          A code may already be in {mailboxWhere(mailboxDelivery)}. It still matches the password
-          from that request. Send a new code if you want to choose a different password.
+        <p className="login-fine" data-testid="invite-code-pending">
+          A code is already in {inviteCodeDestination(codeDelivery)}. It still matches the password
+          from that request. Send a new code to replace it if you want a different password.
         </p>
       ) : null}
       {state.status === 'error' && state.reason !== 'password_mismatch' ? (
@@ -295,13 +298,13 @@ function PasswordInviteOtpForm({
   email,
   role,
   siteKey,
-  mailboxDelivery,
+  codeDelivery,
   onBack,
 }: {
   email: string;
   role: 'student' | 'parent';
   siteKey?: string;
-  mailboxDelivery: MailboxDelivery;
+  codeDelivery: ResolvedMailTransport;
   onBack: () => void;
 }) {
   const [otpState, otpAction, otpPending] = useActionState<CompletePasswordInviteState, FormData>(
@@ -309,9 +312,23 @@ function PasswordInviteOtpForm({
     { status: 'idle' },
   );
   const [code, setCode] = useState('');
+  const where = inviteCodeDestination(codeDelivery);
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
+    const digits = String(formData.get('code') ?? '')
+      .replace(/\D/g, '')
+      .slice(0, 6);
+    if (!/^\d{6}$/.test(digits)) return;
+    formData.set('code', digits);
+    startTransition(() => {
+      otpAction(formData);
+    });
+  }
 
   return (
-    <form className="screen login" action={otpAction} data-testid="invite-otp-form">
+    <form className="screen login" data-testid="invite-otp-form" onSubmit={submit}>
       {siteKey ? (
         <Script
           src="https://challenges.cloudflare.com/turnstile/v0/api.js"
@@ -320,12 +337,12 @@ function PasswordInviteOtpForm({
           strategy="afterInteractive"
         />
       ) : null}
-      <div className="sent-state">
+      <div className="sent-state" role="status">
         <span className="sent-icon">{MailIcon.inbox}</span>
-        <h1 className="sent-title">Enter your code</h1>
-        <p className="sent-note">
-          We sent a 6-digit code to <b>{email}</b>. Joining finishes only after you enter it. Check{' '}
-          {mailboxWhere(mailboxDelivery)}.
+        <h1 className="sent-title">Enter your confirmation code</h1>
+        <p className="sent-note" data-testid="invite-otp-handoff">
+          The password you chose is waiting on this code. We sent a 6-digit code to <b>{email}</b>.
+          Enter it to finish joining. It is in {where}.
         </p>
       </div>
       <div className="field">
@@ -366,13 +383,17 @@ function PasswordInviteOtpForm({
           The code proves this mailbox. The invite link alone is not enough.
         </p>
       )}
+      <p className="login-fine" data-testid="invite-otp-resend-hint">
+        Need a new code? Send one again below. The new code replaces this one, and you enter the
+        password again so they match.
+      </p>
       <button
         type="button"
         className="btn btn-quiet"
         onClick={onBack}
         data-testid="invite-otp-back"
       >
-        Back
+        Send a new code
       </button>
     </form>
   );

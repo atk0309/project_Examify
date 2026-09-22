@@ -60,6 +60,8 @@ stamp `emailVerifiedAt` — until the invitee proves the mailbox.
 - **Mailbox proof before join.** Password-mode accept issues a one-time code to
   the typed address (same local-OTP + mail transport as `AUTH_MODE=local-otp`).
   Membership and `emailVerifiedAt` are set only when that code is consumed.
+  The code screen names that transport (Resend, this host's mail server, or
+  the local outbox) and does not offer a way to finish without the code.
 - **Email-lock is not mailbox verification.** It only chooses which address we
   send the code to. Typing the locked email is not enough.
 - Open student invites let anyone with the URL start a join for an email they

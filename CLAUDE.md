@@ -95,7 +95,10 @@ Surface:
   The password step reads submitted FormData and keeps email/password
   uncontrolled, so silent autofill can request a code. A short password or a
   confirmation mismatch shows a field error and does not send. Fail closed
-  if mail cannot be delivered. See `SECURITY.md`.
+  if mail cannot be delivered. The code screen names where that code went
+  from `resolveMailTransport()` (Resend inbox, this host's SMTP, or the
+  local mail outbox). Sending a new code returns to the password step;
+  there is no way to finish without the code. See `SECURITY.md`.
 - **`/signin`** — sign-in UI for the configured `AUTH_MODE` (password, magic-link, or
   local OTP) with a Student/Parent role control. Password mode can reset a
   forgotten password with a mailbox OTP (`requestPasswordReset` /
