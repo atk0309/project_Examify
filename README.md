@@ -170,7 +170,9 @@ uses a deterministic local stub — no network, no API key needed for developmen
 Set `AUTH_MODE=password` in `.env` if you want to develop without a mail
 provider. Sign-in needs no mail; invite accept still uses the local
 outbox in development (or SMTP / Resend / `ALLOW_LOCAL_OUTBOX=1` in
-production).
+production). Password sign-in and the invite password step stay
+submittable after browser autofill. A short invite password shows a
+field error. Joining still waits for the mailbox code.
 
 ## Access: invite-only households
 

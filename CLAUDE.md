@@ -86,11 +86,18 @@ Surface:
   `/setup/wizard` redirects here.
 - **`/invite/[token]`** — accept a household invite (password, magic-link, or local OTP).
   In `AUTH_MODE=password` the URL is a secret that starts a join; membership and
-  `emailVerifiedAt` wait for a mailbox OTP (`completePasswordInvite`). Fail closed
-  if mail cannot be delivered. See `SECURITY.md`.
+  `emailVerifiedAt` wait for a mailbox OTP (`completePasswordInvite`). The password
+  step reads submitted FormData and keeps email/password uncontrolled, so silent
+  autofill can request a code. A short password shows a field error and does not
+  send. The OTP step is unchanged. Fail closed if mail cannot be delivered. See
+  `SECURITY.md`.
 - **`/signin`** — sign-in UI for the configured `AUTH_MODE` (password, magic-link, or
   local OTP) with a Student/Parent role control. Redirects to
-  `/setup` when the instance has no household yet.
+  `/setup` when the instance has no household yet. Password sign-in
+  (`PasswordLoginForm`) reads submitted FormData and keeps email/password
+  uncontrolled, so silent autofill can submit. The button stays enabled when
+  React state is empty. A bad email or empty/over-long password shows a field
+  error; wrong password, wrong role, and unknown email stay one server `invalid`.
 - **`/signin/verify`** — a **Route Handler** (`route.ts`, not a page): consumes the one-time
   token, establishes the session, redirects to `/`. It must be a route handler because
   clicking the email link is a GET that **writes** the session cookie, and cookie mutation is

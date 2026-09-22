@@ -1,7 +1,7 @@
 'use client';
 
 import Script from 'next/script';
-import { useActionState, useState } from 'react';
+import { useActionState, useState, type FormEvent } from 'react';
 import {
   acceptInviteWithPassword,
   type AcceptInvitePasswordState,
@@ -14,6 +14,12 @@ import { requestInviteLink, type RequestInviteLinkState } from '@/actions/reques
 import { verifyLocalOtp, type VerifyLocalOtpState } from '@/actions/verifyLocalOtp';
 import type { AuthMode } from '@/lib/auth-mode';
 import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from '@/lib/password-policy';
+import {
+  hasPasswordEntryFieldErrors,
+  readPasswordEntryFields,
+  validateInvitePasswordFields,
+  type PasswordEntryFieldErrors,
+} from '@/lib/password-entry-form';
 import { ExplicitTurnstile } from './ExplicitTurnstile';
 import { MailIcon, RoleIcon } from './icons';
 
@@ -81,6 +87,15 @@ export function InviteAcceptForm({
   );
 }
 
+function FieldError({ id, message }: { id: string; message?: string }) {
+  if (!message) return null;
+  return (
+    <p className="field-error" id={id} role="alert" data-testid={id}>
+      {message}
+    </p>
+  );
+}
+
 function PasswordInviteForm({
   inviteToken,
   role,
@@ -96,32 +111,44 @@ function PasswordInviteForm({
     acceptInviteWithPassword,
     { status: 'idle' },
   );
-  const [email, setEmail] = useState(lockedEmail ?? '');
-  const [password, setPassword] = useState('');
   const [submittedPassword, setSubmittedPassword] = useState('');
-  const valid =
-    EMAIL_RE.test(email.trim()) &&
-    password.length >= PASSWORD_MIN_LENGTH &&
-    password.length <= PASSWORD_MAX_LENGTH;
+  const [attempted, setAttempted] = useState(false);
+  const [localErrors, setLocalErrors] = useState<PasswordEntryFieldErrors>({});
+  const emailLocked = Boolean(lockedEmail);
 
-  const submit = (formData: FormData) => {
-    setSubmittedPassword(String(formData.get('password') ?? ''));
+  function onFieldInput(event: FormEvent<HTMLInputElement>) {
+    if (!attempted) return;
+    const form = event.currentTarget.form;
+    if (!form) return;
+    setLocalErrors(validateInvitePasswordFields(readPasswordEntryFields(new FormData(form))));
+  }
+
+  function submit(formData: FormData) {
+    const fields = readPasswordEntryFields(formData);
+    const nextErrors = validateInvitePasswordFields(fields);
+    setAttempted(true);
+    setLocalErrors(nextErrors);
+    if (hasPasswordEntryFieldErrors(nextErrors)) return;
+    setSubmittedPassword(fields.password);
     formAction(formData);
-  };
+  }
 
   if (state.status === 'sent') {
     return (
       <PasswordInviteOtpForm
         email={state.email}
-        password={submittedPassword || password}
+        password={submittedPassword}
         role={role}
         siteKey={siteKey}
       />
     );
   }
 
+  const emailInvalid = Boolean(localErrors.email);
+  const passwordInvalid = Boolean(localErrors.password);
+
   return (
-    <form className="screen login" action={submit} data-testid="invite-form">
+    <form className="screen login" action={submit} noValidate data-testid="invite-form">
       {siteKey ? (
         <Script
           src="https://challenges.cloudflare.com/turnstile/v0/api.js"
@@ -134,7 +161,29 @@ function PasswordInviteForm({
         role={role}
         subtitle="Choose a password, then confirm a one-time code we send to this email."
       />
-      <EmailField email={email} locked={Boolean(lockedEmail)} onChange={setEmail} />
+      <div className="field">
+        <label className="field-label" htmlFor="invite-email">
+          Email address
+        </label>
+        <input
+          id="invite-email"
+          name="email"
+          className="text-input"
+          type="email"
+          inputMode="email"
+          autoComplete="email"
+          required
+          readOnly={emailLocked}
+          placeholder="you@example.com"
+          defaultValue={lockedEmail ?? ''}
+          onInput={onFieldInput}
+          onChange={onFieldInput}
+          aria-invalid={emailInvalid || undefined}
+          aria-describedby={emailInvalid ? 'invite-email-error' : undefined}
+          data-testid="invite-email-input"
+        />
+        <FieldError id="invite-email-error" message={localErrors.email} />
+      </div>
       <div className="field">
         <label className="field-label" htmlFor="invite-password">
           Password
@@ -148,12 +197,14 @@ function PasswordInviteForm({
           required
           minLength={PASSWORD_MIN_LENGTH}
           maxLength={PASSWORD_MAX_LENGTH}
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          disabled={pending}
+          onInput={onFieldInput}
+          onChange={onFieldInput}
+          aria-invalid={passwordInvalid || undefined}
+          aria-describedby={passwordInvalid ? 'invite-password-error' : undefined}
           data-testid="invite-password-input"
         />
         <p className="role-hint">At least {PASSWORD_MIN_LENGTH} characters.</p>
+        <FieldError id="invite-password-error" message={localErrors.password} />
       </div>
       <input type="hidden" name="inviteToken" value={inviteToken} />
       {siteKey ? (
@@ -167,7 +218,7 @@ function PasswordInviteForm({
       <button
         className="btn btn-primary"
         type="submit"
-        disabled={!valid || pending}
+        disabled={pending}
         data-testid="invite-submit"
       >
         {MailIcon.lock} {pending ? 'Sending code…' : 'Send confirmation code'}
