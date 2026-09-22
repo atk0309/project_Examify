@@ -51,6 +51,11 @@ export default defineConfig({
       MAIL_OUTBOX_DIR: E2E_OUTBOX,
       ANTHROPIC_API_KEY: 'test',
       SETUP_BOOTSTRAP_SECRET: 'e2e-setup-bootstrap-secret',
+      // Pin captcha off. Spreading process.env (or a host .env loaded by
+      // next start) must not re-enable Turnstile — this suite asserts no widget.
+      TURNSTILE_ENABLED: '',
+      NEXT_PUBLIC_TURNSTILE_SITE_KEY: '',
+      TURNSTILE_SECRET_KEY: '',
       RATE_LIMIT_SIGNIN_MAX: '10',
       RATE_LIMIT_SIGNIN_WINDOW_MS: '60000',
     },

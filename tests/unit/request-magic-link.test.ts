@@ -50,6 +50,9 @@ afterEach(async () => {
     'unit-test-secret-not-a-cloudflare-dummy-12';
   (env as { NEXT_PUBLIC_TURNSTILE_SITE_KEY?: string }).NEXT_PUBLIC_TURNSTILE_SITE_KEY =
     '1x00000000000000000000AA';
+  // Captcha stays off unless a case explicitly enables it — never leak
+  // TURNSTILE_ENABLED=true into a later test that assumes keys-only = off.
+  (env as { TURNSTILE_ENABLED?: boolean }).TURNSTILE_ENABLED = undefined;
 });
 
 async function seedStudent() {
