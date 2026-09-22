@@ -86,7 +86,15 @@ function Turnstile({ siteKey }: { siteKey?: string }) {
   );
 }
 
-function RolePicker({ role, onChange }: { role: Role; onChange: (role: Role) => void }) {
+function RolePicker({
+  role,
+  onChange,
+  disabled = false,
+}: {
+  role: Role;
+  onChange: (role: Role) => void;
+  disabled?: boolean;
+}) {
   const roleObj = ROLES.find((r) => r.id === role)!;
   return (
     <div className="field">
@@ -99,7 +107,10 @@ function RolePicker({ role, onChange }: { role: Role; onChange: (role: Role) => 
             role="radio"
             aria-checked={role === r.id}
             className={'role-opt' + (role === r.id ? ' active' : '')}
-            onClick={() => onChange(r.id)}
+            disabled={disabled}
+            onClick={() => {
+              if (!disabled) onChange(r.id);
+            }}
           >
             {RoleIcon[r.id]}
             {r.label}
@@ -296,6 +307,9 @@ function PasswordResetFlow({
     { status: 'idle' },
   );
   const [role, setRole] = useState<Role>(initialRole);
+  // Role baked into the in-flight / last request. The code form must use this,
+  // not a RolePicker change that lands while the request is still pending.
+  const [issuedRole, setIssuedRole] = useState<Role>(initialRole);
   const [editing, setEditing] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
 
@@ -304,6 +318,10 @@ function PasswordResetFlow({
     if (!EMAIL_RE.test(email.trim())) {
       setLocalError('Enter a valid email address.');
       return;
+    }
+    const submittedRole = formData.get('role');
+    if (submittedRole === 'student' || submittedRole === 'parent') {
+      setIssuedRole(submittedRole);
     }
     setLocalError(null);
     setEditing(false);
@@ -318,7 +336,7 @@ function PasswordResetFlow({
     return (
       <PasswordResetCodeForm
         email={state.email}
-        role={role}
+        role={issuedRole}
         siteKey={siteKey}
         mailboxDelivery={mailboxDelivery}
         onBack={() => setEditing(true)}
@@ -352,7 +370,7 @@ function PasswordResetFlow({
           whether the address is a member. The password changes only after the code is entered.
         </p>
       </div>
-      <RolePicker role={role} onChange={setRole} />
+      <RolePicker role={role} onChange={setRole} disabled={pending} />
       <div className="field">
         <label className="field-label" htmlFor="reset-email">
           Email address

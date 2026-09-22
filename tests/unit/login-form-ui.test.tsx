@@ -3,6 +3,7 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { RequestPasswordResetState } from '@/actions/requestPasswordReset';
 import type { SignInPasswordState } from '@/actions/signInWithPassword';
 import { LoginForm } from '@/components/exam/LoginForm';
 
@@ -16,8 +17,14 @@ vi.mock('@/actions/signInWithPassword', () => ({
   signInWithPassword: (prev: unknown, formData: FormData) => signInWithPassword(prev, formData),
 }));
 
+const requestPasswordReset = vi.fn(
+  async (_prev: unknown, _formData: FormData): Promise<RequestPasswordResetState> => ({
+    status: 'idle',
+  }),
+);
+
 vi.mock('@/actions/requestPasswordReset', () => ({
-  requestPasswordReset: vi.fn(async () => ({ status: 'idle' })),
+  requestPasswordReset: (prev: unknown, formData: FormData) => requestPasswordReset(prev, formData),
 }));
 
 vi.mock('@/actions/completePasswordReset', () => ({
@@ -71,5 +78,45 @@ describe('PasswordLoginForm autofill', () => {
     expect(await screen.findByTestId('signin-error-invalid')).toHaveTextContent(
       "Email, password, or role didn't match.",
     );
+  });
+});
+
+describe('PasswordResetFlow role', () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  beforeEach(() => {
+    requestPasswordReset.mockReset();
+    requestPasswordReset.mockImplementation(async () => ({ status: 'idle' }));
+  });
+
+  it('keeps the submitted role on the code form if the picker moves while pending', async () => {
+    let resolveRequest: (state: RequestPasswordResetState) => void = () => {};
+    requestPasswordReset.mockImplementation(
+      () =>
+        new Promise<RequestPasswordResetState>((resolve) => {
+          resolveRequest = resolve;
+        }),
+    );
+
+    render(<LoginForm authMode="password" />);
+    fireEvent.click(screen.getByTestId('forgot-password'));
+    fireEvent.click(screen.getByRole('radio', { name: 'Parent' }));
+    fireEvent.change(screen.getByTestId('reset-email-input'), {
+      target: { value: 'pat@example.com' },
+    });
+    fireEvent.submit(screen.getByTestId('reset-request-form'));
+
+    expect(screen.getByRole('radio', { name: 'Parent' })).toBeDisabled();
+    expect(screen.getByRole('radio', { name: 'Student' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('radio', { name: 'Student' }));
+
+    resolveRequest({ status: 'sent', email: 'pat@example.com' });
+
+    const codeForm = await screen.findByTestId('reset-code-form');
+    expect(codeForm.querySelector('input[name="role"]')).toHaveValue('parent');
+    const sentFormData = requestPasswordReset.mock.calls[0]?.[1] as FormData;
+    expect(sentFormData.get('role')).toBe('parent');
   });
 });
