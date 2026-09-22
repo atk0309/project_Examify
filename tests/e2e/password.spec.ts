@@ -123,7 +123,7 @@ test('student signs in with a password, sits a whole exam, and sees results + pr
   );
   const freeRows = page.getByTestId('review-row-free');
   await expect(freeRows).toHaveCount(kinds.filter((k) => k === 'free').length);
-  // The grader's bounded verdict renders (not "Saved for review").
+  // The grader's bounded verdict renders (not the unmarked NEEDS_REVIEW_COPY line).
   await expect(freeRows.first()).toContainText(/Score: \d+\/\d+ · \S/);
 
   // The attempt shows up on the student's own progress screen.
