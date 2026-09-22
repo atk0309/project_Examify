@@ -16,6 +16,7 @@ import {
 } from '@/lib/exam/data';
 import {
   isFreePass,
+  NEEDS_REVIEW_COPY,
   normalizeAttemptItem,
   type AttemptRecord,
   type ProgressData,
@@ -113,9 +114,7 @@ function AttemptRow({
                     <span className="review-mark pending">{UIcon.retry}</span>
                     <div>
                       <p className="review-q">{f.q}</p>
-                      <p className="review-a">
-                        We couldn&rsquo;t mark this one automatically, so it counts as not correct.
-                      </p>
+                      <p className="review-a">{NEEDS_REVIEW_COPY}</p>
                     </div>
                   </div>
                 );

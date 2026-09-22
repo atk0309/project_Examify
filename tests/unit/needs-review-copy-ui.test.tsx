@@ -1,16 +1,15 @@
 /** @vitest-environment jsdom */
 
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ProgressView } from '@/components/exam/ProgressView';
-import type { AttemptRecord } from '@/lib/exam/attempts';
+import { NEEDS_REVIEW_COPY, type AttemptRecord } from '@/lib/exam/attempts';
 
 // needs_review is permanent (nothing re-grades it) and counts as not correct,
-// so the kid-facing copy must not promise later marking.
-const HONEST = 'We couldn’t mark this one automatically, so it counts as not correct.';
+// so the kid-facing copy must not promise later marking. ExamApp's results row
+// renders the same NEEDS_REVIEW_COPY constant.
+const HONEST = NEEDS_REVIEW_COPY;
 
 afterEach(() => cleanup());
 
@@ -28,6 +27,11 @@ function attempt(items: AttemptRecord['items']): AttemptRecord {
 }
 
 describe('needs_review copy', () => {
+  it('does not promise that anything will mark the answer later', () => {
+    expect(NEEDS_REVIEW_COPY).not.toMatch(/shortly|later|will mark|for review/i);
+    expect(NEEDS_REVIEW_COPY).toMatch(/counts as not correct/);
+  });
+
   it('ProgressView says an unmarked answer counts as not correct', () => {
     render(
       <ProgressView
@@ -88,17 +92,5 @@ describe('needs_review copy', () => {
     fireEvent.click(screen.getByRole('button', { expanded: false }));
     expect(screen.getByText(/Clear and correct\./)).toBeInTheDocument();
     expect(screen.queryByText(HONEST)).toBeNull();
-  });
-
-  it('ExamApp results never promise that a held answer will be marked later', () => {
-    const source = readFileSync(
-      path.join(process.cwd(), 'src/components/exam/ExamApp.tsx'),
-      'utf8',
-    );
-    expect(source).toContain(
-      'We couldn&rsquo;t mark this one automatically, so it counts as not correct.',
-    );
-    expect(source).not.toMatch(/mark this one shortly/);
-    expect(source).not.toMatch(/Saved for review/);
   });
 });
