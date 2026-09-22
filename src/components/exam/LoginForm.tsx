@@ -46,7 +46,7 @@ const challengeErrorCopy: Record<
 > = {
   invalid: 'Please enter a valid email address.',
   captcha: 'Verification failed. Please try again.',
-  rate_limited: 'Too many attempts from your network. Try again later.',
+  rate_limited: 'Too many attempts. Try again later.',
   send_failed: 'We could not send the email. Please try again in a moment.',
 };
 
@@ -56,13 +56,13 @@ const passwordErrorCopy: Record<
 > = {
   invalid: "Email, password, or role didn't match.",
   captcha: 'Verification failed. Please try again.',
-  rate_limited: 'Too many attempts from your network. Try again later.',
+  rate_limited: 'Too many attempts. Try again later.',
 };
 
 const otpErrorCopy: Record<Exclude<VerifyLocalOtpState, { status: 'idle' }>['reason'], string> = {
   invalid: 'That code did not work. Try again.',
   captcha: 'Verification failed. Please try again.',
-  rate_limited: 'Too many attempts from your network. Try again later.',
+  rate_limited: 'Too many attempts. Try again later.',
 };
 
 function FieldError({ id, message }: { id: string; message?: string }) {
@@ -404,7 +404,7 @@ function PasswordResetFlow({
           {state.reason === 'captcha'
             ? 'Verification failed. Please try again.'
             : state.reason === 'rate_limited'
-              ? 'Too many attempts from your network. Try again later.'
+              ? 'Too many attempts. Try again later.'
               : 'Enter a valid email address.'}
         </p>
       ) : localError ? (
@@ -473,7 +473,7 @@ function PasswordResetCodeForm({
         : state.reason === 'captcha'
           ? 'Verification failed. Please try again.'
           : state.reason === 'rate_limited'
-            ? 'Too many attempts from your network. Try again later.'
+            ? 'Too many attempts. Try again later.'
             : 'That code did not work. Try again.'
       : null;
 

@@ -36,7 +36,7 @@ const errorCopy: Record<Exclude<BootstrapState, { status: 'idle' }>['reason'], s
   invalid: 'Please enter a household name and a valid email address.',
   already_setup: 'This instance is already set up. Sign in instead.',
   captcha: 'Verification failed. Please try again.',
-  rate_limited: 'Too many attempts from your network. Try again later.',
+  rate_limited: 'Too many attempts. Try again later.',
   forbidden: 'That setup code is not valid.',
   password_mismatch: PASSWORD_MISMATCH,
 };

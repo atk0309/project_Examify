@@ -234,6 +234,44 @@ describe('completePasswordReset', () => {
     expect(sessionHolder.current.studentMode).toBe(false);
   });
 
+  it('lifts the per-account password sign-in lock after a successful reset', async () => {
+    await seedAdmin();
+    const { PASSWORD_FAILURE_MAX, isPasswordSignInLocked, recordPasswordFailure } =
+      await import('@/lib/auth');
+    for (let i = 0; i < PASSWORD_FAILURE_MAX; i += 1) recordPasswordFailure('pat@example.com');
+    expect(isPasswordSignInLocked('pat@example.com')).toBe(true);
+
+    const { requestPasswordReset } = await import('@/actions/requestPasswordReset');
+    await requestPasswordReset({ status: 'idle' }, requestForm('pat@example.com'));
+    const code = sendEmailMock.mock.calls[0]?.[0].code ?? '';
+    const { completePasswordReset } = await import('@/actions/completePasswordReset');
+    await expect(
+      completePasswordReset(
+        { status: 'idle' },
+        completeForm('pat@example.com', code, 'new-password-2'),
+      ),
+    ).rejects.toMatchObject({ url: '/' });
+    expect(isPasswordSignInLocked('pat@example.com')).toBe(false);
+  });
+
+  it('keeps the per-account lock when the reset code is wrong', async () => {
+    await seedAdmin();
+    const { PASSWORD_FAILURE_MAX, isPasswordSignInLocked, recordPasswordFailure } =
+      await import('@/lib/auth');
+    for (let i = 0; i < PASSWORD_FAILURE_MAX; i += 1) recordPasswordFailure('pat@example.com');
+    const { requestPasswordReset } = await import('@/actions/requestPasswordReset');
+    await requestPasswordReset({ status: 'idle' }, requestForm('pat@example.com'));
+    const code = sendEmailMock.mock.calls[0]?.[0].code ?? '';
+    const wrong = code === '000000' ? '000001' : '000000';
+    const { completePasswordReset } = await import('@/actions/completePasswordReset');
+    const state = await completePasswordReset(
+      { status: 'idle' },
+      completeForm('pat@example.com', wrong, 'new-password-2'),
+    );
+    expect(state).toEqual({ status: 'error', reason: 'invalid' });
+    expect(isPasswordSignInLocked('pat@example.com')).toBe(true);
+  });
+
   it('does not consume the code or change the hash on a mismatch or a short password', async () => {
     await seedAdmin();
     const before = await userByEmail('pat@example.com');

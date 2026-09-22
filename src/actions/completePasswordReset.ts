@@ -3,7 +3,7 @@
 import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { z } from 'zod';
-import { consumePasswordReset, getRawSession } from '@/lib/auth';
+import { clearPasswordFailures, consumePasswordReset, getRawSession } from '@/lib/auth';
 import { verifyTurnstile } from '@/lib/captcha';
 import { getAuthMode, isTurnstileEnabled } from '@/lib/env';
 import { extractClientIp } from '@/lib/ip';
@@ -77,6 +77,9 @@ export async function completePasswordReset(
   if (!result.ok) {
     return { status: 'error', reason: result.reason === 'locked' ? 'rate_limited' : 'invalid' };
   }
+  // Mailbox proof just set a new password; earlier wrong guesses no longer
+  // need to hold the per-account sign-in lock.
+  clearPasswordFailures(result.email);
 
   const session = await getRawSession();
   session.userId = result.userId;
