@@ -294,6 +294,116 @@ describe('install.sh', () => {
     expect(script).toContain('ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-test}"');
   });
 
+  it('explains SITE_URL as the address family devices open before prompting', () => {
+    const script = fs.readFileSync(SCRIPT, 'utf8');
+    expect(script).toContain(
+      'Public site URL: the address family devices open, e.g. https://exam.example.com',
+    );
+    expect(script).toContain('or http://192.168.1.20:3000. localhost only works on this machine.');
+  });
+
+  it.each([
+    'http://localhost:3000',
+    'http://127.0.0.1:3000/',
+    'https://LOCALHOST:8443',
+    'http://[::1]:3000',
+  ])('warns that invite links only open on this machine for SITE_URL=%s', (siteUrl) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-install-'));
+    try {
+      const result = spawnSync('bash', [SCRIPT, '--write-env-only'], {
+        cwd: dir,
+        env: installEnv({ SITE_URL: siteUrl }),
+        encoding: 'utf8',
+      });
+      expect(result.status).toBe(0);
+      expect(result.stderr).toContain('invite links will only open on this machine');
+      expect(result.stderr).not.toContain('traffic is unencrypted');
+      expect(fs.readFileSync(path.join(dir, '.env'), 'utf8')).toContain(`SITE_URL=${siteUrl}`);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('warns about localhost when SITE_URL falls back to the installer default', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-install-'));
+    try {
+      const env = installEnv();
+      delete env.SITE_URL;
+      const result = spawnSync('bash', [SCRIPT, '--write-env-only'], {
+        cwd: dir,
+        env,
+        encoding: 'utf8',
+      });
+      expect(result.status).toBe(0);
+      expect(result.stderr).toContain(
+        'Warning: SITE_URL uses localhost, so invite links will only open on this machine.',
+      );
+      expect(fs.readFileSync(path.join(dir, '.env'), 'utf8')).toContain(
+        'SITE_URL=http://localhost:3000',
+      );
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('notes that plain http on a LAN address is unencrypted', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-install-'));
+    try {
+      const result = spawnSync('bash', [SCRIPT, '--write-env-only'], {
+        cwd: dir,
+        env: installEnv({ SITE_URL: 'http://192.168.1.20:3000' }),
+        encoding: 'utf8',
+      });
+      expect(result.status).toBe(0);
+      expect(result.stderr).toContain(
+        'Note: SITE_URL is plain http, so traffic is unencrypted; use HTTPS (a reverse proxy) beyond your home network.',
+      );
+      expect(result.stderr).not.toContain('only open on this machine');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('prints no SITE_URL warning for an https public origin', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-install-'));
+    try {
+      const result = spawnSync('bash', [SCRIPT, '--write-env-only'], {
+        cwd: dir,
+        env: installEnv({ SITE_URL: 'https://exam.example.com' }),
+        encoding: 'utf8',
+      });
+      expect(result.status).toBe(0);
+      expect(result.stderr).not.toContain('SITE_URL uses');
+      expect(result.stderr).not.toContain('SITE_URL is plain http');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('skips the SITE_URL note when a non-interactive run keeps an existing .env', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-install-'));
+    try {
+      fs.writeFileSync(
+        path.join(dir, '.env'),
+        'SITE_URL=https://exam.example.com\nAUTH_MODE=magic-link\n',
+        { mode: 0o600 },
+      );
+      const env = installEnv({ SITE_URL: 'http://localhost:3000' });
+      delete env.AUTH_MODE;
+      const result = spawnSync('bash', [SCRIPT, '--write-env-only'], {
+        cwd: dir,
+        env,
+        encoding: 'utf8',
+      });
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain('Keeping existing .env');
+      expect(result.stderr).not.toContain('SITE_URL uses');
+      expect(result.stderr).not.toContain('SITE_URL is plain http');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('writes ANTHROPIC_API_KEY when provided instead of the test sentinel', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-install-'));
     try {
