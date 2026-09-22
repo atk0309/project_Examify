@@ -61,6 +61,9 @@ export default defineConfig({
       TURNSTILE_SECRET_KEY: '',
       RATE_LIMIT_SIGNIN_MAX: '10',
       RATE_LIMIT_SIGNIN_WINDOW_MS: '60000',
+      // Match the seeded suite: a spec can pick a rate-limit bucket with an
+      // `x-real-ip` header, which the app ignores unless the host opts in.
+      CLIENT_IP_HEADER: 'x-real-ip',
     },
   },
 });

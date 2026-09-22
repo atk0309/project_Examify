@@ -3,7 +3,13 @@
 import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { z } from 'zod';
-import { authenticatePassword, getRawSession } from '@/lib/auth';
+import {
+  authenticatePassword,
+  clearPasswordFailures,
+  getRawSession,
+  isPasswordSignInLocked,
+  recordPasswordFailure,
+} from '@/lib/auth';
 import { verifyTurnstile } from '@/lib/captcha';
 import { getAuthMode, isTurnstileEnabled } from '@/lib/env';
 import { extractClientIp } from '@/lib/ip';
@@ -23,6 +29,12 @@ export type SignInPasswordState =
  * Password sign-in. After Turnstile (when on) + the uniform sign-in
  * rate-limit, every failure — unknown email, wrong password, wrong role,
  * no password set — is `invalid`. Do not split those.
+ *
+ * A per-account bucket (`pw:{email}`, every role, every IP) caps wrong
+ * guesses so rotating client IPs cannot brute-force one password. It is
+ * checked before scrypt runs, fed by every `invalid` outcome — known email
+ * or not, so a lock reveals nothing — and cleared on success. A locked
+ * account returns `rate_limited`.
  */
 export async function signInWithPassword(
   _prev: SignInPasswordState,
@@ -49,8 +61,15 @@ export async function signInWithPassword(
   const limit = checkRateLimit(ip, 'signin');
   if (!limit.ok) return { status: 'error', reason: 'rate_limited' };
 
-  const result = authenticatePassword(parsed.data.email, parsed.data.password, parsed.data.role);
-  if (!result.ok) return { status: 'error', reason: 'invalid' };
+  const { email } = parsed.data;
+  if (isPasswordSignInLocked(email)) return { status: 'error', reason: 'rate_limited' };
+
+  const result = authenticatePassword(email, parsed.data.password, parsed.data.role);
+  if (!result.ok) {
+    recordPasswordFailure(email);
+    return { status: 'error', reason: 'invalid' };
+  }
+  clearPasswordFailures(email);
 
   const session = await getRawSession();
   session.userId = result.userId;

@@ -77,6 +77,14 @@ function secureOnlyCookieOnHttpMessage(name: string): string {
   return `SESSION_COOKIE_NAME=${name} needs an https SITE_URL: browsers drop a __Host- / __Secure- cookie that is not Secure, and the session cookie is Secure only when SITE_URL is https, so sign-in would bounce back to /signin. Unset SESSION_COOKIE_NAME (plain http defaults to examify_session) or serve the app over HTTPS and set SITE_URL to that https:// origin.`;
 }
 
+/**
+ * Which request header carries the real client IP (see `src/lib/ip.ts`).
+ * `x-forwarded-for` reads its rightmost entry — the hop the nearest proxy
+ * appended. The other two are read only when the host opts in.
+ */
+export const CLIENT_IP_HEADERS = ['x-forwarded-for', 'x-real-ip', 'cf-connecting-ip'] as const;
+export type ClientIpHeader = (typeof CLIENT_IP_HEADERS)[number];
+
 function isProductionRuntime(raw: NodeJS.ProcessEnv): boolean {
   const isBuild = (raw.NEXT_PHASE ?? process.env.NEXT_PHASE) === 'phase-production-build';
   return raw.NODE_ENV === 'production' && !isBuild;
@@ -216,6 +224,17 @@ function buildEnvSchema(isProd: boolean) {
       // Defaults are reasonable; overrides are dev/ops choices.
       RATE_LIMIT_SIGNIN_MAX: z.coerce.number().int().positive().default(10),
       RATE_LIMIT_SIGNIN_WINDOW_MS: z.coerce.number().int().positive().default(3_600_000),
+
+      // Header the rate limiter trusts for the client IP. Default reads the
+      // rightmost X-Forwarded-For hop. `x-real-ip` / `cf-connecting-ip` are
+      // client-settable unless your proxy overwrites them, so they are never
+      // read unless chosen here. A typo fails boot rather than silently
+      // falling back.
+      CLIENT_IP_HEADER: z.preprocess(
+        (v) =>
+          emptyToUndef(typeof v === 'string' ? v.trim().toLowerCase() : v) ?? 'x-forwarded-for',
+        z.enum(CLIENT_IP_HEADERS),
+      ),
     })
     .superRefine((data, ctx) => {
       const hasSite = Boolean(data.NEXT_PUBLIC_TURNSTILE_SITE_KEY);
