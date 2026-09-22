@@ -183,8 +183,9 @@ grouped weekly Dependabot PRs in `.github/dependabot.yml`.
 - **Every PR gets a Codex review.** Opening a PR (or marking it ready) triggers one;
   after each later push that changes code, comment `@codex review` so the fix commits
   are reviewed too. Verify each finding and fix the real ones before merging.
-  CodeRabbit also auto-reviews PRs to `main` (`.coderabbit.yaml`); both are advisory
-  on top of green CI. `AGENTS.md` → "Review guidelines" is what Codex checks against.
+  CodeRabbit reviews each PR to `main` once, when it opens (`.coderabbit.yaml`, no
+  incremental re-reviews — it rate-limits); don't re-trigger it after fixes unless a
+  change is large. Both are advisory on top of green CI. `AGENTS.md` → "Review guidelines" is what Codex checks against.
 
 ## End-of-session ritual (every session)
 

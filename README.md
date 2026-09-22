@@ -487,6 +487,6 @@ Ports default to 3100 / 3101 / 3102 (`E2E_PORT`, `E2E_FRESH_PORT`, `E2E_PASSWORD
   [`CLAUDE.md`](CLAUDE.md) (also the working agreement for AI coding agents, paired with
   [`AGENTS.md`](AGENTS.md)).
 - Pull requests get a Codex review (on open, and `@codex review` after later pushes) and
-  a CodeRabbit auto-review (`.coderabbit.yaml`).
+  one CodeRabbit review when they open (`.coderabbit.yaml`).
 - Found a vulnerability? Please report it privately — see [`SECURITY.md`](SECURITY.md).
 - [MIT](LICENSE).

@@ -229,8 +229,9 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
 - Keep docs in sync for any behavior, route, env-var, or script changes (`README.md`, `CLAUDE.md`, `.env.example`).
 - Every PR gets a Codex review: opening it triggers one; after each later push that
   changes code, comment `@codex review` so fix commits are reviewed too. Verify each
-  finding and fix the real ones. CodeRabbit also auto-reviews PRs to `main`
-  (`.coderabbit.yaml`). Both are advisory on top of green CI.
+  finding and fix the real ones. CodeRabbit reviews each PR to `main` once, when it
+  opens (`.coderabbit.yaml`; no re-review per push — it rate-limits, so don't
+  re-trigger it after fixes). Both are advisory on top of green CI.
 
 ## Quality gates (target harness)
 

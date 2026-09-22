@@ -1,9 +1,11 @@
 # yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
-# CodeRabbit reviews every non-draft PR to the default branch (main) on open,
-# and again on each new push. Human review and green CI still gate merges.
+# CodeRabbit reviews every non-draft PR to the default branch (main) once, when
+# it opens. No incremental re-review on later pushes (it rate-limits); Codex
+# re-reviews fix pushes instead. Comment `@coderabbitai review` for a one-off
+# re-review. Human review and green CI still gate merges.
 reviews:
   profile: chill
   auto_review:
     enabled: true
     drafts: false
-    auto_incremental_review: true
+    auto_incremental_review: false
