@@ -291,3 +291,74 @@ describe('ExamApp when the server cannot be reached', () => {
     expect(screen.queryByTestId('resume-maths-easy')).toBeNull();
   });
 });
+
+describe('ExamApp sends the waiting autosave when the exam is left', () => {
+  /** Geography: pick on question 1, then type on question 2 (free-text). */
+  async function typeOnQuestionTwo(text: string) {
+    await startExam('geo');
+    answer(text);
+    clickNext();
+    await settle();
+    answer(text);
+  }
+
+  it('on Home, right after typing', async () => {
+    renderApp();
+    await typeOnQuestionTwo('A long answer typed just now.');
+    const before = saveExamProgress.mock.calls.length;
+    goHome();
+    await settle();
+
+    expect(saveExamProgress).toHaveBeenCalledTimes(before + 1);
+    expect(drafts.get('geo::easy')?.answers).toEqual([0, 'A long answer typed just now.']);
+    // Sent once — the debounce timer does not fire a second save later.
+    await settle(800);
+    expect(saveExamProgress).toHaveBeenCalledTimes(before + 1);
+  });
+
+  it('when the tab is hidden or closed', async () => {
+    renderApp();
+    await typeOnQuestionTwo('Typed before switching apps.');
+    const before = saveExamProgress.mock.calls.length;
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+    document.dispatchEvent(new Event('visibilitychange'));
+    visibility.mockRestore();
+    await settle();
+
+    expect(saveExamProgress).toHaveBeenCalledTimes(before + 1);
+    expect(drafts.get('geo::easy')?.answers).toEqual([0, 'Typed before switching apps.']);
+
+    answer('Typed before closing the tab.');
+    window.dispatchEvent(new Event('pagehide'));
+    await settle();
+    expect(saveExamProgress).toHaveBeenCalledTimes(before + 2);
+    expect(drafts.get('geo::easy')?.answers).toEqual([0, 'Typed before closing the tab.']);
+  });
+
+  it('when a parent exits student mode, before the switch', async () => {
+    renderApp({ role: 'parent' });
+    await typeOnQuestionTwo('The parent’s answer.');
+    fireEvent.click(screen.getByRole('button', { name: 'Exit student mode' }));
+    await settle();
+
+    expect(calls.slice(-2)).toEqual(['save geo::easy', 'studentMode false']);
+    expect(drafts.get('geo::easy')?.answers).toEqual([0, 'The parent’s answer.']);
+  });
+
+  it('on Finish, ahead of the submit, so nothing can recreate the finished draft', async () => {
+    renderApp();
+    await typeOnQuestionTwo('Answered and finished at once.');
+    clickNext(); // Finish exam
+    await settle(800);
+
+    // The typed answer was saved, then the submit cleared the draft — and no
+    // save came after it to bring the finished draft back.
+    expect(saveExamProgress.mock.lastCall?.[0].answers).toEqual([
+      0,
+      'Answered and finished at once.',
+    ]);
+    expect(calls.slice(-2)).toEqual(['save geo::easy', 'record geo::easy']);
+    expect(drafts.has('geo::easy')).toBe(false);
+    expect(screen.getByTestId('results-score')).toBeInTheDocument();
+  });
+});

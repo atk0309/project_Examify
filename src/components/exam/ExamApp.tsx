@@ -11,7 +11,7 @@
    covers the round-trip. A submit that never reached the server keeps the
    answers and offers a retry; a paper the server refuses says so instead.
    ========================================================================== */
-import { useRef, useState, useTransition, type CSSProperties } from 'react';
+import { useEffect, useRef, useState, useTransition, type CSSProperties } from 'react';
 import { unstable_rethrow, useRouter } from 'next/navigation';
 import {
   recordAttempt,
@@ -806,18 +806,40 @@ export function ExamApp({
   // answers (the exam screen has unmounted by then) without re-grading anything.
   const [pending, setPending] = useState<RecordAttemptInput | null>(null);
   const [examError, setExamError] = useState<ExamErrorKind>('unreachable');
-  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The debounced autosave waiting to run, if any (its timer + the save itself).
+  const pendingSave = useRef<{ timer: ReturnType<typeof setTimeout>; run: () => void } | null>(
+    null,
+  );
   // Combos whose draft row may not exist yet because `beginExamSession` hasn't
   // succeeded. The update-only autosave would be a no-op for them, so their next
   // checkpoint tries to create the draft again instead.
   const uncreated = useRef<Set<string>>(new Set());
 
   const cancelPendingSave = () => {
-    if (saveTimer.current) {
-      clearTimeout(saveTimer.current);
-      saveTimer.current = null;
+    if (pendingSave.current) {
+      clearTimeout(pendingSave.current.timer);
+      pendingSave.current = null;
     }
   };
+  // Leaving the exam (Home, another exam, finishing, exiting student mode) is a
+  // checkpoint too: send the waiting autosave now instead of dropping it.
+  const flushPendingSave = () => pendingSave.current?.run();
+
+  // So is hiding or closing the tab — a phone discarding it in the background is
+  // the case resume exists for. Best-effort: a Server Action can't use
+  // sendBeacon, so a page that is unloading may still lose this last save.
+  useEffect(() => {
+    const flush = () => pendingSave.current?.run();
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') flush();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pagehide', flush);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pagehide', flush);
+    };
+  }, []);
 
   // Background writes (autosave, discard) are best-effort. A rejection — a
   // dropped connection, the server restarting, a redeploy that retired the
@@ -870,7 +892,7 @@ export function ExamApp({
   const goHome = () => {
     // Leaving to the dashboard does NOT discard — the autosaved draft stays
     // resumable (the live card covers it while ExamApp is still mounted).
-    cancelPendingSave();
+    flushPendingSave();
     setScreen('dashboard');
   };
   const pickSubject = (s: Subject) => {
@@ -879,9 +901,9 @@ export function ExamApp({
   };
   const startExam = (diff: DifficultyId) => {
     if (!subject) return;
-    cancelPendingSave();
     const qs = buildExam(subject.id, diff, questionBank);
     if (qs.length === 0) return;
+    flushPendingSave(); // the exam being left keeps its latest answers
     const blank: Answer[] = qs.map(() => null);
     setDifficulty(diff);
     setQuestions(qs);
@@ -903,7 +925,7 @@ export function ExamApp({
   const resumeSession = (s: Resumable) => {
     const subj = subjects.find((x) => x.id === s.subject);
     if (!subj) return;
-    cancelPendingSave();
+    flushPendingSave();
     setSubject(subj);
     setDifficulty(s.difficulty);
     setQuestions(s.questions);
@@ -918,6 +940,7 @@ export function ExamApp({
     dismiss(s.subject, s.difficulty);
     uncreated.current.delete(key); // nothing may recreate it now
     if (examSubject?.id === s.subject && difficulty === s.difficulty) {
+      cancelPendingSave();
       setExamSubject(null);
     }
     inBackground(async () => {
@@ -935,10 +958,12 @@ export function ExamApp({
     const subj = subject;
     const diff = difficulty;
     const qs = questions;
-    saveTimer.current = setTimeout(
-      () => persist(saveExamProgress, subj, diff, qs, next, current),
-      AUTOSAVE_DELAY,
-    );
+    const idx = current;
+    const run = () => {
+      cancelPendingSave(); // runs once, whether the timer fires or it is flushed
+      persist(saveExamProgress, subj, diff, qs, next, idx);
+    };
+    pendingSave.current = { timer: setTimeout(run, AUTOSAVE_DELAY), run };
   };
   const goToIndex = (index: number) => {
     if (!subject) return;
@@ -983,7 +1008,10 @@ export function ExamApp({
 
   const finishExam = () => {
     if (!subject) return;
-    cancelPendingSave(); // don't let a debounced save resurrect the finished draft
+    // Send a waiting autosave now rather than drop it: it runs ahead of the
+    // submit (Server Actions go one at a time), so it can't resurrect the draft
+    // the submit clears, and the draft keeps the last answer if the submit fails.
+    flushPendingSave();
     const items: RecordAttemptInput['items'] = questions.map((q, idx) => {
       const a = answers[idx] ?? null;
       if (q.type === 'free') {
@@ -1099,6 +1127,7 @@ export function ExamApp({
   }
 
   const exitStudentMode = () => {
+    flushPendingSave(); // queued ahead of the switch, while the save is still allowed
     startSave(async () => {
       await setStudentMode(false);
       router.refresh();
