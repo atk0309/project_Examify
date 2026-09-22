@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { defineConfig, devices } from '@playwright/test';
 import { requireProductionBuild } from './tests/e2e/require-production-build';
+import { FRESH_SPEC, PASSWORD_SPEC } from './tests/e2e/suites';
 
 requireProductionBuild();
 
@@ -19,7 +20,8 @@ process.env.MAIL_OUTBOX_DIR = E2E_OUTBOX;
 
 export default defineConfig({
   testDir: './tests/e2e',
-  testIgnore: /fresh\.(spec|test)\.ts/,
+  // The fresh and password specs run under their own configs (own DB + env).
+  testIgnore: [FRESH_SPEC, PASSWORD_SPEC],
   fullyParallel: false,
   workers: 1,
   forbidOnly: !!process.env.CI,
