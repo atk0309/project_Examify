@@ -62,7 +62,7 @@ export function InviteAcceptForm({
   siteKey,
   authMode,
   mailboxDelivery = 'inbox',
-  codeDelivery = 'outbox',
+  codeDelivery = null,
 }: {
   inviteToken: string;
   role: 'student' | 'parent';
@@ -70,8 +70,11 @@ export function InviteAcceptForm({
   siteKey?: string;
   authMode: AuthMode;
   mailboxDelivery?: MailboxDelivery;
-  /** Effective transport from `resolveMailTransport()`. Password-invite copy only. */
-  codeDelivery?: ResolvedMailTransport;
+  /**
+   * Effective transport from `resolveMailTransport()`, or `null` when this host
+   * cannot deliver mailbox proof (`canDeliverMailboxProof()`). Password-invite copy only.
+   */
+  codeDelivery?: ResolvedMailTransport | null;
 }) {
   if (authMode === 'password') {
     return (
@@ -118,7 +121,7 @@ function PasswordInviteForm({
   role: 'student' | 'parent';
   lockedEmail: string | null;
   siteKey?: string;
-  codeDelivery: ResolvedMailTransport;
+  codeDelivery: ResolvedMailTransport | null;
 }) {
   const [state, formAction, pending] = useActionState<AcceptInvitePasswordState, FormData>(
     acceptInviteWithPassword,
@@ -202,10 +205,20 @@ function PasswordInviteForm({
       ) : null}
       <InviteHeader
         role={role}
-        subtitle={`Choose a password. Next, enter the one-time code we send to ${inviteCodeDestination(codeDelivery)}.`}
+        subtitle={
+          codeDelivery
+            ? `Choose a password. Next, enter the one-time code we send to ${inviteCodeDestination(codeDelivery)}.`
+            : 'Choose a password, then confirm a one-time code we email you.'
+        }
       />
+      {codeDelivery ? null : (
+        <p className="login-error" role="alert" data-testid="invite-mail-unavailable">
+          This host cannot send email yet, so the confirmation code cannot be delivered. Ask the
+          parent who invited you to set up mail, then try again.
+        </p>
+      )}
       <EmailField
-        defaultEmail={lockedEmail ?? ''}
+        defaultEmail={lockedEmail ?? (state.status === 'sent' ? state.email : '')}
         locked={Boolean(lockedEmail)}
         invalid={Boolean(fieldErrors.email)}
         error={fieldErrors.email}
@@ -272,11 +285,22 @@ function PasswordInviteForm({
       >
         {MailIcon.lock} {pending ? 'Sending code…' : 'Send confirmation code'}
       </button>
-      {state.status === 'sent' ? (
-        <p className="login-fine" data-testid="invite-code-pending">
-          A code is already in {inviteCodeDestination(codeDelivery)}. It still matches the password
-          from that request. Send a new code to replace it if you want a different password.
-        </p>
+      {state.status === 'sent' && !pending ? (
+        <>
+          <p className="login-fine" data-testid="invite-code-pending">
+            We already sent a code to{' '}
+            {codeDelivery ? inviteCodeDestination(codeDelivery) : 'your email inbox'} for the
+            password you chose then. Codes expire after 15 minutes. Sending a new code replaces it.
+          </p>
+          <button
+            type="button"
+            className="btn btn-quiet"
+            onClick={() => setEditing(false)}
+            data-testid="invite-back-to-code"
+          >
+            Back to code entry
+          </button>
+        </>
       ) : null}
       {state.status === 'error' && state.reason !== 'password_mismatch' ? (
         <p className="login-error" role="alert" data-testid={`invite-error-${state.reason}`}>
@@ -304,7 +328,7 @@ function PasswordInviteOtpForm({
   email: string;
   role: 'student' | 'parent';
   siteKey?: string;
-  codeDelivery: ResolvedMailTransport;
+  codeDelivery: ResolvedMailTransport | null;
   onBack: () => void;
 }) {
   const [otpState, otpAction, otpPending] = useActionState<CompletePasswordInviteState, FormData>(
@@ -312,7 +336,7 @@ function PasswordInviteOtpForm({
     { status: 'idle' },
   );
   const [code, setCode] = useState('');
-  const where = inviteCodeDestination(codeDelivery);
+  const where = codeDelivery ? inviteCodeDestination(codeDelivery) : 'your email inbox';
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -384,8 +408,8 @@ function PasswordInviteOtpForm({
         </p>
       )}
       <p className="login-fine" data-testid="invite-otp-resend-hint">
-        Need a new code? Send one again below. The new code replaces this one, and you enter the
-        password again so they match.
+        Need a new code? Go back, enter your password again, and send a new one. It replaces this
+        code.
       </p>
       <button
         type="button"
@@ -393,7 +417,7 @@ function PasswordInviteOtpForm({
         onClick={onBack}
         data-testid="invite-otp-back"
       >
-        Send a new code
+        Back
       </button>
     </form>
   );

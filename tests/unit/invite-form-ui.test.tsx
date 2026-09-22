@@ -44,7 +44,7 @@ function autofillWithoutEvents(testId: string, value: string) {
   descriptor?.set?.call(input, value);
 }
 
-function renderInvite(codeDelivery: ResolvedMailTransport = 'outbox') {
+function renderInvite(codeDelivery: ResolvedMailTransport | null = 'outbox') {
   return render(
     <InviteAcceptForm
       inviteToken="invite-token"
@@ -146,7 +146,10 @@ describe('Password invite form', () => {
       );
       expect(screen.getByRole('heading', { name: 'Enter your confirmation code' })).toBeVisible();
       expect(screen.getByTestId('invite-otp-resend-hint')).toHaveTextContent('Need a new code?');
-      expect(screen.getByTestId('invite-otp-back')).toHaveTextContent('Send a new code');
+      expect(screen.getByTestId('invite-otp-back')).toHaveTextContent('Back');
+      expect(screen.getByTestId('invite-otp-resend-hint')).toHaveTextContent(
+        'enter your password again',
+      );
       expect(screen.queryByDisplayValue('student-pass')).toBeNull();
 
       for (const other of ['resend', 'smtp', 'outbox'] as const) {
@@ -156,15 +159,34 @@ describe('Password invite form', () => {
     },
   );
 
-  it('explains the pending code when sending another one', async () => {
+  it('going back hedges the pending code and can return to code entry', async () => {
     await sendCode('smtp');
     fireEvent.click(screen.getByTestId('invite-otp-back'));
     const pending = screen.getByTestId('invite-code-pending');
     expect(pending).toHaveTextContent(inviteCodeDestination('smtp'));
-    expect(pending).toHaveTextContent('still matches the password');
-    expect(pending).toHaveTextContent('Send a new code to replace it');
+    expect(pending).toHaveTextContent('Codes expire after 15 minutes');
+    expect(pending).toHaveTextContent('Sending a new code replaces it');
+    expect(pending).not.toHaveTextContent('is already in');
     expect(screen.queryByTestId('invite-otp-form')).toBeNull();
+    expect(screen.getByTestId('invite-email-input')).toHaveValue('alex@example.com');
+    expect(acceptInviteWithPassword).toHaveBeenCalledOnce();
+
+    fireEvent.click(screen.getByTestId('invite-back-to-code'));
+    expect(await screen.findByTestId('invite-otp-form')).toBeInTheDocument();
+    expect(acceptInviteWithPassword).toHaveBeenCalledOnce();
     expect(completePasswordInvite).not.toHaveBeenCalled();
+  });
+
+  it('does not name a transport when this host cannot deliver the code', () => {
+    renderInvite(null);
+    const form = screen.getByTestId('invite-form');
+    for (const transport of ['resend', 'smtp', 'outbox'] as const) {
+      expect(form).not.toHaveTextContent(inviteCodeDestination(transport));
+    }
+    expect(screen.getByTestId('invite-mail-unavailable')).toHaveTextContent(
+      'cannot send email yet',
+    );
+    expect(screen.getByTestId('invite-submit')).toBeEnabled();
   });
 
   it('cannot finish the join without the mailbox code', async () => {

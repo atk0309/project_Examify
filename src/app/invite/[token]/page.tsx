@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { InviteAcceptForm } from '@/components/exam/InviteAcceptForm';
 import {
+  canDeliverMailboxProof,
   env,
   getAuthMode,
   isTurnstileEnabled,
@@ -47,7 +48,7 @@ export default async function InvitePage({ params }: { params: Promise<{ token: 
           lockedEmail={invite.email}
           authMode={getAuthMode()}
           mailboxDelivery={mailboxDelivery()}
-          codeDelivery={resolveMailTransport()}
+          codeDelivery={canDeliverMailboxProof() ? resolveMailTransport() : null}
           siteKey={isTurnstileEnabled() ? env.NEXT_PUBLIC_TURNSTILE_SITE_KEY : undefined}
         />
       </div>

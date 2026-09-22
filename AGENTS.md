@@ -181,8 +181,9 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   inside `consumeHashedBearer` when a password is being set), and a failed
   send after issue invalidates the unused OTP and clears `pending_password_hash`.
   The code screen names the effective transport (`resolveMailTransport()`:
-  Resend, this host's SMTP, or the local outbox). A new code is sent from
-  the password step again; the join cannot skip the code.
+  Resend, this host's SMTP, or the local outbox), or none when
+  `canDeliverMailboxProof()` is false. A new code is sent from the password
+  step again (with a way back to code entry); the join cannot skip the code.
   `invite-invalid` does not burn leftover sign-in OTP guesses. Missing mail fails
   closed. The code form does not resubmit the password; complete ignores a
   client password and stores the hash bound to that invite OTP.

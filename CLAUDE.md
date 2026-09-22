@@ -97,8 +97,11 @@ Surface:
   confirmation mismatch shows a field error and does not send. Fail closed
   if mail cannot be delivered. The code screen names where that code went
   from `resolveMailTransport()` (Resend inbox, this host's SMTP, or the
-  local mail outbox). Sending a new code returns to the password step;
-  there is no way to finish without the code. See `SECURITY.md`.
+  local mail outbox). When `canDeliverMailboxProof()` is false the page
+  names no transport and says mail is not set up. Going back to send a new
+  code keeps the email, hedges the pending code (15-minute expiry), and
+  offers a way back to code entry; there is no way to finish without the
+  code. See `SECURITY.md`.
 - **`/signin`** — sign-in UI for the configured `AUTH_MODE` (password, magic-link, or
   local OTP) with a Student/Parent role control. Password mode can reset a
   forgotten password with a mailbox OTP (`requestPasswordReset` /
