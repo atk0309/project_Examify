@@ -42,10 +42,13 @@ function lastForwardedFor(headers: Headers): string | null {
  *     Cloudflare's ranges only). Otherwise anyone who finds the origin can
  *     set it.
  *
- * When the configured header is absent or not a valid IP, fall back to the
- * last X-Forwarded-For entry, then `0.0.0.0` — surfaced as "unknown" so the
- * limiter still applies one shared cap instead of letting the request
- * through. An invalid last XFF entry is not skipped (anything to its left is
+ * X-Forwarded-For is parsed only in `x-forwarded-for` mode. When the
+ * configured header is absent or not a valid IP, the result is `0.0.0.0`,
+ * never XFF: a host picks `x-real-ip` / `cf-connecting-ip` precisely because
+ * XFF stays client-controlled there, so falling back to it would reopen the
+ * rotation bypass. `0.0.0.0` is surfaced as "unknown" so the limiter still
+ * applies one shared cap instead of letting the request through. In XFF mode
+ * an invalid last entry is not skipped (anything to its left is
  * client-controlled).
  *
  * This assumes a single trusted proxy hop. If you front the app with N>1
@@ -57,7 +60,7 @@ export function extractClientIp(
 ): string {
   if (mode !== 'x-forwarded-for') {
     const value = headers.get(mode)?.trim();
-    if (value && isValidIp(value)) return value;
+    return value && isValidIp(value) ? value : '0.0.0.0';
   }
   return lastForwardedFor(headers) ?? '0.0.0.0';
 }

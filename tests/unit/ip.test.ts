@@ -99,17 +99,25 @@ describe('extractClientIp (x-real-ip)', () => {
     expect(extractClientIp(h({ 'cf-connecting-ip': '198.51.100.7' }), 'x-real-ip')).toBe('0.0.0.0');
   });
 
-  it('falls back to the last XFF hop when x-real-ip is absent or invalid', () => {
+  it('never falls back to client-controlled XFF when x-real-ip is absent or invalid', () => {
     expect(extractClientIp(h({ 'x-forwarded-for': '203.0.113.4, 10.0.0.1' }), 'x-real-ip')).toBe(
-      '10.0.0.1',
+      '0.0.0.0',
     );
     expect(
       extractClientIp(
         h({ 'x-forwarded-for': '203.0.113.4, 10.0.0.1', 'x-real-ip': 'unknown' }),
         'x-real-ip',
       ),
-    ).toBe('10.0.0.1');
+    ).toBe('0.0.0.0');
     expect(extractClientIp(h({ 'x-real-ip': 'unknown' }), 'x-real-ip')).toBe('0.0.0.0');
+  });
+
+  it('keeps rotating XFF values in one shared bucket when x-real-ip is missing', () => {
+    const seen = new Set<string>();
+    for (let i = 1; i <= 20; i += 1) {
+      seen.add(extractClientIp(h({ 'x-forwarded-for': `198.51.100.${i}` }), 'x-real-ip'));
+    }
+    expect([...seen]).toEqual(['0.0.0.0']);
   });
 
   it('is picked up from env when no mode is passed', () => {
@@ -134,16 +142,16 @@ describe('extractClientIp (cf-connecting-ip)', () => {
     expect(extractClientIp(h({ 'x-real-ip': '192.0.2.9' }), 'cf-connecting-ip')).toBe('0.0.0.0');
   });
 
-  it('falls back to the last XFF hop when cf-connecting-ip is absent or invalid', () => {
+  it('never falls back to client-controlled XFF when cf-connecting-ip is absent or invalid', () => {
     expect(extractClientIp(h({ 'x-forwarded-for': '10.0.0.1' }), 'cf-connecting-ip')).toBe(
-      '10.0.0.1',
+      '0.0.0.0',
     );
     expect(
       extractClientIp(
         h({ 'x-forwarded-for': '10.0.0.1', 'cf-connecting-ip': 'bogus' }),
         'cf-connecting-ip',
       ),
-    ).toBe('10.0.0.1');
+    ).toBe('0.0.0.0');
   });
 
   it('is picked up from env when no mode is passed', () => {

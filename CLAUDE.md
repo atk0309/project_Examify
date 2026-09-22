@@ -401,8 +401,10 @@ These are non-negotiable. Don't "fix" them out.
   hop the nearest proxy appended; the first entries are client-controlled).
   `x-real-ip` and `cf-connecting-ip` are ordinary request headers a client can
   send (nginx / Caddy pass a client-sent `CF-Connecting-IP` through), so they are
-  **never read unless configured**. If the configured header is absent or invalid,
-  fall back to the last XFF entry, then `0.0.0.0`. An unknown value fails boot.
+  **never read unless configured**. XFF is parsed only in `x-forwarded-for` mode: if
+  a configured `x-real-ip` / `cf-connecting-ip` is absent or invalid the result is
+  `0.0.0.0` (one shared bucket), never an XFF fallback — XFF is client-controlled in
+  exactly the setups that pick those modes. An unknown value fails boot.
   Don't read these headers in handlers and don't restore the old cf → x-real-ip →
   XFF precedence (it let a client rotate "IPs" past every per-IP bucket).
 - Rate-limit windows are tracked in `rate_limit_events`. Sign-in uses a **single**
@@ -420,8 +422,9 @@ These are non-negotiable. Don't "fix" them out.
   returns `locked` (shown as `rate_limited`) **even for a correct code**.
   **Re-issuing a code never clears a guess bucket** — clearing it gave five fresh
   guesses per new code (reset-code cycling → account takeover). Non-6-digit input
-  and `invite-invalid` do not count. `checkRateLimit` purges **all** rows older
-  than 7 days, not only the caller IP's.
+  and `invite-invalid` do not count. Rows older than 7 days are purged globally
+  (`purgeStaleRateLimitEvents`), which `checkRateLimit` runs at most once an hour
+  per process — the scan is unindexed, so never per request.
 - `/setup` (`bootstrapHouseholdAction`) may do the cheap password-policy check
   early, but `hashPassword` (scrypt) runs only after Turnstile, the sign-in
   rate-limit, and `SETUP_BOOTSTRAP_SECRET` all pass.
