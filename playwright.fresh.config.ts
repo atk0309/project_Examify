@@ -50,6 +50,9 @@ export default defineConfig({
       RESEND_FROM: 'WhatATime <test@example.com>',
       MAIL_OUTBOX_DIR: E2E_OUTBOX,
       ANTHROPIC_API_KEY: 'test',
+      // next start runs NODE_ENV=production, where the `test` sentinel no
+      // longer stubs grading unless this explicit opt-in is set.
+      GRADING_STUB: '1',
       SETUP_BOOTSTRAP_SECRET: 'e2e-setup-bootstrap-secret',
       // Pin captcha off. Spreading process.env (or a host .env loaded by
       // next start) must not re-enable Turnstile — this suite asserts no widget.

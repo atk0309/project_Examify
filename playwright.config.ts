@@ -63,6 +63,9 @@ export default defineConfig({
       RESEND_FROM: 'WhatATime <test@example.com>',
       MAIL_OUTBOX_DIR: E2E_OUTBOX,
       ANTHROPIC_API_KEY: 'test',
+      // next start runs NODE_ENV=production, where the `test` sentinel no
+      // longer stubs grading unless this explicit opt-in is set.
+      GRADING_STUB: '1',
       SETUP_BOOTSTRAP_SECRET: 'e2e-setup-bootstrap-secret',
       NEXT_PUBLIC_TURNSTILE_SITE_KEY: '1x00000000000000000000AA',
       TURNSTILE_SECRET_KEY: '1x0000000000000000000000000000000AA',
