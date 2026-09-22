@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { defineConfig, devices } from '@playwright/test';
 import { requireProductionBuild } from './tests/e2e/require-production-build';
+import { FRESH_SPEC, PASSWORD_SPEC } from './tests/e2e/suites';
 
 requireProductionBuild();
 
@@ -19,7 +20,8 @@ process.env.MAIL_OUTBOX_DIR = E2E_OUTBOX;
 
 export default defineConfig({
   testDir: './tests/e2e',
-  testIgnore: /fresh\.(spec|test)\.ts/,
+  // The fresh and password specs run under their own configs (own DB + env).
+  testIgnore: [FRESH_SPEC, PASSWORD_SPEC],
   fullyParallel: false,
   workers: 1,
   forbidOnly: !!process.env.CI,
@@ -63,12 +65,19 @@ export default defineConfig({
       RESEND_FROM: 'WhatATime <test@example.com>',
       MAIL_OUTBOX_DIR: E2E_OUTBOX,
       ANTHROPIC_API_KEY: 'test',
+      // next start runs NODE_ENV=production, where the `test` sentinel no
+      // longer stubs grading unless this explicit opt-in is set.
+      GRADING_STUB: '1',
       SETUP_BOOTSTRAP_SECRET: 'e2e-setup-bootstrap-secret',
       NEXT_PUBLIC_TURNSTILE_SITE_KEY: '1x00000000000000000000AA',
       TURNSTILE_SECRET_KEY: '1x0000000000000000000000000000000AA',
       TURNSTILE_ENABLED: '1',
       RATE_LIMIT_SIGNIN_MAX: '3',
       RATE_LIMIT_SIGNIN_WINDOW_MS: '60000',
+      // Specs pick a rate-limit bucket with an `x-real-ip` header. The app
+      // ignores that header unless the host opts in (default is the last
+      // X-Forwarded-For hop), so opt in here — there is no proxy in front.
+      CLIENT_IP_HEADER: 'x-real-ip',
     },
   },
 });

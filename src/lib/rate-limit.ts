@@ -19,26 +19,43 @@ export type RateLimitResult = {
   max: number;
 };
 
+/** Rows older than this are deleted by the global purge. */
+export const RATE_LIMIT_RETENTION_MS = 7 * 24 * 3_600_000;
+/**
+ * The global purge scans the whole table (the only index leads with `ip`), so
+ * `checkRateLimit` runs it at most this often per process, not per request.
+ */
+export const RATE_LIMIT_PURGE_INTERVAL_MS = 3_600_000;
+
+let nextGlobalPurgeAt = 0;
+
+/**
+ * Delete **every** row older than the retention window — not only one IP's —
+ * so buckets that are never checked again (a one-off address, the per-account
+ * `pw:` / `otp:` / `reset:` buckets) cannot grow the table without bound.
+ */
+export function purgeStaleRateLimitEvents(now = Date.now()): void {
+  db.delete(schema.rateLimitEvents)
+    .where(lt(schema.rateLimitEvents.createdAt, new Date(now - RATE_LIMIT_RETENTION_MS)))
+    .run();
+}
+
 /**
  * Sliding-window rate limit. Counts events in `[now - windowMs, now]` for the
  * given (ip, kind). If under the cap, inserts a new event and returns ok=true.
- * Lazily purges this IP's rows older than 7 days on each call.
+ * Runs {@link purgeStaleRateLimitEvents} at most once per
+ * {@link RATE_LIMIT_PURGE_INTERVAL_MS}.
  */
 export function checkRateLimit(ip: string, kind: RateLimitKind, now = Date.now()): RateLimitResult {
   const { max, windowMs } = configFor(kind);
   const windowStart = now - windowMs;
-  const purgeBefore = now - 7 * 24 * 3_600_000;
+
+  if (now >= nextGlobalPurgeAt) {
+    purgeStaleRateLimitEvents(now);
+    nextGlobalPurgeAt = now + RATE_LIMIT_PURGE_INTERVAL_MS;
+  }
 
   return db.transaction((tx) => {
-    tx.delete(schema.rateLimitEvents)
-      .where(
-        and(
-          eq(schema.rateLimitEvents.ip, ip),
-          lt(schema.rateLimitEvents.createdAt, new Date(purgeBefore)),
-        ),
-      )
-      .run();
-
     const rows = tx
       .select({ createdAt: schema.rateLimitEvents.createdAt })
       .from(schema.rateLimitEvents)

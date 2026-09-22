@@ -804,6 +804,8 @@ describe('onboarding household gate', () => {
       expect(sentinel.anthropicConfigured).toBe(false);
       expect(sentinel.anthropicPresent).toBe(true);
       expect(sentinel.anthropicLiveTest).toBe(true);
+      // Vitest runs with NODE_ENV=test, where gradingStubAllowed() holds.
+      expect(sentinel.gradingStubActive).toBe(true);
       setInitialEnvironForTests({ ANTHROPIC_API_KEY: '' });
       process.env.ANTHROPIC_API_KEY = '';
       writeFileSync(path.join(root, '.env'), 'ANTHROPIC_API_KEY=sk-from-store\n');
@@ -813,6 +815,7 @@ describe('onboarding household gate', () => {
       expect(emptyHost.anthropicConfigured).toBe(false);
       expect(emptyHost.anthropicPresent).toBe(true);
       expect(emptyHost.anthropicLiveTest).toBe(false);
+      expect(emptyHost.gradingStubActive).toBe(false);
     } finally {
       if (previous === undefined) delete process.env.ANTHROPIC_API_KEY;
       else process.env.ANTHROPIC_API_KEY = previous;

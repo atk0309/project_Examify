@@ -167,7 +167,7 @@ grouped weekly Dependabot PRs in `.github/dependabot.yml`.
 | `pnpm format:check`   | Prettier dry-run (CI guard)                                         |
 | `pnpm typecheck`      | `tsc --noEmit`                                                      |
 | `pnpm test`           | Vitest unit suite                                                   |
-| `pnpm test:e2e`       | Playwright e2e (`pnpm build` then both suites)                      |
+| `pnpm test:e2e`       | Playwright e2e (`pnpm build`, then seeded + fresh + password)       |
 | `pnpm db:generate`    | Generate a new Drizzle migration from schema diffs                  |
 | `pnpm db:migrate`     | Apply pending migrations to repo-root `.env` `DATABASE_URL`         |
 | `pnpm db:studio`      | Drizzle Studio against the local DB                                 |
@@ -180,6 +180,11 @@ grouped weekly Dependabot PRs in `.github/dependabot.yml`.
 - **Never push directly to `main`**. Every change opens a PR.
 - PR body lists routes touched and tests added (the `PULL_REQUEST_TEMPLATE.md` enforces this).
 - Don't merge with a red CI. Don't merge bypassing required reviews.
+- **Every PR gets a Codex review.** Opening a PR (or marking it ready) triggers one;
+  after each later push that changes code, comment `@codex review` so the fix commits
+  are reviewed too. Verify each finding and fix the real ones before merging.
+  CodeRabbit also auto-reviews PRs to `main` (`.coderabbit.yaml`); both are advisory
+  on top of green CI. `AGENTS.md` → "Review guidelines" is what Codex checks against.
 
 ## End-of-session ritual (every session)
 
@@ -397,16 +402,35 @@ These are non-negotiable. Don't "fix" them out.
   `verifyTurnstile()` never short-circuits to ok (partial config fails closed).
   The login / setup / invite-accept actions still call `verifyTurnstile()` with
   the client's token before issuing anything.
-- IP extraction always goes through `src/lib/ip.ts`, which prefers `cf-connecting-ip` →
-  `x-real-ip` → the **last** entry of `x-forwarded-for`. The first XFF entry is
-  client-controllable; don't read `x-forwarded-for` directly in handlers.
+- IP extraction always goes through `src/lib/ip.ts`, and trusts exactly **one**
+  header: `CLIENT_IP_HEADER` (default `x-forwarded-for` → its **last** entry, the
+  hop the nearest proxy appended; the first entries are client-controlled).
+  `x-real-ip` and `cf-connecting-ip` are ordinary request headers a client can
+  send (nginx / Caddy pass a client-sent `CF-Connecting-IP` through), so they are
+  **never read unless configured**. XFF is parsed only in `x-forwarded-for` mode: if
+  a configured `x-real-ip` / `cf-connecting-ip` is absent or invalid the result is
+  `0.0.0.0` (one shared bucket), never an XFF fallback — XFF is client-controlled in
+  exactly the setups that pick those modes. An unknown value fails boot.
+  Don't read these headers in handlers and don't restore the old cf → x-real-ip →
+  XFF precedence (it let a client rotate "IPs" past every per-IP bucket).
 - Rate-limit windows are tracked in `rate_limit_events`. Sign-in uses a **single**
   `signin` bucket (10/IP/hour by default) for every request, regardless of whether a user
   row exists — a per-state threshold would leak whether an email is a returning/approved
   user even behind the generic "sent" copy. Don't split it back into signup/login.
-  Local OTP also records well-formed wrong 6-digit guesses under a synthetic
-  `ip` of `otp:{email}:{role}` (same table, no migration). After 5 failures the
-  outstanding challenge is consumed. Non-6-digit input does not count.
+  Per-account buckets share the table under a synthetic `ip` (no migration):
+  **password sign-in** `pw:{email}` (every role and IP) allows
+  `PASSWORD_FAILURE_MAX` (10) failures per 15 min, is checked before scrypt,
+  records every `invalid` outcome for any email (known or not, so a lock reveals
+  nothing), and is cleared by a successful sign-in or password reset; locked →
+  `rate_limited`. **Mailbox codes** use `otp:{email}:{role}` (local OTP, invite
+  OTP) and `reset:{email}:{role}`: after `OTP_GUESS_MAX` (5) well-formed wrong
+  guesses in the 15-min window, outstanding codes are consumed and verification
+  returns `locked` (shown as `rate_limited`) **even for a correct code**.
+  **Re-issuing a code never clears a guess bucket** — clearing it gave five fresh
+  guesses per new code (reset-code cycling → account takeover). Non-6-digit input
+  and `invite-invalid` do not count. Rows older than 7 days are purged globally
+  (`purgeStaleRateLimitEvents`), which `checkRateLimit` runs at most once an hour
+  per process — the scan is unindexed, so never per request.
 - `/setup` (`bootstrapHouseholdAction`) may do the cheap password-policy check
   early, but `hashPassword` (scrypt) runs only after Turnstile, the sign-in
   rate-limit, and `SETUP_BOOTSTRAP_SECRET` all pass.
@@ -430,6 +454,18 @@ These are non-negotiable. Don't "fix" them out.
   cookie is actually cleared. Verify/bootstrap write via `getRawSession` so a
   stale cookie cannot intercept a new sign-in. Parents/admins can remove members
   via `removeMember` (cannot remove self or the household admin).
+- **The session cookie follows `SITE_URL`, not `NODE_ENV`.** `sessionCookieConfig()`
+  (`src/lib/env.ts`) is the only source of iron-session's cookie name + `secure`:
+  `Secure` exactly when `SITE_URL` is `https:`; the default name is
+  `__Host-examify_session` on https and `examify_session` on plain http. Browsers
+  drop a Secure cookie over http and a `__Host-` cookie without Secure, so keying
+  either off `NODE_ENV` bounced LAN hosts and `pnpm dev` to `/signin` forever. An
+  explicit `__Host-` / `__Secure-` `SESSION_COOKIE_NAME` with a non-https
+  `SITE_URL` fails production boot (dev keeps it with a warning).
+- **Credential forms post natively.** Forms that carry a password, setup code or
+  API key and submit through a JS `onSubmit` keep `method="post"`: a submit before
+  hydration otherwise falls back to a GET and puts the secret in the URL, browser
+  history and proxy logs.
 
 ## Progress tracking + roles
 
@@ -529,17 +565,26 @@ These are non-negotiable. Don't "fix" them out.
   malformed/unparseable model JSON falls to `needs_review` so an attempt is never lost.
   Live `ANTHROPIC_API_KEY` is read from `process.env` only (never the boot-frozen
   `env.ts` snapshot) so a wizard set / rotate / clear is visible on the next
-  grade. The `test` sentinel still stubs; a missing key after clear is
-  fail-closed (`needs_review`, no stub) — same usable-key rule as the
-  Configured badge. Blank / missing is never treated as `test`.
-  `ANTHROPIC_API_KEY` is optional in `env.ts` (wizard clear + production
-  restart must not brick boot).
+  grade. The `test` sentinel stubs only when `gradingStubAllowed()`:
+  `NODE_ENV !== 'production'` or `GRADING_STUB=1` (both read live; the
+  Playwright configs set the flag because `next start` runs as production). In
+  production without it the sentinel is no usable key → `needs_review`, never a
+  silent full-marks default (`install.sh` writes `test` for a blank key prompt).
+  A missing key after clear is fail-closed (`needs_review`, no stub) — same
+  usable-key rule as the Configured badge. Blank / missing is never treated as
+  `test`. `ANTHROPIC_API_KEY` is optional in `env.ts` (wizard clear + production
+  restart must not brick boot). Every `needs_review` logs one
+  `[grading] free-text answer not marked` warning with a reason code only
+  (`no_key`, `stub_disabled_in_production`, `http_<status>`, `timeout`,
+  `network_error`, `bad_json`, `bad_shape`) — never the answer, question, rubric,
+  key, an error message (it can quote model text) or a user id.
 - **A free-text item is "correct" at `PASS_THRESHOLD` (0.6).** `isFreePass(score, maxScore)`
   (`attempts.ts`, the shared constant — not an inline literal) decides the ring/tally. A
   `needs_review` item persists `score: null, verdict: null` and counts as incorrect.
 - **Render only the bounded verdict.** The UI shows only `Verdict` fields (`score`, `verdict`,
   `gotRight`, `toReview`, `spelling`) — never the rubric, never raw model text. `needs_review`
-  renders "Saved for review".
+  renders `NEEDS_REVIEW_COPY` (`attempts.ts`): nothing re-grades it, so the copy says it
+  counts as not correct and must never promise later marking.
 - **Results are server-driven.** Because the client holds no answer keys, it can't self-score:
   on finish `ExamApp` submits, shows a "Marking…" state, and renders from the returned
   `AttemptRecord` (or an error/retry screen). Every `ExamApp` instance can submit (the `/` gate
@@ -561,7 +606,11 @@ placeholder); captcha is not identity. Documented placeholder `AUTH_SECRET` /
 `SETUP_BOOTSTRAP_SECRET` values also fail production boot.
 
 Required in production: `SITE_URL`, `AUTH_SECRET`, `DATABASE_URL`,
-`SETUP_BOOTSTRAP_SECRET`. `AUTH_MODE` defaults to `magic-link` (existing #56 hosts
+`SETUP_BOOTSTRAP_SECRET`. `SITE_URL` must be the public origin family devices open:
+it builds invite / sign-in links and decides the session cookie (see Auth
+invariants); `install.sh` warns when it is localhost or plain http beyond the host.
+`CLIENT_IP_HEADER` (`x-forwarded-for` default | `x-real-ip` | `cf-connecting-ip`)
+names the one header the rate limiter trusts. `AUTH_MODE` defaults to `magic-link` (existing #56 hosts
 keep working). `password` sign-in needs no mail; password-mode invite accept
 sends a mailbox OTP and fails closed without a transport. Interactive /
 default `install.sh` (`AUTH_MODE=password`) prompts for mail or enables a
@@ -593,7 +642,8 @@ already ran on the first form (or the form mounted after page load).
 `ANTHROPIC_API_KEY` is optional (wizard clear + production restart must not
 brick boot). A missing / empty key fail-closes free-text grading
 (`needs_review`, no stub) — blank is never treated as `test`. The `test`
-sentinel still stubs. See `.env.example` for the canonical list.
+sentinel stubs only outside production or with `GRADING_STUB=1` (test/CI only).
+See `.env.example` for the canonical list.
 
 ## Testing rules
 
@@ -609,7 +659,7 @@ sentinel still stubs. See `.env.example` for the canonical list.
   without a token.
 - The Playwright config uses an isolated SQLite at `tests/.tmp/e2e.db`;
   `tests/e2e/setup-db.ts` wipes and re-migrates it via `pnpm test:e2e:prepare`, which
-  `pnpm test:e2e` runs _before_ `pnpm build` and `playwright test`. Both Playwright
+  `pnpm test:e2e` runs _before_ `pnpm build` and `playwright test`. All three Playwright
   configs require an existing `.next` (they start with `next start`; they do not
   create the production build).
 - Default sign-in e2e uses the documented always-pass Turnstile dummy key. The widget
@@ -617,7 +667,16 @@ sentinel still stubs. See `.env.example` for the canonical list.
   fallback field with that name. When the widget CDN is unavailable, the Playwright
   helper injects that same field and submits it in one browser task. A second
   Playwright config (`playwright.fresh.config.ts`) covers first-run bootstrap and
-  Turnstile-off sign-in. Happy-path, invite accept, uniform rate-limit, and
+  Turnstile-off sign-in. A third (`playwright.password.config.ts`, seeded by
+  `setup-db.ts --password` with the known passwords in `tests/e2e/seed.ts`) runs
+  `AUTH_MODE=password` — the `install.sh` default — and is the browser coverage for
+  the exam flow: password sign-in, a whole exam (MCQ + free-text) → results →
+  progress, resume after reload, the parent dashboard. Keep the `data-testid`s it
+  uses on ExamApp / ProgressView / ParentDashboard. Each spec runs under exactly one
+  config (`tests/e2e/suites.ts`, guarded by `tests/unit/e2e-suites.test.ts`). The
+  Playwright webServer envs set `GRADING_STUB=1` (deterministic grading under
+  `next start`) and, for the seeded/fresh suites, `CLIENT_IP_HEADER=x-real-ip` so
+  specs can pick a rate-limit bucket per test. Happy-path, invite accept, uniform rate-limit, and
   empty-token (captcha on) coverage all run without bypassing `verifyTurnstile`
   when it is enabled.
 

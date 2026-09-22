@@ -32,7 +32,7 @@ const challengeErrorCopy: Record<
 > = {
   invalid: 'Please enter a valid email address.',
   captcha: 'Verification failed. Please try again.',
-  rate_limited: 'Too many attempts from your network. Try again later.',
+  rate_limited: 'Too many attempts. Try again later.',
   send_failed: 'We could not send the email. Please try again in a moment.',
   invite_invalid: 'This invite is invalid or has expired.',
 };
@@ -43,7 +43,7 @@ const passwordErrorCopy: Record<
 > = {
   invalid: 'Could not join with those details.',
   captcha: 'Verification failed. Please try again.',
-  rate_limited: 'Too many attempts from your network. Try again later.',
+  rate_limited: 'Too many attempts. Try again later.',
   invite_invalid: 'This invite is invalid or has expired.',
   send_failed: 'We could not send a confirmation code. Ask the host to configure mail.',
   password_mismatch: PASSWORD_MISMATCH,
@@ -52,7 +52,7 @@ const passwordErrorCopy: Record<
 const otpErrorCopy: Record<Exclude<VerifyLocalOtpState, { status: 'idle' }>['reason'], string> = {
   invalid: 'That code did not work. Try again.',
   captcha: 'Verification failed. Please try again.',
-  rate_limited: 'Too many attempts from your network. Try again later.',
+  rate_limited: 'Too many attempts. Try again later.',
 };
 
 export function InviteAcceptForm({
@@ -188,6 +188,7 @@ function PasswordInviteForm({
   return (
     <form
       className="screen login"
+      method="post"
       noValidate
       data-testid="invite-form"
       onSubmit={(event) => {

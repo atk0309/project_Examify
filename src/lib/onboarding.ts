@@ -35,6 +35,7 @@ import { db, schema } from '@/lib/db';
 import type { HouseholdRole } from '@/lib/db/schema';
 import { SAMPLE_QUESTIONS, SAMPLE_SUBJECTS } from '@/lib/exam/data';
 import { loadLivePublicBank } from '@/lib/exam/live-bank.server';
+import { gradingStubAllowed } from '@/lib/grading';
 import { env } from '@/lib/env';
 import {
   envStoreSecretConfigured,
@@ -401,6 +402,7 @@ function aiFlags(): {
   anthropicWriteBlocked: boolean;
   openaiWriteBlocked: boolean;
   localAgentConfigured: boolean;
+  gradingStubActive: boolean;
 } {
   return {
     // Both keys: wizard + install.sh write the same repo-root `.env`
@@ -420,6 +422,9 @@ function aiFlags(): {
     localAgentConfigured: Boolean(
       env.EXAMIFY_LLM_BASE_URL || process.env.EXAMIFY_INGEST_LOCAL_CMD?.trim(),
     ),
+    // Same gate as gradeFreeText, so the wizard's marking copy matches what
+    // the grader will actually do with the sentinel on this host.
+    gradingStubActive: envStoreSecretLiveTest('ANTHROPIC_API_KEY') && gradingStubAllowed(),
   };
 }
 

@@ -16,6 +16,24 @@ import {
 const OUTBOX =
   process.env.MAIL_OUTBOX_DIR ?? path.join(process.cwd(), 'tests', '.tmp', 'e2e-fresh-outbox');
 
+// The wizard test below adds a "History" subject, which writes
+// content/subjects/history/ into the checkout (the app's content root). Remove
+// it afterwards unless it existed before the run, so `pnpm test:e2e` leaves the
+// working tree clean.
+const HISTORY_SUBJECT_DIR = path.join(process.cwd(), 'content', 'subjects', 'history');
+let historySubjectExisted = false;
+
+test.beforeAll(async () => {
+  historySubjectExisted = await fs.stat(HISTORY_SUBJECT_DIR).then(
+    () => true,
+    () => false,
+  );
+});
+
+test.afterAll(async () => {
+  if (!historySubjectExisted) await fs.rm(HISTORY_SUBJECT_DIR, { recursive: true, force: true });
+});
+
 const SECRET_ACTION_IDS = [
   'wizard-anthropic-key-save',
   'wizard-anthropic-key-rotate',

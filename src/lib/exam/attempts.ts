@@ -45,6 +45,13 @@ export type ValidateResult =
  */
 export const PASS_THRESHOLD = 0.6;
 
+/**
+ * Shown for a `needs_review` free-text item. Nothing re-grades it later, so
+ * the copy must not promise later marking — it counts as not correct.
+ */
+export const NEEDS_REVIEW_COPY =
+  'We couldn’t mark this one automatically, so it counts as not correct.';
+
 /** Whether a graded free-text score clears {@link PASS_THRESHOLD}. */
 export function isFreePass(score: number, maxScore: number): boolean {
   return maxScore > 0 && score / maxScore >= PASS_THRESHOLD;

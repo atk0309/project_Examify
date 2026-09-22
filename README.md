@@ -3,12 +3,14 @@
 A calm, mobile-first, self-hosted **exam-practice app for families**. Pick a subject,
 choose a difficulty, work a short mini exam one question at a time, and get encouraging
 feedback at the end — mature, not babyish. Built by a parent for their kid(s); you run
-your own instance, and your family's data stays on your own box.
+your own instance: accounts, progress and study files are stored on your own server.
+Optional AI marking and cloud generate send text or files to the provider you pick (see
+[What leaves your server](#what-leaves-your-server)).
 
 It is intentionally small: a static question bank you edit in code, a four-screen client
 flow, host-picked sign-in (`password`, `magic-link`, or `local-otp`) gated by
-**invite-only households** in SQLite, and a single SQLite file. No SaaS, no tracking,
-no env-JSON allowlist to hand-edit.
+**invite-only households** in SQLite, and a single SQLite file. No SaaS account, no
+tracking by default, no env-JSON allowlist to hand-edit.
 
 ## Features
 
@@ -115,7 +117,7 @@ appears in no dashboard.
 | Auth        | `AUTH_MODE`: password / magic-link / local-otp + iron-session, **invite-only households** |
 | Captcha     | Optional Cloudflare Turnstile (off when keys are unset)                                   |
 | Email       | Resend, SMTP, or local outbox (`MAIL_TRANSPORT`)                                          |
-| Grading     | Anthropic Messages API (free-text), with a `test`-sentinel stub                           |
+| Grading     | Anthropic Messages API (free-text); `test` stub outside production / `GRADING_STUB=1`     |
 | Tests       | Vitest (unit), Playwright (e2e)                                                           |
 | Lint/Format | ESLint 9 + Prettier + Tailwind plugin                                                     |
 
@@ -149,6 +151,12 @@ not `.env` alone when local wins. `RESEND_API_KEY=test` is not a mail path.
 Invite accept
 never skips that OTP.
 
+The site URL must be the address family devices open (for example
+`https://exam.example.com` or `http://192.168.1.20:3000`). `localhost` only works on
+the host machine, so the installer warns that invite links will only open there; a
+plain-`http` LAN address gets a note that traffic is unencrypted. See
+[Deploying with HTTPS](#deploying-with-https).
+
 Then `pnpm start` (or `pnpm dev`), open `SITE_URL`, and complete **`/setup`**
 with the printed setup code.
 
@@ -166,6 +174,7 @@ fresh database, visit `/setup`, enter the setup code (`SETUP_BOOTSTRAP_SECRET`;
 the dev default works locally), and create the first household. Invite the
 student from the dashboard. With `ANTHROPIC_API_KEY=test`, free-text grading
 uses a deterministic local stub — no network, no API key needed for development.
+The stub is off under `NODE_ENV=production` unless `GRADING_STUB=1` (tests only).
 
 Set `AUTH_MODE=password` in `.env` if you want to develop without a mail
 provider. Sign-in needs no mail; invite accept still uses the local
@@ -296,17 +305,45 @@ Free-text answers are graded server-side by the Anthropic Messages API
 - Configure `ANTHROPIC_API_KEY` (optional in production — wizard clear +
   restart will not brick boot). The grader reads the live key from
   `process.env` (updated by `/onboarding` set / rotate / clear), never a
-  boot-frozen snapshot. The `test` sentinel (the dev default) swaps in a
-  deterministic full-score stub with no network calls — the same pattern as the Resend
-  email outbox. Clear fails closed (`needs_review`, no stub).
+  boot-frozen snapshot. The `test` sentinel swaps in a deterministic full-score stub
+  with no network calls **only** outside production or when `GRADING_STUB=1` is set
+  (the Playwright configs set it). In production without the flag, `test` counts as no
+  key — `install.sh` writes it when the Anthropic prompt is left blank — so free-text
+  answers are saved but not marked, never given free full marks. Clear fails closed
+  (`needs_review`, no stub).
 - Grading is **fail-safe**: requests have a 15-second deadline, and any timeout, network
   error, non-2xx, or malformed model output resolves to `needs_review` instead of throwing,
-  so a finished exam is never lost. A `needs_review` item renders as "Saved for review" and
-  counts as incorrect.
+  so a finished exam is never lost. A `needs_review` item is final (nothing re-grades
+  it): it shows "We couldn’t mark this one automatically, so it counts as not correct."
+  Each one logs a server warning, `[grading] free-text answer not marked`, with a reason
+  code (`no_key`, `stub_disabled_in_production`, `http_<status>`, `timeout`,
+  `network_error`, `bad_json`, `bad_shape`) and never the answer, rubric or key.
 - A free-text item counts as "correct" when the score reaches **60%** of `maxScore`
   (`PASS_THRESHOLD` in `src/lib/exam/attempts.ts`).
 - The UI renders only the bounded verdict (score, one-line feedback, got-right /
   to-review / spelling lists) — never the rubric, never raw model text.
+
+## What leaves your server
+
+Stored only on your server: household accounts and sessions, exam attempts and progress,
+in-progress drafts, uploaded PDFs and notes, generated question banks and answer keys,
+and the `.env` keys.
+
+Sent to a third party only when you turn the feature on:
+
+- **Free-text marking (Anthropic).** With a real `ANTHROPIC_API_KEY`, each free-text answer
+  is sent to the Anthropic API with its question and rubric. No names, emails or user ids
+  are sent. Multiple-choice answers are scored on your server. Without a key, free-text
+  answers are saved but not marked.
+- **Cloud generate (Anthropic / OpenAI).** The `/onboarding` cloud modes and
+  `examify-ingest generate --provider anthropic|openai` send that subject's source files
+  (PDFs or their page images, notes, images) to the provider. Local modes send them to the
+  endpoint or command you configure; `--provider test` sends nothing.
+- **Mail.** Invite, sign-in and reset codes go through Resend or your SMTP server. The
+  local outbox keeps them on disk.
+- **Fonts.** Pages load the Newsreader and Hanken Grotesk stylesheet from Google Fonts.
+- **Optional:** Cloudflare Turnstile (`TURNSTILE_ENABLED=1`) and Plausible analytics
+  (`PLAUSIBLE_DOMAIN`).
 
 ## Themes
 
@@ -326,7 +363,7 @@ applied at runtime via `accentCSS()`.
 | `pnpm typecheck`      | `tsc --noEmit`                                              |
 | `pnpm format`         | Prettier write                                              |
 | `pnpm test`           | Vitest unit suite                                           |
-| `pnpm test:e2e`       | Playwright e2e (needs `pnpm test:e2e:install`)              |
+| `pnpm test:e2e`       | Playwright e2e: seeded, fresh and password suites           |
 | `pnpm db:generate`    | Generate a Drizzle migration from schema diffs              |
 | `pnpm db:migrate`     | Apply pending migrations to repo-root `.env` `DATABASE_URL` |
 | `pnpm examify-ingest` | Generate / validate / emit BankIR (`tools/examify-ingest`)  |
@@ -351,7 +388,11 @@ Turnstile keys are optional when **both** are unset; exactly one key in
 production crashes boot. Env validation **fails closed** in production for the
 required vars. Access is empty-fail-closed: until someone completes `/setup`
 with the bootstrap secret (or a leftover `FAMILIES` import runs), nobody can
-sign in.
+sign in. `SITE_URL` also decides the session cookie: `Secure` +
+`__Host-examify_session` on https, non-Secure `examify_session` on plain http.
+`SESSION_COOKIE_NAME` is optional; a `__Host-` / `__Secure-` name with a non-https
+`SITE_URL` fails production boot. `CLIENT_IP_HEADER` names the one header the sign-in
+rate limiter trusts for the client IP (see [Deploying with HTTPS](#deploying-with-https)).
 
 ## Deploy
 
@@ -370,23 +411,73 @@ pnpm build
 pnpm db:migrate && pnpm start    # repo-root .env DATABASE_URL, then serve
 ```
 
-Point `DATABASE_URL` at a file on **persistent storage** so the database survives
-deploys, set the required env vars above (`AUTH_MODE` included), and healthcheck
+Run `pnpm db:migrate` before `pnpm start` on every deploy — the server does not migrate
+itself on boot. Point `DATABASE_URL` at a file on **persistent storage** so the database
+survives deploys, set the required env vars above (`AUTH_MODE` included), and healthcheck
 `GET /api/health`.
 
-On hosts with ephemeral filesystems, mount persistent storage (for example at `/data`)
-and set `DATABASE_URL=file:/data/app.db`.
+The checkout itself must be persistent too: `/onboarding` writes subjects, uploaded PDFs,
+generated banks and answer keys under `content/` and `src/lib/exam/generated-*`, and API
+keys into `.env`. Back up the database (use `sqlite3 app.db ".backup backup.db"` while the
+server runs — it uses WAL), `.env`, and `content/`.
+
+### Deploying with HTTPS
+
+`SITE_URL` must equal the public origin family devices open (scheme, host and port).
+Invite and sign-in links are built from it, and the session cookie follows it. Plain
+http works on a home LAN but is unencrypted: passwords, codes and the session cookie
+cross the network in clear. Use HTTPS for anything beyond the home network.
+
+**Caddy** (automatic certificates):
+
+```caddy
+exam.example.com {
+  reverse_proxy 127.0.0.1:3000
+}
+```
+
+Then set `SITE_URL=https://exam.example.com` and restart. **Cloudflare Tunnel** also works
+(no open inbound ports): route `exam.example.com` to `http://localhost:3000`.
+
+**nginx** must forward the original host and scheme, or Next.js Server Actions reject
+requests and sign-in fails:
+
+```nginx
+location / {
+  proxy_pass http://127.0.0.1:3000;
+  proxy_set_header Host $host;
+  proxy_set_header X-Forwarded-Host $host;
+  proxy_set_header X-Forwarded-Proto $scheme;
+  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+}
+```
+
+**Client IP for rate limits.** Sign-in limits are keyed by the client IP from one header,
+`CLIENT_IP_HEADER`. The default, `x-forwarded-for`, uses the last X-Forwarded-For entry
+and suits a single reverse proxy that appends to it (Caddy, Traefik, nginx as above,
+most PaaS edges). Set `x-real-ip` only if your proxy overwrites X-Real-IP with the peer
+address, and `cf-connecting-ip` only if the origin is reachable **exclusively** through
+Cloudflare (a Tunnel, or a firewall that admits only Cloudflare). Don't expose
+`next start` directly to the internet: with no proxy, the client controls
+X-Forwarded-For. Password sign-in and mailbox codes also have per-account limits that
+don't depend on the IP.
 
 ## Testing
 
 `pnpm test` runs the Vitest unit suite (content guards, scoring, grading, auth, actions)
-against an isolated SQLite file. `pnpm test:e2e` builds the app (`pnpm build`) then runs Playwright smokes for the
-public routes plus the magic-link happy path, invite accept, first-run bootstrap
-(Turnstile off), uniform sign-in rate limit, and empty-token failure path when
-captcha is on (run `pnpm test:e2e:install` once first). Both suites require that
-production `.next` — they start with `next start` and do not create it. The
-default e2e server uses Cloudflare's always-pass dummy keys; a second fresh-DB
-run covers Turnstile unset.
+against an isolated SQLite file. `pnpm test:e2e` builds the app (`pnpm build`) then runs
+three Playwright suites (run `pnpm test:e2e:install` once first):
+
+- **seeded** — public-route smokes, the magic-link happy path, invite accept, the uniform
+  sign-in rate limit, and the empty-token failure path with captcha on (Cloudflare's
+  always-pass dummy keys);
+- **fresh** — first-run bootstrap and the onboarding wizard with Turnstile unset;
+- **password** — `AUTH_MODE=password` (the installer default): password sign-in, a whole
+  exam (multiple-choice and free-text) through results and progress, resume after a
+  reload, the parent dashboard, and the generic wrong-password error.
+
+All suites start with `next start` against the production `.next` and do not create it.
+Ports default to 3100 / 3101 / 3102 (`E2E_PORT`, `E2E_FRESH_PORT`, `E2E_PASSWORD_PORT`).
 
 ## Contributing, security, license
 
@@ -395,5 +486,7 @@ run covers Turnstile unset.
   [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md). Architecture and invariants live in
   [`CLAUDE.md`](CLAUDE.md) (also the working agreement for AI coding agents, paired with
   [`AGENTS.md`](AGENTS.md)).
+- Pull requests get a Codex review (on open, and `@codex review` after later pushes) and
+  a CodeRabbit auto-review (`.coderabbit.yaml`).
 - Found a vulnerability? Please report it privately — see [`SECURITY.md`](SECURITY.md).
 - [MIT](LICENSE).

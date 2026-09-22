@@ -1,4 +1,8 @@
-import { execFileSync, spawnSync } from 'node:child_process';
+import {
+  execFileSync,
+  spawnSync,
+  type SpawnSyncOptionsWithStringEncoding,
+} from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -21,6 +25,30 @@ function installEnv(overrides: Record<string, string | undefined> = {}): NodeJS.
     ANTHROPIC_API_KEY: 'test',
     ...overrides,
   };
+}
+
+/**
+ * Runs the installer the way a person would (no EXAMIFY_NONINTERACTIVE), but
+ * detached into a new session so there is no controlling terminal: each
+ * prompt prints to stdout and takes its default, and nothing blocks on a tty.
+ */
+function interactiveWriteEnvOnly(dir: string) {
+  // spawnSync honours `detached` (setsid: new session, no controlling tty)
+  // even though @types/node only declares it on spawn().
+  const options = {
+    cwd: dir,
+    env: {
+      NODE_ENV: 'test',
+      PATH: process.env.PATH,
+      HOME: process.env.HOME,
+      TMPDIR: process.env.TMPDIR,
+    },
+    input: '',
+    encoding: 'utf8',
+    detached: true,
+    timeout: 30_000,
+  } as SpawnSyncOptionsWithStringEncoding;
+  return spawnSync('bash', [SCRIPT, '--write-env-only'], options);
 }
 
 describe('install.sh', () => {
@@ -282,16 +310,185 @@ describe('install.sh', () => {
     }
   });
 
-  it('prompts for ANTHROPIC_API_KEY as an OpenAI twin (secret, same .env store)', () => {
-    const script = fs.readFileSync(SCRIPT, 'utf8');
-    expect(script).toContain('ANTHROPIC_API_KEY for /onboarding Cloud (Anthropic) generate.');
-    expect(script).toContain(
-      'Same .env store as the wizard. Leave blank to keep the test sentinel (you can set it later).',
-    );
-    expect(script).toContain('prompt ANTHROPIC_API_KEY "Anthropic API key" "" secret');
-    expect(script).toContain('Optional: OPENAI_API_KEY for /onboarding Cloud (OpenAI) generate.');
-    expect(script).toContain('prompt OPENAI_API_KEY "OpenAI API key" "" secret');
-    expect(script).toContain('ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-test}"');
+  it('an interactive run shows the honest banner, SITE_URL help and key copy', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-install-'));
+    try {
+      const result = interactiveWriteEnvOnly(dir);
+      expect(result.status).toBe(0);
+      const out = result.stdout;
+      // Banner: accounts and progress stay local; AI features send data out.
+      expect(out).toContain('Invite-only; accounts and progress stay on this server.');
+      expect(out).toContain(
+        'AI marking and cloud generate send answer text or study PDFs to the provider you choose.',
+      );
+      expect(out).not.toContain('data stays on this box');
+      // SITE_URL is explained before the prompt, and localhost is flagged.
+      expect(out).toContain(
+        'Public site URL: the address family devices open, e.g. https://exam.example.com',
+      );
+      expect(out).toContain('or http://192.168.1.20:3000. localhost only works on this machine.');
+      expect(result.stderr).toContain(
+        'Warning: SITE_URL uses localhost, so invite links will only open on this machine.',
+      );
+      // Key prompts say what is sent and what blank means; no jargon.
+      expect(out).toContain(
+        'Optional: ANTHROPIC_API_KEY marks free-text answers by sending each answer, its question,',
+      );
+      expect(out).toContain(
+        'Leave blank to skip: free-text answers are saved but not marked (they count as not correct).',
+      );
+      expect(out).toContain('Anthropic API key: ');
+      expect(out).toContain(
+        "That generate sends the subject's study files (PDF pages, notes) to OpenAI.",
+      );
+      expect(out).toContain('OpenAI API key: ');
+      expect(out).not.toContain('test sentinel');
+      // A blank Anthropic answer keeps the placeholder (production treats it as no key).
+      const written = fs.readFileSync(path.join(dir, '.env'), 'utf8');
+      expect(written).toContain('ANTHROPIC_API_KEY=test\n');
+      expect(written).not.toContain('OPENAI_API_KEY=');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('an interactive rerun that keeps .env does not warn about the unused SITE_URL', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-install-'));
+    try {
+      fs.writeFileSync(
+        path.join(dir, '.env'),
+        'SITE_URL=https://exam.example.com\nAUTH_MODE=magic-link\n',
+        { mode: 0o600 },
+      );
+      const result = interactiveWriteEnvOnly(dir);
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain('Keeping existing .env');
+      expect(result.stderr).not.toContain('SITE_URL uses');
+      expect(result.stderr).not.toContain('SITE_URL is plain http');
+      expect(fs.readFileSync(path.join(dir, '.env'), 'utf8')).toContain(
+        'SITE_URL=https://exam.example.com',
+      );
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a non-interactive --write-env-only run stays quiet (no banner)', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-install-'));
+    try {
+      const result = spawnSync('bash', [SCRIPT, '--write-env-only'], {
+        cwd: dir,
+        env: installEnv(),
+        encoding: 'utf8',
+      });
+      expect(result.status).toBe(0);
+      expect(result.stdout).not.toContain('Examify installer');
+      expect(result.stdout).not.toContain('Public site URL:');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    'http://localhost:3000',
+    'http://127.0.0.1:3000/',
+    'https://LOCALHOST:8443',
+    'http://[::1]:3000',
+  ])('warns that invite links only open on this machine for SITE_URL=%s', (siteUrl) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-install-'));
+    try {
+      const result = spawnSync('bash', [SCRIPT, '--write-env-only'], {
+        cwd: dir,
+        env: installEnv({ SITE_URL: siteUrl }),
+        encoding: 'utf8',
+      });
+      expect(result.status).toBe(0);
+      expect(result.stderr).toContain('invite links will only open on this machine');
+      expect(result.stderr).not.toContain('traffic is unencrypted');
+      expect(fs.readFileSync(path.join(dir, '.env'), 'utf8')).toContain(`SITE_URL=${siteUrl}`);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('warns about localhost when SITE_URL falls back to the installer default', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-install-'));
+    try {
+      const env = installEnv();
+      delete env.SITE_URL;
+      const result = spawnSync('bash', [SCRIPT, '--write-env-only'], {
+        cwd: dir,
+        env,
+        encoding: 'utf8',
+      });
+      expect(result.status).toBe(0);
+      expect(result.stderr).toContain(
+        'Warning: SITE_URL uses localhost, so invite links will only open on this machine.',
+      );
+      expect(fs.readFileSync(path.join(dir, '.env'), 'utf8')).toContain(
+        'SITE_URL=http://localhost:3000',
+      );
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('notes that plain http on a LAN address is unencrypted', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-install-'));
+    try {
+      const result = spawnSync('bash', [SCRIPT, '--write-env-only'], {
+        cwd: dir,
+        env: installEnv({ SITE_URL: 'http://192.168.1.20:3000' }),
+        encoding: 'utf8',
+      });
+      expect(result.status).toBe(0);
+      expect(result.stderr).toContain(
+        'Note: SITE_URL is plain http, so traffic is unencrypted; use HTTPS (a reverse proxy) beyond your home network.',
+      );
+      expect(result.stderr).not.toContain('only open on this machine');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('prints no SITE_URL warning for an https public origin', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-install-'));
+    try {
+      const result = spawnSync('bash', [SCRIPT, '--write-env-only'], {
+        cwd: dir,
+        env: installEnv({ SITE_URL: 'https://exam.example.com' }),
+        encoding: 'utf8',
+      });
+      expect(result.status).toBe(0);
+      expect(result.stderr).not.toContain('SITE_URL uses');
+      expect(result.stderr).not.toContain('SITE_URL is plain http');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('skips the SITE_URL note when a non-interactive run keeps an existing .env', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-install-'));
+    try {
+      fs.writeFileSync(
+        path.join(dir, '.env'),
+        'SITE_URL=https://exam.example.com\nAUTH_MODE=magic-link\n',
+        { mode: 0o600 },
+      );
+      const env = installEnv({ SITE_URL: 'http://localhost:3000' });
+      delete env.AUTH_MODE;
+      const result = spawnSync('bash', [SCRIPT, '--write-env-only'], {
+        cwd: dir,
+        env,
+        encoding: 'utf8',
+      });
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain('Keeping existing .env');
+      expect(result.stderr).not.toContain('SITE_URL uses');
+      expect(result.stderr).not.toContain('SITE_URL is plain http');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('writes ANTHROPIC_API_KEY when provided instead of the test sentinel', () => {

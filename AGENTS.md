@@ -91,11 +91,14 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   `.examify-ingest/`.
 - **Free-text is LLM-graded server-side** (`src/lib/grading/index.ts`,
   live `ANTHROPIC_API_KEY` from `process.env` only so a wizard set / rotate /
-  clear is visible without restart; `test` → deterministic stub; missing
-  after clear → `needs_review`, no stub; blank is never treated as `test`;
+  clear is visible without restart; `test` → deterministic stub only when
+  `NODE_ENV !== 'production'` or `GRADING_STUB=1` (Playwright sets it), else
+  `needs_review`; missing after clear → `needs_review`, no stub; blank is never treated as `test`;
   same usable-key rule as the Configured badge; optional in `env.ts` so a
   production restart after clear does not brick boot). Grading never throws — failures
-  fall to `needs_review`. A free item is "correct" at `PASS_THRESHOLD` (0.6). The UI
+  fall to `needs_review`, which is final (nothing re-grades it), counts as not correct,
+  renders `NEEDS_REVIEW_COPY` (never promise later marking) and logs one `[grading]`
+  warning with a reason code only (no answer / question / rubric / key / user id). A free item is "correct" at `PASS_THRESHOLD` (0.6). The UI
   renders only the bounded `Verdict` fields, never the rubric. Results are
   server-driven (a "Marking…" state covers the submit round-trip). Full design:
   the "Content + grading invariants" block in `CLAUDE.md` + `docs/content-authoring.md`.
@@ -212,8 +215,11 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   SMTP AUTH/DATA requires TLS (STARTTLS or `SMTP_SECURE`) unless
   `SMTP_ALLOW_INSECURE=1`. `SMTP_FROM` is required only when SMTP is the
   active transport. Household membership remains the privacy boundary; every
-  mode issues the same session shape. Local OTP locks a challenge after 5
-  well-formed wrong guesses.
+  mode issues the same session shape. Mailbox codes (local OTP, invite OTP,
+  reset) lock after 5 well-formed wrong guesses per 15 min; re-issuing a code
+  never resets that lock, and while locked even a correct code is refused.
+  Password sign-in also has a per-account `pw:{email}` bucket (10 failures /
+  15 min, any email, checked before scrypt, cleared on success or reset).
 
 ## Workflow expectations
 
@@ -221,6 +227,10 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
 - Do not push directly to `main`.
 - Prefer small, reviewable commits with clear intent.
 - Keep docs in sync for any behavior, route, env-var, or script changes (`README.md`, `CLAUDE.md`, `.env.example`).
+- Every PR gets a Codex review: opening it triggers one; after each later push that
+  changes code, comment `@codex review` so fix commits are reviewed too. Verify each
+  finding and fix the real ones. CodeRabbit also auto-reviews PRs to `main`
+  (`.coderabbit.yaml`). Both are advisory on top of green CI.
 
 ## Quality gates (target harness)
 
@@ -230,7 +240,10 @@ Before merge, ensure these pass in CI:
 2. `pnpm typecheck`
 3. `pnpm test`
 4. `pnpm build`
-5. `pnpm test:e2e` (where browser/network constraints permit)
+5. `pnpm test:e2e` (where browser/network constraints permit). It runs three
+   Playwright suites: seeded magic-link, fresh first-run, and `AUTH_MODE=password` +
+   the exam flow. Override ports with `E2E_PORT` / `E2E_FRESH_PORT` /
+   `E2E_PASSWORD_PORT` when running alongside other servers.
 
 ## Test coverage expectations
 
@@ -238,11 +251,18 @@ Before merge, ensure these pass in CI:
 - New mutable server handlers/actions: add happy + failure tests.
 - New `src/lib/*` helpers: add unit tests.
 - Keep link-crawl and feed/health/OG checks green.
+- Changes to sign-in, ExamApp, ProgressView or ParentDashboard must keep
+  `tests/e2e/password.spec.ts` green; keep its `data-testid` hooks. Each e2e spec
+  belongs to exactly one Playwright config (`tests/e2e/suites.ts`).
 
 ## Deployment constraints
 
 - SQLite path should remain runtime-mounted (e.g., `file:/data/app.db`).
-- Run migrations at startup (runtime), not build-time.
+- Run `pnpm db:migrate` before `pnpm start` on every deploy (runtime, never
+  build-time). The server does not migrate itself on boot.
+- `SITE_URL` must equal the public origin family devices open (it builds invite
+  links and decides the session cookie). Behind a reverse proxy, forward the
+  original `Host` and `X-Forwarded-Proto` or Next Server Actions reject requests.
 - Keep `/api/health` lightweight and reliable.
 - Preserve fail-closed env validation in production.
 
@@ -252,7 +272,13 @@ Before merge, ensure these pass in CI:
   (`TURNSTILE_ENABLED=1` and both keys). When the flag is unset, skip the
   widget and verification so sign-in works without Cloudflare. Exactly one
   key in production crashes boot.
-- Keep canonical IP extraction centralized in `src/lib/ip.ts`.
+- Keep canonical IP extraction centralized in `src/lib/ip.ts`, trusting only the
+  header named by `CLIENT_IP_HEADER` (default: rightmost X-Forwarded-For).
+  `x-real-ip` / `cf-connecting-ip` are client-settable unless configured.
+- Keep the session cookie derived from `SITE_URL` via `sessionCookieConfig()`:
+  `Secure` only on https; never key it off `NODE_ENV` or hard-code `__Host-`.
+- Credential forms that submit through a JS `onSubmit` keep `method="post"` so a
+  pre-hydration submit never puts a password in the URL.
 - Preserve rate-limit boundaries and per-kind separation.
 - Keep sign-in role-gated by household membership (student = student member,
   parent = parent or admin member), derived via `isAllowedEmail`; never leak
@@ -273,6 +299,32 @@ Before merge, ensure these pass in CI:
   and cookie mutation is illegal during a render. Failures redirect to `/signin/verify/error`.
   `/signin/verify` and `consumeMagicToken` only succeed when `AUTH_MODE` is
   `magic-link`. They refuse `otp:` bearers; local OTP is `verifyLocalOtp` only.
+
+## Review guidelines
+
+Codex reads this section when it reviews a PR. Flag as high priority (P0/P1):
+
+- Anything that could ship an answer key, rubric or `provenance` to the browser:
+  imports of `*.server.ts` or `server-only` modules from client code, or `answer` /
+  `rubric` fields in `src/lib/exam/data.ts`, generated public JSON or component props.
+- Trusting the client's score, a client-supplied user id, or writing another
+  user's attempts / sessions (writes go to `session.userId` only).
+- Membership enumeration: any response, error or timing branch that differs for
+  invited vs unknown emails; skipping the dummy scrypt; splitting the `signin` bucket.
+- Weakened auth: tokens stored unhashed or reusable, OTP / reset guess locks reset on
+  re-issue, a bypassed Turnstile check when captcha is on, IP read from a header other
+  than `CLIENT_IP_HEADER`, `secure: isProd` on the session cookie, credential forms
+  without `method="post"`.
+- Cross-household reads (anything besides `resolveChildren` crossing user ids).
+- Free-text grading that can throw, stub in production without `GRADING_STUB=1`, log
+  answer / rubric / key text, or UI copy that promises later marking.
+- Writes to the repo checkout or `.env` reachable by a non-admin, or without
+  `requireOnboardingAdmin()`.
+- Env validation that fails open in production.
+
+Also check: happy + failure tests for new actions / route handlers, docs updated in
+the same PR (`README.md`, `CLAUDE.md`, `AGENTS.md`, `.env.example`), and no new
+source-text regex tests (assert behaviour, not file contents).
 
 ## PR checklist
 

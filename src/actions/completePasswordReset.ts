@@ -3,7 +3,7 @@
 import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { z } from 'zod';
-import { consumePasswordReset, getRawSession } from '@/lib/auth';
+import { clearPasswordFailures, consumePasswordReset, getRawSession } from '@/lib/auth';
 import { verifyTurnstile } from '@/lib/captcha';
 import { getAuthMode, isTurnstileEnabled } from '@/lib/env';
 import { extractClientIp } from '@/lib/ip';
@@ -30,7 +30,9 @@ export type CompletePasswordResetState =
  * Password-mode forgot-password, step 2. The new password is hashed only
  * after the reset code matches, inside the same transaction that consumes
  * it. A mismatch or a short password does not consume the code. Unknown
- * codes, wrong roles, and non-members all surface as `invalid`.
+ * codes, wrong roles, and non-members all surface as `invalid`. A full reset
+ * guess lock returns `rate_limited`, even for the right code — requesting a
+ * new code does not lift it.
  */
 export async function completePasswordReset(
   _prev: CompletePasswordResetState,
@@ -72,7 +74,12 @@ export async function completePasswordReset(
     parsed.data.code,
     parsed.data.password,
   );
-  if (!result.ok) return { status: 'error', reason: 'invalid' };
+  if (!result.ok) {
+    return { status: 'error', reason: result.reason === 'locked' ? 'rate_limited' : 'invalid' };
+  }
+  // Mailbox proof just set a new password; earlier wrong guesses no longer
+  // need to hold the per-account sign-in lock.
+  clearPasswordFailures(result.email);
 
   const session = await getRawSession();
   session.userId = result.userId;

@@ -164,6 +164,12 @@ export type OnboardingSnapshot = {
   anthropicWriteBlocked: boolean;
   openaiWriteBlocked: boolean;
   localAgentConfigured: boolean;
+  /**
+   * Free-text marking currently uses the deterministic `test` stub (full
+   * marks, no network): the live key is the sentinel and `gradingStubAllowed()`
+   * holds (non-production, or `GRADING_STUB=1`). Never the key itself.
+   */
+  gradingStubActive: boolean;
   /** Sample + generated live bank (Ready). Silent wrong bank stays visible. */
   liveSubjects: OnboardingLiveSubject[];
 };

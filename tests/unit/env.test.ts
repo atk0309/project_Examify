@@ -1,11 +1,13 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   allowLocalMailOutbox,
   canDeliverMailboxProof,
   env,
   getAuthMode,
+  isHttpsSiteUrl,
   parseEnv,
   resolveMailTransport,
+  sessionCookieConfig,
 } from '@/lib/env';
 
 const prodBase: NodeJS.ProcessEnv = {
@@ -145,6 +147,28 @@ describe('parseEnv production fail-closed', () => {
     ).toBe('local-otp');
   });
 
+  it('defaults CLIENT_IP_HEADER to x-forwarded-for and accepts the opt-in headers', () => {
+    expect(parseEnv(prodBase).CLIENT_IP_HEADER).toBe('x-forwarded-for');
+    expect(parseEnv({ ...prodBase, CLIENT_IP_HEADER: '' }).CLIENT_IP_HEADER).toBe(
+      'x-forwarded-for',
+    );
+    expect(parseEnv({ ...prodBase, CLIENT_IP_HEADER: 'x-real-ip' }).CLIENT_IP_HEADER).toBe(
+      'x-real-ip',
+    );
+    expect(parseEnv({ ...prodBase, CLIENT_IP_HEADER: ' CF-Connecting-IP ' }).CLIENT_IP_HEADER).toBe(
+      'cf-connecting-ip',
+    );
+  });
+
+  it('fails boot on an unknown CLIENT_IP_HEADER instead of guessing', () => {
+    expect(() => parseEnv({ ...prodBase, CLIENT_IP_HEADER: 'true-client-ip' })).toThrow(
+      /Invalid environment variables/,
+    );
+    expect(() => parseEnv({ NODE_ENV: 'test', CLIENT_IP_HEADER: 'x-forwarded' })).toThrow(
+      /Invalid environment variables/,
+    );
+  });
+
   it('requires ALLOW_LOCAL_OUTBOX for local-otp or explicit outbox in production', () => {
     expect(() => parseEnv({ ...prodBase, AUTH_MODE: 'local-otp' })).toThrow(
       /Invalid environment variables/,
@@ -236,6 +260,106 @@ describe('parseEnv production fail-closed', () => {
     expect(parseEnv({ ...prodBase, ANTHROPIC_API_KEY: '   ' }).ANTHROPIC_API_KEY).toBeUndefined();
     expect(parseEnv(prodBase).ANTHROPIC_API_KEY).toBe('sk-ant-real');
     expect(parseEnv({ ...prodBase, ANTHROPIC_API_KEY: 'test' }).ANTHROPIC_API_KEY).toBe('test');
+  });
+});
+
+describe('session cookie follows SITE_URL', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('is Secure with a __Host- default name on an https SITE_URL', () => {
+    expect(sessionCookieConfig(parseEnv(prodBase))).toEqual({
+      name: '__Host-examify_session',
+      secure: true,
+    });
+    expect(
+      sessionCookieConfig(
+        parseEnv({ NODE_ENV: 'development', SITE_URL: 'https://localhost:3443' }),
+      ),
+    ).toEqual({ name: '__Host-examify_session', secure: true });
+  });
+
+  it('is not Secure and drops the __Host- prefix on a plain-http LAN SITE_URL in production', () => {
+    const parsed = parseEnv({ ...prodBase, SITE_URL: 'http://192.168.1.20:3000' });
+    expect(parsed.SESSION_COOKIE_NAME).toBeUndefined();
+    expect(sessionCookieConfig(parsed)).toEqual({ name: 'examify_session', secure: false });
+  });
+
+  it('keys Secure off SITE_URL, not NODE_ENV (pnpm dev on http://localhost)', () => {
+    expect(sessionCookieConfig(parseEnv({ NODE_ENV: 'development' }))).toEqual({
+      name: 'examify_session',
+      secure: false,
+    });
+    expect(sessionCookieConfig(parseEnv({ NODE_ENV: 'test' })).secure).toBe(false);
+  });
+
+  it('treats a blank SESSION_COOKIE_NAME as unset', () => {
+    expect(
+      sessionCookieConfig(
+        parseEnv({ ...prodBase, SITE_URL: 'http://192.168.1.20:3000', SESSION_COOKIE_NAME: '  ' }),
+      ).name,
+    ).toBe('examify_session');
+  });
+
+  it('respects an explicit SESSION_COOKIE_NAME on either scheme', () => {
+    expect(
+      sessionCookieConfig(parseEnv({ ...prodBase, SESSION_COOKIE_NAME: 'family_exam' })),
+    ).toEqual({ name: 'family_exam', secure: true });
+    expect(
+      sessionCookieConfig(
+        parseEnv({
+          ...prodBase,
+          SITE_URL: 'http://192.168.1.20:3000',
+          SESSION_COOKIE_NAME: 'family_exam',
+        }),
+      ),
+    ).toEqual({ name: 'family_exam', secure: false });
+    expect(
+      sessionCookieConfig(parseEnv({ ...prodBase, SESSION_COOKIE_NAME: '__Secure-family' })),
+    ).toEqual({ name: '__Secure-family', secure: true });
+  });
+
+  it('refuses production boot for an explicit __Host- / __Secure- name on a plain-http SITE_URL', () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    for (const name of ['__Host-examify_session', '__Secure-examify', '__host-lowercase']) {
+      expect(() =>
+        parseEnv({ ...prodBase, SITE_URL: 'http://192.168.1.20:3000', SESSION_COOKIE_NAME: name }),
+      ).toThrow(/Invalid environment variables/);
+    }
+    const logged = error.mock.calls.map((call) => String(call[0])).join('\n');
+    expect(logged).toContain('SESSION_COOKIE_NAME');
+    expect(logged).toContain('needs an https SITE_URL');
+    expect(logged).toContain('Unset SESSION_COOKIE_NAME');
+  });
+
+  it('keeps an explicit __Host- name on plain http outside production, with a warning', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const parsed = parseEnv({
+      NODE_ENV: 'development',
+      SITE_URL: 'http://localhost:3000',
+      SESSION_COOKIE_NAME: '__Host-examify_session',
+    });
+    expect(sessionCookieConfig(parsed)).toEqual({
+      name: '__Host-examify_session',
+      secure: false,
+    });
+    expect(warn).toHaveBeenCalledOnce();
+    expect(String(warn.mock.calls[0]?.[0])).toContain('needs an https SITE_URL');
+  });
+
+  it('does not warn for the derived default or an https SITE_URL', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    parseEnv({ NODE_ENV: 'development' });
+    parseEnv({ ...prodBase, SESSION_COOKIE_NAME: '__Host-examify_session' });
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('only treats https: as a secure SITE_URL', () => {
+    expect(isHttpsSiteUrl('https://exam.example.com')).toBe(true);
+    expect(isHttpsSiteUrl('HTTPS://exam.example.com')).toBe(true);
+    expect(isHttpsSiteUrl('http://exam.example.com')).toBe(false);
+    expect(isHttpsSiteUrl('not a url')).toBe(false);
   });
 });
 

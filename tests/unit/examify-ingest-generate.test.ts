@@ -1710,6 +1710,26 @@ function abortingFetch(
   };
 }
 
+/**
+ * `kill(pid, 0)` also succeeds on a zombie. When PID 1 does not reap orphans
+ * (some containers), a killed grandchild lingers in state `Z`, so check procfs
+ * where it exists.
+ */
+function isRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+  } catch {
+    return false;
+  }
+  if (!existsSync('/proc/self/stat')) return true;
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
+    return stat[stat.lastIndexOf(')') + 2] !== 'Z';
+  } catch {
+    return false;
+  }
+}
+
 describe('examify-ingest generate abort', () => {
   it('combines a caller signal with the provider deadline', () => {
     const controller = new AbortController();
@@ -2118,13 +2138,7 @@ setInterval(() => {}, 1000);
     controller.abort();
     await expect(pending).rejects.toBeInstanceOf(GenerateAbortedError);
     await new Promise((resolve) => setTimeout(resolve, 400));
-    let alive = true;
-    try {
-      process.kill(grandchildPid, 0);
-    } catch {
-      alive = false;
-    }
-    expect(alive).toBe(false);
+    expect(isRunning(grandchildPid)).toBe(false);
     expect(existsSync(path.join(root, 'content/subjects/plants/bank.ir.json'))).toBe(false);
   });
 });

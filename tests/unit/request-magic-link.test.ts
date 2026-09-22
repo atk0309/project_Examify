@@ -13,7 +13,7 @@ Reflect.set(process.env, 'DATABASE_URL', `file:${DB_PATH}`);
 delete process.env.FAMILIES;
 
 vi.mock('next/headers', () => ({
-  headers: async () => new Headers({ 'x-real-ip': '203.0.113.88' }),
+  headers: async () => new Headers({ 'x-forwarded-for': '203.0.113.88' }),
 }));
 
 beforeAll(() => {

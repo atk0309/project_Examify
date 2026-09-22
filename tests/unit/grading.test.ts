@@ -2,7 +2,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { clampScore, gradeFreeText } from '@/lib/grading';
+import { clampScore, gradeFreeText, gradingStubAllowed } from '@/lib/grading';
 import { env } from '@/lib/env';
 
 describe('clampScore', () => {
@@ -65,6 +65,194 @@ describe('gradeFreeText (test sentinel)', () => {
       if (previous === undefined) delete process.env.ANTHROPIC_API_KEY;
       else process.env.ANTHROPIC_API_KEY = previous;
     }
+  });
+});
+
+describe('gradingStubAllowed', () => {
+  it('allows the stub outside production', () => {
+    expect(gradingStubAllowed({ NODE_ENV: 'test' })).toBe(true);
+    expect(gradingStubAllowed({ NODE_ENV: 'development' })).toBe(true);
+    expect(gradingStubAllowed({})).toBe(true);
+  });
+
+  it('refuses the stub in production unless GRADING_STUB=1', () => {
+    expect(gradingStubAllowed({ NODE_ENV: 'production' })).toBe(false);
+    expect(gradingStubAllowed({ NODE_ENV: 'production', GRADING_STUB: '' })).toBe(false);
+    expect(gradingStubAllowed({ NODE_ENV: 'production', GRADING_STUB: '0' })).toBe(false);
+    expect(gradingStubAllowed({ NODE_ENV: 'production', GRADING_STUB: 'true' })).toBe(false);
+    expect(gradingStubAllowed({ NODE_ENV: 'production', GRADING_STUB: '1' })).toBe(true);
+  });
+});
+
+describe('gradeFreeText (test sentinel gate by NODE_ENV / GRADING_STUB)', () => {
+  const args = {
+    question: 'What is a metaphor?',
+    rubric: 'Award up to 3 marks…',
+    maxScore: 3,
+    studentAnswer: 'A comparison that says one thing is another.',
+  };
+  const saved = {
+    NODE_ENV: process.env.NODE_ENV,
+    GRADING_STUB: process.env.GRADING_STUB,
+    ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
+  };
+
+  function restore(key: keyof typeof saved): void {
+    const value = saved[key];
+    if (value === undefined) Reflect.deleteProperty(process.env, key);
+    else Reflect.set(process.env, key, value);
+  }
+
+  beforeEach(() => {
+    Reflect.set(process.env, 'ANTHROPIC_API_KEY', 'test');
+    Reflect.deleteProperty(process.env, 'GRADING_STUB');
+  });
+
+  afterEach(() => {
+    restore('NODE_ENV');
+    restore('GRADING_STUB');
+    restore('ANTHROPIC_API_KEY');
+    vi.restoreAllMocks();
+  });
+
+  it('production without GRADING_STUB never stubs: needs_review, no network, logged', async () => {
+    Reflect.set(process.env, 'NODE_ENV', 'production');
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const res = await gradeFreeText(args);
+    expect(res).toEqual({ status: 'needs_review' });
+    expect(res).not.toMatchObject({ status: 'graded', verdict: { verdict: 'Looks good.' } });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith('[grading] free-text answer not marked', {
+      reason: 'stub_disabled_in_production',
+    });
+  });
+
+  it('production with GRADING_STUB=1 keeps the deterministic stub (Playwright)', async () => {
+    Reflect.set(process.env, 'NODE_ENV', 'production');
+    Reflect.set(process.env, 'GRADING_STUB', '1');
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const res = await gradeFreeText(args);
+    expect(res).toMatchObject({ status: 'graded', verdict: { score: 3, verdict: 'Looks good.' } });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('non-production keeps the stub without the flag', async () => {
+    for (const nodeEnv of ['test', 'development'] as const) {
+      Reflect.set(process.env, 'NODE_ENV', nodeEnv);
+      const res = await gradeFreeText(args);
+      expect(res).toMatchObject({
+        status: 'graded',
+        verdict: { score: 3, verdict: 'Looks good.' },
+      });
+    }
+  });
+
+  it('GRADING_STUB=1 never turns a blank key into the stub', async () => {
+    Reflect.set(process.env, 'NODE_ENV', 'production');
+    Reflect.set(process.env, 'GRADING_STUB', '1');
+    Reflect.deleteProperty(process.env, 'ANTHROPIC_API_KEY');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await expect(gradeFreeText(args)).resolves.toEqual({ status: 'needs_review' });
+    expect(warn).toHaveBeenCalledWith('[grading] free-text answer not marked', {
+      reason: 'no_key',
+    });
+  });
+});
+
+describe('gradeFreeText (needs_review logging)', () => {
+  const originalProcessKey = process.env.ANTHROPIC_API_KEY;
+  const key = 'sk-anth-log-test-never-echo';
+  const args = {
+    question: 'Explain photosynthesis QUESTION-MARKER',
+    rubric: 'RUBRIC-MARKER: award 1 mark per stage.',
+    maxScore: 3,
+    studentAnswer: 'ANSWER-MARKER plants make food from light',
+  };
+
+  function textResponse(text: string, status = 200): Response {
+    return new Response(JSON.stringify({ content: [{ type: 'text', text }] }), { status });
+  }
+
+  beforeEach(() => {
+    process.env.ANTHROPIC_API_KEY = key;
+  });
+
+  afterEach(() => {
+    if (originalProcessKey === undefined) delete process.env.ANTHROPIC_API_KEY;
+    else process.env.ANTHROPIC_API_KEY = originalProcessKey;
+    vi.restoreAllMocks();
+  });
+
+  const cases: Array<{ reason: string; fetch: () => Promise<Response> }> = [
+    {
+      reason: 'http_529',
+      fetch: async () => new Response(`overloaded ${args.studentAnswer}`, { status: 529 }),
+    },
+    {
+      reason: 'timeout',
+      fetch: async () => {
+        throw new DOMException(`deadline ${args.studentAnswer}`, 'TimeoutError');
+      },
+    },
+    {
+      reason: 'network_error',
+      fetch: async () => {
+        throw new TypeError(`fetch failed ${args.studentAnswer}`);
+      },
+    },
+    {
+      // The model echoed the answer back as prose; JSON.parse's message would
+      // quote it — the log must carry the reason code only.
+      reason: 'bad_json',
+      fetch: async () => textResponse(`Sure! ${args.studentAnswer} ${args.rubric}`),
+    },
+    {
+      reason: 'bad_json',
+      fetch: async () => new Response(`<html>${args.studentAnswer}</html>`, { status: 200 }),
+    },
+    {
+      reason: 'bad_shape',
+      fetch: async () => textResponse(JSON.stringify({ score: 2, gotRight: [args.studentAnswer] })),
+    },
+    {
+      reason: 'bad_shape',
+      fetch: async () => new Response(JSON.stringify({ content: [] }), { status: 200 }),
+    },
+  ];
+
+  for (const { reason, fetch } of cases) {
+    it(`logs reason ${reason} without the answer, question, rubric, or key`, async () => {
+      vi.spyOn(globalThis, 'fetch').mockImplementationOnce(fetch);
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      await expect(gradeFreeText(args)).resolves.toEqual({ status: 'needs_review' });
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith('[grading] free-text answer not marked', { reason });
+      const logged = JSON.stringify(warn.mock.calls);
+      for (const secret of ['ANSWER-MARKER', 'RUBRIC-MARKER', 'QUESTION-MARKER', key]) {
+        expect(logged).not.toContain(secret);
+      }
+    });
+  }
+
+  it('logs no_key when the key is missing, and nothing on a graded answer', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    delete process.env.ANTHROPIC_API_KEY;
+    await expect(gradeFreeText(args)).resolves.toEqual({ status: 'needs_review' });
+    expect(warn).toHaveBeenCalledWith('[grading] free-text answer not marked', {
+      reason: 'no_key',
+    });
+
+    warn.mockClear();
+    process.env.ANTHROPIC_API_KEY = key;
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      textResponse(JSON.stringify({ score: 3, verdict: 'Well explained.' })),
+    );
+    await expect(gradeFreeText(args)).resolves.toMatchObject({ status: 'graded' });
+    expect(warn).not.toHaveBeenCalled();
   });
 });
 

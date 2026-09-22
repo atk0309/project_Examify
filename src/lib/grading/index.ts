@@ -4,19 +4,25 @@ import 'server-only';
    EXAMIFY — FREE-TEXT GRADING (server-only)
    ----------------------------------------------------------------------------
    Grades a child's short free-text answer against a server-only rubric using
-   Claude. Two paths:
+   Claude. Paths:
    - live `ANTHROPIC_API_KEY === 'test'` (process.env only, never the boot-frozen
-     `env.ts` snapshot) → a deterministic full-score stub, no network. This
-     is the intentional sentinel only — blank / missing / whitespace are not
-     `test`. Mirrors the Resend outbox stub so `pnpm dev`, unit tests and
-     Playwright (which inject the `test` sentinel) never hit the API.
+     `env.ts` snapshot) → a deterministic full-score stub, no network — but
+     only when `gradingStubAllowed()`: outside production, or in production
+     with `GRADING_STUB=1` (Playwright's `next start`). A production host that
+     kept the install.sh sentinel gets `needs_review`, never free full marks.
+     Blank / missing / whitespace are not `test`. Mirrors the Resend outbox
+     stub so `pnpm dev`, unit tests and Playwright never hit the API.
    - live key missing / empty / whitespace (wizard clear) → `{ status: 'needs_review' }`
      fail-closed. No stub. Same “usable?” rule as the wizard Configured badge.
    - otherwise → a single `fetch` to the Anthropic Messages API.
 
-   Fail-safe (I4): any failure — network error, non-2xx, unparseable or
-   malformed JSON — resolves to `{ status: 'needs_review' }` rather than
-   throwing, so an attempt is never lost; the item is simply held for review.
+   Fail-safe (I4): any failure — network error, timeout, non-2xx, unparseable
+   or malformed JSON — resolves to `{ status: 'needs_review' }` rather than
+   throwing, so an attempt is never lost. Nothing re-grades it later: the item
+   is stored unmarked and counts as not correct. Each such outcome logs one
+   `[grading]` warning with a short reason code only — never the answer, the
+   question, the rubric, the key, an error message (a JSON.parse message can
+   quote model text), or any user identifier.
 
    Only the bounded `Verdict` fields ever leave this module; the rubric and the
    raw model text are never returned to callers (and so never reach the client).
@@ -121,13 +127,49 @@ function liveAnthropicApiKey(): string | undefined {
 }
 
 /**
+ * True when the `test` sentinel may stub grading: any non-production
+ * NODE_ENV, or production with the explicit `GRADING_STUB=1` opt-in. Read
+ * live (not `env.ts`) like the key, so the gate matches the running server.
+ */
+export function gradingStubAllowed(env: Record<string, string | undefined> = process.env): boolean {
+  return env.NODE_ENV !== 'production' || env.GRADING_STUB === '1';
+}
+
+/** Short, content-free code for why an answer was not marked. */
+export type NeedsReviewReason =
+  | 'no_key'
+  | 'stub_disabled_in_production'
+  | `http_${number}`
+  | 'timeout'
+  | 'network_error'
+  | 'bad_json'
+  | 'bad_shape';
+
+/** Log the reason code only (no answer, rubric, key, message or user id). */
+function needsReview(reason: NeedsReviewReason): GradeResult {
+  console.warn('[grading] free-text answer not marked', { reason });
+  return { status: 'needs_review' };
+}
+
+/** Classify a thrown fetch / body / parse error without reading its message. */
+function thrownReason(error: unknown): 'timeout' | 'bad_json' | 'network_error' {
+  if (error instanceof SyntaxError) return 'bad_json';
+  const name =
+    typeof error === 'object' && error !== null ? (error as { name?: unknown }).name : undefined;
+  if (name === 'TimeoutError' || name === 'AbortError') return 'timeout';
+  return 'network_error';
+}
+
+/**
  * Grade one free-text answer. Returns `{ status: 'graded', verdict }` on success
  * or `{ status: 'needs_review' }` on any failure (never throws).
  */
 export async function gradeFreeText(args: GradeArgs): Promise<GradeResult> {
   const apiKey = liveAnthropicApiKey();
-  // Deterministic stub only when the live store still holds the sentinel.
+  // Deterministic stub only when the live store still holds the sentinel and
+  // the stub is allowed here (never a silent full-marks default in production).
   if (apiKey === 'test') {
+    if (!gradingStubAllowed()) return needsReview('stub_disabled_in_production');
     return {
       status: 'graded',
       verdict: {
@@ -140,7 +182,7 @@ export async function gradeFreeText(args: GradeArgs): Promise<GradeResult> {
     };
   }
   if (!envStoreSecretConfigured('ANTHROPIC_API_KEY') || !apiKey) {
-    return { status: 'needs_review' };
+    return needsReview('no_key');
   }
 
   try {
@@ -159,18 +201,19 @@ export async function gradeFreeText(args: GradeArgs): Promise<GradeResult> {
       }),
       signal: AbortSignal.timeout(GRADING_TIMEOUT_MS),
     });
-    if (!res.ok) return { status: 'needs_review' };
+    if (!res.ok) return needsReview(`http_${res.status}`);
 
     const data: unknown = await res.json();
     const text = firstTextBlock(data);
-    if (text === null) return { status: 'needs_review' };
+    if (text === null) return needsReview('bad_shape');
 
     const verdict = toVerdict(JSON.parse(text), args.maxScore);
-    if (verdict === null) return { status: 'needs_review' };
+    if (verdict === null) return needsReview('bad_shape');
     return { status: 'graded', verdict };
-  } catch {
-    // Network error, non-JSON body, or JSON.parse throwing → hold for review.
-    return { status: 'needs_review' };
+  } catch (error) {
+    // Network error, deadline, non-JSON body, or JSON.parse throwing → not
+    // marked. Classify by type/name only; the message may quote model text.
+    return needsReview(thrownReason(error));
   }
 }
 

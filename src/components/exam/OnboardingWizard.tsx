@@ -66,7 +66,7 @@ const STAGE_HELP: Record<StepId, string> = {
   welcome: '',
   subjects: 'Add the subjects you want in the practice bank. One is enough to continue.',
   files:
-    'Keep study files on this host — PDFs you upload, plus notes.txt and other CLI sources generate already reads. They never enter the question bank.',
+    'Study files are stored on this host — PDFs you upload, plus notes.txt and other CLI sources generate already reads. They go to Anthropic or OpenAI only when you generate with that provider, and never enter the question bank.',
   ai: 'Choose how generate talks to a model, then optionally draft BankIR from local sources (PDFs, notes.txt, and other files generate already reads).',
   validate: 'Check BankIR before anything is written to the generated bank.',
   'dry-run': 'Preview the emit plan, including planned deletes. Apply is the only write.',
@@ -864,8 +864,8 @@ function WelcomeStep() {
       <p className="eyebrow">First-run</p>
       <h1 className="display-title">Set up your family’s content</h1>
       <p className="wizard-help wizard-help-lead">
-        Add subjects, keep study files on this host, then generate and review BankIR before anything
-        is applied. The sample bank stays usable if you skip.
+        Add subjects, store study files on this host, then generate and review BankIR before
+        anything is applied. The sample bank stays usable if you skip.
       </p>
       <ul className="wizard-benefits">
         <li>
@@ -884,8 +884,9 @@ function WelcomeStep() {
           <span>
             <strong>Local study files</strong>
             <span>
-              PDFs you upload, plus notes.txt and other CLI sources generate already reads. They
-              stay on this host — never in the public bank.
+              PDFs you upload, plus notes.txt and other CLI sources generate already reads. Stored
+              on this host, sent to Anthropic or OpenAI only when you generate with that provider,
+              and never in the public bank.
             </span>
           </span>
         </li>
@@ -1385,6 +1386,7 @@ function EnvKeyPanel({
       {locked ? null : showField ? (
         <form
           className="wizard-secret-form"
+          method="post"
           onSubmit={(event) => {
             event.preventDefault();
             void (async () => {
@@ -1545,6 +1547,18 @@ function AiStep({
         Anthropic {snapshot.anthropicConfigured ? 'configured' : 'not configured'} · OpenAI{' '}
         {snapshot.openaiConfigured ? 'configured' : 'not configured'} · Local{' '}
         {snapshot.localAgentConfigured ? 'configured' : 'not configured'}
+      </p>
+      <p className="login-fine" data-testid="wizard-ai-sends">
+        When you generate, the subject’s source files (PDFs, notes, images) go to the mode you pick:
+        Anthropic or OpenAI for cloud, your own endpoint or command for local. The test stub sends
+        nothing.
+      </p>
+      <p className="login-fine" data-testid="wizard-ai-grading">
+        {snapshot.anthropicConfigured
+          ? 'Marking is separate from generate: with the Anthropic key set, each free-text answer is sent to Anthropic with its question and rubric, whichever mode you pick here.'
+          : snapshot.gradingStubActive
+            ? 'Marking is separate from generate: the Anthropic key is the test placeholder, so free-text answers get a local stub full mark and nothing is sent. Set a real key before real use.'
+            : 'Marking is separate from generate: without an Anthropic key, free-text answers are saved but not marked (they count as not correct). With a key, each answer is sent to Anthropic with its question and rubric.'}
       </p>
       <div className="wizard-modes" role="radiogroup" aria-label="AI setup mode">
         {(Object.keys(AI_COPY) as OnboardingAiMode[]).map((mode) => {

@@ -22,7 +22,8 @@ export type VerifyLocalOtpState =
 /**
  * Consumes a local OTP and establishes the matching session. Wrong, expired,
  * used, and unissued codes all return `invalid` so the response does not reveal
- * whether a code was issued for the email.
+ * whether a code was issued for the email. A full guess lock (any email, so it
+ * reveals nothing) returns `rate_limited` — even for the right code.
  */
 export async function verifyLocalOtp(
   _prev: VerifyLocalOtpState,
@@ -50,7 +51,9 @@ export async function verifyLocalOtp(
   if (!limit.ok) return { status: 'error', reason: 'rate_limited' };
 
   const result = consumeLocalOtp(parsed.data.email, parsed.data.role, parsed.data.code);
-  if (!result.ok) return { status: 'error', reason: 'invalid' };
+  if (!result.ok) {
+    return { status: 'error', reason: result.reason === 'locked' ? 'rate_limited' : 'invalid' };
+  }
 
   const session = await getRawSession();
   session.userId = result.userId;

@@ -244,14 +244,18 @@ Behaviour you can rely on:
 
 - **`ANTHROPIC_API_KEY=test`** (the live `process.env` value — never the
   boot-frozen `env.ts` snapshot) routes to a deterministic full-score stub —
-  no network, no key needed for local development or CI. A wizard set /
+  no network, no key needed for local development or CI. The stub only runs
+  when `NODE_ENV` is not production or `GRADING_STUB=1`; in production
+  without the flag, `test` counts as no key (`needs_review`). A wizard set /
   rotate is used on the next grade; clear fails closed (`needs_review`, no
   stub) so the Configured badge and the grader stay twins. Blank / missing
   is never treated as `test`. The key is optional in `env.ts` — a
   production restart after clear will not brick boot.
 - **It never throws.** A fetch error, non-2xx, or unparseable model reply resolves to
   `{ status: 'needs_review' }`; the attempt persists with `score: null` and renders as
-  "Saved for review" (counted as incorrect, never lost).
+  "We couldn’t mark this one automatically, so it counts as not correct." (counted as
+  incorrect, never lost, never re-graded). Each such outcome logs a `[grading]` warning
+  with a reason code only.
 - A graded item counts as **correct** when `score / maxScore >= 0.6`
   (`PASS_THRESHOLD` / `isFreePass` in `src/lib/exam/attempts.ts`).
 - Items in one exam are graded concurrently, so a mixed paper marks in roughly one

@@ -30,6 +30,19 @@ function autofillWithoutEvents(testId: string, value: string) {
   descriptor?.set?.call(input, value);
 }
 
+describe('SetupForm native fallback', () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  // Before hydration a form without `method` submits as a GET, putting the
+  // admin password and setup code in the URL and proxy logs.
+  it('posts natively so a pre-hydration submit keeps secrets out of the URL', () => {
+    render(<SetupForm authMode="password" />);
+    expect(screen.getByTestId('setup-form')).toHaveAttribute('method', 'post');
+  });
+});
+
 describe('SetupForm autofill desync', () => {
   afterEach(() => {
     cleanup();

@@ -16,6 +16,7 @@ import {
 } from '@/lib/exam/data';
 import {
   isFreePass,
+  NEEDS_REVIEW_COPY,
   normalizeAttemptItem,
   type AttemptRecord,
   type ProgressData,
@@ -83,7 +84,11 @@ function AttemptRow({
   const diff = DIFFICULTY_LABEL.get(attempt.difficulty) ?? attempt.difficulty;
 
   return (
-    <div className="attempt-row" style={subject ? accentCSS(subject, 1) : undefined}>
+    <div
+      className="attempt-row"
+      style={subject ? accentCSS(subject, 1) : undefined}
+      data-testid="attempt-row"
+    >
       <button className="attempt-head" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
         <span className="attempt-info">
           <span className="attempt-subject">{label}</span>
@@ -109,7 +114,7 @@ function AttemptRow({
                     <span className="review-mark pending">{UIcon.retry}</span>
                     <div>
                       <p className="review-q">{f.q}</p>
-                      <p className="review-a">Saved for review.</p>
+                      <p className="review-a">{NEEDS_REVIEW_COPY}</p>
                     </div>
                   </div>
                 );

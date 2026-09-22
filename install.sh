@@ -339,6 +339,33 @@ refuse_kept_auth_mode_conflict() {
   exit 1
 }
 
+# SITE_URL is the address family devices open; invite / sign-in links and the
+# session cookie (Secure only on https) follow it. One line of feedback:
+# localhost only opens on this machine; plain http beyond it is unencrypted.
+site_url_note() {
+  local url="$1"
+  local scheme rest host
+  scheme="$(printf '%s' "${url%%://*}" | tr '[:upper:]' '[:lower:]')"
+  rest="${url#*://}"
+  rest="${rest%%/*}"
+  rest="${rest##*@}"
+  case "$rest" in
+    \[*) host="${rest%%]*}]" ;;
+    *) host="${rest%%:*}" ;;
+  esac
+  host="$(printf '%s' "$host" | tr '[:upper:]' '[:lower:]')"
+  case "$host" in
+    localhost|*.localhost|127.*|0.0.0.0|\[::1\])
+      echo "Warning: SITE_URL uses ${host}, so invite links will only open on this machine." >&2
+      ;;
+    *)
+      if [ "$scheme" = "http" ]; then
+        echo "Note: SITE_URL is plain http, so traffic is unencrypted; use HTTPS (a reverse proxy) beyond your home network." >&2
+      fi
+      ;;
+  esac
+}
+
 confirm() {
   local message="$1"
   local default="${2:-n}"
@@ -538,13 +565,20 @@ if [ "$NONINTERACTIVE" = "1" ]; then
   ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-test}"
 fi
 
-if [ "$WRITE_ENV_ONLY" != "1" ]; then
+# Any run a person answers (interactive), plus every full install, shows the
+# banner; only non-interactive --write-env-only stays quiet for scripts.
+if [ "$WRITE_ENV_ONLY" != "1" ] || [ "$NONINTERACTIVE" != "1" ]; then
   echo
   echo "Examify installer"
-  echo "A self-hosted exam-practice app for one family. Invite-only; data stays on this box."
+  echo "A self-hosted exam-practice app for one family. Invite-only; accounts and progress stay on this server."
+  echo "AI marking and cloud generate send answer text or study PDFs to the provider you choose."
   echo
 fi
 
+if [ "$NONINTERACTIVE" != "1" ] && [ -z "${SITE_URL}" ]; then
+  echo "Public site URL: the address family devices open, e.g. https://exam.example.com"
+  echo "or http://192.168.1.20:3000. localhost only works on this machine."
+fi
 prompt SITE_URL "Public site URL" "http://localhost:3000"
 GENERATED_AUTH_SECRET=0
 GENERATED_SETUP_SECRET=0
@@ -637,12 +671,17 @@ fi
 
 if [ "$NONINTERACTIVE" != "1" ]; then
   echo
-  echo "ANTHROPIC_API_KEY for /onboarding Cloud (Anthropic) generate."
-  echo "Same .env store as the wizard. Leave blank to keep the test sentinel (you can set it later)."
+  echo "Optional: ANTHROPIC_API_KEY marks free-text answers by sending each answer, its question,"
+  echo "and its rubric to Anthropic. It also powers /onboarding Cloud (Anthropic) generate."
+  echo "Leave blank to skip: free-text answers are saved but not marked (they count as not correct)."
+  echo "Add it later in /onboarding content setup, or in .env (then restart)."
   prompt ANTHROPIC_API_KEY "Anthropic API key" "" secret
+  # Blank keeps the `test` placeholder: the wizard shows "not configured" and
+  # production grading treats it as no key (answers saved, not marked).
   ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-test}"
   echo
   echo "Optional: OPENAI_API_KEY for /onboarding Cloud (OpenAI) generate."
+  echo "That generate sends the subject's study files (PDF pages, notes) to OpenAI."
   echo "Same .env store as the wizard. Leave blank to skip (you can set it later)."
   echo "OpenAI generate from PDFs needs pdftoppm (poppler-utils) on PATH; without it,"
   echo "PDF-only generate fails closed. Install: apt install poppler-utils  (or brew install poppler)"
@@ -667,6 +706,11 @@ else
   write_env .env
   WROTE_ENV=1
   echo "Wrote .env"
+fi
+# Only when this run's SITE_URL was written: a kept .env (declined overwrite,
+# or non-interactive) keeps its own URL, so a note about ours would mislead.
+if [ "$WROTE_ENV" = "1" ]; then
+  site_url_note "$SITE_URL"
 fi
 
 if [ "$WROTE_ENV" = "1" ] && [ "$NONINTERACTIVE" != "1" ]; then

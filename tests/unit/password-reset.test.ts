@@ -37,7 +37,7 @@ vi.mock('@/lib/auth', async () => {
 });
 
 vi.mock('next/headers', () => ({
-  headers: async () => new Headers({ 'x-real-ip': '203.0.113.77' }),
+  headers: async () => new Headers({ 'x-forwarded-for': '203.0.113.77' }),
 }));
 
 vi.mock('next/navigation', () => ({
@@ -234,6 +234,44 @@ describe('completePasswordReset', () => {
     expect(sessionHolder.current.studentMode).toBe(false);
   });
 
+  it('lifts the per-account password sign-in lock after a successful reset', async () => {
+    await seedAdmin();
+    const { PASSWORD_FAILURE_MAX, isPasswordSignInLocked, recordPasswordFailure } =
+      await import('@/lib/auth');
+    for (let i = 0; i < PASSWORD_FAILURE_MAX; i += 1) recordPasswordFailure('pat@example.com');
+    expect(isPasswordSignInLocked('pat@example.com')).toBe(true);
+
+    const { requestPasswordReset } = await import('@/actions/requestPasswordReset');
+    await requestPasswordReset({ status: 'idle' }, requestForm('pat@example.com'));
+    const code = sendEmailMock.mock.calls[0]?.[0].code ?? '';
+    const { completePasswordReset } = await import('@/actions/completePasswordReset');
+    await expect(
+      completePasswordReset(
+        { status: 'idle' },
+        completeForm('pat@example.com', code, 'new-password-2'),
+      ),
+    ).rejects.toMatchObject({ url: '/' });
+    expect(isPasswordSignInLocked('pat@example.com')).toBe(false);
+  });
+
+  it('keeps the per-account lock when the reset code is wrong', async () => {
+    await seedAdmin();
+    const { PASSWORD_FAILURE_MAX, isPasswordSignInLocked, recordPasswordFailure } =
+      await import('@/lib/auth');
+    for (let i = 0; i < PASSWORD_FAILURE_MAX; i += 1) recordPasswordFailure('pat@example.com');
+    const { requestPasswordReset } = await import('@/actions/requestPasswordReset');
+    await requestPasswordReset({ status: 'idle' }, requestForm('pat@example.com'));
+    const code = sendEmailMock.mock.calls[0]?.[0].code ?? '';
+    const wrong = code === '000000' ? '000001' : '000000';
+    const { completePasswordReset } = await import('@/actions/completePasswordReset');
+    const state = await completePasswordReset(
+      { status: 'idle' },
+      completeForm('pat@example.com', wrong, 'new-password-2'),
+    );
+    expect(state).toEqual({ status: 'error', reason: 'invalid' });
+    expect(isPasswordSignInLocked('pat@example.com')).toBe(true);
+  });
+
   it('does not consume the code or change the hash on a mismatch or a short password', async () => {
     await seedAdmin();
     const before = await userByEmail('pat@example.com');
@@ -272,6 +310,68 @@ describe('completePasswordReset', () => {
     ).toEqual({ status: 'error', reason: 'invalid' });
     expect((await userByEmail('pat@example.com'))?.passwordHash).toBe(before?.passwordHash);
     expect(sessionHolder.current.save).not.toHaveBeenCalled();
+  });
+
+  it('locks after five wrong codes and keeps the lock across a new reset code', async () => {
+    await seedAdmin();
+    const before = await userByEmail('pat@example.com');
+    const { OTP_GUESS_MAX } = await import('@/lib/auth');
+    const { requestPasswordReset } = await import('@/actions/requestPasswordReset');
+    const { completePasswordReset } = await import('@/actions/completePasswordReset');
+    await requestPasswordReset({ status: 'idle' }, requestForm('pat@example.com'));
+    const first = sendEmailMock.mock.calls[0]?.[0].code ?? '';
+    for (let i = 0; i < OTP_GUESS_MAX; i++) {
+      const guess = String(i).padStart(6, '0');
+      const wrong = guess === first ? '999999' : guess;
+      expect(
+        await completePasswordReset(
+          { status: 'idle' },
+          completeForm('pat@example.com', wrong, 'new-password-2'),
+        ),
+      ).toEqual({ status: 'error', reason: 'invalid' });
+    }
+    // The right code is refused once the bucket is full.
+    expect(
+      await completePasswordReset(
+        { status: 'idle' },
+        completeForm('pat@example.com', first, 'new-password-2'),
+      ),
+    ).toEqual({ status: 'error', reason: 'rate_limited' });
+
+    // Requesting a fresh code must not hand out five more guesses.
+    await requestPasswordReset({ status: 'idle' }, requestForm('pat@example.com'));
+    const second = sendEmailMock.mock.calls[1]?.[0].code ?? '';
+    expect(second).toMatch(/^\d{6}$/);
+    expect(
+      await completePasswordReset(
+        { status: 'idle' },
+        completeForm('pat@example.com', second, 'new-password-2'),
+      ),
+    ).toEqual({ status: 'error', reason: 'rate_limited' });
+    expect((await userByEmail('pat@example.com'))?.passwordHash).toBe(before?.passwordHash);
+    expect(sessionHolder.current.save).not.toHaveBeenCalled();
+  });
+
+  it('accepts a new reset code once earlier failures age out', async () => {
+    await seedAdmin();
+    const { OTP_GUESS_MAX, consumePasswordReset, issuePasswordResetOtp } =
+      await import('@/lib/auth');
+    const issued = issuePasswordResetOtp('pat@example.com', 'parent');
+    const wrong = issued.code === '999999' ? '000000' : '999999';
+    for (let i = 0; i < OTP_GUESS_MAX; i++) {
+      consumePasswordReset('pat@example.com', 'parent', wrong, 'new-password-2');
+    }
+    expect(
+      consumePasswordReset('pat@example.com', 'parent', issued.code, 'new-password-2'),
+    ).toEqual({ ok: false, reason: 'locked' });
+    const { db, schema } = await import('@/lib/db');
+    db.update(schema.rateLimitEvents)
+      .set({ createdAt: new Date(Date.now() - 16 * 60 * 1000) })
+      .run();
+    const fresh = issuePasswordResetOtp('pat@example.com', 'parent');
+    expect(consumePasswordReset('pat@example.com', 'parent', fresh.code, 'new-password-2').ok).toBe(
+      true,
+    );
   });
 
   it('does not let /signin/verify consume a reset code', async () => {

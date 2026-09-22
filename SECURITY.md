@@ -26,8 +26,16 @@ get an initial response within a week.
   is off unless `TURNSTILE_ENABLED=1` and both keys are set.
 - Magic-link tokens, local OTPs, and invite tokens are stored hashed, are single-use,
   and expire (15 minutes for links/OTPs, 7 days for invites); sign-in is rate-limited
-  per IP. Local OTP also locks a challenge after 5 well-formed wrong 6-digit
-  guesses (recorded in `rate_limit_events` under `otp:{email}:{role}`).
+  per IP. The client IP comes only from the header named by `CLIENT_IP_HEADER`
+  (default: the rightmost X-Forwarded-For entry); `CF-Connecting-IP` and
+  `X-Real-IP` are ignored unless configured, because clients can send them and
+  common proxies pass them through. Password sign-in also has a per-account
+  limit (10 failures per 15 minutes per email, for any email so it reveals no
+  membership), checked before scrypt. Mailbox codes (local OTP, invite OTP,
+  password reset) lock after 5 well-formed wrong guesses per 15 minutes;
+  requesting a new code does not lift the lock, and while locked even the
+  correct code is refused. Trade-off: someone who knows an email can
+  temporarily lock that account's password sign-in or code entry.
   `/signin/verify` is magic-link only and refuses `otp:` bearers so the 1e6
   OTP space cannot be guessed via GET without the lock.
   Passwords are stored as scrypt hashes (`users.password_hash`); `/setup`
@@ -44,6 +52,16 @@ get an initial response within a week.
   directory as secret material and never enable it on a shared or exposed disk.
   `AUTH_MODE=local-otp` and `MAIL_TRANSPORT=outbox` require this opt-in in
   production. The writer creates the directory as `0700` and each message as `0600`.
+- The session cookie is `HttpOnly`, `SameSite=Lax`, and `Secure` exactly when
+  `SITE_URL` is https. A plain-http `SITE_URL` (a home LAN) gets a non-Secure
+  cookie that anyone on the network path can read — use HTTPS beyond the home
+  network. Credential forms post natively, so a submit before the page
+  hydrates never puts a password in the URL.
+- **Third-party data flows.** With a real `ANTHROPIC_API_KEY`, each free-text
+  answer is sent to Anthropic with its question and rubric (no names, emails or
+  user ids). Cloud generate sends a subject's source files to Anthropic or
+  OpenAI. Grading failures are logged with a reason code only. See README →
+  "What leaves your server".
 - Prefer `AUTH_MODE=password` on a tiny self-host if you do not want to run
   email for **sign-in**. Password-mode invite accept still needs SMTP, Resend,
   or an allowed outbox (and fails closed if none can deliver). `install.sh`
