@@ -60,6 +60,8 @@ describe('SetupForm autofill desync', () => {
     expect(formData?.get('householdName')).toBe('Autofill family');
     expect(formData?.get('setupSecret')).toBe('instance-secret');
     expect(formData?.get('email')).toBe('autofill@example.com');
+    expect(formData?.get('confirmPassword')).toBeNull();
+    expect(screen.queryByTestId('setup-confirm-password-input')).toBeNull();
     expect(screen.queryByTestId('setup-email-error')).toBeNull();
     await waitFor(() => {
       expect(screen.getByTestId('setup-email-input')).toHaveValue('autofill@example.com');
@@ -278,6 +280,131 @@ describe('SetupForm autofill desync', () => {
     expect(screen.getByTestId('setup-password-error')).toHaveTextContent(
       SETUP_FIELD_ERROR.password,
     );
+    expect(screen.queryByTestId('setup-confirm-error')).toBeNull();
+    expect(screen.getByLabelText('Confirm admin password')).toBeInTheDocument();
     expect(bootstrapHouseholdAction).not.toHaveBeenCalled();
+  });
+
+  it('hides confirm admin password outside password mode', () => {
+    render(<SetupForm authMode="magic-link" />);
+    expect(screen.queryByLabelText('Confirm admin password')).toBeNull();
+    cleanup();
+    render(<SetupForm authMode="local-otp" />);
+    expect(screen.queryByLabelText('Confirm admin password')).toBeNull();
+    expect(screen.getByTestId('setup-submit')).toBeEnabled();
+  });
+
+  it('refuses a confirmation mismatch on the confirm field and still submits a match', () => {
+    render(<SetupForm authMode="password" />);
+    expect(screen.getByTestId('setup-submit')).toBeEnabled();
+    autofillWithoutEvents('household-name-input', 'Autofill family');
+    autofillWithoutEvents('setup-secret-input', 'instance-secret');
+    autofillWithoutEvents('setup-email-input', 'autofill@example.com');
+    autofillWithoutEvents('setup-password-input', 'admin-password');
+    autofillWithoutEvents('setup-confirm-password-input', 'other-password');
+
+    fireEvent.submit(screen.getByTestId('setup-form'));
+
+    expect(bootstrapHouseholdAction).not.toHaveBeenCalled();
+    const confirm = screen.getByTestId('setup-confirm-password-input');
+    expect(confirm).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByTestId('setup-confirm-error')).toHaveTextContent(
+      SETUP_FIELD_ERROR.passwordMismatch,
+    );
+    expect(screen.getByTestId('setup-submit')).toBeEnabled();
+
+    autofillWithoutEvents('setup-confirm-password-input', 'admin-password');
+    fireEvent.submit(screen.getByTestId('setup-form'));
+
+    expect(bootstrapHouseholdAction).toHaveBeenCalledOnce();
+    const formData = bootstrapHouseholdAction.mock.calls[0]?.[1] as FormData;
+    expect(formData.get('householdName')).toBe('Autofill family');
+    expect(formData.get('setupSecret')).toBe('instance-secret');
+    expect(formData.get('email')).toBe('autofill@example.com');
+    expect(formData.get('password')).toBe('admin-password');
+    expect(formData.get('confirmPassword')).toBe('admin-password');
+  });
+
+  it('maps a server password_mismatch onto the confirm field without a form banner', async () => {
+    bootstrapHouseholdAction.mockImplementation(async () => ({
+      status: 'error',
+      reason: 'password_mismatch',
+    }));
+    render(<SetupForm authMode="password" />);
+    autofillWithoutEvents('household-name-input', 'Autofill family');
+    autofillWithoutEvents('setup-secret-input', 'instance-secret');
+    autofillWithoutEvents('setup-email-input', 'autofill@example.com');
+    autofillWithoutEvents('setup-password-input', 'admin-password');
+    autofillWithoutEvents('setup-confirm-password-input', 'admin-password');
+
+    fireEvent.submit(screen.getByTestId('setup-form'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('setup-confirm-error')).toHaveTextContent(
+        SETUP_FIELD_ERROR.passwordMismatch,
+      );
+    });
+    expect(screen.getByTestId('setup-confirm-password-input')).toHaveAttribute(
+      'aria-invalid',
+      'true',
+    );
+    expect(screen.queryByTestId('setup-error-password_mismatch')).toBeNull();
+    expect(screen.getByTestId('setup-submit')).toBeEnabled();
+  });
+
+  it('does not resurrect a user-cleared confirmation after remount', async () => {
+    const { rerender } = render(<SetupForm authMode="password" />);
+    fireEvent.input(screen.getByTestId('setup-password-input'), {
+      target: { value: 'admin-password' },
+    });
+    fireEvent.input(screen.getByTestId('setup-confirm-password-input'), {
+      target: { value: 'admin-password' },
+    });
+    fireEvent.input(screen.getByTestId('household-name-input'), {
+      target: { value: 'Stoyanov family' },
+    });
+    autofillWithoutEvents('setup-confirm-password-input', '');
+    autofillWithoutEvents('household-name-input', SETUP_DEFAULT_HOUSEHOLD_NAME);
+    autofillWithoutEvents('setup-secret-input', '');
+    autofillWithoutEvents('setup-email-input', '');
+    rerender(<SetupForm authMode="password" siteKey="1x00000000000000000000AA" />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('household-name-input')).toHaveValue('Stoyanov family');
+    });
+    expect(screen.getByTestId('setup-password-input')).toHaveValue('admin-password');
+    expect(screen.getByTestId('setup-confirm-password-input')).toHaveValue('');
+    expect(screen.getByTestId('setup-submit')).toBeEnabled();
+  });
+
+  it('restores silent autofill of name and email and does not resurrect wiped passwords', async () => {
+    const { rerender } = render(<SetupForm authMode="password" />);
+    autofillWithoutEvents('household-name-input', 'Autofill family');
+    autofillWithoutEvents('setup-secret-input', 'instance-secret');
+    autofillWithoutEvents('setup-email-input', 'autofill@example.com');
+    autofillWithoutEvents('setup-password-input', 'admin-password');
+    autofillWithoutEvents('setup-confirm-password-input', 'admin-password');
+
+    await act(async () => {
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+      });
+    });
+
+    autofillWithoutEvents('household-name-input', SETUP_DEFAULT_HOUSEHOLD_NAME);
+    autofillWithoutEvents('setup-secret-input', '');
+    autofillWithoutEvents('setup-email-input', '');
+    autofillWithoutEvents('setup-password-input', '');
+    autofillWithoutEvents('setup-confirm-password-input', '');
+    rerender(<SetupForm authMode="password" siteKey="1x00000000000000000000AA" />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('household-name-input')).toHaveValue('Autofill family');
+    });
+    expect(screen.getByTestId('setup-secret-input')).toHaveValue('instance-secret');
+    expect(screen.getByTestId('setup-email-input')).toHaveValue('autofill@example.com');
+    expect(screen.getByTestId('setup-password-input')).toHaveValue('');
+    expect(screen.getByTestId('setup-confirm-password-input')).toHaveValue('');
+    expect(screen.getByTestId('setup-submit')).toBeEnabled();
   });
 });

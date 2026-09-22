@@ -32,8 +32,8 @@ Surface:
   uncontrolled, and re-reads / restores a FormData snapshot if a Turnstile
   remount wipes values. First-paint default household name (“Our family”)
   does not seed that snapshot; silent autofill is captured so a remount
-  can restore it. A user-cleared password is never resurrected from an
-  old snapshot. It never silently disables Create household.
+  can restore it. A user-cleared password or confirmation is never
+  resurrected from an old snapshot. It never silently disables Create household.
   Password mode asks for the admin password twice; a mismatch is refused
   and scrypt still runs only after Turnstile, the sign-in rate limit, and
   `SETUP_BOOTSTRAP_SECRET`.
