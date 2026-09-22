@@ -7,7 +7,7 @@
    be enumerated.
    ========================================================================== */
 import Script from 'next/script';
-import { useActionState, useState } from 'react';
+import { useActionState, useState, type FormEvent } from 'react';
 import {
   completePasswordReset,
   type CompletePasswordResetState,
@@ -21,6 +21,12 @@ import { signInWithPassword, type SignInPasswordState } from '@/actions/signInWi
 import { verifyLocalOtp, type VerifyLocalOtpState } from '@/actions/verifyLocalOtp';
 import type { AuthMode } from '@/lib/auth-mode';
 import { mailboxWhere, type MailboxDelivery } from '@/lib/mailbox-copy';
+import {
+  hasPasswordEntryFieldErrors,
+  readPasswordEntryFields,
+  validateSignInFields,
+  type PasswordEntryFieldErrors,
+} from '@/lib/password-entry-form';
 import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, PASSWORD_MISMATCH } from '@/lib/password-policy';
 import { ExplicitTurnstile } from './ExplicitTurnstile';
 import { MailIcon, RoleIcon } from './icons';
@@ -58,6 +64,15 @@ const otpErrorCopy: Record<Exclude<VerifyLocalOtpState, { status: 'idle' }>['rea
   captcha: 'Verification failed. Please try again.',
   rate_limited: 'Too many attempts from your network. Try again later.',
 };
+
+function FieldError({ id, message }: { id: string; message?: string }) {
+  if (!message) return null;
+  return (
+    <p className="field-error" id={id} role="alert" data-testid={id}>
+      {message}
+    </p>
+  );
+}
 
 function Turnstile({ siteKey }: { siteKey?: string }) {
   if (!siteKey) return null;
@@ -126,7 +141,8 @@ function PasswordLoginForm({
   );
   const [role, setRole] = useState<Role>('student');
   const [forgot, setForgot] = useState(false);
-  const [localError, setLocalError] = useState<string | null>(null);
+  const [attempted, setAttempted] = useState(false);
+  const [localErrors, setLocalErrors] = useState<PasswordEntryFieldErrors>({});
 
   if (forgot) {
     return (
@@ -139,20 +155,23 @@ function PasswordLoginForm({
     );
   }
 
-  const submit = (formData: FormData) => {
-    const email = String(formData.get('email') ?? '');
-    const password = String(formData.get('password') ?? '');
-    if (
-      !EMAIL_RE.test(email.trim()) ||
-      password.length < 1 ||
-      password.length > PASSWORD_MAX_LENGTH
-    ) {
-      setLocalError('Enter the email and password for this household.');
-      return;
-    }
-    setLocalError(null);
+  function onFieldInput(event: FormEvent<HTMLInputElement>) {
+    if (!attempted) return;
+    const form = event.currentTarget.form;
+    if (!form) return;
+    setLocalErrors(validateSignInFields(readPasswordEntryFields(new FormData(form))));
+  }
+
+  function submit(formData: FormData) {
+    const nextErrors = validateSignInFields(readPasswordEntryFields(formData));
+    setAttempted(true);
+    setLocalErrors(nextErrors);
+    if (hasPasswordEntryFieldErrors(nextErrors)) return;
     formAction(formData);
-  };
+  }
+
+  const emailInvalid = Boolean(localErrors.email);
+  const passwordInvalid = Boolean(localErrors.password);
 
   return (
     <form
@@ -195,8 +214,13 @@ function PasswordLoginForm({
           autoComplete="username"
           required
           placeholder="you@example.com"
+          onInput={onFieldInput}
+          onChange={onFieldInput}
+          aria-invalid={emailInvalid || undefined}
+          aria-describedby={emailInvalid ? 'signin-email-error' : undefined}
           data-testid="email-input"
         />
+        <FieldError id="signin-email-error" message={localErrors.email} />
       </div>
 
       <div className="field">
@@ -211,8 +235,13 @@ function PasswordLoginForm({
           autoComplete="current-password"
           required
           maxLength={PASSWORD_MAX_LENGTH}
+          onInput={onFieldInput}
+          onChange={onFieldInput}
+          aria-invalid={passwordInvalid || undefined}
+          aria-describedby={passwordInvalid ? 'signin-password-error' : undefined}
           data-testid="password-input"
         />
+        <FieldError id="signin-password-error" message={localErrors.password} />
       </div>
 
       <input type="hidden" name="role" value={role} />
@@ -230,10 +259,6 @@ function PasswordLoginForm({
       {state.status === 'error' ? (
         <p className="login-error" role="alert" data-testid={`signin-error-${state.reason}`}>
           {passwordErrorCopy[state.reason]}
-        </p>
-      ) : localError ? (
-        <p className="login-error" role="alert" data-testid="signin-local-error">
-          {localError}
         </p>
       ) : (
         <p className="login-fine">

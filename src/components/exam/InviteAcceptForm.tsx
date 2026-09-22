@@ -1,7 +1,7 @@
 'use client';
 
 import Script from 'next/script';
-import { useActionState, useState, type ChangeEvent } from 'react';
+import { useActionState, useState, type ChangeEvent, type FormEvent } from 'react';
 import {
   acceptInviteWithPassword,
   type AcceptInvitePasswordState,
@@ -14,6 +14,12 @@ import { requestInviteLink, type RequestInviteLinkState } from '@/actions/reques
 import { verifyLocalOtp, type VerifyLocalOtpState } from '@/actions/verifyLocalOtp';
 import type { AuthMode } from '@/lib/auth-mode';
 import { mailboxWhere, type MailboxDelivery } from '@/lib/mailbox-copy';
+import {
+  hasPasswordEntryFieldErrors,
+  readPasswordEntryFields,
+  validateInvitePasswordFields,
+  type PasswordEntryFieldErrors,
+} from '@/lib/password-entry-form';
 import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, PASSWORD_MISMATCH } from '@/lib/password-policy';
 import { ExplicitTurnstile } from './ExplicitTurnstile';
 import { MailIcon, RoleIcon } from './icons';
@@ -87,6 +93,17 @@ export function InviteAcceptForm({
   );
 }
 
+function FieldError({ id, message }: { id: string; message?: string }) {
+  if (!message) return null;
+  return (
+    <p className="field-error" id={id} role="alert" data-testid={id}>
+      {message}
+    </p>
+  );
+}
+
+type InviteStepErrors = PasswordEntryFieldErrors & { confirmPassword?: string };
+
 function PasswordInviteForm({
   inviteToken,
   role,
@@ -105,30 +122,34 @@ function PasswordInviteForm({
     { status: 'idle' },
   );
   const [editing, setEditing] = useState(false);
-  const [fieldErrors, setFieldErrors] = useState<{
-    email?: string;
-    password?: string;
-    confirmPassword?: string;
-  }>({});
+  const [attempted, setAttempted] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState<InviteStepErrors>({});
 
-  const submit = (formData: FormData) => {
-    const email = String(formData.get('email') ?? '');
-    const password = String(formData.get('password') ?? '');
+  function readStep(formData: FormData): InviteStepErrors {
+    const fields = readPasswordEntryFields(formData);
+    const next: InviteStepErrors = { ...validateInvitePasswordFields(fields) };
     const confirm = String(formData.get('confirmPassword') ?? '');
-    const next: { email?: string; password?: string; confirmPassword?: string } = {};
-    if (!EMAIL_RE.test(email.trim())) next.email = 'Enter a valid email address.';
-    if (password.length < PASSWORD_MIN_LENGTH) {
-      next.password = `Choose a password of at least ${PASSWORD_MIN_LENGTH} characters.`;
-    } else if (password.length > PASSWORD_MAX_LENGTH) {
-      next.password = `Password must be at most ${PASSWORD_MAX_LENGTH} characters.`;
-    } else if (password !== confirm) {
+    if (!next.password && fields.password !== confirm) {
       next.confirmPassword = PASSWORD_MISMATCH;
     }
+    return next;
+  }
+
+  function onFieldInput(event: FormEvent<HTMLInputElement>) {
+    if (!attempted) return;
+    const form = event.currentTarget.form;
+    if (!form) return;
+    setFieldErrors(readStep(new FormData(form)));
+  }
+
+  function submit(formData: FormData) {
+    const next = readStep(formData);
+    setAttempted(true);
     setFieldErrors(next);
-    if (Object.keys(next).length > 0) return;
+    if (hasPasswordEntryFieldErrors(next) || next.confirmPassword) return;
     setEditing(false);
     formAction(formData);
-  };
+  }
 
   if (state.status === 'sent' && !editing) {
     return (
@@ -181,6 +202,7 @@ function PasswordInviteForm({
         locked={Boolean(lockedEmail)}
         invalid={Boolean(fieldErrors.email)}
         error={fieldErrors.email}
+        onInput={onFieldInput}
       />
       <div className="field">
         <label className="field-label" htmlFor="invite-password">
@@ -195,6 +217,8 @@ function PasswordInviteForm({
           required
           minLength={PASSWORD_MIN_LENGTH}
           maxLength={PASSWORD_MAX_LENGTH}
+          onInput={onFieldInput}
+          onChange={onFieldInput}
           aria-invalid={fieldErrors.password ? true : undefined}
           aria-describedby={passwordDescribedBy}
           data-testid="invite-password-input"
@@ -202,16 +226,7 @@ function PasswordInviteForm({
         <p className="role-hint" id="invite-password-hint">
           At least {PASSWORD_MIN_LENGTH} characters (max {PASSWORD_MAX_LENGTH}).
         </p>
-        {fieldErrors.password ? (
-          <p
-            className="field-error"
-            id="invite-password-error"
-            role="alert"
-            data-testid="invite-password-error"
-          >
-            {fieldErrors.password}
-          </p>
-        ) : null}
+        <FieldError id="invite-password-error" message={fieldErrors.password} />
       </div>
       <div className="field">
         <label className="field-label" htmlFor="invite-confirm-password">
@@ -225,20 +240,13 @@ function PasswordInviteForm({
           autoComplete="new-password"
           required
           maxLength={PASSWORD_MAX_LENGTH}
+          onInput={onFieldInput}
+          onChange={onFieldInput}
           aria-invalid={confirmError ? true : undefined}
           aria-describedby={confirmError ? 'invite-confirm-error' : undefined}
           data-testid="invite-confirm-password-input"
         />
-        {confirmError ? (
-          <p
-            className="field-error"
-            id="invite-confirm-error"
-            role="alert"
-            data-testid="invite-confirm-error"
-          >
-            {confirmError}
-          </p>
-        ) : null}
+        <FieldError id="invite-confirm-error" message={confirmError} />
       </div>
       <input type="hidden" name="inviteToken" value={inviteToken} />
       {siteKey ? (
@@ -550,6 +558,7 @@ function EmailField({
   locked,
   value,
   onChange,
+  onInput,
   invalid,
   error,
 }: {
@@ -557,6 +566,7 @@ function EmailField({
   locked: boolean;
   value?: string;
   onChange?: (value: string) => void;
+  onInput?: (event: FormEvent<HTMLInputElement>) => void;
   invalid?: boolean;
   error?: string;
 }) {
@@ -582,12 +592,18 @@ function EmailField({
               onChange: (event: ChangeEvent<HTMLInputElement>) => onChange?.(event.target.value),
             }
           : { defaultValue: defaultEmail })}
+        onInput={onInput}
         aria-invalid={invalid || undefined}
         aria-describedby={error ? 'invite-email-error' : undefined}
         data-testid="invite-email-input"
       />
       {error ? (
-        <p className="field-error" id="invite-email-error" role="alert">
+        <p
+          className="field-error"
+          id="invite-email-error"
+          role="alert"
+          data-testid="invite-email-error"
+        >
           {error}
         </p>
       ) : null}

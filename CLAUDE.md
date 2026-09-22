@@ -92,13 +92,20 @@ Surface:
   `emailVerifiedAt` wait for a mailbox OTP (`completePasswordInvite`). The chosen
   password's scrypt hash is stored on that OTP row (`pending_password_hash`) and
   applied only when the code is consumed; the code form does not resubmit it.
-  Fail closed if mail cannot be delivered. See `SECURITY.md`.
+  The password step reads submitted FormData and keeps email/password
+  uncontrolled, so silent autofill can request a code. A short password or a
+  confirmation mismatch shows a field error and does not send. Fail closed
+  if mail cannot be delivered. See `SECURITY.md`.
 - **`/signin`** — sign-in UI for the configured `AUTH_MODE` (password, magic-link, or
   local OTP) with a Student/Parent role control. Password mode can reset a
   forgotten password with a mailbox OTP (`requestPasswordReset` /
   `completePasswordReset`); the hash does not change until the code is consumed,
   and unknown addresses get the same sent screen. Redirects to
-  `/setup` when the instance has no household yet.
+  `/setup` when the instance has no household yet. Password sign-in
+  (`PasswordLoginForm`) reads submitted FormData and keeps email/password
+  uncontrolled, so silent autofill can submit. The button stays enabled when
+  React state is empty. A bad email or empty/over-long password shows a field
+  error; wrong password, wrong role, and unknown email stay one server `invalid`.
 - **`/signin/verify`** — a **Route Handler** (`route.ts`, not a page): consumes the one-time
   token, establishes the session, redirects to `/`. It must be a route handler because
   clicking the email link is a GET that **writes** the session cookie, and cookie mutation is
