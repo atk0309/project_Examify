@@ -25,7 +25,8 @@ tracking by default, no env-JSON allowlist to hand-edit.
 - **MCQ + free-text questions** — free-text answers are marked server-side by an LLM
   against a rubric you write, with a bounded, encouraging verdict.
 - **Autosave + resume** — reload, close the browser, or lose the tab mid-exam and the
-  dashboard offers a "Continue where you left off" card.
+  dashboard offers a "Continue where you left off" card. If the finished exam can't reach
+  the server, your answers stay on screen with a "Try again".
 - **Progress tracking** — per-subject best / average / latest and a per-question review
   of every attempt.
 - **Parent dashboard + student mode** — parents get a side-by-side comparison and an
@@ -51,11 +52,17 @@ tracking by default, no env-JSON allowlist to hand-edit.
    cancel POSTs `/api/onboarding/cancel-generate`
    (not a queued Server Action), aborts provider HTTP/CMD via AbortSignal,
    and discards the preview so prior IR is unchanged (the wizard waits for
-   an `ok` cancel response before claiming cancelled; cancel after that
-   token already wrote IR is refused; an acknowledged cancel unlocks nav
+   an `ok` cancel response before claiming cancelled; during Generate all,
+   cancel stops the later subjects and keeps and reports the ones already
+   generated; an acknowledged cancel unlocks nav
    while the provider is still unwinding);
    cancelled is a calm status, not an error toast; generate is
-   gated to wizard catalog subjects; an empty
+   gated to wizard catalog subjects; a subject that reuses a sample subject
+   id (`maths`, `computer-science`, `geography`) needs replace-sample, which
+   the AI step offers next to Generate; a failed generate shows a specific
+   reason and logs `[onboarding] generate failed { reason, subjectId, status }`;
+   uploaded PDF names are sanitised, so commas, apostrophes, accents and so
+   on are fine (a different file with the same name is stored as ` (2)`); an empty
    catalog is refused; a changed plan after dry-run is refused). Finish requires
    that confirmed apply; skip-without-emit keeps the sample bank.
    Bootstrap signs in the first household administrator and redirects to
@@ -86,8 +93,12 @@ the server** from the submitted answers — the browser's total is never trusted
 **In-progress** exams are persisted too, in the `exam_sessions` table (one row per
 user + subject + difficulty), so a closed browser or a discarded mobile tab can resume
 instead of restarting. The exam autosaves as you answer (and on every Next/Back) via the
-`saveExamProgress` action; finishing or discarding clears the draft. Only public question
-ids and your own answers are stored — never the answer keys. These drafts never expire.
+`saveExamProgress` action. The waiting save is also sent when you leave the exam (Home,
+another exam, Finish), and best-effort when the tab is hidden or closed. Finishing or
+discarding clears the draft. If the finish can't reach the server, your answers stay on
+screen with a "Try again" that re-sends them (a retry after a lost reply can save the
+attempt twice). Only public question ids and your own answers are stored — never the
+answer keys. These drafts never expire.
 
 Roles diverge at `/`: a **student** gets the exam flow + their own progress; a **parent**
 gets a dashboard with their child's progress, their own progress, and a side-by-side
@@ -338,7 +349,10 @@ Sent to a third party only when you turn the feature on:
 - **Cloud generate (Anthropic / OpenAI).** The `/onboarding` cloud modes and
   `examify-ingest generate --provider anthropic|openai` send that subject's source files
   (PDFs or their page images, notes, images) to the provider. Local modes send them to the
-  endpoint or command you configure; `--provider test` sends nothing.
+  endpoint or command you configure; `--provider test` sends nothing. A failed wizard
+  generate shows a specific reason (rejected key, rate limit, timeout, …) and logs only
+  the reason code, subject id and provider HTTP status — never the provider's message,
+  model text or your files.
 - **Mail.** Invite, sign-in and reset codes go through Resend or your SMTP server. The
   local outbox keeps them on disk.
 - **Fonts.** Pages load the Newsreader and Hanken Grotesk stylesheet from Google Fonts.
@@ -474,7 +488,8 @@ three Playwright suites (run `pnpm test:e2e:install` once first):
 - **fresh** — first-run bootstrap and the onboarding wizard with Turnstile unset;
 - **password** — `AUTH_MODE=password` (the installer default): password sign-in, a whole
   exam (multiple-choice and free-text) through results and progress, resume after a
-  reload, the parent dashboard, and the generic wrong-password error.
+  reload, a retry after a finish whose submit was dropped, the parent dashboard, and the
+  generic wrong-password error.
 
 All suites start with `next start` against the production `.next` and do not create it.
 Ports default to 3100 / 3101 / 3102 (`E2E_PORT`, `E2E_FRESH_PORT`, `E2E_PASSWORD_PORT`).

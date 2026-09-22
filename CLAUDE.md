@@ -60,17 +60,48 @@ Surface:
   silently clobbered: the dry-run/preview names `would overwrite <rel>`
   and the wizard asks a calm confirm before any write (“Replace existing
   BankIR for {label}?” or a named generate-all batch). Decline
-  keeps prior bytes (`skipped` / cancelled — not `invalid`); confirm
+  keeps prior bytes (`skipped` / cancelled — not a failure); confirm
   writes through shared `writeBankIrAtomic` (CLI `--force` for that subject).
   Cancel POSTs `/api/onboarding/cancel-generate` (a Route Handler, not a
   queued Server Action) so the token can land while generate is in flight,
   then aborts provider HTTP/CMD via AbortSignal and discards the preview
   (no IR write; prior IR unchanged). The wizard waits for an
   `ok` cancel response before claiming cancelled; a failed POST is an error,
-  not a calm cancel. Cancel after that token already wrote IR returns
-  `already_committed` (not cancelled). An acknowledged cancel unlocks
+  not a calm cancel. Cancel records the token even after an earlier subject
+  committed, so Generate all stops before its next subject (refused as
+  `cancelled` before the provider call) and an in-flight subject is aborted;
+  subjects that already wrote BankIR are kept and reported (“Generate
+  cancelled. Kept N subjects already generated.”). With nothing in flight
+  and the token's last generate committed, the route still answers
+  `already_committed` (409); a single-subject run then shows a calm
+  “Generate already finished — review the new BankIR.” An acknowledged cancel unlocks
   skip / Back / rail even if the provider is still unwinding.
-  User-initiated cancel is a calm status, not an error toast.
+  User-initiated cancel is a calm status, not an error toast. Generate
+  busy / progress state is set outside the async transition so Cancel
+  renders during the run.
+  Generate uses the household replace-sample setting (same as CLI / emit
+  `--replace-sample`): a wizard subject whose id is a sample subject id
+  (`maths`, `computer-science`, `geography`; `isSampleSubjectId`) is refused
+  with `sample_collision` before any provider call unless that setting is
+  on. The AI step shows the replace-sample toggle next to Generate when such
+  a subject exists, the Subjects add form warns, and Generate all continues
+  past it and names it. Generate failures return safe reason codes
+  (`provider_auth`, `provider_rate_limited`, `provider_timeout`,
+  `provider_unavailable`, `provider_error`, `provider_output_invalid`,
+  `sources_unreadable`, `sample_collision`, `disk`, `generate_failed`, …)
+  with specific copy; raw provider messages never reach the browser. Each
+  failure logs one line,
+  `console.warn('[onboarding] generate failed', { reason, subjectId?, status? })`
+  (`subjectId` only when it is a valid kebab id, `status` only for a provider
+  HTTP status); never the message, model text, paths or keys. Cancel / skip /
+  overwrite-confirm are not logged.
+  Uploaded PDFs are stored under a sanitised basename (`sanitizeUploadName`:
+  accents folded, quotes and other punctuation dropped) instead of being
+  refused; path separators / NUL are `invalid_name`, a non-`.pdf` name, an
+  empty file or missing `%PDF` magic is `invalid_type`, and over 8 MiB is
+  `too_large`. A different file with the same stored name becomes ` (2)`,
+  ` (3)`, … via exclusive create (no clobber, never through a symlink); the
+  same bytes again is a no-op.
   Generate is gated to wizard catalog subjects (`listOnboardingSubjects`).
   Delete/rename wait on the generate lock. A post-provider catalog
   re-check (#65) refuses a write if the id is gone.
@@ -209,6 +240,7 @@ src/
     onboarding/         # admin-only content wizard (BankIR validate / dry-run / apply)
     signin/             # login (page); magic-link verify (route.ts) + verify/error (page)
     page.tsx            # auth gate -> ExamApp
+    error.tsx           # app-level error boundary: calm copy, retry(), full reload to /
     layout.tsx          # fonts (Newsreader + Hanken Grotesk via <link>), data-theme
     globals.css         # Tailwind @theme tokens + component layer
     robots.ts           # disallow-all
@@ -230,7 +262,8 @@ src/
     households.ts       # bootstrap, invites, membership, optional FAMILIES import (server-only)
     household-types.ts  # client-safe PendingInvite type
     onboarding.ts       # first-run subjects/PDFs + examify-ingest emit (server-only)
-    onboarding-generate.ts # AI-step generateSubject bridge (preview then commit if !cancelled)
+    onboarding-generate.ts # AI-step generateSubject bridge (preview then commit if !cancelled);
+                        #   maps failures to safe reason codes + one `[onboarding] generate failed` log line
     onboarding-admin.ts # shared household-admin gate for wizard actions + cancel route
     onboarding-types.ts # client-safe wizard snapshot / AI mode types
     repo-root.ts        # shared `findRepoRoot` (env-store, content I/O, ingest keys, db:migrate)
@@ -310,9 +343,14 @@ SAMPLE freeze, provider) so a mid-list failure leaves no BankIR. A
 sourceless sibling blocks `generate content/subjects` and hints to target
 `content/subjects/<id>` or `--subject <id>` (e.g. demo). Persist of a tree is one abort gate then a transactional commit
 (any later write rolls back earlier BankIR / IR cache / manifest / page cache). The `/onboarding` generate path calls that same helper: named
-confirm supplies `force`; decline/cancel keeps prior bytes. `generateSubject` accepts optional `AbortSignal` (forwarded
+confirm supplies `force`; decline/cancel keeps prior bytes; the household
+replace-sample setting is passed as `replaceSample`. `generateSubject` accepts optional `AbortSignal` (forwarded
 to provider HTTP/CMD; abort throws and writes no IR, IR cache, page-raster
-cache, or run manifest). Cloud
+cache, or run manifest). Generate throws typed errors so callers never parse
+messages: `ProviderFailureError` (`kind` `http` / `timeout` / `unreachable` /
+`output` / `command`, plus HTTP `status`), `SampleIdCollisionError` (`ids`),
+`UnreadableSourcesError`. CLI messages are unchanged except the fetch
+deadline, now `provider request timed out after 180000ms`. Cloud
 providers fail closed without an env key (generate also fills unset keys from
 repo `.env` / `.env.local`); `--provider test` is the CI
 fixture. OpenAI-compatible generate fails closed when the only sources are
@@ -499,7 +537,19 @@ chosen, answer }`, free-text `{ type:'free', id, q, response, maxScore, score, s
   **never expire** — only finishing or an explicit discard removes them. Resume is a dashboard
   "Continue where you left off" prompt (`ExamApp` fetches `resumable` server-side via `page.tsx`),
   not an auto-jump; the in-memory live card is keyed to the _active exam's_ subject (`examSubject`),
-  not the navigation `subject`, so browsing other tiles can't mis-label a draft.
+  not the navigation `subject`, so browsing other tiles can't mis-label a draft. A waiting
+  debounced autosave is **sent, not dropped**, when the exam is left: Home, starting/resuming
+  another exam, Finish (queued ahead of `recordAttempt`), and before `setStudentMode(false)`. It
+  is also sent best-effort on `visibilitychange` → hidden and `pagehide`; a Server Action can't
+  use `sendBeacon`, so an unloading page may still drop it. Autosave and discard rejections are
+  swallowed (`unstable_rethrow` still lets Next redirect / not-found through): local state is kept
+  and the next checkpoint re-sends the full snapshot. If `beginExamSession` never succeeded for a
+  combo, the next checkpoint retries `beginExamSession` (upsert) instead of the update-only save;
+  this is safe because Next dispatches Server Actions one at a time and finish/discard end the
+  retrying. `saveExamProgress` itself stays update-only. Exams left for another one this session
+  are kept in memory ("parked"): the dashboard lists the live exam, then parked drafts (newest
+  first), then the page-load `resumable` drafts. An in-memory copy always wins over the page-load
+  snapshot of the same combo, so resume never rolls back answers given this session.
 - **Never trust the client's score.** `scoreAttempt` (`src/lib/exam/score.server.ts`,
   **server-only** — it reads the answer keys) re-derives `correct`/`score_pct` from the submitted
   items. The client submits only `{ type, id, chosen|response }`; the scorer resolves each item by
@@ -588,7 +638,16 @@ These are non-negotiable. Don't "fix" them out.
   counts as not correct and must never promise later marking.
 - **Results are server-driven.** Because the client holds no answer keys, it can't self-score:
   on finish `ExamApp` submits, shows a "Marking…" state, and renders from the returned
-  `AttemptRecord` (or an error/retry screen). Every `ExamApp` instance can submit (the `/` gate
+  `AttemptRecord`. Two failure cases: (1) a submit that never came back (a rejected Server
+  Action: dropped connection, server restart, a redeploy that retired the action id, or a server
+  exception) keeps the answers in memory and shows `exam-error-unreachable`; "Try again"
+  (`exam-retry`) re-sends the identical payload. (2) an `ok:false` result (`invalid` |
+  `forbidden`) is deterministic, so it shows `exam-error-refused` with no retry and drops that
+  exam's local resume card. Next redirect / not-found errors still propagate
+  (`unstable_rethrow`). Known limitation: a retry after a lost response (the server saved the
+  attempt but the reply never arrived) records a duplicate `exam_attempts` row — there is no
+  idempotency key yet. Anything else that throws on the client lands on `src/app/error.tsx`, a
+  calm app-level boundary (retry, or a full reload to `/`). Every `ExamApp` instance can submit (the `/` gate
   only renders it for a student or a parent in student mode), so there is no `canRecord` prop.
 
 ## Environment
@@ -672,8 +731,10 @@ See `.env.example` for the canonical list.
   `setup-db.ts --password` with the known passwords in `tests/e2e/seed.ts`) runs
   `AUTH_MODE=password` — the `install.sh` default — and is the browser coverage for
   the exam flow: password sign-in, a whole exam (MCQ + free-text) → results →
-  progress, resume after reload, the parent dashboard. Keep the `data-testid`s it
-  uses on ExamApp / ProgressView / ParentDashboard. Each spec runs under exactly one
+  progress, resume after reload, the parent dashboard, and a finish whose first submit is
+  dropped (`page.route` abort) → retry screen → Try again → results. Keep the `data-testid`s it
+  uses on ExamApp / ProgressView / ParentDashboard (including `exam-error-unreachable`,
+  `exam-error-refused` and `exam-retry`). Each spec runs under exactly one
   config (`tests/e2e/suites.ts`, guarded by `tests/unit/e2e-suites.test.ts`). The
   Playwright webServer envs set `GRADING_STUB=1` (deterministic grading under
   `next start`) and, for the seeded/fresh suites, `CLIENT_IP_HEADER=x-real-ip` so

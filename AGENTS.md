@@ -33,7 +33,15 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   combo on finish. Same write gate + own-id rule as `recordAttempt`; the row stores only
   public question ids + the user's own answers (**no answer keys**). Helpers:
   `src/lib/exam-session.ts` (server-only). Sessions never expire. Resume rebuilds the
-  exact paper via `resolveExamPaper` (no re-shuffle).
+  exact paper via `resolveExamPaper` (no re-shuffle). A waiting debounced autosave is
+  sent, not dropped, on Home / starting or resuming another exam / Finish (queued ahead of
+  `recordAttempt`) / exit student mode, and best-effort on tab hidden / `pagehide` (a
+  Server Action can't use `sendBeacon`). Autosave / discard rejections never crash the
+  exam: local state is kept and the next checkpoint re-sends the full snapshot. A failed
+  `beginExamSession` is retried (upsert) at the next checkpoint; safe because Next
+  dispatches Server Actions one at a time and finish/discard end the retrying;
+  `saveExamProgress` stays update-only. In-memory drafts (live, then exams "parked" this
+  session, newest first) always beat the page-load `resumable` snapshot of the same combo.
 - **Answer keys + rubrics are server-only.** The public bank (`src/lib/exam/data.ts`)
   carries no answers/rubrics; they live in `src/lib/exam/answer-keys.server.ts`,
   keyed by question `id`, and every key carries a mandatory `provenance { pdf, locator }`.
@@ -69,7 +77,14 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   non-existing for that gate. Corrupt / unparseable / invalid-schema IR
   requires `--force` (error names corruption, not empty).
   Frozen sample-bank ids fail at generate unless `--replace-sample` (**no
-  BankIR written**; do not imply the file already exists). Missing cloud
+  BankIR written**; do not imply the file already exists). The wizard passes
+  the household replace-sample setting and refuses a subject whose id is a
+  sample subject id (`sample_collision`) before calling the provider unless
+  that setting is on. Generate
+  throws typed errors (`ProviderFailureError` `kind` http / timeout /
+  unreachable / output / command + `status`, `SampleIdCollisionError.ids`,
+  `UnreadableSourcesError`); CLI text is unchanged except the fetch deadline
+  (`provider request timed out after 180000ms`). Missing cloud
   keys are refused before overwrite messaging when a real key is required;
   `--provider test` still runs without keys. A sourceless sibling blocks
   `generate content/subjects` (hint: `content/subjects/<id>` or
@@ -100,7 +115,13 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   renders `NEEDS_REVIEW_COPY` (never promise later marking) and logs one `[grading]`
   warning with a reason code only (no answer / question / rubric / key / user id). A free item is "correct" at `PASS_THRESHOLD` (0.6). The UI
   renders only the bounded `Verdict` fields, never the rubric. Results are
-  server-driven (a "Marking…" state covers the submit round-trip). Full design:
+  server-driven (a "Marking…" state covers the submit round-trip). A rejected submit
+  (no answer came back) keeps the answers and offers "Try again", which re-sends the
+  identical payload (`exam-error-unreachable` / `exam-retry`); an `ok:false` paper
+  (`invalid` | `forbidden`) gets a no-retry `exam-error-refused` screen. Next redirect /
+  not-found still propagate (`unstable_rethrow`). Known limitation: a retry after a lost
+  response can record a duplicate `exam_attempts` row (no idempotency key yet).
+  `src/app/error.tsx` is the calm app-level backstop (retry, or full reload to `/`). Full design:
   the "Content + grading invariants" block in `CLAUDE.md` + `docs/content-authoring.md`.
 - Role split at the `/` gate (`src/app/page.tsx`): a `student` gets the exam flow
   plus a "Your progress" screen; a `parent` gets a dashboard with the child's
@@ -139,14 +160,32 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   valid zero-item ≠ existing; corrupt / unparseable / invalid schema is
   existing and needs force; never `existsSync` on the IR path); real
   existing `bank.ir.json` needs a calm confirm — preview names `would overwrite`,
-  decline is skipped/cancelled not invalid, confirm is CLI `--force` for
+  decline is skipped/cancelled, not a failure, confirm is CLI `--force` for
   that subject; generate-all confirms per colliding subject or one named
   batch; persist is shared `writeBankIrAtomic`; cancel
   POSTs `/api/onboarding/cancel-generate` so the token is not queued
   behind generate, then aborts provider HTTP/CMD via AbortSignal and
   discards the preview (no IR write; prior IR unchanged); the wizard
-  waits for an `ok` cancel response before claiming cancelled; cancel after
-  IR commit is `already_committed`; an acknowledged cancel unlocks nav while
+  waits for an `ok` cancel response before claiming cancelled; cancel records
+  the token even after an earlier subject committed, so Generate all still
+  stops (next subject refused as `cancelled` before the provider call,
+  in-flight subject aborted, committed subjects kept and reported: “Kept N
+  subjects already generated”); with nothing in flight and the last generate
+  committed the route answers `already_committed` (409) and a single subject
+  shows “Generate already finished”; Generate busy state is set outside the
+  async transition so Cancel renders; failures return safe reason codes
+  (`provider_auth` / `provider_rate_limited` / `provider_timeout` /
+  `provider_unavailable` / `provider_error` / `provider_output_invalid` /
+  `sources_unreadable` / `sample_collision` / `disk` / `generate_failed`),
+  never raw provider text, and log one
+  `console.warn('[onboarding] generate failed', { reason, subjectId?, status? })`
+  (`subjectId` only when it is a valid kebab id; never message / model text /
+  paths / keys; cancel / skip / overwrite-confirm not logged); uploaded PDF
+  names are sanitised (`sanitizeUploadName`), not refused: path separator /
+  NUL is `invalid_name`, non-`.pdf` / empty / no `%PDF` magic is
+  `invalid_type`, over 8 MiB is `too_large`, a same-name different file gets
+  ` (2)` via exclusive create (never clobbers, never through a symlink), same
+  bytes is a no-op; an acknowledged cancel unlocks nav while
   the provider is still unwinding; cancelled is a
   calm status, not an error toast; delete/rename wait on the generate
   lock and re-check the admin gate after the wait; subject
@@ -159,8 +198,9 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   skip / Back / desktop rail lock while
   generate is in flight so Cancel stays reachable), and emit
   BankIR via `examify-ingest` (directory-only, Review / dry-run HITL before apply,
-  empty catalog fail-closed; `--replace-sample` only behind an explicit advanced
-  toggle). `/onboarding` is one stage at a time: desktop ≥900px uses a left step
+  empty catalog fail-closed; `--replace-sample` only behind an explicit
+  toggle — Review › Advanced, and on AI setup next to Generate when a subject
+  reuses a sample id; the Subjects add form warns). `/onboarding` is one stage at a time: desktop ≥900px uses a left step
   rail + stage + sticky footer; mobile uses compact “Step N of M · Label”
   progress and a sticky bottom bar.
   Apply re-hashes the current plan and refuses if it differs from the confirmed
@@ -253,7 +293,9 @@ Before merge, ensure these pass in CI:
 - New `src/lib/*` helpers: add unit tests.
 - Keep link-crawl and feed/health/OG checks green.
 - Changes to sign-in, ExamApp, ProgressView or ParentDashboard must keep
-  `tests/e2e/password.spec.ts` green; keep its `data-testid` hooks. Each e2e spec
+  `tests/e2e/password.spec.ts` green (it includes a finish whose first submit is
+  dropped → retry → results); keep its `data-testid` hooks, including
+  `exam-error-unreachable` / `exam-error-refused` / `exam-retry`. Each e2e spec
   belongs to exactly one Playwright config (`tests/e2e/suites.ts`).
 
 ## Deployment constraints

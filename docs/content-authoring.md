@@ -38,13 +38,14 @@ existing; corrupt / unparseable / invalid schema needs force; never
 `would overwrite content/subjects/<id>/bank.ir.json`, then the wizard
 asks “Replace existing BankIR for {label}?” before any write (generate-all
 uses a named batch, not an opaque count). Decline keeps the prior file
-(`skipped` or cancelled, not invalid). Confirm writes through shared
+(`skipped` or cancelled, not a failure). Confirm writes through shared
 `writeBankIrAtomic` (CLI `--force` for that subject). Cancel POSTs
 `/api/onboarding/cancel-generate` (a Route Handler, not a queued Server
 Action) so the token can land mid-generate, then aborts provider HTTP/CMD
 via AbortSignal and discards the preview so prior `bank.ir.json` is
 unchanged. The wizard waits for an `ok` cancel response before claiming
-cancelled; cancel after that token already wrote IR is refused. An
+cancelled. During Generate all, cancel stops the later subjects; subjects
+that already wrote BankIR are kept and reported. An
 acknowledged cancel unlocks the wizard even if the provider is still
 unwinding. Delete/rename wait on the generate lock and re-check the admin gate
 after the wait. Generate is limited to subjects in the wizard catalog. Hand-authored IR
@@ -55,8 +56,12 @@ leftover generated JSON is pruned only after a named HITL confirm on Apply
 (cancel keeps those files). Ready lists live bank subject ids/names and
 question counts.
 An empty subjects tree is refused and never wipes generated files. Uploaded
-PDFs must start with `%PDF`. `--replace-sample` is off unless the admin enables
-the advanced toggle.
+PDFs must start with `%PDF`; their names are sanitised to a safe basename
+(commas, apostrophes, accents are fine), and a different file with the same
+name is stored as ` (2)`. `--replace-sample` is off unless the admin enables
+it: the Review › Advanced toggle, or the same toggle on AI setup, shown when a
+subject reuses a sample subject id. Generate uses that setting too; without it
+such a subject is refused before the provider call.
 
 Generate writes IR only. It never silently emits or applies. A real BankIR
 with questions is not overwritten unless you pass `--force` (dry-run says
