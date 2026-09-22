@@ -4,11 +4,20 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AcceptInvitePasswordState } from '@/actions/acceptInviteWithPassword';
+import type { CompletePasswordInviteState } from '@/actions/completePasswordInvite';
 import { InviteAcceptForm } from '@/components/exam/InviteAcceptForm';
+import type { ResolvedMailTransport } from '@/lib/auth-mode';
+import { inviteCodeDestination } from '@/lib/mailbox-copy';
 import { PASSWORD_MISMATCH } from '@/lib/password-policy';
 
 const acceptInviteWithPassword = vi.fn(
   async (_prev: unknown, _formData: FormData): Promise<AcceptInvitePasswordState> => ({
+    status: 'idle',
+  }),
+);
+
+const completePasswordInvite = vi.fn(
+  async (_prev: unknown, _formData: FormData): Promise<CompletePasswordInviteState> => ({
     status: 'idle',
   }),
 );
@@ -19,7 +28,8 @@ vi.mock('@/actions/acceptInviteWithPassword', () => ({
 }));
 
 vi.mock('@/actions/completePasswordInvite', () => ({
-  completePasswordInvite: vi.fn(async () => ({ status: 'idle' })),
+  completePasswordInvite: (prev: unknown, formData: FormData) =>
+    completePasswordInvite(prev, formData),
 }));
 
 vi.mock('next/script', () => ({
@@ -34,16 +44,29 @@ function autofillWithoutEvents(testId: string, value: string) {
   descriptor?.set?.call(input, value);
 }
 
-function renderInvite(mailboxDelivery: 'inbox' | 'outbox' = 'inbox') {
+function renderInvite(codeDelivery: ResolvedMailTransport | null = 'outbox') {
   return render(
     <InviteAcceptForm
       inviteToken="invite-token"
       role="student"
       lockedEmail={null}
       authMode="password"
-      mailboxDelivery={mailboxDelivery}
+      codeDelivery={codeDelivery}
     />,
   );
+}
+
+async function sendCode(codeDelivery: ResolvedMailTransport = 'outbox') {
+  acceptInviteWithPassword.mockImplementation(async () => ({
+    status: 'sent',
+    email: 'alex@example.com',
+  }));
+  renderInvite(codeDelivery);
+  autofillWithoutEvents('invite-email-input', 'alex@example.com');
+  autofillWithoutEvents('invite-password-input', 'student-pass');
+  autofillWithoutEvents('invite-confirm-password-input', 'student-pass');
+  fireEvent.submit(screen.getByTestId('invite-form'));
+  return screen.findByTestId('invite-otp-form');
 }
 
 describe('Password invite form', () => {
@@ -53,6 +76,8 @@ describe('Password invite form', () => {
 
   beforeEach(() => {
     acceptInviteWithPassword.mockClear();
+    completePasswordInvite.mockClear();
+    acceptInviteWithPassword.mockImplementation(async () => ({ status: 'idle' }));
   });
 
   it('keeps send enabled before the password meets the policy', () => {
@@ -94,34 +119,97 @@ describe('Password invite form', () => {
     expect(screen.getByTestId('invite-confirm-error')).toHaveTextContent(PASSWORD_MISMATCH);
   });
 
-  it('tells an outbox host to check the outbox after the code is sent', async () => {
-    acceptInviteWithPassword.mockImplementation(async () => ({
-      status: 'sent',
-      email: 'alex@example.com',
-    }));
-    renderInvite('outbox');
-    autofillWithoutEvents('invite-email-input', 'alex@example.com');
-    autofillWithoutEvents('invite-password-input', 'student-pass');
-    autofillWithoutEvents('invite-confirm-password-input', 'student-pass');
-    fireEvent.submit(screen.getByTestId('invite-form'));
-    expect(await screen.findByTestId('invite-otp-form')).toHaveTextContent(
-      'the mail outbox on this host',
-    );
-    expect(screen.getByTestId('invite-otp-form')).not.toHaveTextContent('your inbox');
-    expect(screen.queryByDisplayValue('student-pass')).toBeNull();
+  it.each(['resend', 'smtp', 'outbox'] as const)(
+    'names the %s transport on the password step and the code step',
+    async (transport) => {
+      const where = inviteCodeDestination(transport);
+      acceptInviteWithPassword.mockImplementation(async () => ({
+        status: 'sent',
+        email: 'alex@example.com',
+      }));
+      renderInvite(transport);
+      expect(screen.getByTestId('invite-form')).toHaveTextContent(where);
+      expect(screen.getByTestId('invite-form')).toHaveTextContent('Next, enter the one-time code');
+      autofillWithoutEvents('invite-email-input', 'alex@example.com');
+      autofillWithoutEvents('invite-password-input', 'student-pass');
+      autofillWithoutEvents('invite-confirm-password-input', 'student-pass');
+      fireEvent.submit(screen.getByTestId('invite-form'));
+
+      const otp = await screen.findByTestId('invite-otp-form');
+      expect(otp).toHaveTextContent(where);
+      expect(screen.getByTestId('invite-otp-handoff')).toHaveTextContent(
+        'The password you chose is waiting on this code',
+      );
+      expect(screen.getByTestId('invite-otp-handoff')).toHaveTextContent('alex@example.com');
+      expect(screen.getByTestId('invite-otp-handoff')).toHaveTextContent(
+        'Enter it to finish joining',
+      );
+      expect(screen.getByRole('heading', { name: 'Enter your confirmation code' })).toBeVisible();
+      expect(screen.getByTestId('invite-otp-resend-hint')).toHaveTextContent('Need a new code?');
+      expect(screen.getByTestId('invite-otp-back')).toHaveTextContent('Back');
+      expect(screen.getByTestId('invite-otp-resend-hint')).toHaveTextContent(
+        'enter your password again',
+      );
+      expect(screen.queryByDisplayValue('student-pass')).toBeNull();
+
+      for (const other of ['resend', 'smtp', 'outbox'] as const) {
+        if (other === transport) continue;
+        expect(otp).not.toHaveTextContent(inviteCodeDestination(other));
+      }
+    },
+  );
+
+  it('going back hedges the pending code and can return to code entry', async () => {
+    await sendCode('smtp');
+    fireEvent.click(screen.getByTestId('invite-otp-back'));
+    const pending = screen.getByTestId('invite-code-pending');
+    expect(pending).toHaveTextContent(inviteCodeDestination('smtp'));
+    expect(pending).toHaveTextContent('Codes expire after 15 minutes');
+    expect(pending).toHaveTextContent('Sending a new code replaces it');
+    expect(pending).not.toHaveTextContent('is already in');
+    expect(screen.queryByTestId('invite-otp-form')).toBeNull();
+    expect(screen.getByTestId('invite-email-input')).toHaveValue('alex@example.com');
+    expect(acceptInviteWithPassword).toHaveBeenCalledOnce();
+
+    fireEvent.click(screen.getByTestId('invite-back-to-code'));
+    expect(await screen.findByTestId('invite-otp-form')).toBeInTheDocument();
+    expect(acceptInviteWithPassword).toHaveBeenCalledOnce();
+    expect(completePasswordInvite).not.toHaveBeenCalled();
   });
 
-  it('tells an inbox host to check the inbox', async () => {
-    acceptInviteWithPassword.mockImplementation(async () => ({
-      status: 'sent',
-      email: 'alex@example.com',
-    }));
-    renderInvite('inbox');
-    autofillWithoutEvents('invite-email-input', 'alex@example.com');
-    autofillWithoutEvents('invite-password-input', 'student-pass');
-    autofillWithoutEvents('invite-confirm-password-input', 'student-pass');
-    fireEvent.submit(screen.getByTestId('invite-form'));
-    expect(await screen.findByTestId('invite-otp-form')).toHaveTextContent('your inbox');
-    expect(screen.getByTestId('invite-otp-form')).not.toHaveTextContent('mail outbox');
+  it('does not name a transport when this host cannot deliver the code', () => {
+    renderInvite(null);
+    const form = screen.getByTestId('invite-form');
+    for (const transport of ['resend', 'smtp', 'outbox'] as const) {
+      expect(form).not.toHaveTextContent(inviteCodeDestination(transport));
+    }
+    expect(screen.getByTestId('invite-mail-unavailable')).toHaveTextContent(
+      'cannot send email yet',
+    );
+    expect(screen.getByTestId('invite-submit')).toBeEnabled();
+  });
+
+  it('cannot finish the join without the mailbox code', async () => {
+    await sendCode('resend');
+    expect(screen.queryByRole('button', { name: /skip/i })).toBeNull();
+    expect(screen.getByTestId('otp-submit')).toBeDisabled();
+    expect(
+      screen.getByTestId('invite-otp-form').querySelector('input[name="password"]'),
+    ).toBeNull();
+
+    fireEvent.submit(screen.getByTestId('invite-otp-form'));
+    fireEvent.change(screen.getByTestId('otp-input'), { target: { value: '12345' } });
+    fireEvent.submit(screen.getByTestId('invite-otp-form'));
+    expect(completePasswordInvite).not.toHaveBeenCalled();
+    expect(screen.getByTestId('otp-submit')).toBeDisabled();
+
+    fireEvent.change(screen.getByTestId('otp-input'), { target: { value: '123456' } });
+    expect(screen.getByTestId('otp-submit')).toBeEnabled();
+    fireEvent.submit(screen.getByTestId('invite-otp-form'));
+    expect(completePasswordInvite).toHaveBeenCalledOnce();
+    const formData = completePasswordInvite.mock.calls[0]?.[1] as FormData;
+    expect(formData.get('code')).toBe('123456');
+    expect(formData.get('password')).toBeNull();
+    expect(formData.get('email')).toBe('alex@example.com');
   });
 });

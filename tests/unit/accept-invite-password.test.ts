@@ -466,6 +466,35 @@ describe('completePasswordInvite', () => {
     expect(tokens.every((row) => row.consumedAt == null)).toBe(true);
   });
 
+  it('does not join when the confirmation code is missing', async () => {
+    const invite = await seedOpenStudentInvite();
+    const { acceptInviteWithPassword } = await import('@/actions/acceptInviteWithPassword');
+    const start = new FormData();
+    start.set('email', 'alex@example.com');
+    start.set('password', 'student-pass');
+    start.set('confirmPassword', 'student-pass');
+    start.set('inviteToken', invite.token);
+    expect(await acceptInviteWithPassword({ status: 'idle' }, start)).toEqual({
+      status: 'sent',
+      email: 'alex@example.com',
+    });
+
+    const { completePasswordInvite } = await import('@/actions/completePasswordInvite');
+    const finish = new FormData();
+    finish.set('email', 'alex@example.com');
+    finish.set('role', 'student');
+    finish.set('password', 'student-pass');
+    expect(await completePasswordInvite({ status: 'idle' }, finish)).toEqual({
+      status: 'error',
+      reason: 'invalid',
+    });
+
+    const { getMembershipForEmail } = await import('@/lib/households');
+    expect(getMembershipForEmail('alex@example.com')).toBeNull();
+    expect(await userByEmail('alex@example.com')).toBeUndefined();
+    expect(sessionHolder.current.save).not.toHaveBeenCalled();
+  });
+
   it('does not stamp emailVerifiedAt or attach membership on a wrong code', async () => {
     const invite = await seedOpenStudentInvite();
     const { acceptInviteWithPassword } = await import('@/actions/acceptInviteWithPassword');

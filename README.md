@@ -201,7 +201,10 @@ Who may sign in is stored in SQLite, not env:
    Revoke unused links; remove a member if they should no longer have access.
    When `AUTH_MODE=password`, that URL is a **secret**: it starts a join
    but does not complete it. The invitee must enter a one-time code sent
-   to their email before membership and `emailVerifiedAt` are set. An
+   to their email before membership and `emailVerifiedAt` are set. The
+   code screen says where to look, matching the transport this host
+   actually uses (Resend, this host's mail server, or the local outbox).
+   Sending a new code goes back to the password step. An
    email lock only chooses which mailbox we send to (not mailbox proof
    by itself). An open student link lets anyone with the URL start a
    join for an email they control. If no mail transport (or allowed
