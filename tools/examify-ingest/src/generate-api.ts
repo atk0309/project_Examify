@@ -7,7 +7,9 @@ export {
   generateTargets,
   NEXT_INGEST_COMMANDS,
   publicSplitHasNoSecrets,
+  SampleIdCollisionError,
   sourcelessGenerateTargetIds,
+  UnreadableSourcesError,
   type GenerateRequest,
   type GenerateSubjectResult,
 } from './generate';
@@ -55,9 +57,11 @@ export {
   GenerateAbortedError,
   PROVIDER_TIMEOUT_MS,
   ProviderConfigError,
+  ProviderFailureError,
   UNTRUSTED_SOURCE_NOTE,
   isAbortError,
   providerRequestSignal,
   throwIfAborted,
   splitCommandLine,
+  type ProviderFailureKind,
 } from './providers';

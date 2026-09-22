@@ -23,6 +23,7 @@ import type { AuthMode } from '@/lib/auth-mode';
 import type { HouseholdMemberView, PendingInvite } from '@/lib/household-types';
 import {
   EMPTY_AUTHORITATIVE_EMIT,
+  ONBOARDING_GENERATE_ALREADY_FINISHED,
   ONBOARDING_GENERATE_SEED_DEFAULT,
   postOnboardingGenerateCancel,
   ONBOARDING_INGEST_CLI,
@@ -31,10 +32,13 @@ import {
   generateIrWriteLabel,
   onboardingGenerateAndEmitCli,
   onboardingGenerateBatchIds,
+  onboardingGenerateCancelledNote,
   onboardingGenerateOverwriteSubjects,
   onboardingIrOverwriteConfirmMessage,
   onboardingPruneConfirmMessage,
   onboardingPruneEntries,
+  onboardingSampleCollisionMessage,
+  onboardingSampleIdSubjects,
   onboardingSourceCountLabel,
   onboardingSourceFileNames,
   onboardingSubjectIrRel,
@@ -117,7 +121,9 @@ function errorCopy(error: OnboardingActionError): string {
     case 'invalid_id':
       return 'Subject id must be kebab-case (a-z, digits, hyphens) and unique.';
     case 'invalid_type':
-      return 'Only PDF files can be uploaded, and they stay under content/source-pdfs/.';
+      return 'That file is not a PDF. Only PDF files can be uploaded.';
+    case 'invalid_name':
+      return 'That file name cannot be used. Rename the file and upload it again.';
     case 'duplicate':
       return 'A subject with that id already exists.';
     case 'missing':
@@ -146,6 +152,24 @@ function errorCopy(error: OnboardingActionError): string {
       return 'Local generate needs EXAMIFY_INGEST_LOCAL_CMD and/or EXAMIFY_LLM_BASE_URL.';
     case 'empty_sources':
       return 'No source files for that subject (source-pdfs/<id>/, <id>.pdf, or files in the subject folder).';
+    case 'sources_unreadable':
+      return 'This provider cannot read PDFs directly. Install pdftoppm (poppler-utils) on the host so PDF pages are sent as images, or add a notes.txt for this subject. Nothing was written.';
+    case 'sample_collision':
+      return onboardingSampleCollisionMessage([]);
+    case 'provider_auth':
+      return 'The AI provider rejected the API key. Check or replace the key in this step, then generate again. Nothing was written.';
+    case 'provider_rate_limited':
+      return 'The AI provider is rate-limiting this key, or the account is out of quota. Wait a few minutes or check the account’s usage and billing, then try again. Nothing was written.';
+    case 'provider_timeout':
+      return 'The AI provider did not answer within 3 minutes. Try again; very large files take longer. Nothing was written.';
+    case 'provider_unavailable':
+      return 'Could not reach the AI provider, or it is busy right now. Check this host’s network and try again in a few minutes. Nothing was written.';
+    case 'provider_error':
+      return 'The AI provider returned an error (for example, no credit left on the account, or a model it does not offer). Check the provider account or local command, then try again. Nothing was written.';
+    case 'provider_output_invalid':
+      return 'The AI replied, but not with questions Examify can use. Try Generate again. Nothing was written.';
+    case 'generate_failed':
+      return 'Generate failed and nothing was written. Try again, or run the generate command under Power-user commands on the host to see the full error.';
     case 'cancelled':
       return 'Generate cancelled.';
     case 'skipped':
@@ -207,9 +231,9 @@ export function OnboardingWizard({
   const [generateSeed, setGenerateSeed] = useState(ONBOARDING_GENERATE_SEED_DEFAULT);
   const [generateBusy, setGenerateBusy] = useState(false);
   const [generateNote, setGenerateNote] = useState<string | null>(null);
-  const [generateNoteKind, setGenerateNoteKind] = useState<'cancelled' | 'skipped' | 'overwrite'>(
-    'cancelled',
-  );
+  const [generateNoteKind, setGenerateNoteKind] = useState<
+    'cancelled' | 'skipped' | 'overwrite' | 'finished'
+  >('cancelled');
   const [generateCancelAck, setGenerateCancelAck] = useState(false);
   const [irReady, setIrReady] = useState(false);
   const [generateRuns, setGenerateRuns] = useState<Record<string, OnboardingGenerateResult>>({});
@@ -217,6 +241,9 @@ export function OnboardingWizard({
   const generateCancelRef = useRef(false);
   const generateCancelTokenRef = useRef<string | null>(null);
   const generateCancellingRef = useRef(false);
+  /** Subjects in the running generate, and how many already wrote BankIR (kept on cancel). */
+  const generateBatchSizeRef = useRef(0);
+  const generateKeptRef = useRef(0);
   const [pending, startTransition] = useTransition();
 
   const stepIndex = STEPS.findIndex((entry) => entry.id === step);
@@ -265,6 +292,16 @@ export function OnboardingWizard({
     setIssues(result.issues ?? []);
     return false;
   };
+
+  const toggleReplaceSample = (enabled: boolean) =>
+    run(async () => {
+      const data = new FormData();
+      data.set('replaceSample', enabled ? '1' : '0');
+      if (applyResult(await setReplaceSampleAction(data))) {
+        setValidated(false);
+        setDryRun(null);
+      }
+    });
 
   const go = (next: StepId) => {
     if (generateBusy) return;
@@ -462,16 +499,24 @@ export function OnboardingWizard({
                     generateCancellingRef.current = true;
                     try {
                       // Await the concurrent route. Do not claim cancelled until it records the token.
-                      const recorded = await postOnboardingGenerateCancel(token);
-                      if (!recorded) {
+                      const outcome = await postOnboardingGenerateCancel(token);
+                      if (outcome === 'failed') {
                         setError('Could not cancel generate.');
                         return;
                       }
+                      // Recorded either way: the server now refuses any later subject
+                      // of this batch, so the loop stops after the current one.
                       generateCancelRef.current = true;
                       if (generateCancelTokenRef.current !== token) return;
                       setError(null);
+                      if (outcome === 'already_committed' && generateBatchSizeRef.current <= 1) {
+                        // Nothing left to stop: this subject already wrote its BankIR.
+                        setGenerateNoteKind('finished');
+                        setGenerateNote(ONBOARDING_GENERATE_ALREADY_FINISHED);
+                        return;
+                      }
                       setGenerateNoteKind('cancelled');
-                      setGenerateNote('Generate cancelled');
+                      setGenerateNote(onboardingGenerateCancelledNote(generateKeptRef.current));
                       setGenerateBusy(false);
                       setGenerateCancelAck(true);
                       setActiveGenerateId(null);
@@ -481,39 +526,52 @@ export function OnboardingWizard({
                   })();
                 }}
                 onGoValidate={() => go('validate')}
-                onGenerate={(subjectIds) =>
-                  run(async () => {
-                    const colliding = onboardingGenerateOverwriteSubjects(
-                      snapshot.subjects,
-                      subjectIds,
+                onToggleReplace={toggleReplaceSample}
+                onGenerate={(subjectIds) => {
+                  if (generateBusy || subjectIds.length === 0) return;
+                  const colliding = onboardingGenerateOverwriteSubjects(
+                    snapshot.subjects,
+                    subjectIds,
+                  );
+                  if (colliding.length > 0) {
+                    setGenerateNoteKind('overwrite');
+                    setGenerateNote(
+                      colliding
+                        .map((subject) =>
+                          generateIrWriteLabel(onboardingSubjectIrRel(subject.id), false, true),
+                        )
+                        .join(' · '),
                     );
-                    if (colliding.length > 0) {
-                      setGenerateNoteKind('overwrite');
-                      setGenerateNote(
-                        colliding
-                          .map((subject) =>
-                            generateIrWriteLabel(onboardingSubjectIrRel(subject.id), false, true),
-                          )
-                          .join(' · '),
-                      );
-                      const decision = confirmOnboardingIrOverwrite(colliding, (message) =>
-                        window.confirm(message),
-                      );
-                      if (decision === 'skip') {
-                        setGenerateNoteKind('skipped');
-                        setGenerateNote('Generate skipped');
-                        return;
-                      }
+                    const decision = confirmOnboardingIrOverwrite(colliding, (message) =>
+                      window.confirm(message),
+                    );
+                    if (decision === 'skip') {
+                      setGenerateNoteKind('skipped');
+                      setGenerateNote('Generate skipped');
+                      return;
                     }
+                  }
 
-                    const token = crypto.randomUUID();
-                    generateCancelTokenRef.current = token;
-                    generateCancelRef.current = false;
-                    setGenerateCancelAck(false);
-                    setGenerateNote(null);
-                    setGenerateBusy(true);
-                    let wroteAny = false;
+                  const token = crypto.randomUUID();
+                  generateCancelTokenRef.current = token;
+                  generateCancelRef.current = false;
+                  generateBatchSizeRef.current = subjectIds.length;
+                  generateKeptRef.current = 0;
+                  // Set outside the transition: React holds updates made inside an
+                  // async transition until the whole run settles, which would keep
+                  // Cancel and the first subject's progress hidden until the end.
+                  setError(null);
+                  setGenerateCancelAck(false);
+                  setGenerateNote(null);
+                  setGenerateBusy(true);
+                  setActiveGenerateId(subjectIds[0] ?? null);
+                  run(async () => {
+                    let kept = 0;
                     let cancelled = false;
+                    let failure: OnboardingActionError | null = null;
+                    // Sample-id subjects are refused before any provider call, so the
+                    // rest of a batch still runs; they are named together at the end.
+                    const sampleCollisions: string[] = [];
                     const recordSuccess = (
                       subjectId: string,
                       result: {
@@ -528,10 +586,14 @@ export function OnboardingWizard({
                       }));
                       setDryRun(null);
                       setValidated(false);
-                      wroteAny = wroteAny || result.result.wroteIr;
+                      if (!result.result.wroteIr) return;
+                      kept += 1;
+                      if (generateCancelTokenRef.current === token) generateKeptRef.current = kept;
                     };
                     try {
                       for (const subjectId of subjectIds) {
+                        // A cancel (or an already-committed ack) stops before the next
+                        // subject; the server refuses this token from now on anyway.
                         if (generateCancelRef.current) {
                           cancelled = true;
                           break;
@@ -542,60 +604,61 @@ export function OnboardingWizard({
                         data.set('seed', String(generateSeed));
                         data.set('cancelToken', token);
                         const subject = snapshot.subjects.find((row) => row.id === subjectId);
+                        const label = subject?.label ?? subjectId;
                         if (subject?.hasIr) data.set('force', '1');
-                        const result = await generateOnboardingSubjectAction(data);
-                        if (!result.ok) {
-                          if (result.reason === 'cancelled' || generateCancelRef.current) {
-                            cancelled = true;
-                            break;
-                          }
-                          if (result.reason === 'skipped') {
+                        let result = await generateOnboardingSubjectAction(data);
+                        if (!result.ok && result.reason === 'needs_confirm') {
+                          const irRel = result.irRel ?? onboardingSubjectIrRel(subjectId);
+                          setGenerateNoteKind('overwrite');
+                          setGenerateNote(generateIrWriteLabel(irRel, false, true));
+                          if (!window.confirm(`Replace existing BankIR for ${label}?`)) {
                             setGenerateNoteKind('skipped');
                             setGenerateNote('Generate skipped');
                             continue;
                           }
-                          if (result.reason === 'needs_confirm') {
-                            const irRel = result.irRel ?? onboardingSubjectIrRel(subjectId);
-                            setGenerateNoteKind('overwrite');
-                            setGenerateNote(generateIrWriteLabel(irRel, false, true));
-                            const label = subject?.label ?? subjectId;
-                            if (!window.confirm(`Replace existing BankIR for ${label}?`)) {
-                              setGenerateNoteKind('skipped');
-                              setGenerateNote('Generate skipped');
-                              continue;
-                            }
-                            data.set('force', '1');
-                            const retried = await generateOnboardingSubjectAction(data);
-                            if (!retried.ok) {
-                              if (retried.reason === 'cancelled' || generateCancelRef.current) {
-                                cancelled = true;
-                                break;
-                              }
-                              applyResult(retried);
-                              return;
-                            }
-                            recordSuccess(subjectId, retried);
-                            if (generateCancelRef.current) {
-                              cancelled = true;
-                              break;
-                            }
-                            continue;
-                          }
-                          applyResult(result);
-                          return;
+                          data.set('force', '1');
+                          result = await generateOnboardingSubjectAction(data);
                         }
-                        recordSuccess(subjectId, result);
-                        if (generateCancelRef.current) {
+                        if (result.ok) {
+                          recordSuccess(subjectId, result);
+                          continue;
+                        }
+                        if (result.reason === 'cancelled' || generateCancelRef.current) {
                           cancelled = true;
                           break;
                         }
+                        if (result.reason === 'skipped') {
+                          setGenerateNoteKind('skipped');
+                          setGenerateNote('Generate skipped');
+                          continue;
+                        }
+                        if (result.reason === 'sample_collision') {
+                          sampleCollisions.push(label);
+                          continue;
+                        }
+                        failure = result;
+                        break;
                       }
                       // Keep IR-ready for subjects that already finished (including generate-all cancel).
-                      if (wroteAny) setIrReady(true);
+                      if (kept > 0) setIrReady(true);
+                      // After an acknowledged cancel a newer run may own the status line.
+                      if (generateCancelTokenRef.current !== token) return;
                       if (cancelled) {
                         setGenerateNoteKind('cancelled');
-                        setGenerateNote('Generate cancelled');
+                        setGenerateNote(onboardingGenerateCancelledNote(kept));
+                      } else if (generateCancelRef.current) {
+                        // Cancel arrived after the last subject had already written IR.
+                        setGenerateNoteKind('finished');
+                        setGenerateNote(ONBOARDING_GENERATE_ALREADY_FINISHED);
                       }
+                      const messages: string[] = [];
+                      if (sampleCollisions.length > 0) {
+                        messages.push(onboardingSampleCollisionMessage(sampleCollisions));
+                      }
+                      if (failure && failure.reason !== 'needs_confirm') {
+                        messages.push(errorCopy(failure));
+                      }
+                      if (messages.length > 0) setError(messages.join(' '));
                     } finally {
                       if (generateCancelTokenRef.current === token) {
                         generateCancelTokenRef.current = null;
@@ -604,8 +667,8 @@ export function OnboardingWizard({
                         setGenerateBusy(false);
                       }
                     }
-                  })
-                }
+                  });
+                }}
               />
             ) : null}
 
@@ -632,16 +695,7 @@ export function OnboardingWizard({
                 snapshot={snapshot}
                 pending={holdWizard}
                 dryRun={dryRun}
-                onToggleReplace={(enabled) =>
-                  run(async () => {
-                    const data = new FormData();
-                    data.set('replaceSample', enabled ? '1' : '0');
-                    if (applyResult(await setReplaceSampleAction(data))) {
-                      setValidated(false);
-                      setDryRun(null);
-                    }
-                  })
-                }
+                onToggleReplace={toggleReplaceSample}
                 onPreview={() =>
                   run(async () => {
                     const result = await previewOnboardingEmitAction();
@@ -710,7 +764,9 @@ export function OnboardingWizard({
                     ? 'wizard-generate-skipped'
                     : generateNoteKind === 'overwrite'
                       ? 'wizard-generate-overwrite'
-                      : 'wizard-generate-cancelled'
+                      : generateNoteKind === 'finished'
+                        ? 'wizard-generate-finished'
+                        : 'wizard-generate-cancelled'
                 }
               >
                 {generateNote}
@@ -934,6 +990,9 @@ function SubjectsStep({
   const [editId, setEditId] = useState('');
   const [editIcon, setEditIcon] = useState<SubjectIconOption>('maths');
   const canAdd = id.trim().length > 0 && label.trim().length > 0;
+  const sampleMatch = snapshot.sampleSubjects.find(
+    (sample) => sample.id === id.trim().toLowerCase(),
+  );
 
   return (
     <div className="wizard-panel" data-testid="wizard-subjects">
@@ -1099,6 +1158,13 @@ function SubjectsStep({
                 <p className="login-fine" data-testid="wizard-subject-id-hint">
                   Could not suggest an id from that label. Type a kebab-case id (a-z, digits,
                   hyphens).
+                </p>
+              ) : null}
+              {sampleMatch ? (
+                <p className="login-fine" data-testid="wizard-subject-id-sample-hint">
+                  “{sampleMatch.id}” is the id of the sample {sampleMatch.label} subject. Generated
+                  questions for it would replace the sample ones, so generate asks you to allow that
+                  first. Use another id (for example {sampleMatch.id}-2) to keep both.
                 </p>
               ) : null}
             </div>
@@ -1522,6 +1588,7 @@ function AiStep({
   onGenerate,
   onCancel,
   onGoValidate,
+  onToggleReplace,
 }: {
   snapshot: OnboardingSnapshot;
   pending: boolean;
@@ -1537,6 +1604,7 @@ function AiStep({
   onGenerate: (subjectIds: string[]) => void;
   onCancel: () => void;
   onGoValidate: () => void;
+  onToggleReplace: (enabled: boolean) => void;
 }) {
   const provider = snapshot.aiMode ? providerForOnboardingAiMode(snapshot.aiMode) : null;
   const busy = pending || generateBusy;
@@ -1647,6 +1715,7 @@ function AiStep({
             onGenerate={onGenerate}
             onCancel={onCancel}
             onGoValidate={onGoValidate}
+            onToggleReplace={onToggleReplace}
           />
         </div>
       ) : (
@@ -1671,6 +1740,7 @@ function GeneratePanel({
   onGenerate,
   onCancel,
   onGoValidate,
+  onToggleReplace,
 }: {
   snapshot: OnboardingSnapshot;
   provider: NonNullable<ReturnType<typeof providerForOnboardingAiMode>>;
@@ -1684,15 +1754,33 @@ function GeneratePanel({
   onGenerate: (subjectIds: string[]) => void;
   onCancel: () => void;
   onGoValidate: () => void;
+  onToggleReplace: (enabled: boolean) => void;
 }) {
   const batchIds = onboardingGenerateBatchIds(snapshot.subjects);
   const batchOverwrites = onboardingGenerateOverwriteSubjects(snapshot.subjects, batchIds);
+  const sampleIdSubjects = onboardingSampleIdSubjects(snapshot.subjects, snapshot.sampleSubjects);
+  const sampleIdNames = sampleIdSubjects.map((subject) => `${subject.label} (${subject.id})`);
   return (
     <div className="wizard-generate-panel">
       <PowerUserCommands
         testId="wizard-cli-generate"
         commands={onboardingGenerateAndEmitCli(provider, generateSeed)}
       />
+      {sampleIdSubjects.length > 0 ? (
+        <div className="wizard-callout wizard-sample-ids" data-testid="wizard-generate-sample-ids">
+          <p>
+            {snapshot.replaceSample
+              ? `Replacing sample-bank questions is on: questions generated for ${sampleIdNames.join(', ')} replace the matching sample questions when you apply.`
+              : `${sampleIdNames.join(', ')} ${sampleIdSubjects.length === 1 ? 'uses the same id as a sample-bank subject' : 'use the same ids as sample-bank subjects'}, so generate refuses ${sampleIdSubjects.length === 1 ? 'it' : 'them'}: the questions would replace sample questions. Allow that here, or rename the subject in Subjects to keep both.`}
+          </p>
+          <ReplaceSampleCheckbox
+            enabled={snapshot.replaceSample}
+            pending={busy}
+            onToggle={onToggleReplace}
+            testId="wizard-generate-replace-sample"
+          />
+        </div>
+      ) : null}
       <details className="wizard-details">
         <summary>Advanced</summary>
         <label className="wizard-advanced">
@@ -1870,6 +1958,32 @@ function PowerUserCommands({ commands, testId }: { commands: readonly string[]; 
   );
 }
 
+/** One household setting, shown on AI setup (sample-id subjects) and under Review › Advanced. */
+function ReplaceSampleCheckbox({
+  enabled,
+  pending,
+  onToggle,
+  testId,
+}: {
+  enabled: boolean;
+  pending: boolean;
+  onToggle: (enabled: boolean) => void;
+  testId: string;
+}) {
+  return (
+    <label className="wizard-advanced">
+      <input
+        type="checkbox"
+        checked={enabled}
+        disabled={pending}
+        data-testid={testId}
+        onChange={(event) => onToggle(event.target.checked)}
+      />
+      Allow --replace-sample (overwrite colliding sample-bank ids)
+    </label>
+  );
+}
+
 function ReplaceSampleToggle({
   enabled,
   pending,
@@ -1882,16 +1996,12 @@ function ReplaceSampleToggle({
   return (
     <details className="wizard-details">
       <summary>Advanced</summary>
-      <label className="wizard-advanced">
-        <input
-          type="checkbox"
-          checked={enabled}
-          disabled={pending}
-          data-testid="wizard-replace-sample"
-          onChange={(event) => onToggle(event.target.checked)}
-        />
-        Allow --replace-sample (overwrite colliding sample-bank ids)
-      </label>
+      <ReplaceSampleCheckbox
+        enabled={enabled}
+        pending={pending}
+        onToggle={onToggle}
+        testId="wizard-replace-sample"
+      />
     </details>
   );
 }

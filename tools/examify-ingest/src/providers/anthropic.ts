@@ -1,7 +1,9 @@
-import { extractJsonObject } from '../json';
-import { bankIrSchema, type BankIR } from '../schema';
+import type { BankIR } from '../schema';
 import { fenceUntrustedText, untrustedCaption, userGenerateMessage } from './content';
 import {
+  ProviderFailureError,
+  parseProviderBankIr,
+  providerHttpError,
   readRequiredKey,
   withProviderSignal,
   type GenerateProvider,
@@ -93,15 +95,15 @@ async function callAnthropic(request: ProviderRequest, deps: ProviderDeps): Prom
     }),
   );
   if (!res.ok) {
-    throw new Error(`Anthropic returned HTTP ${res.status}`);
+    throw providerHttpError('Anthropic', res.status);
   }
   const payload = (await res.json()) as { content?: { type?: string; text?: string }[] };
   const text = (payload.content ?? [])
     .filter((block) => block.type === 'text' && typeof block.text === 'string')
     .map((block) => block.text)
     .join('\n');
-  if (!text.trim()) throw new Error('Anthropic returned no text content');
-  return bankIrSchema.parse(extractJsonObject(text));
+  if (!text.trim()) throw new ProviderFailureError('output', 'Anthropic returned no text content');
+  return parseProviderBankIr(text);
 }
 
 export const anthropicProvider: GenerateProvider = {

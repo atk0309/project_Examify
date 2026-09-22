@@ -1,7 +1,9 @@
-import { extractJsonObject } from '../json';
-import { bankIrSchema, type BankIR } from '../schema';
+import type { BankIR } from '../schema';
 import { buildOpenAiCompatibleUserContent } from './content';
 import {
+  ProviderFailureError,
+  parseProviderBankIr,
+  providerHttpError,
   readRequiredKey,
   withProviderSignal,
   type GenerateProvider,
@@ -36,12 +38,12 @@ async function callOpenAi(request: ProviderRequest, deps: ProviderDeps): Promise
     }),
   );
   if (!res.ok) {
-    throw new Error(`OpenAI returned HTTP ${res.status}`);
+    throw providerHttpError('OpenAI', res.status);
   }
   const payload = (await res.json()) as { choices?: { message?: { content?: string } }[] };
   const text = payload.choices?.[0]?.message?.content;
-  if (!text) throw new Error('OpenAI returned no message content');
-  return bankIrSchema.parse(extractJsonObject(text));
+  if (!text) throw new ProviderFailureError('output', 'OpenAI returned no message content');
+  return parseProviderBankIr(text);
 }
 
 export const openaiProvider: GenerateProvider = {

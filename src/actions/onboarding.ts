@@ -57,6 +57,7 @@ export type OnboardingActionError = {
     | 'invalid'
     | 'invalid_id'
     | 'invalid_type'
+    | 'invalid_name'
     | 'duplicate'
     | 'missing'
     | 'too_large'
@@ -71,6 +72,15 @@ export type OnboardingActionError = {
     | 'missing_key'
     | 'missing_local'
     | 'empty_sources'
+    | 'sources_unreadable'
+    | 'sample_collision'
+    | 'provider_auth'
+    | 'provider_rate_limited'
+    | 'provider_timeout'
+    | 'provider_unavailable'
+    | 'provider_error'
+    | 'provider_output_invalid'
+    | 'generate_failed'
     | 'cancelled'
     | 'skipped'
     | 'needs_confirm'
@@ -222,9 +232,12 @@ export async function generateOnboardingSubjectAction(
     cancelToken,
     force,
     overwrite,
+    // Same household choice validate / preview / apply use (CLI --replace-sample).
+    replaceSample: state.replaceSample === true,
   });
   if (!generated.ok) {
-    // Safe codes only — never forward raw provider / path / env messages.
+    // Safe codes only — never forward raw provider / path / env messages
+    // (the lib already logged the reason code server-side).
     // needs_confirm may include the public irRel so the wizard can name
     // the overwrite (same shape as CLI dry-run) before the user confirms.
     if (generated.reason === 'needs_confirm') {

@@ -232,8 +232,14 @@ test('first-run bootstrap creates the admin without Turnstile', async ({ page })
   if ((await page.getByTestId('wizard-add-subject').count()) === 0) {
     await page.getByRole('button', { name: 'Add a subject' }).click();
   }
+  await page.getByTestId('wizard-subject-label').fill('Maths');
+  await expect(page.getByTestId('wizard-subject-id')).toHaveValue('maths');
+  await expect(page.getByTestId('wizard-subject-id-sample-hint')).toContainText(
+    'sample Maths subject',
+  );
   await page.getByTestId('wizard-subject-label').fill('History');
   await expect(page.getByTestId('wizard-subject-id')).toHaveValue('history');
+  await expect(page.getByTestId('wizard-subject-id-sample-hint')).toHaveCount(0);
   await page.getByTestId('wizard-add-subject-submit').click();
   await expect(page.getByTestId('wizard-subjects')).toContainText('History');
   await expect(page.getByTestId('wizard-subjects')).toContainText('history');
