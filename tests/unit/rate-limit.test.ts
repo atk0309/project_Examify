@@ -74,4 +74,34 @@ describe('checkRateLimit', () => {
     expect(checkRateLimit('203.0.113.11', 'signin', now + 3).ok).toBe(true);
     expect(countRateLimit('203.0.113.10', 'signin', now + 3)).toBe(3);
   });
+
+  it('purges every row older than the retention window, not only the caller ip', async () => {
+    const { checkRateLimit, RATE_LIMIT_RETENTION_MS } = await import('@/lib/rate-limit');
+    const { db, schema } = await import('@/lib/db');
+    const now = 1_000_000_000_000;
+    const stale = new Date(now - RATE_LIMIT_RETENTION_MS - 1);
+    const fresh = new Date(now - RATE_LIMIT_RETENTION_MS + 60_000);
+    // Buckets nobody checks again: one-off spoofed addresses and the
+    // per-account / guess buckets that never go through checkRateLimit.
+    db.insert(schema.rateLimitEvents)
+      .values([
+        { ip: '192.0.2.1', kind: 'signin', createdAt: stale },
+        { ip: '192.0.2.2', kind: 'invite', createdAt: stale },
+        { ip: 'pw:pat@example.com', kind: 'signin', createdAt: stale },
+        { ip: 'otp:pat@example.com:parent', kind: 'signin', createdAt: stale },
+        { ip: '192.0.2.3', kind: 'signin', createdAt: fresh },
+        { ip: 'reset:pat@example.com:parent', kind: 'signin', createdAt: fresh },
+      ])
+      .run();
+
+    expect(checkRateLimit('203.0.113.99', 'signin', now).ok).toBe(true);
+
+    const left = db
+      .select({ ip: schema.rateLimitEvents.ip })
+      .from(schema.rateLimitEvents)
+      .all()
+      .map((r) => r.ip)
+      .sort();
+    expect(left).toEqual(['192.0.2.3', '203.0.113.99', 'reset:pat@example.com:parent']);
+  });
 });
