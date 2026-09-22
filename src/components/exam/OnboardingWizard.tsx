@@ -117,7 +117,9 @@ function errorCopy(error: OnboardingActionError): string {
     case 'invalid_id':
       return 'Subject id must be kebab-case (a-z, digits, hyphens) and unique.';
     case 'invalid_type':
-      return 'Only PDF files can be uploaded, and they stay under content/source-pdfs/.';
+      return 'That file is not a PDF. Only PDF files can be uploaded.';
+    case 'invalid_name':
+      return 'That file name cannot be used. Rename the file and upload it again.';
     case 'duplicate':
       return 'A subject with that id already exists.';
     case 'missing':

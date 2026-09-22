@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
@@ -646,6 +654,105 @@ describe('onboarding subjects and files', () => {
     if (preview.ok) throw new Error('expected refuse');
     expect(preview.reason).toBe('empty_catalog');
     expect(preview.message).toMatch(/will not wipe generated content/);
+  });
+});
+
+describe('onboarding upload filenames (C13)', () => {
+  const PDF = Buffer.from('%PDF-1.4 fixture');
+
+  async function uploadRoot() {
+    const mod = await import('@/lib/onboarding');
+    const root = tempRoot();
+    mod.setOnboardingContentRootForTests(root);
+    expect(
+      mod.addOnboardingSubject({ id: 'history', label: 'History', icon: 'geography' }, root).ok,
+    ).toBe(true);
+    return { ...mod, root, dir: path.join(root, 'content/source-pdfs/history') };
+  }
+
+  it('stores ordinary school filenames under a safe name instead of refusing them', async () => {
+    const { attachSourcePdf, isSafeUploadName, listOnboardingSubjects, root, dir } =
+      await uploadRoot();
+    const cases: [string, string][] = [
+      ['Chemistry, Unit 2.pdf', 'Chemistry Unit 2.pdf'],
+      ["Mum's notes.pdf", 'Mums notes.pdf'],
+      ['Maths & Stats.pdf', 'Maths and Stats.pdf'],
+      ['Year 9 – Biology.pdf', 'Year 9 - Biology.pdf'],
+      ['Physique_été.pdf', 'Physique_ete.pdf'],
+      ['Paper1+MS.pdf', 'Paper1-MS.pdf'],
+      ['Revision #3.pdf', 'Revision 3.pdf'],
+      ['worksheet 3 ans!.pdf', 'worksheet 3 ans.pdf'],
+      ['notes..pdf', 'notes.pdf'],
+      ['.hidden.pdf', 'hidden.pdf'],
+      ['Биология.pdf', 'upload.pdf'],
+      ['Unit 1 - Cells.pdf', 'Unit 1 - Cells.pdf'],
+      ['IMG_1234.PDF', 'IMG_1234.pdf'],
+    ];
+    cases.forEach(([uploaded, stored], index) => {
+      const bytes = Buffer.from(`%PDF-1.4 case ${index}`);
+      expect(attachSourcePdf({ subjectId: 'history', filename: uploaded, bytes }, root)).toEqual({
+        ok: true,
+        filename: stored,
+      });
+      expect(isSafeUploadName(stored)).toBe(true);
+      expect(readFileSync(path.join(dir, stored))).toEqual(bytes);
+    });
+    expect(readdirSync(dir).sort()).toEqual(cases.map(([, stored]) => stored).sort());
+    expect(listOnboardingSubjects(root)[0]?.sourceFiles).toEqual(
+      cases.map(([, stored]) => stored).sort(),
+    );
+  });
+
+  it('never clobbers a different file with the same stored name', async () => {
+    const { attachSourcePdf, root, dir } = await uploadRoot();
+    const first = Buffer.from('%PDF-1.4 first');
+    const second = Buffer.from('%PDF-1.4 second');
+    expect(
+      attachSourcePdf({ subjectId: 'history', filename: 'Unit 2.pdf', bytes: first }, root),
+    ).toEqual({ ok: true, filename: 'Unit 2.pdf' });
+    expect(
+      attachSourcePdf({ subjectId: 'history', filename: 'Unit, 2.pdf', bytes: second }, root),
+    ).toEqual({ ok: true, filename: 'Unit 2 (2).pdf' });
+    // Dropping the same file again is a no-op, not a third copy.
+    expect(
+      attachSourcePdf({ subjectId: 'history', filename: 'Unit 2.pdf', bytes: first }, root),
+    ).toEqual({ ok: true, filename: 'Unit 2.pdf' });
+    expect(readdirSync(dir).sort()).toEqual(['Unit 2 (2).pdf', 'Unit 2.pdf']);
+    expect(readFileSync(path.join(dir, 'Unit 2.pdf'))).toEqual(first);
+    expect(readFileSync(path.join(dir, 'Unit 2 (2).pdf'))).toEqual(second);
+  });
+
+  it('does not write through a symlink that already has the stored name', async () => {
+    const { attachSourcePdf, root, dir } = await uploadRoot();
+    mkdirSync(dir, { recursive: true });
+    const outside = path.join(root, 'outside.txt');
+    writeFileSync(outside, 'keep me');
+    symlinkSync(outside, path.join(dir, 'notes.pdf'));
+    expect(
+      attachSourcePdf({ subjectId: 'history', filename: 'notes.pdf', bytes: PDF }, root),
+    ).toEqual({ ok: true, filename: 'notes (2).pdf' });
+    expect(readFileSync(outside, 'utf8')).toBe('keep me');
+  });
+
+  it('gives non-PDF, oversized and unusable names their own reasons', async () => {
+    const { attachSourcePdf, root, dir } = await uploadRoot();
+    const attach = (filename: string, bytes = PDF) =>
+      attachSourcePdf({ subjectId: 'history', filename, bytes }, root);
+    expect(attach('notes.docx')).toEqual({ ok: false, reason: 'invalid_type' });
+    expect(attach('fake.pdf', Buffer.from('not a pdf'))).toEqual({
+      ok: false,
+      reason: 'invalid_type',
+    });
+    expect(attach('empty.pdf', Buffer.alloc(0))).toEqual({ ok: false, reason: 'invalid_type' });
+    expect(attach('huge.pdf', Buffer.alloc(8 * 1024 * 1024 + 1))).toEqual({
+      ok: false,
+      reason: 'too_large',
+    });
+    for (const name of ['../escape.pdf', 'a/b.pdf', 'a\\b.pdf', 'nul\0.pdf', '   ']) {
+      expect(attach(name)).toEqual({ ok: false, reason: 'invalid_name' });
+    }
+    expect(existsSync(dir) ? readdirSync(dir) : []).toEqual([]);
+    expect(existsSync(path.join(root, 'content/source-pdfs/escape.pdf'))).toBe(false);
   });
 });
 

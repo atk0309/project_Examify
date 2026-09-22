@@ -1745,3 +1745,33 @@ describe('onboarding actions', () => {
     }
   });
 });
+
+describe('onboarding upload filenames', () => {
+  it('uploads a PDF with an ordinary school filename and refuses non-PDF / unusable names', async () => {
+    const root = tempRoot();
+    const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
+    setOnboardingContentRootForTests(root);
+    await signInHost();
+    fs.mkdirSync(path.join(root, 'content/subjects/chemistry'), { recursive: true });
+    const { attachOnboardingPdfAction } = await import('@/actions/onboarding');
+    const upload = (name: string, body = '%PDF-1.4 unit') => {
+      const data = new FormData();
+      data.set('subjectId', 'chemistry');
+      data.set('file', new File([body], name, { type: 'application/pdf' }));
+      return attachOnboardingPdfAction(data);
+    };
+
+    const ok = await upload('Chemistry, Unit 2.pdf');
+    expect(ok.ok).toBe(true);
+    if (!ok.ok) throw new Error('expected upload');
+    expect(ok.snapshot.subjects.find((row) => row.id === 'chemistry')?.sourceFiles).toEqual([
+      'Chemistry Unit 2.pdf',
+    ]);
+    expect(await upload('notes.docx')).toEqual({ ok: false, reason: 'invalid_type' });
+    expect(await upload('fake.pdf', 'not a pdf')).toEqual({ ok: false, reason: 'invalid_type' });
+    expect(await upload('..\\escape.pdf')).toEqual({ ok: false, reason: 'invalid_name' });
+    expect(fs.readdirSync(path.join(root, 'content/source-pdfs/chemistry'))).toEqual([
+      'Chemistry Unit 2.pdf',
+    ]);
+  });
+});

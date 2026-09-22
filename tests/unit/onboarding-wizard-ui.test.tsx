@@ -12,21 +12,24 @@ const previewOnboardingEmitAction = vi.fn();
 const validateOnboardingAction = vi.fn();
 const setOnboardingAiModeAction = vi.fn();
 const setOnboardingAnthropicKeyAction = vi.fn();
+const generateOnboardingSubjectAction = vi.fn();
+const setReplaceSampleAction = vi.fn();
+const attachOnboardingPdfAction = vi.fn();
 
 vi.mock('@/actions/onboarding', () => ({
   addOnboardingSubjectAction: vi.fn(),
   applyOnboardingEmitAction: (...args: unknown[]) => applyOnboardingEmitAction(...args),
-  attachOnboardingPdfAction: vi.fn(),
+  attachOnboardingPdfAction: (...args: unknown[]) => attachOnboardingPdfAction(...args),
   deleteOnboardingSubjectAction: vi.fn(),
   detachOnboardingPdfAction: vi.fn(),
   finishOnboardingAction: vi.fn(),
-  generateOnboardingSubjectAction: vi.fn(),
+  generateOnboardingSubjectAction: (...args: unknown[]) => generateOnboardingSubjectAction(...args),
   previewOnboardingEmitAction: (...args: unknown[]) => previewOnboardingEmitAction(...args),
   renameOnboardingSubjectAction: vi.fn(),
   setOnboardingAiModeAction: (...args: unknown[]) => setOnboardingAiModeAction(...args),
   setOnboardingAnthropicKeyAction: (...args: unknown[]) => setOnboardingAnthropicKeyAction(...args),
   setOnboardingOpenAiKeyAction: vi.fn(),
-  setReplaceSampleAction: vi.fn(),
+  setReplaceSampleAction: (...args: unknown[]) => setReplaceSampleAction(...args),
   skipOnboardingAction: vi.fn(),
   validateOnboardingAction: (...args: unknown[]) => validateOnboardingAction(...args),
 }));
@@ -97,6 +100,7 @@ function snapshot(overrides: Partial<OnboardingSnapshot> = {}): OnboardingSnapsh
 describe('OnboardingWizard majors UI', () => {
   afterEach(() => {
     cleanup();
+    vi.unstubAllGlobals();
   });
 
   beforeEach(() => {
@@ -105,6 +109,9 @@ describe('OnboardingWizard majors UI', () => {
     validateOnboardingAction.mockReset();
     setOnboardingAiModeAction.mockReset();
     setOnboardingAnthropicKeyAction.mockReset();
+    generateOnboardingSubjectAction.mockReset();
+    setReplaceSampleAction.mockReset();
+    attachOnboardingPdfAction.mockReset();
     window.confirm = vi.fn(() => true);
   });
 
@@ -734,5 +741,39 @@ describe('OnboardingWizard majors UI', () => {
     fireEvent.click(screen.getByTestId('wizard-to-ready'));
     expect(screen.queryByTestId('wizard-generate-skipped')).toBeNull();
     expect(screen.getByTestId('wizard-ready-subjects')).toBeVisible();
+  });
+});
+
+describe('OnboardingWizard upload copy', () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  beforeEach(() => {
+    attachOnboardingPdfAction.mockReset();
+  });
+
+  it('names the upload problem instead of “Only PDF files” for a bad name', async () => {
+    attachOnboardingPdfAction.mockResolvedValue({ ok: false, reason: 'invalid_name' });
+    render(
+      <OnboardingWizard
+        snapshot={snapshot()}
+        pendingInvites={[]}
+        members={[]}
+        canInvite={false}
+        authMode="magic-link"
+      />,
+    );
+    fireEvent.click(screen.getByTestId('wizard-get-started'));
+    fireEvent.click(screen.getByTestId('wizard-next'));
+    fireEvent.change(screen.getByTestId('wizard-file-demo'), {
+      target: { files: [new File(['%PDF-1.4'], 'Unit 2.pdf', { type: 'application/pdf' })] },
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId('wizard-error')).toHaveTextContent(
+        'That file name cannot be used. Rename the file and upload it again.',
+      ),
+    );
+    expect(screen.getByTestId('wizard-error')).not.toHaveTextContent('Only PDF files');
   });
 });

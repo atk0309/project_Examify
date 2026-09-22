@@ -3,6 +3,7 @@ import 'server-only';
 import crypto from 'node:crypto';
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
@@ -177,6 +178,52 @@ export function isSafeUploadName(name: string): boolean {
     !base.includes('..') &&
     /^[A-Za-z0-9._()[\] -]+$/.test(base)
   );
+}
+
+const UPLOAD_STEM_MAX = 100;
+const UPLOAD_NAME_ATTEMPTS = 100;
+
+export type UploadNameResult =
+  { ok: true; filename: string } | { ok: false; reason: 'invalid_type' | 'invalid_name' };
+
+/**
+ * Map a browser filename to a safe stored `.pdf` basename instead of
+ * rejecting ordinary school names ("Chemistry, Unit 2.pdf", "Mum's notes.pdf",
+ * "Physique_été.pdf"). Accents are folded, quotes and other punctuation are
+ * dropped, dashes / `+` become `-`, `&` becomes `and`. Anything with a path
+ * separator or NUL is refused (`invalid_name`), never guessed at. The result
+ * always passes {@link isSafeUploadName}; an empty stem becomes `upload.pdf`.
+ */
+export function sanitizeUploadName(raw: string): UploadNameResult {
+  const name = raw.trim();
+  if (!name || /[/\\\0]/.test(name)) return { ok: false, reason: 'invalid_name' };
+  if (!name.toLowerCase().endsWith('.pdf')) return { ok: false, reason: 'invalid_type' };
+  const stem = name
+    .slice(0, -'.pdf'.length)
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/['‘’`"“”]/g, '')
+    .replace(/&/g, ' and ')
+    .replace(/[\u2010-\u2015\u2212+]/g, '-')
+    .replace(/[^A-Za-z0-9._()[\] -]+/g, '')
+    .replace(/\.{2,}/g, '.')
+    .replace(/\s+/g, ' ')
+    .slice(0, UPLOAD_STEM_MAX)
+    .replace(/^[\s._-]+|[\s.]+$/g, '');
+  return { ok: true, filename: `${stem || 'upload'}.pdf` };
+}
+
+function uploadNameCandidate(filename: string, attempt: number): string {
+  if (attempt === 1) return filename;
+  return `${filename.slice(0, -'.pdf'.length)} (${attempt}).pdf`;
+}
+
+function sameFileBytes(absPath: string, bytes: Buffer): boolean {
+  try {
+    return lstatSync(absPath).isFile() && readFileSync(absPath).equals(bytes);
+  } catch {
+    return false;
+  }
 }
 
 /** PDF files start with the `%PDF` magic. Extension alone is not enough. */
@@ -635,8 +682,17 @@ export function deleteOnboardingSubject(
 
 export type AttachPdfResult =
   | { ok: true; filename: string }
-  | { ok: false; reason: 'invalid_id' | 'invalid_type' | 'too_large' | 'disk' | 'missing' };
+  | {
+      ok: false;
+      reason: 'invalid_id' | 'invalid_type' | 'invalid_name' | 'too_large' | 'disk' | 'missing';
+    };
 
+/**
+ * Store an uploaded PDF under `content/source-pdfs/<id>/` with a sanitized
+ * basename ({@link sanitizeUploadName}). `%PDF` magic and the 8 MiB cap still
+ * apply. A different file with the same stored name gets ` (2)`, ` (3)`, …
+ * (exclusive create, so nothing is clobbered); the same bytes again is a no-op.
+ */
 export function attachSourcePdf(
   input: { subjectId: string; filename: string; bytes: Buffer },
   root = getOnboardingContentRoot(),
@@ -644,23 +700,30 @@ export function attachSourcePdf(
   const subjectId = normalizeSubjectId(input.subjectId);
   if (!isValidSubjectId(subjectId)) return { ok: false, reason: 'invalid_id' };
   if (!existsSync(path.join(subjectsDir(root), subjectId))) return { ok: false, reason: 'missing' };
-  if (!isSafeUploadName(input.filename) || !input.filename.toLowerCase().endsWith('.pdf')) {
-    return { ok: false, reason: 'invalid_type' };
-  }
-  if (input.bytes.byteLength === 0 || input.bytes.byteLength > MAX_SOURCE_PDF_BYTES) {
-    return { ok: false, reason: 'too_large' };
-  }
+  const name = sanitizeUploadName(input.filename);
+  if (!name.ok) return name;
+  if (input.bytes.byteLength > MAX_SOURCE_PDF_BYTES) return { ok: false, reason: 'too_large' };
   if (!hasPdfMagic(input.bytes)) return { ok: false, reason: 'invalid_type' };
 
-  const dest = path.join(sourcePdfsDir(root), subjectId, input.filename);
+  const dir = path.join(sourcePdfsDir(root), subjectId);
   try {
-    mkdirSync(path.dirname(dest), { recursive: true });
-    writeFileSync(dest, input.bytes);
+    mkdirSync(dir, { recursive: true });
+    for (let attempt = 1; attempt <= UPLOAD_NAME_ATTEMPTS; attempt += 1) {
+      const filename = uploadNameCandidate(name.filename, attempt);
+      const dest = path.join(dir, filename);
+      try {
+        writeFileSync(dest, input.bytes, { flag: 'wx' });
+        return { ok: true, filename };
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+        if (sameFileBytes(dest, input.bytes)) return { ok: true, filename };
+      }
+    }
   } catch (error) {
     if (isDiskError(error)) return { ok: false, reason: 'disk' };
     throw error;
   }
-  return { ok: true, filename: input.filename };
+  return { ok: false, reason: 'invalid_name' };
 }
 
 export type DetachPdfResult = { ok: true } | { ok: false; reason: 'invalid_id' | 'missing' };

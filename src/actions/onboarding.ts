@@ -57,6 +57,7 @@ export type OnboardingActionError = {
     | 'invalid'
     | 'invalid_id'
     | 'invalid_type'
+    | 'invalid_name'
     | 'duplicate'
     | 'missing'
     | 'too_large'
