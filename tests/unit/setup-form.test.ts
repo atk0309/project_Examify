@@ -127,6 +127,21 @@ describe('readSetupFields / validateSetupFields', () => {
         'password',
       ),
     ).toEqual({ confirmPassword: SETUP_FIELD_ERROR.passwordMismatch });
+    expect(
+      validateSetupFields(fields({ password: 'admin-password', confirmPassword: '' }), 'password'),
+    ).toEqual({ confirmPassword: SETUP_FIELD_ERROR.passwordMismatch });
+    expect(
+      validateSetupFields(
+        fields({ password: 'admin-password', confirmPassword: 'other-password' }),
+        'magic-link',
+      ),
+    ).toEqual({});
+    expect(
+      validateSetupFields(
+        fields({ password: 'admin-password', confirmPassword: 'other-password' }),
+        'local-otp',
+      ),
+    ).toEqual({});
   });
 
   it('maps server forbidden/invalid onto the fields the operator can fix', () => {
@@ -210,6 +225,29 @@ describe('readSetupFields / validateSetupFields', () => {
     });
     expect(isDefaultOnlySetupSnapshot(firstPaint)).toBe(true);
     expect(captureSilentSetupSnapshot(firstPaint, null)).toBeNull();
+    expect(
+      isDefaultOnlySetupSnapshot(
+        fields({
+          householdName: SETUP_DEFAULT_HOUSEHOLD_NAME,
+          setupSecret: '',
+          email: '',
+          password: '',
+          confirmPassword: 'admin-password',
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      captureSilentSetupSnapshot(
+        fields({
+          householdName: SETUP_DEFAULT_HOUSEHOLD_NAME,
+          setupSecret: '',
+          email: '',
+          password: '',
+          confirmPassword: 'admin-password',
+        }),
+        null,
+      )?.confirmPassword,
+    ).toBe('admin-password');
 
     const autofilled = fields({
       householdName: 'Autofill family',
@@ -249,6 +287,34 @@ describe('readSetupFields / validateSetupFields', () => {
     });
     expect(
       captureSilentSetupSnapshot(fields({ ...snapshot, password: '' }), snapshot)?.password,
+    ).toBe('admin-password');
+  });
+
+  it('does not resurrect a cleared confirmation from an older snapshot', () => {
+    const snapshot = fields({
+      householdName: 'Autofill family',
+      setupSecret: 'instance-secret',
+      email: 'autofill@example.com',
+      password: 'admin-password',
+      confirmPassword: 'admin-password',
+    });
+    const afterConfirmClear = fields({
+      householdName: SETUP_DEFAULT_HOUSEHOLD_NAME,
+      setupSecret: '',
+      email: '',
+      password: 'admin-password',
+      confirmPassword: '',
+    });
+    expect(recoverSetupFieldsAfterRemount(afterConfirmClear, snapshot)).toEqual({
+      householdName: 'Autofill family',
+      setupSecret: 'instance-secret',
+      email: 'autofill@example.com',
+      password: 'admin-password',
+      confirmPassword: '',
+    });
+    expect(
+      captureSilentSetupSnapshot(fields({ ...snapshot, confirmPassword: '' }), snapshot)
+        ?.confirmPassword,
     ).toBe('admin-password');
   });
 });

@@ -121,8 +121,8 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   (autofill-safe), keeps inputs uncontrolled, and re-reads / restores a
   FormData snapshot if a Turnstile remount wipes values. First-paint
   default household name does not seed that snapshot; silent autofill is
-  captured so a remount can restore it. A user-cleared password is never
-  resurrected from an old snapshot. It never silently
+  captured so a remount can restore it. A user-cleared password or
+  confirmation is never resurrected from an old snapshot. It never silently
   disables Create household. Password mode confirms the admin password;
   a mismatch is refused before scrypt, which still waits for Turnstile,
   the sign-in rate limit, and `SETUP_BOOTSTRAP_SECRET`. Field-level / `aria-invalid` errors drop on the

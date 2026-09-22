@@ -105,18 +105,37 @@ describe('bootstrapHouseholdAction', () => {
 
   it('requires a password when AUTH_MODE is password', async () => {
     const { env } = await import('@/lib/env');
+    const password = await import('@/lib/password');
+    const hashSpy = vi.spyOn(password, 'hashPassword');
+    hashSpy.mockClear();
     (env as { AUTH_MODE: typeof env.AUTH_MODE }).AUTH_MODE = 'password';
-    const { bootstrapHouseholdAction } = await import('@/actions/bootstrapHousehold');
-    const missing = await bootstrapHouseholdAction({ status: 'idle' }, setupForm());
-    expect(missing).toEqual({ status: 'error', reason: 'invalid' });
+    try {
+      const { bootstrapHouseholdAction } = await import('@/actions/bootstrapHousehold');
+      const missing = await bootstrapHouseholdAction({ status: 'idle' }, setupForm());
+      expect(missing).toEqual({ status: 'error', reason: 'invalid' });
+      expect(hashSpy).not.toHaveBeenCalled();
 
-    const data = setupForm();
-    data.set('password', 'admin-password');
-    data.set('confirmPassword', 'admin-password');
-    await expect(bootstrapHouseholdAction({ status: 'idle' }, data)).rejects.toMatchObject({
-      url: '/onboarding',
-    });
-    (env as { AUTH_MODE: typeof env.AUTH_MODE }).AUTH_MODE = 'magic-link';
+      const data = setupForm();
+      data.set('password', 'admin-password');
+      data.set('confirmPassword', 'admin-password');
+      await expect(bootstrapHouseholdAction({ status: 'idle' }, data)).rejects.toMatchObject({
+        url: '/onboarding',
+      });
+      expect(hashSpy).toHaveBeenCalledOnce();
+      expect(hashSpy).toHaveBeenCalledWith('admin-password');
+      const { db, schema } = await import('@/lib/db');
+      const { eq } = await import('drizzle-orm');
+      const user = db
+        .select()
+        .from(schema.users)
+        .where(eq(schema.users.email, 'host@example.com'))
+        .get();
+      expect(user?.passwordHash).toBeTruthy();
+      expect(password.verifyPassword('admin-password', user!.passwordHash!)).toBe(true);
+    } finally {
+      hashSpy.mockRestore();
+      (env as { AUTH_MODE: typeof env.AUTH_MODE }).AUTH_MODE = 'magic-link';
+    }
   });
 
   it('rejects a second setup', async () => {
@@ -132,27 +151,144 @@ describe('bootstrapHouseholdAction', () => {
 
   it('refuses a password mismatch after the setup secret, without hashing', async () => {
     const { env } = await import('@/lib/env');
+    const password = await import('@/lib/password');
+    const hashSpy = vi.spyOn(password, 'hashPassword');
+    hashSpy.mockClear();
     (env as { AUTH_MODE: typeof env.AUTH_MODE }).AUTH_MODE = 'password';
-    const { bootstrapHouseholdAction } = await import('@/actions/bootstrapHousehold');
-    const { hasAnyHousehold } = await import('@/lib/households');
-    const data = setupForm();
-    data.set('password', 'admin-password');
-    data.set('confirmPassword', 'different-password');
-    expect(await bootstrapHouseholdAction({ status: 'idle' }, data)).toEqual({
-      status: 'error',
-      reason: 'password_mismatch',
-    });
-    expect(hasAnyHousehold()).toBe(false);
+    try {
+      const { bootstrapHouseholdAction } = await import('@/actions/bootstrapHousehold');
+      const { hasAnyHousehold } = await import('@/lib/households');
+      const { db, schema } = await import('@/lib/db');
+      const data = setupForm();
+      data.set('password', 'admin-password');
+      data.set('confirmPassword', 'different-password');
+      expect(await bootstrapHouseholdAction({ status: 'idle' }, data)).toEqual({
+        status: 'error',
+        reason: 'password_mismatch',
+      });
+      expect(hasAnyHousehold()).toBe(false);
+      expect(hashSpy).not.toHaveBeenCalled();
+      expect(db.select().from(schema.rateLimitEvents).all().length).toBeGreaterThan(0);
 
-    const wrongSecret = setupForm({ setupSecret: 'definitely-not-the-setup-secret' });
-    wrongSecret.set('password', 'admin-password');
-    wrongSecret.set('confirmPassword', 'different-password');
-    expect(await bootstrapHouseholdAction({ status: 'idle' }, wrongSecret)).toEqual({
-      status: 'error',
-      reason: 'forbidden',
-    });
-    (env as { AUTH_MODE: typeof env.AUTH_MODE }).AUTH_MODE = 'magic-link';
+      const omitted = setupForm();
+      omitted.set('password', 'admin-password');
+      expect(await bootstrapHouseholdAction({ status: 'idle' }, omitted)).toEqual({
+        status: 'error',
+        reason: 'password_mismatch',
+      });
+      expect(hashSpy).not.toHaveBeenCalled();
+
+      const wrongSecret = setupForm({ setupSecret: 'definitely-not-the-setup-secret' });
+      wrongSecret.set('password', 'admin-password');
+      wrongSecret.set('confirmPassword', 'different-password');
+      expect(await bootstrapHouseholdAction({ status: 'idle' }, wrongSecret)).toEqual({
+        status: 'error',
+        reason: 'forbidden',
+      });
+      expect(hashSpy).not.toHaveBeenCalled();
+      expect(hasAnyHousehold()).toBe(false);
+    } finally {
+      hashSpy.mockRestore();
+      (env as { AUTH_MODE: typeof env.AUTH_MODE }).AUTH_MODE = 'magic-link';
+    }
   });
+
+  it('does not hash when captcha or the sign-in rate limit fails closed', async () => {
+    const { env } = await import('@/lib/env');
+    const password = await import('@/lib/password');
+    const hashSpy = vi.spyOn(password, 'hashPassword');
+    hashSpy.mockClear();
+    const originalMax = env.RATE_LIMIT_SIGNIN_MAX;
+    (env as { AUTH_MODE: typeof env.AUTH_MODE }).AUTH_MODE = 'password';
+    (env as { RATE_LIMIT_SIGNIN_MAX: number }).RATE_LIMIT_SIGNIN_MAX = 1;
+    try {
+      const { bootstrapHouseholdAction } = await import('@/actions/bootstrapHousehold');
+      const { hasAnyHousehold } = await import('@/lib/households');
+      const mismatch = setupForm();
+      mismatch.set('password', 'admin-password');
+      mismatch.set('confirmPassword', 'different-password');
+      expect(await bootstrapHouseholdAction({ status: 'idle' }, mismatch)).toEqual({
+        status: 'error',
+        reason: 'password_mismatch',
+      });
+      expect(hashSpy).not.toHaveBeenCalled();
+
+      const limited = setupForm();
+      limited.set('password', 'admin-password');
+      limited.set('confirmPassword', 'admin-password');
+      expect(await bootstrapHouseholdAction({ status: 'idle' }, limited)).toEqual({
+        status: 'error',
+        reason: 'rate_limited',
+      });
+      expect(hashSpy).not.toHaveBeenCalled();
+      expect(hasAnyHousehold()).toBe(false);
+
+      (env as { TURNSTILE_ENABLED: boolean }).TURNSTILE_ENABLED = true;
+      (env as { TURNSTILE_SECRET_KEY?: string }).TURNSTILE_SECRET_KEY =
+        '2x0000000000000000000000000000000AA';
+      (env as { NEXT_PUBLIC_TURNSTILE_SITE_KEY?: string }).NEXT_PUBLIC_TURNSTILE_SITE_KEY =
+        '2x00000000000000000000AB';
+      const missingToken = setupForm();
+      missingToken.set('password', 'admin-password');
+      missingToken.set('confirmPassword', 'admin-password');
+      expect(await bootstrapHouseholdAction({ status: 'idle' }, missingToken)).toEqual({
+        status: 'error',
+        reason: 'invalid',
+      });
+      expect(hashSpy).not.toHaveBeenCalled();
+
+      const captcha = setupForm();
+      captcha.set('password', 'admin-password');
+      captcha.set('confirmPassword', 'admin-password');
+      captcha.set('cf-turnstile-response', 'not-a-pass');
+      expect(await bootstrapHouseholdAction({ status: 'idle' }, captcha)).toEqual({
+        status: 'error',
+        reason: 'captcha',
+      });
+      expect(hashSpy).not.toHaveBeenCalled();
+      expect(hasAnyHousehold()).toBe(false);
+    } finally {
+      hashSpy.mockRestore();
+      (env as { AUTH_MODE: typeof env.AUTH_MODE }).AUTH_MODE = 'magic-link';
+      (env as { RATE_LIMIT_SIGNIN_MAX: number }).RATE_LIMIT_SIGNIN_MAX = originalMax;
+      (env as { TURNSTILE_ENABLED?: boolean }).TURNSTILE_ENABLED = undefined;
+      (env as { TURNSTILE_SECRET_KEY?: string }).TURNSTILE_SECRET_KEY = undefined;
+      (env as { NEXT_PUBLIC_TURNSTILE_SITE_KEY?: string }).NEXT_PUBLIC_TURNSTILE_SITE_KEY =
+        undefined;
+    }
+  });
+
+  it.each(['magic-link', 'local-otp'] as const)(
+    'does not require confirmPassword when AUTH_MODE is %s',
+    async (mode) => {
+      const { env } = await import('@/lib/env');
+      const password = await import('@/lib/password');
+      const hashSpy = vi.spyOn(password, 'hashPassword');
+      hashSpy.mockClear();
+      (env as { AUTH_MODE: typeof env.AUTH_MODE }).AUTH_MODE = mode;
+      try {
+        const { bootstrapHouseholdAction } = await import('@/actions/bootstrapHousehold');
+        const { db, schema } = await import('@/lib/db');
+        const { eq } = await import('drizzle-orm');
+        const data = setupForm();
+        data.set('password', 'admin-password');
+        data.set('confirmPassword', 'different-password');
+        await expect(bootstrapHouseholdAction({ status: 'idle' }, data)).rejects.toMatchObject({
+          url: '/onboarding',
+        });
+        expect(hashSpy).not.toHaveBeenCalled();
+        const user = db
+          .select()
+          .from(schema.users)
+          .where(eq(schema.users.email, 'host@example.com'))
+          .get();
+        expect(user?.passwordHash ?? null).toBeNull();
+      } finally {
+        hashSpy.mockRestore();
+        (env as { AUTH_MODE: typeof env.AUTH_MODE }).AUTH_MODE = 'magic-link';
+      }
+    },
+  );
 });
 
 describe('createInvite + requestInviteLink', () => {
