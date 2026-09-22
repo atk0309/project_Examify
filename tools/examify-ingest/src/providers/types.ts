@@ -1,5 +1,6 @@
+import { extractJsonObject } from '../json';
 import type { PageImage } from '../pages';
-import type { BankIR, BankIrSubject, GenerateProviderId } from '../schema';
+import { bankIrSchema, type BankIR, type BankIrSubject, type GenerateProviderId } from '../schema';
 import type { ResolvedSource } from '../sources';
 
 export class ProviderConfigError extends Error {
@@ -8,6 +9,46 @@ export class ProviderConfigError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'ProviderConfigError';
+  }
+}
+
+/**
+ * How a configured provider failed. `http`: a non-2xx answer (`status` set).
+ * `timeout`: the 180s deadline. `unreachable`: no answer at all (network, or a
+ * local command that could not start). `output`: an answer that is not usable
+ * BankIR. `command`: a local command that exited non-zero.
+ */
+export type ProviderFailureKind = 'http' | 'timeout' | 'unreachable' | 'output' | 'command';
+
+/** Typed provider failure so callers can react without parsing messages. CLI text is unchanged. */
+export class ProviderFailureError extends Error {
+  readonly code = 'PROVIDER_FAILURE';
+  readonly kind: ProviderFailureKind;
+  readonly status: number | undefined;
+
+  constructor(
+    kind: ProviderFailureKind,
+    message: string,
+    options: { status?: number; cause?: unknown } = {},
+  ) {
+    super(message, options.cause === undefined ? undefined : { cause: options.cause });
+    this.name = 'ProviderFailureError';
+    this.kind = kind;
+    this.status = options.status;
+  }
+}
+
+export function providerHttpError(label: string, status: number): ProviderFailureError {
+  return new ProviderFailureError('http', `${label} returned HTTP ${status}`, { status });
+}
+
+/** Model text → BankIR. Anything unusable is an `output` failure (same message as before). */
+export function parseProviderBankIr(text: string): BankIR {
+  try {
+    return bankIrSchema.parse(extractJsonObject(text));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new ProviderFailureError('output', message, { cause: error });
   }
 }
 
@@ -57,6 +98,15 @@ export function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) throw new GenerateAbortedError();
 }
 
+function isTimeoutError(error: unknown): boolean {
+  return error instanceof Error && error.name === 'TimeoutError';
+}
+
+/**
+ * Run the provider request (`work` is the HTTP call itself). A caller cancel
+ * is `GenerateAbortedError`; the 180s deadline is a `timeout` failure; any
+ * other throw means no HTTP answer arrived (`unreachable`).
+ */
 export async function withProviderSignal<T>(
   userSignal: AbortSignal | undefined,
   work: (signal: AbortSignal) => Promise<T>,
@@ -67,7 +117,15 @@ export async function withProviderSignal<T>(
     return await work(signal);
   } catch (error) {
     throwIfAborted(userSignal);
-    throw error;
+    if (signal.aborted || isTimeoutError(error)) {
+      throw new ProviderFailureError(
+        'timeout',
+        `provider request timed out after ${PROVIDER_TIMEOUT_MS}ms`,
+        { cause: error },
+      );
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    throw new ProviderFailureError('unreachable', message, { cause: error });
   }
 }
 

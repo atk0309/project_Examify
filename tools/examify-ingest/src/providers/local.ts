@@ -1,12 +1,14 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { extractJsonObject } from '../json';
-import { bankIrSchema, type BankIR } from '../schema';
+import type { BankIR } from '../schema';
 import { UNTRUSTED_SOURCE_NOTE, buildOpenAiCompatibleUserContent } from './content';
 import {
   GenerateAbortedError,
   PROVIDER_TIMEOUT_MS,
   ProviderConfigError,
+  ProviderFailureError,
   isAbortError,
+  parseProviderBankIr,
+  providerHttpError,
   providerRequestSignal,
   throwIfAborted,
   withProviderSignal,
@@ -92,12 +94,12 @@ async function generateViaHttp(
     }),
   );
   if (!res.ok) {
-    throw new Error(`local endpoint returned HTTP ${res.status}`);
+    throw providerHttpError('local endpoint', res.status);
   }
   const payload = (await res.json()) as { choices?: { message?: { content?: string } }[] };
   const text = payload.choices?.[0]?.message?.content;
-  if (!text) throw new Error('local endpoint returned no message content');
-  return bankIrSchema.parse(extractJsonObject(text));
+  if (!text) throw new ProviderFailureError('output', 'local endpoint returned no message content');
+  return parseProviderBankIr(text);
 }
 
 const LOCAL_CMD_MAX_BUFFER = 10 * 1024 * 1024;
@@ -105,7 +107,10 @@ const LOCAL_CMD_KILL_GRACE_MS = 250;
 
 function cmdAbortError(userSignal?: AbortSignal): Error {
   if (userSignal?.aborted) return new GenerateAbortedError();
-  return new Error(`local command timed out after ${PROVIDER_TIMEOUT_MS}ms`);
+  return new ProviderFailureError(
+    'timeout',
+    `local command timed out after ${PROVIDER_TIMEOUT_MS}ms`,
+  );
 }
 
 /** Kill the spawned command and, on POSIX, its process group (descendants). */
@@ -200,7 +205,7 @@ function generateViaCmd(
         return;
       }
       try {
-        resolve(bankIrSchema.parse(extractJsonObject(text ?? '')));
+        resolve(parseProviderBankIr(text ?? ''));
       } catch (parseError) {
         reject(parseError instanceof Error ? parseError : new Error(String(parseError)));
       }
@@ -225,7 +230,7 @@ function generateViaCmd(
         return;
       }
       const message = error instanceof Error ? error.message : String(error);
-      finish(new Error(`local command failed to start: ${message}`));
+      finish(new ProviderFailureError('unreachable', `local command failed to start: ${message}`));
       return;
     }
 
@@ -240,7 +245,7 @@ function generateViaCmd(
       stdout += chunk;
       if (Buffer.byteLength(stdout, 'utf8') > LOCAL_CMD_MAX_BUFFER) {
         abortChild();
-        finish(new Error('local command exceeded maxBuffer'));
+        finish(new ProviderFailureError('output', 'local command exceeded maxBuffer'));
       }
     });
     child.stdin?.on('error', () => {
@@ -251,7 +256,9 @@ function generateViaCmd(
         finish(cmdAbortError(userSignal));
         return;
       }
-      finish(new Error(`local command failed to start: ${error.message}`));
+      finish(
+        new ProviderFailureError('unreachable', `local command failed to start: ${error.message}`),
+      );
     });
     child.on('close', (status) => {
       if (requestSignal.aborted) {
@@ -259,7 +266,7 @@ function generateViaCmd(
         return;
       }
       if (status !== 0) {
-        finish(new Error(`local command exited ${status ?? 'null'}`));
+        finish(new ProviderFailureError('command', `local command exited ${status ?? 'null'}`));
         return;
       }
       finish(null, stdout);
