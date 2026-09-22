@@ -352,6 +352,27 @@ describe('install.sh', () => {
     }
   });
 
+  it('an interactive rerun that keeps .env does not warn about the unused SITE_URL', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-install-'));
+    try {
+      fs.writeFileSync(
+        path.join(dir, '.env'),
+        'SITE_URL=https://exam.example.com\nAUTH_MODE=magic-link\n',
+        { mode: 0o600 },
+      );
+      const result = interactiveWriteEnvOnly(dir);
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain('Keeping existing .env');
+      expect(result.stderr).not.toContain('SITE_URL uses');
+      expect(result.stderr).not.toContain('SITE_URL is plain http');
+      expect(fs.readFileSync(path.join(dir, '.env'), 'utf8')).toContain(
+        'SITE_URL=https://exam.example.com',
+      );
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('a non-interactive --write-env-only run stays quiet (no banner)', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-install-'));
     try {

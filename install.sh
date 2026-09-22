@@ -580,10 +580,6 @@ if [ "$NONINTERACTIVE" != "1" ] && [ -z "${SITE_URL}" ]; then
   echo "or http://192.168.1.20:3000. localhost only works on this machine."
 fi
 prompt SITE_URL "Public site URL" "http://localhost:3000"
-# A kept .env (non-interactive never overwrites) ignores this run's SITE_URL.
-if [ "$NONINTERACTIVE" != "1" ] || [ ! -f .env ]; then
-  site_url_note "$SITE_URL"
-fi
 GENERATED_AUTH_SECRET=0
 GENERATED_SETUP_SECRET=0
 if [ -z "${AUTH_SECRET}" ]; then
@@ -710,6 +706,11 @@ else
   write_env .env
   WROTE_ENV=1
   echo "Wrote .env"
+fi
+# Only when this run's SITE_URL was written: a kept .env (declined overwrite,
+# or non-interactive) keeps its own URL, so a note about ours would mislead.
+if [ "$WROTE_ENV" = "1" ]; then
+  site_url_note "$SITE_URL"
 fi
 
 if [ "$WROTE_ENV" = "1" ] && [ "$NONINTERACTIVE" != "1" ]; then
