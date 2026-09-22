@@ -183,6 +183,7 @@ export function SetupForm({ siteKey, authMode }: { siteKey?: string; authMode: A
     <form
       ref={formRef}
       className="screen login login-setup"
+      method="post"
       noValidate
       data-testid="setup-form"
       onSubmit={(event) => {

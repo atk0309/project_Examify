@@ -189,6 +189,7 @@ function PasswordLoginForm({
   return (
     <form
       className="screen login"
+      method="post"
       noValidate
       data-testid="signin-form"
       onSubmit={(event) => {
@@ -347,6 +348,7 @@ function PasswordResetFlow({
   return (
     <form
       className="screen login"
+      method="post"
       noValidate
       data-testid="reset-request-form"
       onSubmit={(event) => {
@@ -478,6 +480,7 @@ function PasswordResetCodeForm({
   return (
     <form
       className="screen login"
+      method="post"
       noValidate
       data-testid="reset-code-form"
       onSubmit={(event) => {

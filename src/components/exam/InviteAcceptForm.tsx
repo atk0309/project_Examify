@@ -182,6 +182,7 @@ function PasswordInviteForm({
   return (
     <form
       className="screen login"
+      method="post"
       noValidate
       data-testid="invite-form"
       onSubmit={(event) => {

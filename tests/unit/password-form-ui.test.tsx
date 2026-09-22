@@ -260,3 +260,31 @@ describe('Password invite step autofill', () => {
     expect(acceptInviteWithPassword).not.toHaveBeenCalled();
   });
 });
+
+// Before hydration a form without `method` submits as a native GET, which
+// would put the password (or email) in the URL, browser history and proxy
+// logs. POST keeps credentials in the request body.
+describe('credential forms never fall back to GET', () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  it('password sign-in and forgot-password request post natively', () => {
+    render(<LoginForm authMode="password" />);
+    expect(screen.getByTestId('signin-form')).toHaveAttribute('method', 'post');
+    fireEvent.click(screen.getByTestId('forgot-password'));
+    expect(screen.getByTestId('reset-request-form')).toHaveAttribute('method', 'post');
+  });
+
+  it('the password invite step posts natively', () => {
+    render(
+      <InviteAcceptForm
+        inviteToken="invite-token"
+        role="student"
+        lockedEmail={null}
+        authMode="password"
+      />,
+    );
+    expect(screen.getByTestId('invite-form')).toHaveAttribute('method', 'post');
+  });
+});

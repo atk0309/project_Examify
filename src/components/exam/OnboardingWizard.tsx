@@ -1394,6 +1394,7 @@ function EnvKeyPanel({
       {locked ? null : showField ? (
         <form
           className="wizard-secret-form"
+          method="post"
           onSubmit={(event) => {
             event.preventDefault();
             void (async () => {
