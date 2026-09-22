@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   isOtpShapedBearer,
+  isResetShapedBearer,
   isPasswordAuth,
   parseAuthMode,
   parseMailTransport,
@@ -34,6 +35,8 @@ describe('auth-mode helpers', () => {
     expect(isOtpShapedBearer('  otp:x')).toBe(true);
     expect(isOtpShapedBearer('good-magic-token')).toBe(false);
     expect(isOtpShapedBearer('')).toBe(false);
+    expect(isResetShapedBearer('reset:ada@example.com:parent:000000')).toBe(true);
+    expect(isResetShapedBearer('otp:ada@example.com:parent:000000')).toBe(false);
   });
 
   it('parses mail transports', () => {

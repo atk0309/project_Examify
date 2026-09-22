@@ -10,6 +10,8 @@
  * - `password` — email + password; sign-in needs no mail. Invite accept
  *   still sends a mailbox OTP (SMTP / Resend / allowed outbox) and fails
  *   closed if none can deliver. `install.sh` configures that path.
+ *   Forgot-password uses that same mailbox OTP and does not change
+ *   `password_hash` until the code is consumed.
  * - `magic-link` — one-time URL via Resend, SMTP, or the local outbox
  * - `local-otp` — one-time 6-digit code written to the outbox (and emailed
  *   when a transport is configured). Production requires ALLOW_LOCAL_OUTBOX.
@@ -61,4 +63,13 @@ export function usesMagicLink(mode: AuthMode): boolean {
  */
 export function isOtpShapedBearer(token: string): boolean {
   return token.trim().startsWith('otp:');
+}
+
+/**
+ * Password-reset codes are stored hashed as `reset:{email}:{role}:{code}`.
+ * `/signin/verify` must never accept these — they only set a password inside
+ * `consumePasswordReset` after the mailbox code matches.
+ */
+export function isResetShapedBearer(token: string): boolean {
+  return token.trim().startsWith('reset:');
 }

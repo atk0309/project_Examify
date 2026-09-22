@@ -2,6 +2,7 @@
 
 import Script from 'next/script';
 import {
+  startTransition,
   useActionState,
   useEffect,
   useLayoutEffect,
@@ -11,7 +12,7 @@ import {
 } from 'react';
 import { bootstrapHouseholdAction, type BootstrapState } from '@/actions/bootstrapHousehold';
 import type { AuthMode } from '@/lib/auth-mode';
-import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from '@/lib/password-policy';
+import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, PASSWORD_MISMATCH } from '@/lib/password-policy';
 import {
   captureSilentSetupSnapshot,
   hasSetupFieldErrors,
@@ -37,6 +38,7 @@ const errorCopy: Record<Exclude<BootstrapState, { status: 'idle' }>['reason'], s
   captcha: 'Verification failed. Please try again.',
   rate_limited: 'Too many attempts from your network. Try again later.',
   forbidden: 'That setup code is not valid.',
+  password_mismatch: PASSWORD_MISMATCH,
 };
 
 const AUTH_MODE_COPY: Record<AuthMode, string> = {
@@ -159,22 +161,34 @@ export function SetupForm({ siteKey, authMode }: { siteKey?: string; authMode: A
     setLocalErrors(nextErrors);
     if (hasSetupFieldErrors(nextErrors)) return;
     dispatchIdRef.current += 1;
-    formAction(formData);
+    startTransition(() => {
+      formAction(formData);
+    });
   }
 
   const emailInvalid = Boolean(fieldErrors.email);
   const nameInvalid = Boolean(fieldErrors.householdName);
   const secretInvalid = Boolean(fieldErrors.setupSecret);
   const passwordInvalid = Boolean(fieldErrors.password);
+  const confirmInvalid = Boolean(fieldErrors.confirmPassword);
+  const passwordDescribedBy = ['setup-password-hint', passwordInvalid ? 'setup-password-error' : '']
+    .filter(Boolean)
+    .join(' ');
+  const confirmDescribedBy = ['setup-confirm-hint', confirmInvalid ? 'setup-confirm-error' : '']
+    .filter(Boolean)
+    .join(' ');
   const showFormBanner = state.status === 'error' && !isFieldMappedBootstrapReason(state.reason);
 
   return (
     <form
       ref={formRef}
       className="screen login login-setup"
-      action={submit}
       noValidate
       data-testid="setup-form"
+      onSubmit={(event) => {
+        event.preventDefault();
+        submit(new FormData(event.currentTarget));
+      }}
     >
       <div hidden={!siteKey} aria-hidden={!siteKey || undefined}>
         {siteKey ? (
@@ -283,13 +297,40 @@ export function SetupForm({ siteKey, authMode }: { siteKey?: string; authMode: A
             onInput={onFieldInput}
             onChange={onFieldInput}
             aria-invalid={passwordInvalid || undefined}
-            aria-describedby={passwordInvalid ? 'setup-password-error' : undefined}
+            aria-describedby={passwordDescribedBy}
             data-testid="setup-password-input"
           />
-          <p className="role-hint">
+          <p className="role-hint" id="setup-password-hint">
             At least {PASSWORD_MIN_LENGTH} characters (max {PASSWORD_MAX_LENGTH}).
           </p>
           <FieldError id="setup-password-error" message={fieldErrors.password} />
+        </div>
+      ) : null}
+
+      {authMode === 'password' ? (
+        <div className="field">
+          <label className="field-label" htmlFor="setup-confirm-password">
+            Confirm admin password
+          </label>
+          <input
+            id="setup-confirm-password"
+            name="confirmPassword"
+            className="text-input"
+            type="password"
+            autoComplete="new-password"
+            required
+            minLength={PASSWORD_MIN_LENGTH}
+            maxLength={PASSWORD_MAX_LENGTH}
+            onInput={onFieldInput}
+            onChange={onFieldInput}
+            aria-invalid={confirmInvalid || undefined}
+            aria-describedby={confirmDescribedBy}
+            data-testid="setup-confirm-password-input"
+          />
+          <p className="role-hint" id="setup-confirm-hint">
+            Type the same password again.
+          </p>
+          <FieldError id="setup-confirm-error" message={fieldErrors.confirmPassword} />
         </div>
       ) : null}
 

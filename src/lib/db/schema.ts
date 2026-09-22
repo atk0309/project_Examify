@@ -47,6 +47,13 @@ export const magicTokens = sqliteTable(
     // Set when the link was issued from an invite accept. Consuming the
     // magic token then attaches household membership in the same transaction.
     inviteId: integer('invite_id').references(() => householdInvites.id),
+    /**
+     * scrypt hash chosen during password-invite accept, bound to this OTP row.
+     * Applied to `users.password_hash` only when this invite-bound token is
+     * consumed. Cleared when the row is consumed or invalidated. A client
+     * resubmit cannot replace it. Never present on sign-in or reset tokens.
+     */
+    pendingPasswordHash: text('pending_password_hash'),
     createdAt: integer('created_at', { mode: 'timestamp_ms' })
       .notNull()
       .default(sql`(unixepoch() * 1000)`),

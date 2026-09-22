@@ -117,7 +117,7 @@ export function HouseholdInvites({
       </p>
       <p className="subtitle">
         {authMode === 'password'
-          ? 'Treat the invite link as a secret and do not post it publicly. The invitee must enter a one-time code sent to their email before they join. An email lock only chooses which mailbox we send to (required for parents). An open student link lets anyone with the URL start a join for an email they control.'
+          ? 'Treat the invite link as a secret and do not post it publicly. The invitee must enter a one-time code sent to their email before they join. An email lock only chooses which mailbox we send to (required for parents). An open student link lets anyone with the URL start a join for an email they control. If someone forgets a password, they can reset it from the sign-in page — that code proves the mailbox too.'
           : 'Share the invite link privately. Do not post it publicly.'}
       </p>
 

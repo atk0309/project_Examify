@@ -7,18 +7,27 @@
    be enumerated.
    ========================================================================== */
 import Script from 'next/script';
-import { useActionState, useState, type FormEvent } from 'react';
+import { startTransition, useActionState, useState, type FormEvent } from 'react';
+import {
+  completePasswordReset,
+  type CompletePasswordResetState,
+} from '@/actions/completePasswordReset';
+import {
+  requestPasswordReset,
+  type RequestPasswordResetState,
+} from '@/actions/requestPasswordReset';
 import { requestMagicLink, type RequestMagicLinkState } from '@/actions/requestMagicLink';
 import { signInWithPassword, type SignInPasswordState } from '@/actions/signInWithPassword';
 import { verifyLocalOtp, type VerifyLocalOtpState } from '@/actions/verifyLocalOtp';
 import type { AuthMode } from '@/lib/auth-mode';
-import { PASSWORD_MAX_LENGTH } from '@/lib/password-policy';
+import { mailboxWhere, type MailboxDelivery } from '@/lib/mailbox-copy';
 import {
   hasPasswordEntryFieldErrors,
   readPasswordEntryFields,
   validateSignInFields,
   type PasswordEntryFieldErrors,
 } from '@/lib/password-entry-form';
+import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, PASSWORD_MISMATCH } from '@/lib/password-policy';
 import { ExplicitTurnstile } from './ExplicitTurnstile';
 import { MailIcon, RoleIcon } from './icons';
 
@@ -45,7 +54,7 @@ const passwordErrorCopy: Record<
   Exclude<SignInPasswordState, { status: 'idle' }>['reason'],
   string
 > = {
-  invalid: 'Email or password is incorrect.',
+  invalid: "Email, password, or role didn't match.",
   captcha: 'Verification failed. Please try again.',
   rate_limited: 'Too many attempts from your network. Try again later.',
 };
@@ -77,7 +86,15 @@ function Turnstile({ siteKey }: { siteKey?: string }) {
   );
 }
 
-function RolePicker({ role, onChange }: { role: Role; onChange: (role: Role) => void }) {
+function RolePicker({
+  role,
+  onChange,
+  disabled = false,
+}: {
+  role: Role;
+  onChange: (role: Role) => void;
+  disabled?: boolean;
+}) {
   const roleObj = ROLES.find((r) => r.id === role)!;
   return (
     <div className="field">
@@ -90,7 +107,10 @@ function RolePicker({ role, onChange }: { role: Role; onChange: (role: Role) => 
             role="radio"
             aria-checked={role === r.id}
             className={'role-opt' + (role === r.id ? ' active' : '')}
-            onClick={() => onChange(r.id)}
+            disabled={disabled}
+            onClick={() => {
+              if (!disabled) onChange(r.id);
+            }}
           >
             {RoleIcon[r.id]}
             {r.label}
@@ -102,21 +122,49 @@ function RolePicker({ role, onChange }: { role: Role; onChange: (role: Role) => 
   );
 }
 
-export function LoginForm({ siteKey, authMode }: { siteKey?: string; authMode: AuthMode }) {
+export function LoginForm({
+  siteKey,
+  authMode,
+  mailboxDelivery = 'inbox',
+}: {
+  siteKey?: string;
+  authMode: AuthMode;
+  mailboxDelivery?: MailboxDelivery;
+}) {
   if (authMode === 'password') {
-    return <PasswordLoginForm siteKey={siteKey} />;
+    return <PasswordLoginForm siteKey={siteKey} mailboxDelivery={mailboxDelivery} />;
   }
-  return <ChallengeLoginForm siteKey={siteKey} authMode={authMode} />;
+  return (
+    <ChallengeLoginForm siteKey={siteKey} authMode={authMode} mailboxDelivery={mailboxDelivery} />
+  );
 }
 
-function PasswordLoginForm({ siteKey }: { siteKey?: string }) {
+function PasswordLoginForm({
+  siteKey,
+  mailboxDelivery,
+}: {
+  siteKey?: string;
+  mailboxDelivery: MailboxDelivery;
+}) {
   const [state, formAction, pending] = useActionState<SignInPasswordState, FormData>(
     signInWithPassword,
     { status: 'idle' },
   );
   const [role, setRole] = useState<Role>('student');
+  const [forgot, setForgot] = useState(false);
   const [attempted, setAttempted] = useState(false);
   const [localErrors, setLocalErrors] = useState<PasswordEntryFieldErrors>({});
+
+  if (forgot) {
+    return (
+      <PasswordResetFlow
+        siteKey={siteKey}
+        mailboxDelivery={mailboxDelivery}
+        initialRole={role}
+        onCancel={() => setForgot(false)}
+      />
+    );
+  }
 
   function onFieldInput(event: FormEvent<HTMLInputElement>) {
     if (!attempted) return;
@@ -130,14 +178,24 @@ function PasswordLoginForm({ siteKey }: { siteKey?: string }) {
     setAttempted(true);
     setLocalErrors(nextErrors);
     if (hasPasswordEntryFieldErrors(nextErrors)) return;
-    formAction(formData);
+    startTransition(() => {
+      formAction(formData);
+    });
   }
 
   const emailInvalid = Boolean(localErrors.email);
   const passwordInvalid = Boolean(localErrors.password);
 
   return (
-    <form className="screen login" action={submit} noValidate data-testid="signin-form">
+    <form
+      className="screen login"
+      noValidate
+      data-testid="signin-form"
+      onSubmit={(event) => {
+        event.preventDefault();
+        submit(new FormData(event.currentTarget));
+      }}
+    >
       {siteKey ? (
         <Script
           src="https://challenges.cloudflare.com/turnstile/v0/api.js"
@@ -221,6 +279,302 @@ function PasswordLoginForm({ siteKey }: { siteKey?: string }) {
           Secure sign-in. Only household members can log in.
         </p>
       )}
+      <button
+        type="button"
+        className="btn btn-quiet"
+        onClick={() => setForgot(true)}
+        data-testid="forgot-password"
+      >
+        Forgot password?
+      </button>
+    </form>
+  );
+}
+
+function PasswordResetFlow({
+  siteKey,
+  mailboxDelivery,
+  initialRole,
+  onCancel,
+}: {
+  siteKey?: string;
+  mailboxDelivery: MailboxDelivery;
+  initialRole: Role;
+  onCancel: () => void;
+}) {
+  const [state, formAction, pending] = useActionState<RequestPasswordResetState, FormData>(
+    requestPasswordReset,
+    { status: 'idle' },
+  );
+  const [role, setRole] = useState<Role>(initialRole);
+  // Role baked into the in-flight / last request. The code form must use this,
+  // not a RolePicker change that lands while the request is still pending.
+  const [issuedRole, setIssuedRole] = useState<Role>(initialRole);
+  const [editing, setEditing] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
+
+  const submit = (formData: FormData) => {
+    const email = String(formData.get('email') ?? '');
+    if (!EMAIL_RE.test(email.trim())) {
+      setLocalError('Enter a valid email address.');
+      return;
+    }
+    const submittedRole = formData.get('role');
+    if (submittedRole === 'student' || submittedRole === 'parent') {
+      setIssuedRole(submittedRole);
+    }
+    setLocalError(null);
+    setEditing(false);
+    startTransition(() => {
+      formAction(formData);
+    });
+  };
+
+  // Keep the OTP screen closed while a replacement request is in flight so the
+  // previous code cannot be submitted before the revoke lands.
+  if (state.status === 'sent' && !editing && !pending) {
+    return (
+      <PasswordResetCodeForm
+        email={state.email}
+        role={issuedRole}
+        siteKey={siteKey}
+        mailboxDelivery={mailboxDelivery}
+        onBack={() => setEditing(true)}
+      />
+    );
+  }
+
+  return (
+    <form
+      className="screen login"
+      noValidate
+      data-testid="reset-request-form"
+      onSubmit={(event) => {
+        event.preventDefault();
+        submit(new FormData(event.currentTarget));
+      }}
+    >
+      {siteKey ? (
+        <Script
+          src="https://challenges.cloudflare.com/turnstile/v0/api.js"
+          async
+          defer
+          strategy="afterInteractive"
+        />
+      ) : null}
+      <div className="login-head">
+        <span className="brand-mark">E</span>
+        <h1 className="brand-word">Reset password</h1>
+        <p className="login-sub">
+          If this email can sign in as that role, we send a one-time code. We won&rsquo;t say
+          whether the address is a member. The password changes only after the code is entered.
+        </p>
+      </div>
+      <RolePicker role={role} onChange={setRole} disabled={pending} />
+      <div className="field">
+        <label className="field-label" htmlFor="reset-email">
+          Email address
+        </label>
+        <input
+          id="reset-email"
+          name="email"
+          className="text-input"
+          type="email"
+          inputMode="email"
+          autoComplete="username"
+          required
+          placeholder="you@example.com"
+          data-testid="reset-email-input"
+        />
+      </div>
+      <input type="hidden" name="role" value={role} />
+      {siteKey ? <ExplicitTurnstile siteKey={siteKey} /> : null}
+      <button
+        className="btn btn-primary"
+        type="submit"
+        disabled={pending}
+        data-testid="reset-request-submit"
+      >
+        {MailIcon.send} {pending ? 'Sending…' : 'Send reset code'}
+      </button>
+      {state.status === 'error' ? (
+        <p className="login-error" role="alert" data-testid={`reset-request-error-${state.reason}`}>
+          {state.reason === 'captcha'
+            ? 'Verification failed. Please try again.'
+            : state.reason === 'rate_limited'
+              ? 'Too many attempts from your network. Try again later.'
+              : 'Enter a valid email address.'}
+        </p>
+      ) : localError ? (
+        <p className="login-error" role="alert" data-testid="reset-request-local-error">
+          {localError}
+        </p>
+      ) : state.status === 'sent' ? (
+        <p className="login-fine">
+          A code may already be waiting in {mailboxWhere(mailboxDelivery)}. Send again only if you
+          need a new one.
+        </p>
+      ) : null}
+      <button type="button" className="btn btn-quiet" onClick={onCancel}>
+        Back to sign in
+      </button>
+    </form>
+  );
+}
+
+function PasswordResetCodeForm({
+  email,
+  role,
+  siteKey,
+  mailboxDelivery,
+  onBack,
+}: {
+  email: string;
+  role: Role;
+  siteKey?: string;
+  mailboxDelivery: MailboxDelivery;
+  onBack: () => void;
+}) {
+  const [state, formAction, pending] = useActionState<CompletePasswordResetState, FormData>(
+    completePasswordReset,
+    { status: 'idle' },
+  );
+  const [localError, setLocalError] = useState<string | null>(null);
+
+  const submit = (formData: FormData) => {
+    const code = String(formData.get('code') ?? '').replace(/\D/g, '');
+    const password = String(formData.get('password') ?? '');
+    const confirm = String(formData.get('confirmPassword') ?? '');
+    if (!/^\d{6}$/.test(code)) {
+      setLocalError('Enter the 6-digit code.');
+      return;
+    }
+    if (password.length < PASSWORD_MIN_LENGTH || password.length > PASSWORD_MAX_LENGTH) {
+      setLocalError(`Choose a password of at least ${PASSWORD_MIN_LENGTH} characters.`);
+      return;
+    }
+    if (password !== confirm) {
+      setLocalError(PASSWORD_MISMATCH);
+      return;
+    }
+    setLocalError(null);
+    formData.set('code', code);
+    startTransition(() => {
+      formAction(formData);
+    });
+  };
+
+  const serverError =
+    state.status === 'error'
+      ? state.reason === 'password_mismatch'
+        ? PASSWORD_MISMATCH
+        : state.reason === 'captcha'
+          ? 'Verification failed. Please try again.'
+          : state.reason === 'rate_limited'
+            ? 'Too many attempts from your network. Try again later.'
+            : 'That code did not work. Try again.'
+      : null;
+
+  return (
+    <form
+      className="screen login"
+      noValidate
+      data-testid="reset-code-form"
+      onSubmit={(event) => {
+        event.preventDefault();
+        submit(new FormData(event.currentTarget));
+      }}
+    >
+      {siteKey ? (
+        <Script
+          src="https://challenges.cloudflare.com/turnstile/v0/api.js"
+          async
+          defer
+          strategy="afterInteractive"
+        />
+      ) : null}
+      <div className="sent-state">
+        <span className="sent-icon">{MailIcon.inbox}</span>
+        <h1 className="sent-title">Choose a new password</h1>
+        <p className="sent-note">
+          If <b>{email}</b> can sign in, a 6-digit code is in {mailboxWhere(mailboxDelivery)}. The
+          password changes only after the code is accepted.
+        </p>
+      </div>
+      <div className="field">
+        <label className="field-label" htmlFor="reset-code">
+          Reset code
+        </label>
+        <input
+          id="reset-code"
+          name="code"
+          className="text-input"
+          inputMode="numeric"
+          autoComplete="one-time-code"
+          required
+          maxLength={6}
+          data-testid="reset-code-input"
+        />
+      </div>
+      <div className="field">
+        <label className="field-label" htmlFor="reset-password">
+          New password
+        </label>
+        <input
+          id="reset-password"
+          name="password"
+          className="text-input"
+          type="password"
+          autoComplete="new-password"
+          required
+          minLength={PASSWORD_MIN_LENGTH}
+          maxLength={PASSWORD_MAX_LENGTH}
+          data-testid="reset-password-input"
+        />
+        <p className="role-hint" id="reset-password-hint">
+          At least {PASSWORD_MIN_LENGTH} characters.
+        </p>
+      </div>
+      <div className="field">
+        <label className="field-label" htmlFor="reset-confirm">
+          Confirm new password
+        </label>
+        <input
+          id="reset-confirm"
+          name="confirmPassword"
+          className="text-input"
+          type="password"
+          autoComplete="new-password"
+          required
+          maxLength={PASSWORD_MAX_LENGTH}
+          data-testid="reset-confirm-input"
+        />
+      </div>
+      <input type="hidden" name="email" value={email} />
+      <input type="hidden" name="role" value={role} />
+      {siteKey ? <ExplicitTurnstile siteKey={siteKey} /> : null}
+      <button
+        className="btn btn-primary"
+        type="submit"
+        disabled={pending}
+        data-testid="reset-code-submit"
+      >
+        {MailIcon.lock} {pending ? 'Saving…' : 'Save password'}
+      </button>
+      {serverError ? (
+        <p className="login-error" role="alert" data-testid="reset-code-error">
+          {serverError}
+        </p>
+      ) : localError ? (
+        <p className="login-error" role="alert" data-testid="reset-code-local-error">
+          {localError}
+        </p>
+      ) : (
+        <p className="login-fine">{MailIcon.lock} The code proves this mailbox.</p>
+      )}
+      <button type="button" className="btn btn-quiet" onClick={onBack} data-testid="reset-back">
+        Back
+      </button>
     </form>
   );
 }
@@ -228,9 +582,11 @@ function PasswordLoginForm({ siteKey }: { siteKey?: string }) {
 function ChallengeLoginForm({
   siteKey,
   authMode,
+  mailboxDelivery,
 }: {
   siteKey?: string;
   authMode: Exclude<AuthMode, 'password'>;
+  mailboxDelivery: MailboxDelivery;
 }) {
   const [state, formAction, pending] = useActionState<RequestMagicLinkState, FormData>(
     requestMagicLink,
@@ -269,8 +625,7 @@ function ChallengeLoginForm({
             <h1 className="sent-title">Enter your code</h1>
             <p className="sent-note">
               If <b>{state.email}</b> is a household member, we&rsquo;ve issued a 6-digit sign-in
-              code (check the mail outbox on this host, or your inbox if email is configured). It is
-              good for 15 minutes.
+              code. Check {mailboxWhere(mailboxDelivery)}. It is good for 15 minutes.
             </p>
             <span className="sent-email-chip">
               {MailIcon.at}

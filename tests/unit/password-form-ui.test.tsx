@@ -50,6 +50,14 @@ vi.mock('@/actions/verifyLocalOtp', () => ({
   verifyLocalOtp: async () => ({ status: 'idle' }),
 }));
 
+vi.mock('@/actions/requestPasswordReset', () => ({
+  requestPasswordReset: async () => ({ status: 'idle' }),
+}));
+
+vi.mock('@/actions/completePasswordReset', () => ({
+  completePasswordReset: async () => ({ status: 'idle' }),
+}));
+
 vi.mock('@/actions/requestInviteLink', () => ({
   requestInviteLink: async () => ({ status: 'idle' }),
 }));
@@ -111,7 +119,7 @@ describe('PasswordLoginForm autofill', () => {
 
     await waitFor(() => {
       expect(screen.getByTestId('signin-error-invalid')).toHaveTextContent(
-        'Email or password is incorrect.',
+        "Email, password, or role didn't match.",
       );
     });
     expect(screen.queryByTestId('signin-error-captcha')).toBeNull();
@@ -186,6 +194,7 @@ describe('Password invite step autofill', () => {
     );
     autofillWithoutEvents('invite-email-input', 'autofill@example.com');
     autofillWithoutEvents('invite-password-input', 'long-enough-password');
+    autofillWithoutEvents('invite-confirm-password-input', 'long-enough-password');
 
     fireEvent.submit(screen.getByTestId('invite-form'));
 
@@ -193,6 +202,7 @@ describe('Password invite step autofill', () => {
     const formData = acceptInviteWithPassword.mock.calls[0]?.[1];
     expect(formData?.get('email')).toBe('autofill@example.com');
     expect(formData?.get('password')).toBe('long-enough-password');
+    expect(formData?.get('confirmPassword')).toBe('long-enough-password');
     expect(formData?.get('inviteToken')).toBe('invite-token');
     expect(completePasswordInvite).not.toHaveBeenCalled();
 
@@ -200,10 +210,9 @@ describe('Password invite step autofill', () => {
       expect(screen.getByTestId('invite-otp-form')).toBeInTheDocument();
     });
     expect(screen.getByTestId('otp-submit')).toBeDisabled();
-    const hiddenPassword = screen
-      .getByTestId('invite-otp-form')
-      .querySelector('input[name="password"]');
-    expect(hiddenPassword).toHaveValue('long-enough-password');
+    expect(
+      screen.getByTestId('invite-otp-form').querySelector('input[name="password"]'),
+    ).toBeNull();
   });
 
   it('shows a field error for a short password and does not request a code', () => {

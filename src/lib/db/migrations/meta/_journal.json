@@ -57,6 +57,13 @@
       "when": 1789462548971,
       "tag": "0007_slow_sister_grimm",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1790062787719,
+      "tag": "0008_password_pending_hash",
+      "breakpoints": true
     }
   ]
 }

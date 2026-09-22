@@ -34,6 +34,9 @@ Surface:
   does not seed that snapshot; silent autofill is captured so a remount
   can restore it. A user-cleared password is never resurrected from an
   old snapshot. It never silently disables Create household.
+  Password mode asks for the admin password twice; a mismatch is refused
+  and scrypt still runs only after Turnstile, the sign-in rate limit, and
+  `SETUP_BOOTSTRAP_SECRET`.
   Field-level / `aria-invalid` errors explain what failed and drop on the
   next successful edit of that field or on resubmit. Email is the required
   admin account id in every `AUTH_MODE` (including password).
@@ -86,13 +89,18 @@ Surface:
   `/setup/wizard` redirects here.
 - **`/invite/[token]`** — accept a household invite (password, magic-link, or local OTP).
   In `AUTH_MODE=password` the URL is a secret that starts a join; membership and
-  `emailVerifiedAt` wait for a mailbox OTP (`completePasswordInvite`). The password
-  step reads submitted FormData and keeps email/password uncontrolled, so silent
-  autofill can request a code. A short password shows a field error and does not
-  send. The OTP step is unchanged. Fail closed if mail cannot be delivered. See
-  `SECURITY.md`.
+  `emailVerifiedAt` wait for a mailbox OTP (`completePasswordInvite`). The chosen
+  password's scrypt hash is stored on that OTP row (`pending_password_hash`) and
+  applied only when the code is consumed; the code form does not resubmit it.
+  The password step reads submitted FormData and keeps email/password
+  uncontrolled, so silent autofill can request a code. A short password or a
+  confirmation mismatch shows a field error and does not send. Fail closed
+  if mail cannot be delivered. See `SECURITY.md`.
 - **`/signin`** — sign-in UI for the configured `AUTH_MODE` (password, magic-link, or
-  local OTP) with a Student/Parent role control. Redirects to
+  local OTP) with a Student/Parent role control. Password mode can reset a
+  forgotten password with a mailbox OTP (`requestPasswordReset` /
+  `completePasswordReset`); the hash does not change until the code is consumed,
+  and unknown addresses get the same sent screen. Redirects to
   `/setup` when the instance has no household yet. Password sign-in
   (`PasswordLoginForm`) reads submitted FormData and keeps email/password
   uncontrolled, so silent autofill can submit. The button stays enabled when
@@ -194,6 +202,7 @@ src/
     robots.ts           # disallow-all
   actions/              # 'use server' actions (requestMagicLink, signInWithPassword,
                         #   verifyLocalOtp, acceptInviteWithPassword, completePasswordInvite,
+                        #   requestPasswordReset, completePasswordReset,
                         #   bootstrapHousehold,
                         #   onboarding (subjects/PDFs/AI mode + OpenAI key write + generate + ingest validate/dry-run/apply),
                         #   createInvite / revokeInvite / requestInviteLink, signOut,
@@ -354,8 +363,11 @@ These are non-negotiable. Don't "fix" them out.
   `invite-invalid` does not record an OTP guess (leftover sign-in codes stay
   usable). Email-lock only chooses which mailbox we send to. Missing mail
   transport fails closed (`send_failed`) instead of trusting the URL; if
-  `sendEmail` fails after issue, the unused OTP is invalidated. Parent invites
-  stay email-locked; do not post links publicly. See `SECURITY.md`.
+  `sendEmail` fails after issue, the unused OTP is invalidated and its pending
+  hash is cleared. Parent invites stay email-locked; do not post links publicly.
+  Forgot-password (`reset:` bearer) is a separate consume path: it does not
+  stamp `emailVerifiedAt`, does not attach membership, and `/signin/verify`
+  refuses the bearer. See `SECURITY.md`.
 - **No enumeration.** Challenge modes (`magic-link`, `local-otp`): `requestMagicLink`
   always returns the generic `sent` state once Turnstile (when enabled) + rate-limit
   pass; it only issues a link/code when the email is a household member for that
@@ -371,10 +383,11 @@ These are non-negotiable. Don't "fix" them out.
   same-route soft nav that never remounts the component, leaving `useActionState` at
   `status: 'sent'` (the button looked dead). It toggles a local `dismissed` flag back to
   the form; the `submit` wrapper clears `dismissed` so a fresh send re-shows the screen.
-- Turnstile is **never** bypassed server-side **when either key is set**. Both
-  `NEXT_PUBLIC_TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY` must be present to
-  enable captcha; when both are unset, the widget is omitted and `verifyTurnstile`
-  returns ok. Exactly one key in production crashes boot. When either key is set,
+- Turnstile is **never** bypassed server-side **when captcha is enabled**.
+  Captcha is off by default. Set `TURNSTILE_ENABLED=1` and both
+  `NEXT_PUBLIC_TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY` to enable it;
+  when the flag is unset, the widget is omitted and `verifyTurnstile`
+  returns ok (keys alone do not enable captcha). When captcha is on,
   `verifyTurnstile()` never short-circuits to ok (partial config fails closed).
   The login / setup / invite-accept actions still call `verifyTurnstile()` with
   the client's token before issuing anything.
@@ -565,11 +578,12 @@ connection that never upgraded to TLS is refused unless `SMTP_ALLOW_INSECURE=1`.
 `resend` needs a real key + `RESEND_FROM`; `outbox`
 in production needs `ALLOW_LOCAL_OUTBOX=1`. Production with no real mail
 transport does not write bearer tokens to `data/outbox` unless
-`ALLOW_LOCAL_OUTBOX=1`. Turnstile keys are optional (both unset →
-captcha off; exactly one key in production crashes boot).
-The OTP step after a `sent` screen mounts Turnstile with an explicit
-`turnstile.render()` (`ExplicitTurnstile`) because the implicit scanner
-already ran on the first form.
+`ALLOW_LOCAL_OUTBOX=1`. Turnstile captcha is off by default; set
+`TURNSTILE_ENABLED=1` with both keys to enable (exactly one key in
+production crashes boot; keys alone do not enable captcha).
+The OTP / forgot-password step after a `sent` screen mounts Turnstile with an
+explicit `turnstile.render()` (`ExplicitTurnstile`) because the implicit scanner
+already ran on the first form (or the form mounted after page load).
 `ANTHROPIC_API_KEY` is optional (wizard clear + production restart must not
 brick boot). A missing / empty key fail-closes free-text grading
 (`needs_review`, no stub) — blank is never treated as `test`. The `test`

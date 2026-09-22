@@ -26,6 +26,8 @@
 #   (mailbox proof) can be read from data/outbox — only when this run writes
 #   .env. Set SMTP_* / RESEND_* to use real mail instead. Invite accept never
 #   skips that OTP. RESEND_API_KEY=test is not a mail path.
+#   Turnstile stays off unless TURNSTILE_ENABLED=1 (or true) and both Turnstile
+#   keys are set (keys alone do not enable captcha).
 #
 # Flags:
 #   --write-env-only   write .env and exit (used by tests)
@@ -63,6 +65,8 @@ Non-interactive (CI / automation):
   (mailbox proof) can be read from data/outbox — only when this run writes
   .env. Set SMTP_* / RESEND_* to use real mail instead. Invite accept never
   skips that OTP. RESEND_API_KEY=test is not a mail path.
+  Turnstile stays off unless TURNSTILE_ENABLED=1 (or true) and both Turnstile
+  keys are set (keys alone do not enable captcha).
 
 Flags:
   --write-env-only   write .env and exit (used by tests)
@@ -432,6 +436,16 @@ ensure_pnpm() {
 write_env() {
   local dest="${1:-.env}"
   local old_umask
+  # Keys alone do not enable captcha — same rule as parseEnv / isTurnstileEnabled.
+  # Interactive confirm sets TURNSTILE_ENABLED=1 before prompting for keys;
+  # non-interactive hosts must export TURNSTILE_ENABLED=1 (or true) with both keys.
+  # Validate before creating dest so a refuse leaves no half-written .env.
+  if [ "${TURNSTILE_ENABLED-}" = "1" ] || [ "${TURNSTILE_ENABLED-}" = "true" ]; then
+    if [ -z "${NEXT_PUBLIC_TURNSTILE_SITE_KEY-}" ] || [ -z "${TURNSTILE_SECRET_KEY-}" ]; then
+      echo "TURNSTILE_ENABLED=1 requires both NEXT_PUBLIC_TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY." >&2
+      exit 1
+    fi
+  fi
   old_umask="$(umask)"
   umask 077
   {
@@ -471,9 +485,11 @@ write_env() {
   if [ "${ALLOW_LOCAL_OUTBOX-}" = "1" ]; then
     printf 'ALLOW_LOCAL_OUTBOX=1\n' >> "$dest"
   fi
-  if [ -n "${NEXT_PUBLIC_TURNSTILE_SITE_KEY-}" ]; then
+  if [ "${TURNSTILE_ENABLED-}" = "1" ] || [ "${TURNSTILE_ENABLED-}" = "true" ]; then
+    # Canonical form matches interactive confirm and docs (parseEnv also accepts true).
+    printf 'TURNSTILE_ENABLED=1\n' >> "$dest"
     printf 'NEXT_PUBLIC_TURNSTILE_SITE_KEY=%s\n' "$NEXT_PUBLIC_TURNSTILE_SITE_KEY" >> "$dest"
-    printf 'TURNSTILE_SECRET_KEY=%s\n' "${TURNSTILE_SECRET_KEY-}" >> "$dest"
+    printf 'TURNSTILE_SECRET_KEY=%s\n' "$TURNSTILE_SECRET_KEY" >> "$dest"
   fi
   chmod 600 "$dest"
   umask "$old_umask"
@@ -613,7 +629,8 @@ fi
 
 ensure_password_invite_mail
 
-if [ "$NONINTERACTIVE" != "1" ] && confirm "Enable Cloudflare Turnstile (captcha)?" "n"; then
+if [ "$NONINTERACTIVE" != "1" ] && confirm "Enable Cloudflare Turnstile (captcha)? Off by default — skip unless you have Cloudflare keys." "n"; then
+  TURNSTILE_ENABLED=1
   prompt NEXT_PUBLIC_TURNSTILE_SITE_KEY "Turnstile site key"
   prompt TURNSTILE_SECRET_KEY "Turnstile secret key" "" secret
 fi
@@ -710,10 +727,11 @@ else
   echo
   echo "Invite family from the parent dashboard after setup."
   if [ "$AUTH_MODE" = "password" ]; then
-    echo "Password sign-in needs no mail. Invite accept still sends a mailbox OTP"
-    echo "(never skipped) via ${MAIL_TRANSPORT}."
+    echo "Password sign-in needs no mail. Eligible invite accept and forgot-password requests"
+    echo "still require mailbox OTP delivery via ${MAIL_TRANSPORT}."
+    echo "Unknown emails and wrong-role reset requests still return a generic sent response."
   fi
-  echo "Edit .env and restart to change AUTH_MODE, mail, or Turnstile."
+  echo "Edit .env and restart to change AUTH_MODE, mail, or Turnstile (TURNSTILE_ENABLED=1)."
   echo
   if [ "$AUTH_MODE" = "local-otp" ] || [ "${MAIL_TRANSPORT}" = "outbox" ]; then
     echo "Local outbox path: data/outbox (or MAIL_OUTBOX_DIR). Treat it as secret."

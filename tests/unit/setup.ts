@@ -8,9 +8,8 @@ Reflect.set(process.env, 'NODE_ENV', 'test');
 if (!process.env.DATABASE_URL) Reflect.set(process.env, 'DATABASE_URL', `file:${UNIT_DB}`);
 if (!process.env.AUTH_SECRET)
   Reflect.set(process.env, 'AUTH_SECRET', 'unit-test-secret-must-be-at-least-32-chars-long');
-// Use a non-dummy secret by default so the Turnstile fetch path is exercised
-// in tests; tests that want to verify the dummy-key shortcut override env
-// at runtime.
+// Turnstile stays off in unit tests unless a case sets TURNSTILE_ENABLED=1.
+// Keys alone do not enable captcha (same rule as production / self-host).
 if (!process.env.TURNSTILE_SECRET_KEY)
   Reflect.set(process.env, 'TURNSTILE_SECRET_KEY', 'unit-test-secret-not-a-cloudflare-dummy-12');
 if (!process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY)

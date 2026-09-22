@@ -22,7 +22,8 @@ get an initial response within a week.
   `AUTH_SECRET` (and any leftover `FAMILIES` JSON you have not yet imported) like a
   secret, and never commit a real `.env`.
 - Env validation fails closed in production: missing security-critical vars crash boot
-  rather than falling back to dev defaults. Resend and Turnstile are optional.
+  rather than falling back to dev defaults. Resend is optional. Turnstile captcha
+  is off unless `TURNSTILE_ENABLED=1` and both keys are set.
 - Magic-link tokens, local OTPs, and invite tokens are stored hashed, are single-use,
   and expire (15 minutes for links/OTPs, 7 days for invites); sign-in is rate-limited
   per IP. Local OTP also locks a challenge after 5 well-formed wrong 6-digit
@@ -32,8 +33,8 @@ get an initial response within a week.
   Passwords are stored as scrypt hashes (`users.password_hash`); `/setup`
   hashes only after captcha, rate-limit, and the setup secret pass.
   SMTP AUTH/DATA is refused on a connection that never upgraded to TLS
-  unless `SMTP_ALLOW_INSECURE=1`. Cloudflare
-  Turnstile is verified on the server when keys are set.
+  unless `SMTP_ALLOW_INSECURE=1`. Cloudflare Turnstile is verified on the
+  server only when `TURNSTILE_ENABLED=1` and both keys are set.
 - **Do not write magic-link bearer tokens or OTP codes to disk in production
   unless you opt in.** Unset Resend / `RESEND_API_KEY=test` uses a local outbox
   only in dev/test. Production with no real mail transport returns the generic
@@ -76,4 +77,16 @@ stamp `emailVerifiedAt` — until the invitee proves the mailbox.
 - Prefer an email lock on every invite. Parent invites are already required to
   be locked; lock student invites too when you know the address.
 - In `magic-link` / `local-otp` modes, accept already sent a mailbox challenge.
-  Password sign-in itself still needs no mail; only invite accept does.
+  Password sign-in itself still needs no mail. Invite accept and forgot
+  password both need a deliverable mailbox code.
+- **Forgot password does not skip the code.** `/signin` can send a reset code
+  to a household member. The response is the same when the address is unknown
+  or the role does not match. `users.password_hash` and `emailVerifiedAt`
+  stay as they were until `completePasswordReset` consumes that code.
+  Reset codes are `reset:` bearers. `/signin/verify` refuses them. A reset
+  code cannot stamp a password onto a sign-in OTP or an invite OTP.
+- **Invite password is bound to the OTP row.** Accept stores a scrypt hash on
+  `magic_tokens.pending_password_hash` and does not put the password in the
+  code form. The hash is written to the user only when that invite-bound code
+  is consumed, then cleared. A failed send clears it too. A caller-supplied
+  password on complete is ignored.

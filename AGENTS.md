@@ -123,7 +123,9 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   default household name does not seed that snapshot; silent autofill is
   captured so a remount can restore it. A user-cleared password is never
   resurrected from an old snapshot. It never silently
-  disables Create household. Field-level / `aria-invalid` errors drop on the
+  disables Create household. Password mode confirms the admin password;
+  a mismatch is refused before scrypt, which still waits for Turnstile,
+  the sign-in rate limit, and `SETUP_BOOTSTRAP_SECRET`. Field-level / `aria-invalid` errors drop on the
   next successful edit of that field or on resubmit. Email is the required
   admin account id in every `AUTH_MODE` (including password). After bootstrap, `/onboarding` lets the
   household admin add subjects, attach local study files (PDFs plus notes.txt
@@ -171,21 +173,26 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   `AUTH_MODE` (password, magic-link verify, or local OTP). Password sign-in
   and the invite password step read submitted FormData and keep email/password
   uncontrolled (same autofill rule as `SetupForm`): the CTA is not disabled
-  from empty React state. A short invite password shows a field error and does
-  not send a code. The OTP step and `completePasswordInvite` are unchanged.
+  from empty React state. A short invite password or a confirmation mismatch
+  shows a field error and does not send a code.
   In `password` mode the
   invitee must confirm a mailbox OTP before membership / `emailVerifiedAt`
   (`completePasswordInvite`); the token must carry `invite_id` (also refused
   inside `consumeHashedBearer` when a password is being set), and a failed
-  send after issue invalidates the unused OTP. `invite-invalid` does not burn
-  leftover sign-in OTP guesses. Missing mail fails closed.
+  send after issue invalidates the unused OTP and clears `pending_password_hash`.
+  `invite-invalid` does not burn leftover sign-in OTP guesses. Missing mail fails
+  closed. The code form does not resubmit the password; complete ignores a
+  client password and stores the hash bound to that invite OTP.
   Treat links as secrets
   and do not post them publicly (`SECURITY.md`). Do not bring back a
   required `FAMILIES` env allowlist. A leftover `FAMILIES` JSON is imported once
   if the DB has no households. Production boot fails if `FAMILIES` is set and invalid.
 - **Auth mode** is `AUTH_MODE` (`password` | `magic-link` | `local-otp`, default
   `magic-link`). `install.sh` writes it. Password sign-in needs no mail;
-  password-mode invite accept still sends a mailbox OTP (never skipped).
+  password-mode invite accept and forgot-password still send a mailbox OTP
+  (never skipped). Reset does not change `password_hash` or `emailVerifiedAt`
+  until that code is consumed, and it does not reveal whether the address is
+  a member.
   Interactive / default `install.sh` prompts for mail or enables a local
   outbox when it writes `.env` so kid invites are not stranded. A kept
   password-mode `.env` with no mail path is refused (judged from on-disk
@@ -237,9 +244,10 @@ Before merge, ensure these pass in CI:
 
 ## Security invariants (do not weaken)
 
-- Never bypass server-side Turnstile verification when either Turnstile key is set.
-  When both site and secret keys are unset, skip the widget and verification so
-  sign-in still works. Exactly one key in production crashes boot.
+- Never bypass server-side Turnstile verification when captcha is enabled
+  (`TURNSTILE_ENABLED=1` and both keys). When the flag is unset, skip the
+  widget and verification so sign-in works without Cloudflare. Exactly one
+  key in production crashes boot.
 - Keep canonical IP extraction centralized in `src/lib/ip.ts`.
 - Preserve rate-limit boundaries and per-kind separation.
 - Keep sign-in role-gated by household membership (student = student member,

@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import { InviteAcceptForm } from '@/components/exam/InviteAcceptForm';
-import { env, getAuthMode, isTurnstileEnabled } from '@/lib/env';
+import { env, getAuthMode, isTurnstileEnabled, mailboxDelivery } from '@/lib/env';
 import { lookupInvite } from '@/lib/households';
 
 export const dynamic = 'force-dynamic';
@@ -40,6 +40,7 @@ export default async function InvitePage({ params }: { params: Promise<{ token: 
           role={invite.role}
           lockedEmail={invite.email}
           authMode={getAuthMode()}
+          mailboxDelivery={mailboxDelivery()}
           siteKey={isTurnstileEnabled() ? env.NEXT_PUBLIC_TURNSTILE_SITE_KEY : undefined}
         />
       </div>
