@@ -116,7 +116,11 @@ export async function issueMagicLink(
 }
 
 const OTP_TTL_MS = TOKEN_TTL_MS;
-/** Well-formed wrong guesses per email+role before the challenge is consumed. */
+/**
+ * Well-formed wrong guesses per email+role, inside one OTP lifetime, before
+ * the challenge is consumed and verification is locked. Issuing a new code
+ * does not reset the count — the lock lifts only as failures age out.
+ */
 export const OTP_GUESS_MAX = 5;
 const OTP_ISSUE_HASH_ATTEMPTS = 8;
 
@@ -193,7 +197,9 @@ export function generateOtpCode(): string {
  * Issue a local OTP. Previous unused codes for this email+role are marked
  * consumed so only the latest code works. Insert + revoke run in one
  * transaction; a unique-hash collision retries, and if every attempt fails
- * the rollback leaves the previous unused code intact.
+ * the rollback leaves the previous unused code intact. The guess bucket is
+ * left alone: clearing it here would hand out five fresh guesses per
+ * re-issue, turning the lock into a speed bump.
  */
 export function issueLocalOtp(
   email: string,
@@ -240,15 +246,6 @@ export function issueLocalOtp(
           )
           .run();
 
-        tx.delete(schema.rateLimitEvents)
-          .where(
-            and(
-              eq(schema.rateLimitEvents.ip, otpGuessBucket(email, role)),
-              eq(schema.rateLimitEvents.kind, 'signin'),
-            ),
-          )
-          .run();
-
         return { id: inserted.id, code, expiresAt };
       });
     } catch (error) {
@@ -272,8 +269,8 @@ export function invalidateIssuedToken(id: number, now = Date.now()): void {
     .run();
 }
 
-function countBucketGuessFailures(bucket: string, now: number): number {
-  const windowStart = now - OTP_TTL_MS;
+function countBucketGuessFailures(bucket: string, now: number, windowMs = OTP_TTL_MS): number {
+  const windowStart = now - windowMs;
   return db
     .select({ id: schema.rateLimitEvents.id })
     .from(schema.rateLimitEvents)
@@ -306,7 +303,8 @@ function consumeOutstandingUnaffiliated(email: string, role: SessionRole, now: n
  * Issue a password-reset code. Previous unused bearers for this email+role
  * that are not invite OTPs are consumed so only the latest reset code works.
  * Does not store a password hash — the new password is applied only when
- * `consumePasswordReset` accepts the code.
+ * `consumePasswordReset` accepts the code. Like `issueLocalOtp`, re-issue
+ * never clears the reset guess bucket.
  */
 export function issuePasswordResetOtp(
   email: string,
@@ -341,15 +339,6 @@ export function issuePasswordResetOtp(
           )
           .run();
 
-        tx.delete(schema.rateLimitEvents)
-          .where(
-            and(
-              eq(schema.rateLimitEvents.ip, resetGuessBucket(email, role)),
-              eq(schema.rateLimitEvents.kind, 'signin'),
-            ),
-          )
-          .run();
-
         return { id: inserted.id, code, expiresAt };
       });
     } catch (error) {
@@ -365,7 +354,8 @@ export function issuePasswordResetOtp(
  * same transaction. Does not create a user, attach membership, or stamp
  * `emailVerifiedAt`. A correct code for someone who is no longer a member
  * is consumed and does not count as a guess. Wrong codes use a separate
- * 5-guess bucket from sign-in OTPs.
+ * 5-guess bucket from sign-in OTPs. While that bucket is full every code —
+ * even the right one — returns `locked`.
  */
 export function consumePasswordReset(
   email: string,
@@ -383,7 +373,7 @@ export function consumePasswordReset(
   const bucket = resetGuessBucket(normalised, role);
   if (countBucketGuessFailures(bucket, now) >= OTP_GUESS_MAX) {
     consumeOutstandingUnaffiliated(normalised, role, now);
-    return { ok: false, reason: 'not-found' };
+    return { ok: false, reason: 'locked' };
   }
 
   const tokenHash = sha256(resetBearer(normalised, role, trimmed));
@@ -473,7 +463,9 @@ function recordResetGuessFailure(email: string, role: SessionRole, now: number):
 /**
  * Consumes a local OTP for an email and role. Malformed codes fail without
  * counting as guesses; after five well-formed failures within the OTP lifetime,
- * outstanding codes for that email and role are invalidated.
+ * outstanding codes for that email and role are invalidated and every code —
+ * even a correct one from a later re-issue — returns `locked` until the
+ * failures age out.
  * `invite-invalid` is not a guess — a leftover sign-in OTP (or a revoked
  * invite) must not burn the 5-guess lock. Setting a password is invite-bound
  * inside `consumeHashedBearer` (defense in depth; `requireInviteId` stays
@@ -495,7 +487,7 @@ export function consumeLocalOtp(
   if (countOtpGuessFailures(email, role, now) >= OTP_GUESS_MAX) {
     consumeOutstandingOtps(email, role, now);
     consumeHashedBearer(otpBearer(email, role, trimmed));
-    return { ok: false, reason: 'not-found' };
+    return { ok: false, reason: 'locked' };
   }
 
   const result = consumeHashedBearer(otpBearer(email, role, trimmed), opts);
@@ -505,10 +497,51 @@ export function consumeLocalOtp(
   return result;
 }
 
+/** Failed password sign-ins per email (every role) before the account is locked. */
+export const PASSWORD_FAILURE_MAX = 10;
+/** Sliding window for `PASSWORD_FAILURE_MAX`. */
+export const PASSWORD_FAILURE_WINDOW_MS = 15 * 60 * 1000;
+
+/**
+ * Per-account bucket in `rate_limit_events`, keyed by the normalised email
+ * only so every role (and every client IP) shares it. Recorded for unknown
+ * emails too, so locking reveals nothing about membership.
+ */
+function passwordFailureBucket(email: string): string {
+  return `pw:${email.trim().toLowerCase()}`;
+}
+
+/** True while `email` has `PASSWORD_FAILURE_MAX` failures inside the window. */
+export function isPasswordSignInLocked(email: string, now = Date.now()): boolean {
+  return (
+    countBucketGuessFailures(passwordFailureBucket(email), now, PASSWORD_FAILURE_WINDOW_MS) >=
+    PASSWORD_FAILURE_MAX
+  );
+}
+
+export function recordPasswordFailure(email: string, now = Date.now()): void {
+  db.insert(schema.rateLimitEvents)
+    .values({ ip: passwordFailureBucket(email), kind: 'signin', createdAt: new Date(now) })
+    .run();
+}
+
+export function clearPasswordFailures(email: string): void {
+  db.delete(schema.rateLimitEvents)
+    .where(
+      and(
+        eq(schema.rateLimitEvents.ip, passwordFailureBucket(email)),
+        eq(schema.rateLimitEvents.kind, 'signin'),
+      ),
+    )
+    .run();
+}
+
 /**
  * Email + password + role. Always spends a password-hash compare (dummy
  * when the user or hash is missing) so unknown emails and wrong passwords
- * look the same. Wrong role also fails closed after the compare.
+ * look the same. Wrong role also fails closed after the compare. The
+ * per-account lock (`isPasswordSignInLocked`) is checked by the caller
+ * before this runs, so a locked account costs no scrypt.
  */
 export function authenticatePassword(
   email: string,
@@ -523,9 +556,16 @@ export function authenticatePassword(
   return { ok: true, userId: user.id, role, email: user.email };
 }
 
+/**
+ * `locked` comes only from the OTP / reset guess locks (`consumeLocalOtp`,
+ * `consumePasswordReset`); callers surface it as `rate_limited`.
+ */
 export type ConsumeResult =
   | { ok: true; userId: number; role: SessionRole; email: string; isNew: boolean }
-  | { ok: false; reason: 'not-found' | 'expired' | 'used' | 'invite-invalid' | 'not-member' };
+  | {
+      ok: false;
+      reason: 'not-found' | 'expired' | 'used' | 'invite-invalid' | 'not-member' | 'locked';
+    };
 
 class ConsumeRollback extends Error {
   constructor(readonly result: ConsumeResult) {

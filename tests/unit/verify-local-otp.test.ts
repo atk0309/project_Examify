@@ -27,7 +27,7 @@ vi.mock('@/lib/auth', async () => {
 });
 
 vi.mock('next/headers', () => ({
-  headers: async () => new Headers({ 'x-real-ip': '203.0.113.55' }),
+  headers: async () => new Headers({ 'x-forwarded-for': '203.0.113.55' }),
 }));
 
 vi.mock('next/navigation', () => ({
@@ -146,7 +146,7 @@ describe('local-otp auth', () => {
     expect(sessionHolder.current.save).not.toHaveBeenCalled();
   });
 
-  it('consumes the challenge after five well-formed wrong guesses', async () => {
+  it('consumes the challenge and locks verify after five well-formed wrong guesses', async () => {
     await seedParent();
     const { requestMagicLink } = await import('@/actions/requestMagicLink');
     const { verifyLocalOtp } = await import('@/actions/verifyLocalOtp');
@@ -161,8 +161,63 @@ describe('local-otp auth', () => {
     }
     await expect(
       verifyLocalOtp({ status: 'idle' }, otpForm('pat@example.com', code)),
-    ).resolves.toEqual({ status: 'error', reason: 'invalid' });
+    ).resolves.toEqual({ status: 'error', reason: 'rate_limited' });
     expect(sessionHolder.current.save).not.toHaveBeenCalled();
+    const { db, schema } = await import('@/lib/db');
+    expect(db.select().from(schema.magicTokens).all()[0]?.consumedAt).toBeInstanceOf(Date);
+  });
+
+  it('keeps the guess lock across a re-issue and refuses the fresh correct code', async () => {
+    await seedParent();
+    const { requestMagicLink } = await import('@/actions/requestMagicLink');
+    const { verifyLocalOtp } = await import('@/actions/verifyLocalOtp');
+    const { OTP_GUESS_MAX } = await import('@/lib/auth');
+    await requestMagicLink({ status: 'idle' }, requestForm('pat@example.com'));
+    const first = await latestCode();
+    for (let i = 0; i < OTP_GUESS_MAX; i++) {
+      const guess = String(i).padStart(6, '0');
+      const wrong = guess === first ? '999999' : guess;
+      await verifyLocalOtp({ status: 'idle' }, otpForm('pat@example.com', wrong));
+    }
+
+    // Re-issue used to wipe the bucket: five fresh guesses per new code.
+    await requestMagicLink({ status: 'idle' }, requestForm('pat@example.com'));
+    const second = await latestCode();
+    const { db, schema } = await import('@/lib/db');
+    expect(
+      db
+        .select()
+        .from(schema.rateLimitEvents)
+        .all()
+        .filter((r) => r.ip.startsWith('otp:')),
+    ).toHaveLength(OTP_GUESS_MAX);
+    await expect(
+      verifyLocalOtp({ status: 'idle' }, otpForm('pat@example.com', second)),
+    ).resolves.toEqual({ status: 'error', reason: 'rate_limited' });
+    expect(sessionHolder.current.save).not.toHaveBeenCalled();
+  });
+
+  it('lifts the guess lock once failures age out of the OTP window', async () => {
+    await seedParent();
+    const { consumeLocalOtp, issueLocalOtp, OTP_GUESS_MAX } = await import('@/lib/auth');
+    const { db, schema } = await import('@/lib/db');
+    const issued = issueLocalOtp('pat@example.com', 'parent');
+    const wrong = issued.code === '999999' ? '000000' : '999999';
+    for (let i = 0; i < OTP_GUESS_MAX; i++) {
+      consumeLocalOtp('pat@example.com', 'parent', wrong);
+    }
+    const locked = issueLocalOtp('pat@example.com', 'parent');
+    expect(consumeLocalOtp('pat@example.com', 'parent', locked.code)).toEqual({
+      ok: false,
+      reason: 'locked',
+    });
+
+    // Age every failure past the 15-minute window.
+    db.update(schema.rateLimitEvents)
+      .set({ createdAt: new Date(Date.now() - 16 * 60 * 1000) })
+      .run();
+    const fresh = issueLocalOtp('pat@example.com', 'parent');
+    expect(consumeLocalOtp('pat@example.com', 'parent', fresh.code).ok).toBe(true);
   });
 
   it('does not count a non-six-digit guess toward the lock', async () => {

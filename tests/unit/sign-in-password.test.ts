@@ -24,9 +24,20 @@ vi.mock('@/lib/auth', async () => {
   };
 });
 
-vi.mock('next/headers', () => ({
-  headers: async () => new Headers({ 'x-real-ip': '203.0.113.44' }),
+// Default CLIENT_IP_HEADER is the last X-Forwarded-For hop. Cases that
+// rotate the client IP (or spoof other headers) overwrite this record.
+const requestHeaders = vi.hoisted(() => ({
+  current: { 'x-forwarded-for': '203.0.113.44' } as Record<string, string>,
 }));
+
+vi.mock('next/headers', () => ({
+  headers: async () => new Headers(requestHeaders.current),
+}));
+
+vi.mock('@/lib/password', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/password')>('@/lib/password');
+  return { ...actual, verifyPasswordOrDummy: vi.fn(actual.verifyPasswordOrDummy) };
+});
 
 vi.mock('next/navigation', () => ({
   redirect: (url: string) => {
@@ -65,6 +76,9 @@ beforeEach(async () => {
   db.delete(schema.users).run();
   resetLegacyImportLatch();
   sessionHolder.current = { save: vi.fn(async () => {}) };
+  requestHeaders.current = { 'x-forwarded-for': '203.0.113.44' };
+  const { verifyPasswordOrDummy } = await import('@/lib/password');
+  vi.mocked(verifyPasswordOrDummy).mockClear();
   const { env } = await import('@/lib/env');
   (env as { AUTH_MODE: typeof env.AUTH_MODE }).AUTH_MODE = 'password';
   (env as { TURNSTILE_SECRET_KEY?: string }).TURNSTILE_SECRET_KEY = undefined;
@@ -129,6 +143,129 @@ describe('signInWithPassword', () => {
       form('pat@example.com', 'correct-horse', 'student'),
     );
     expect(state).toEqual({ status: 'error', reason: 'invalid' });
+  });
+
+  it('does not let a rotating cf-connecting-ip / x-real-ip escape the per-IP bucket', async () => {
+    await seedAdmin();
+    const { env } = await import('@/lib/env');
+    const { signInWithPassword } = await import('@/actions/signInWithPassword');
+    const states = [];
+    for (let i = 0; i <= env.RATE_LIMIT_SIGNIN_MAX; i++) {
+      // A distinct account each time so only the per-IP bucket is in play.
+      requestHeaders.current = {
+        'x-forwarded-for': '203.0.113.44',
+        'cf-connecting-ip': `192.0.2.${i + 1}`,
+        'x-real-ip': `198.51.100.${i + 1}`,
+      };
+      states.push(
+        await signInWithPassword({ status: 'idle' }, form(`ghost-${i}@example.com`, 'guess')),
+      );
+    }
+    expect(states.slice(0, -1).every((s) => s.status === 'error' && s.reason === 'invalid')).toBe(
+      true,
+    );
+    expect(states.at(-1)).toEqual({ status: 'error', reason: 'rate_limited' });
+  });
+
+  it('locks one account after repeated wrong passwords, even from rotating IPs and roles', async () => {
+    await seedAdmin();
+    const { PASSWORD_FAILURE_MAX } = await import('@/lib/auth');
+    const { signInWithPassword } = await import('@/actions/signInWithPassword');
+    for (let i = 0; i < PASSWORD_FAILURE_MAX; i++) {
+      requestHeaders.current = { 'x-forwarded-for': `192.0.2.${i + 1}` };
+      const role = i % 2 === 0 ? 'parent' : 'student';
+      expect(
+        await signInWithPassword({ status: 'idle' }, form('Pat@Example.com', `wrong-${i}`, role)),
+      ).toEqual({ status: 'error', reason: 'invalid' });
+    }
+    requestHeaders.current = { 'x-forwarded-for': '192.0.2.200' };
+    expect(
+      await signInWithPassword({ status: 'idle' }, form('pat@example.com', 'correct-horse')),
+    ).toEqual({ status: 'error', reason: 'rate_limited' });
+    expect(sessionHolder.current.save).not.toHaveBeenCalled();
+  });
+
+  it('locks an unknown email exactly like a real one', async () => {
+    await seedAdmin();
+    const { PASSWORD_FAILURE_MAX } = await import('@/lib/auth');
+    const { signInWithPassword } = await import('@/actions/signInWithPassword');
+    const run = async (email: string) => {
+      const out = [];
+      for (let i = 0; i <= PASSWORD_FAILURE_MAX; i++) {
+        requestHeaders.current = { 'x-forwarded-for': `198.51.100.${i + 1}` };
+        out.push(await signInWithPassword({ status: 'idle' }, form(email, `wrong-${i}`)));
+      }
+      return out;
+    };
+    const known = await run('pat@example.com');
+    const ghost = await run('ghost@example.com');
+    expect(ghost).toEqual(known);
+    expect(known.at(-1)).toEqual({ status: 'error', reason: 'rate_limited' });
+  });
+
+  it('skips scrypt while the account is locked', async () => {
+    await seedAdmin();
+    const { PASSWORD_FAILURE_MAX, recordPasswordFailure } = await import('@/lib/auth');
+    const { verifyPasswordOrDummy } = await import('@/lib/password');
+    const { signInWithPassword } = await import('@/actions/signInWithPassword');
+    // Unlocked: the compare runs (so the spy below is wired to the real path).
+    await signInWithPassword({ status: 'idle' }, form('pat@example.com', 'wrong'));
+    expect(verifyPasswordOrDummy).toHaveBeenCalledOnce();
+
+    for (let i = 1; i < PASSWORD_FAILURE_MAX; i++) recordPasswordFailure('pat@example.com');
+    vi.mocked(verifyPasswordOrDummy).mockClear();
+    expect(
+      await signInWithPassword({ status: 'idle' }, form('pat@example.com', 'correct-horse')),
+    ).toEqual({ status: 'error', reason: 'rate_limited' });
+    expect(verifyPasswordOrDummy).not.toHaveBeenCalled();
+  });
+
+  it('clears the account bucket on a successful sign-in', async () => {
+    await seedAdmin();
+    const { PASSWORD_FAILURE_MAX, isPasswordSignInLocked } = await import('@/lib/auth');
+    const { signInWithPassword } = await import('@/actions/signInWithPassword');
+    for (let i = 0; i < PASSWORD_FAILURE_MAX - 1; i++) {
+      requestHeaders.current = { 'x-forwarded-for': `192.0.2.${i + 1}` };
+      await signInWithPassword({ status: 'idle' }, form('pat@example.com', `wrong-${i}`));
+    }
+    requestHeaders.current = { 'x-forwarded-for': '192.0.2.100' };
+    await expect(
+      signInWithPassword({ status: 'idle' }, form('pat@example.com', 'correct-horse')),
+    ).rejects.toMatchObject({ url: '/' });
+
+    const { db, schema } = await import('@/lib/db');
+    const { eq } = await import('drizzle-orm');
+    expect(
+      db
+        .select()
+        .from(schema.rateLimitEvents)
+        .where(eq(schema.rateLimitEvents.ip, 'pw:pat@example.com'))
+        .all(),
+    ).toHaveLength(0);
+
+    // One more wrong guess after the clear does not trip the lock.
+    requestHeaders.current = { 'x-forwarded-for': '192.0.2.101' };
+    expect(
+      await signInWithPassword({ status: 'idle' }, form('pat@example.com', 'wrong-again')),
+    ).toEqual({ status: 'error', reason: 'invalid' });
+    expect(isPasswordSignInLocked('pat@example.com')).toBe(false);
+  });
+
+  it('lifts the lock once failures age out of the window', async () => {
+    const {
+      PASSWORD_FAILURE_MAX,
+      PASSWORD_FAILURE_WINDOW_MS,
+      isPasswordSignInLocked,
+      recordPasswordFailure,
+    } = await import('@/lib/auth');
+    const now = Date.now();
+    for (let i = 0; i < PASSWORD_FAILURE_MAX; i++) recordPasswordFailure('pat@example.com', now);
+    expect(isPasswordSignInLocked('pat@example.com', now)).toBe(true);
+    expect(isPasswordSignInLocked('PAT@example.com ', now)).toBe(true);
+    expect(isPasswordSignInLocked('other@example.com', now)).toBe(false);
+    expect(isPasswordSignInLocked('pat@example.com', now + PASSWORD_FAILURE_WINDOW_MS + 1)).toBe(
+      false,
+    );
   });
 
   it('refuses when AUTH_MODE is not password', async () => {

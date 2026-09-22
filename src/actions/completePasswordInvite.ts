@@ -25,7 +25,7 @@ export type CompletePasswordInviteState =
  * password field on this request is ignored. Membership and
  * `emailVerifiedAt` are set in the same transaction. The token must carry
  * `magic_tokens.invite_id` and a pending hash. A leftover sign-in OTP is
- * refused.
+ * refused. A full guess lock returns `rate_limited`, even for the right code.
  */
 export async function completePasswordInvite(
   _prev: CompletePasswordInviteState,
@@ -55,7 +55,9 @@ export async function completePasswordInvite(
   const result = consumeLocalOtp(parsed.data.email, parsed.data.role, parsed.data.code, {
     requireInviteId: true,
   });
-  if (!result.ok) return { status: 'error', reason: 'invalid' };
+  if (!result.ok) {
+    return { status: 'error', reason: result.reason === 'locked' ? 'rate_limited' : 'invalid' };
+  }
 
   const session = await getRawSession();
   session.userId = result.userId;
