@@ -30,11 +30,12 @@ export type TurnstileResult = {
 };
 
 export async function verifyTurnstile(token: string, ip: string): Promise<TurnstileResult> {
+  // Off by default (no TURNSTILE_ENABLED=1). When the flag is on, both keys
+  // must be present — production boot already rejects a partial pair.
+  if (env.TURNSTILE_ENABLED !== true) return { ok: true };
+
   const site = env.NEXT_PUBLIC_TURNSTILE_SITE_KEY?.trim();
   const secret = env.TURNSTILE_SECRET_KEY?.trim();
-  // Both unset: captcha is off. Exactly one set must never skip verify —
-  // production boot already rejects that pairing; this is the runtime belt.
-  if (!site && !secret) return { ok: true };
   if (!site || !secret) {
     return { ok: false, errorCodes: ['partial-turnstile-config'] };
   }

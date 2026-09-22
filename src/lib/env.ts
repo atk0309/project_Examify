@@ -157,11 +157,18 @@ function buildEnvSchema(isProd: boolean) {
       // (CLI and /onboarding AI step). Not a secret. Never expose via NEXT_PUBLIC_*.
       EXAMIFY_LLM_BASE_URL: z.preprocess(emptyToUndef, z.string().url().optional()),
 
-      // Turnstile is optional. Both site + secret must be set to enable captcha;
-      // unset/empty skips the widget and server verification so sign-in still
-      // works. Exactly one key in production crashes boot (partial config must
-      // not silently disable verify). Dummy keys (1x…AA / 2x…AA) remain valid
-      // when you want captcha on in dev/e2e.
+      // Cloudflare Turnstile captcha. OFF by default — local / simple self-hosts
+      // need no Cloudflare account. Set TURNSTILE_ENABLED=1 and both keys to
+      // turn it on. Keys alone do not enable captcha. When enabled, both keys
+      // are required (production boot fails closed on a partial pair).
+      TURNSTILE_ENABLED: z.preprocess((v) => {
+        if (v === undefined) return undefined;
+        if (typeof v !== 'string') return v;
+        const t = v.trim().toLowerCase();
+        if (t === '1' || t === 'true') return true;
+        if (t === '' || t === '0' || t === 'false') return undefined;
+        return v;
+      }, z.boolean().optional()),
       NEXT_PUBLIC_TURNSTILE_SITE_KEY: z.preprocess(emptyToUndef, z.string().min(1).optional()),
       TURNSTILE_SECRET_KEY: z.preprocess(emptyToUndef, z.string().min(1).optional()),
 
@@ -186,11 +193,22 @@ function buildEnvSchema(isProd: boolean) {
     .superRefine((data, ctx) => {
       const hasSite = Boolean(data.NEXT_PUBLIC_TURNSTILE_SITE_KEY);
       const hasSecret = Boolean(data.TURNSTILE_SECRET_KEY);
-      if (isProd && hasSite !== hasSecret) {
+      if (data.TURNSTILE_ENABLED === true) {
+        if (!hasSite || !hasSecret) {
+          ctx.addIssue({
+            code: 'custom',
+            message:
+              'TURNSTILE_ENABLED=1 requires both NEXT_PUBLIC_TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY.',
+            path: hasSite ? ['TURNSTILE_SECRET_KEY'] : ['NEXT_PUBLIC_TURNSTILE_SITE_KEY'],
+          });
+        }
+      } else if (isProd && hasSite !== hasSecret) {
+        // Leftover half-config while captcha is off — still fail closed so a
+        // host that meant to enable Turnstile is not left with a silent skip.
         ctx.addIssue({
           code: 'custom',
           message:
-            'Turnstile must be fully configured or fully omitted: set both NEXT_PUBLIC_TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY, or neither.',
+            'Turnstile keys must both be set or both omitted. To enable captcha set TURNSTILE_ENABLED=1 with both keys; otherwise remove the leftover key.',
           path: hasSite ? ['TURNSTILE_SECRET_KEY'] : ['NEXT_PUBLIC_TURNSTILE_SITE_KEY'],
         });
       }
@@ -299,8 +317,12 @@ export function isResendConfigured(): boolean {
   return isConfiguredSecret(env.RESEND_API_KEY);
 }
 
-/** Both Turnstile keys present — captcha UI + server verify are on. */
+/**
+ * Cloudflare Turnstile captcha. Off unless TURNSTILE_ENABLED=1 and both the
+ * site key and secret are set. Local / simple self-hosts leave the flag unset.
+ */
 export function isTurnstileEnabled(): boolean {
+  if (env.TURNSTILE_ENABLED !== true) return false;
   return Boolean(env.NEXT_PUBLIC_TURNSTILE_SITE_KEY?.trim() && env.TURNSTILE_SECRET_KEY?.trim());
 }
 

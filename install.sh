@@ -472,6 +472,7 @@ write_env() {
     printf 'ALLOW_LOCAL_OUTBOX=1\n' >> "$dest"
   fi
   if [ -n "${NEXT_PUBLIC_TURNSTILE_SITE_KEY-}" ]; then
+    printf 'TURNSTILE_ENABLED=1\n' >> "$dest"
     printf 'NEXT_PUBLIC_TURNSTILE_SITE_KEY=%s\n' "$NEXT_PUBLIC_TURNSTILE_SITE_KEY" >> "$dest"
     printf 'TURNSTILE_SECRET_KEY=%s\n' "${TURNSTILE_SECRET_KEY-}" >> "$dest"
   fi
@@ -613,7 +614,8 @@ fi
 
 ensure_password_invite_mail
 
-if [ "$NONINTERACTIVE" != "1" ] && confirm "Enable Cloudflare Turnstile (captcha)?" "n"; then
+if [ "$NONINTERACTIVE" != "1" ] && confirm "Enable Cloudflare Turnstile (captcha)? Off by default — skip unless you have Cloudflare keys." "n"; then
+  TURNSTILE_ENABLED=1
   prompt NEXT_PUBLIC_TURNSTILE_SITE_KEY "Turnstile site key"
   prompt TURNSTILE_SECRET_KEY "Turnstile secret key" "" secret
 fi
@@ -710,10 +712,11 @@ else
   echo
   echo "Invite family from the parent dashboard after setup."
   if [ "$AUTH_MODE" = "password" ]; then
-    echo "Password sign-in needs no mail. Invite accept and forgot-password still send a mailbox OTP"
-    echo "(never skipped) via ${MAIL_TRANSPORT}."
+    echo "Password sign-in needs no mail. Eligible invite accept and forgot-password requests"
+    echo "still require mailbox OTP delivery via ${MAIL_TRANSPORT}."
+    echo "Unknown emails and wrong-role reset requests still return a generic sent response."
   fi
-  echo "Edit .env and restart to change AUTH_MODE, mail, or Turnstile."
+  echo "Edit .env and restart to change AUTH_MODE, mail, or Turnstile (TURNSTILE_ENABLED=1)."
   echo
   if [ "$AUTH_MODE" = "local-otp" ] || [ "${MAIL_TRANSPORT}" = "outbox" ]; then
     echo "Local outbox path: data/outbox (or MAIL_OUTBOX_DIR). Treat it as secret."

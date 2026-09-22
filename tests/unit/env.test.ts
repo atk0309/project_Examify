@@ -27,7 +27,7 @@ describe('parseEnv production fail-closed', () => {
     );
   });
 
-  it('rejects exactly one Turnstile key', () => {
+  it('rejects exactly one Turnstile key in production', () => {
     expect(() =>
       parseEnv({
         ...prodBase,
@@ -42,8 +42,23 @@ describe('parseEnv production fail-closed', () => {
     ).toThrow(/Invalid environment variables/);
   });
 
-  it('allows both Turnstile keys unset or both set', () => {
+  it('requires both Turnstile keys when TURNSTILE_ENABLED=1', () => {
+    expect(() => parseEnv({ ...prodBase, TURNSTILE_ENABLED: '1' })).toThrow(
+      /Invalid environment variables/,
+    );
+    expect(
+      parseEnv({
+        ...prodBase,
+        TURNSTILE_ENABLED: '1',
+        NEXT_PUBLIC_TURNSTILE_SITE_KEY: '1x00000000000000000000AA',
+        TURNSTILE_SECRET_KEY: '1x0000000000000000000000000000000AA',
+      }).TURNSTILE_ENABLED,
+    ).toBe(true);
+  });
+
+  it('allows both Turnstile keys unset or both set while captcha stays off without the flag', () => {
     expect(parseEnv(prodBase).SETUP_BOOTSTRAP_SECRET).toBe('production-setup-secret');
+    expect(parseEnv(prodBase).TURNSTILE_ENABLED).toBeUndefined();
     expect(
       parseEnv({
         ...prodBase,

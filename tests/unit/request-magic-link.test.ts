@@ -198,12 +198,15 @@ describe('requestMagicLink', () => {
   });
 
   it('rejects a missing token when Turnstile is enabled', async () => {
+    const { env } = await import('@/lib/env');
+    (env as { TURNSTILE_ENABLED: boolean }).TURNSTILE_ENABLED = true;
     const { requestMagicLink } = await import('@/actions/requestMagicLink');
     const state = await requestMagicLink(
       { status: 'idle' },
       form('student@example.com', 'student'),
     );
     expect(state).toEqual({ status: 'error', reason: 'invalid' });
+    (env as { TURNSTILE_ENABLED?: boolean }).TURNSTILE_ENABLED = undefined;
   });
 
   it('refuses to issue a link when AUTH_MODE is password', async () => {

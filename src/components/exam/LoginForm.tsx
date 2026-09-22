@@ -7,7 +7,7 @@
    be enumerated.
    ========================================================================== */
 import Script from 'next/script';
-import { useActionState, useState, type FormEvent } from 'react';
+import { startTransition, useActionState, useState, type FormEvent } from 'react';
 import {
   completePasswordReset,
   type CompletePasswordResetState,
@@ -167,7 +167,9 @@ function PasswordLoginForm({
     setAttempted(true);
     setLocalErrors(nextErrors);
     if (hasPasswordEntryFieldErrors(nextErrors)) return;
-    formAction(formData);
+    startTransition(() => {
+      formAction(formData);
+    });
   }
 
   const emailInvalid = Boolean(localErrors.email);
@@ -305,7 +307,9 @@ function PasswordResetFlow({
     }
     setLocalError(null);
     setEditing(false);
-    formAction(formData);
+    startTransition(() => {
+      formAction(formData);
+    });
   };
 
   if (state.status === 'sent' && !editing) {
@@ -364,7 +368,7 @@ function PasswordResetFlow({
         />
       </div>
       <input type="hidden" name="role" value={role} />
-      <Turnstile siteKey={siteKey} />
+      {siteKey ? <ExplicitTurnstile siteKey={siteKey} /> : null}
       <button
         className="btn btn-primary"
         type="submit"
@@ -435,7 +439,9 @@ function PasswordResetCodeForm({
     }
     setLocalError(null);
     formData.set('code', code);
-    formAction(formData);
+    startTransition(() => {
+      formAction(formData);
+    });
   };
 
   const serverError =

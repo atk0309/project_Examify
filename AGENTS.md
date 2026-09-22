@@ -244,9 +244,10 @@ Before merge, ensure these pass in CI:
 
 ## Security invariants (do not weaken)
 
-- Never bypass server-side Turnstile verification when either Turnstile key is set.
-  When both site and secret keys are unset, skip the widget and verification so
-  sign-in still works. Exactly one key in production crashes boot.
+- Never bypass server-side Turnstile verification when captcha is enabled
+  (`TURNSTILE_ENABLED=1` and both keys). When the flag is unset, skip the
+  widget and verification so sign-in works without Cloudflare. Exactly one
+  key in production crashes boot.
 - Keep canonical IP extraction centralized in `src/lib/ip.ts`.
 - Preserve rate-limit boundaries and per-kind separation.
 - Keep sign-in role-gated by household membership (student = student member,

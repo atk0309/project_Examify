@@ -2,6 +2,7 @@
 
 import Script from 'next/script';
 import {
+  startTransition,
   useActionState,
   useEffect,
   useLayoutEffect,
@@ -160,7 +161,9 @@ export function SetupForm({ siteKey, authMode }: { siteKey?: string; authMode: A
     setLocalErrors(nextErrors);
     if (hasSetupFieldErrors(nextErrors)) return;
     dispatchIdRef.current += 1;
-    formAction(formData);
+    startTransition(() => {
+      formAction(formData);
+    });
   }
 
   const emailInvalid = Boolean(fieldErrors.email);

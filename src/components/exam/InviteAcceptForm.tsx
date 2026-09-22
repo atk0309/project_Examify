@@ -1,7 +1,7 @@
 'use client';
 
 import Script from 'next/script';
-import { useActionState, useState, type ChangeEvent, type FormEvent } from 'react';
+import { startTransition, useActionState, useState, type ChangeEvent, type FormEvent } from 'react';
 import {
   acceptInviteWithPassword,
   type AcceptInvitePasswordState,
@@ -148,7 +148,9 @@ function PasswordInviteForm({
     setFieldErrors(next);
     if (hasPasswordEntryFieldErrors(next) || next.confirmPassword) return;
     setEditing(false);
-    formAction(formData);
+    startTransition(() => {
+      formAction(formData);
+    });
   }
 
   if (state.status === 'sent' && !editing) {

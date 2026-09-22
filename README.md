@@ -247,10 +247,12 @@ After a successful import, remove `FAMILIES` from the host. If `FAMILIES` is
 set but unparsable, production boot fails — fix the JSON or unset it. New installs
 should leave it unset and use `/setup`.
 
-Turnstile is optional: leave `NEXT_PUBLIC_TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY`
-unset to skip the captcha. When both are set, sign-in / setup / invite accept verify the
-token on the server. Setting exactly one key in production crashes boot so verify cannot
-be silently disabled.
+Turnstile captcha is **off by default**. Local / LAN / simple self-hosts need no
+Cloudflare account. To enable it, set `TURNSTILE_ENABLED=1` and both
+`NEXT_PUBLIC_TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY`. Keys alone do not
+turn captcha on. Setting exactly one key in production crashes boot so verify
+cannot be silently half-configured. `install.sh` asks before writing Turnstile
+(default answer: no).
 
 ## Authoring content
 

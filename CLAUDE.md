@@ -383,10 +383,11 @@ These are non-negotiable. Don't "fix" them out.
   same-route soft nav that never remounts the component, leaving `useActionState` at
   `status: 'sent'` (the button looked dead). It toggles a local `dismissed` flag back to
   the form; the `submit` wrapper clears `dismissed` so a fresh send re-shows the screen.
-- Turnstile is **never** bypassed server-side **when either key is set**. Both
-  `NEXT_PUBLIC_TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY` must be present to
-  enable captcha; when both are unset, the widget is omitted and `verifyTurnstile`
-  returns ok. Exactly one key in production crashes boot. When either key is set,
+- Turnstile is **never** bypassed server-side **when captcha is enabled**.
+  Captcha is off by default. Set `TURNSTILE_ENABLED=1` and both
+  `NEXT_PUBLIC_TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY` to enable it;
+  when the flag is unset, the widget is omitted and `verifyTurnstile`
+  returns ok (keys alone do not enable captcha). When captcha is on,
   `verifyTurnstile()` never short-circuits to ok (partial config fails closed).
   The login / setup / invite-accept actions still call `verifyTurnstile()` with
   the client's token before issuing anything.
@@ -577,11 +578,12 @@ connection that never upgraded to TLS is refused unless `SMTP_ALLOW_INSECURE=1`.
 `resend` needs a real key + `RESEND_FROM`; `outbox`
 in production needs `ALLOW_LOCAL_OUTBOX=1`. Production with no real mail
 transport does not write bearer tokens to `data/outbox` unless
-`ALLOW_LOCAL_OUTBOX=1`. Turnstile keys are optional (both unset →
-captcha off; exactly one key in production crashes boot).
-The OTP step after a `sent` screen mounts Turnstile with an explicit
-`turnstile.render()` (`ExplicitTurnstile`) because the implicit scanner
-already ran on the first form.
+`ALLOW_LOCAL_OUTBOX=1`. Turnstile captcha is off by default; set
+`TURNSTILE_ENABLED=1` with both keys to enable (exactly one key in
+production crashes boot; keys alone do not enable captcha).
+The OTP / forgot-password step after a `sent` screen mounts Turnstile with an
+explicit `turnstile.render()` (`ExplicitTurnstile`) because the implicit scanner
+already ran on the first form (or the form mounted after page load).
 `ANTHROPIC_API_KEY` is optional (wizard clear + production restart must not
 brick boot). A missing / empty key fail-closes free-text grading
 (`needs_review`, no stub) — blank is never treated as `test`. The `test`
