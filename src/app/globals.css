@@ -2306,6 +2306,11 @@
     border: 1px solid var(--accent-soft);
     color: var(--accent-ink);
   }
+  .wizard-sample-ids {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-3);
+  }
   .wizard-add,
   .wizard-upload {
     display: flex;

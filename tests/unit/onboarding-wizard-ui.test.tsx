@@ -744,13 +744,309 @@ describe('OnboardingWizard majors UI', () => {
   });
 });
 
-describe('OnboardingWizard upload copy', () => {
+function sourceSubject(id: string, label: string) {
+  return {
+    id,
+    label,
+    icon: 'biology',
+    hasIr: false,
+    sourceFiles: [],
+    generateSources: [`content/source-pdfs/${id}/notes.txt`],
+  };
+}
+
+function generated(snap: OnboardingSnapshot, subjectId: string) {
+  return {
+    ok: true as const,
+    snapshot: snap,
+    result: {
+      subjectId,
+      provider: 'test' as const,
+      model: 'fixture-v1',
+      seed: 0,
+      cacheHit: false,
+      cacheKey: `key-${subjectId}`,
+      sourceCount: 1,
+      sourceHashes: {},
+      wroteIr: true,
+      irRel: `content/subjects/${subjectId}/bank.ir.json`,
+      overwrite: false,
+    },
+  };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+function renderAtAiStep(snap: OnboardingSnapshot) {
+  render(
+    <OnboardingWizard
+      snapshot={snap}
+      pendingInvites={[]}
+      members={[]}
+      canInvite={false}
+      authMode="magic-link"
+    />,
+  );
+  fireEvent.click(screen.getByTestId('wizard-get-started'));
+  fireEvent.click(screen.getByTestId('wizard-next'));
+  fireEvent.click(screen.getByTestId('wizard-next'));
+  expect(screen.getByTestId('wizard-generate')).toBeVisible();
+}
+
+function generatedIds(): string[] {
+  return generateOnboardingSubjectAction.mock.calls.map((call) =>
+    String((call[0] as FormData).get('subjectId')),
+  );
+}
+
+describe('OnboardingWizard generate fixes', () => {
   afterEach(() => {
     cleanup();
+    vi.unstubAllGlobals();
   });
 
   beforeEach(() => {
+    generateOnboardingSubjectAction.mockReset();
+    setReplaceSampleAction.mockReset();
     attachOnboardingPdfAction.mockReset();
+    window.confirm = vi.fn(() => true);
+  });
+
+  const batch = () =>
+    snapshot({
+      aiMode: 'skip-stub',
+      subjects: [
+        sourceSubject('alpha', 'Alpha'),
+        sourceSubject('beta', 'Beta'),
+        sourceSubject('gamma', 'Gamma'),
+      ],
+    });
+
+  it('stops Generate all when cancel lands just after a subject committed, and keeps it', async () => {
+    const snap = batch();
+    const beta = deferred<ReturnType<typeof generated>>();
+    generateOnboardingSubjectAction.mockImplementation(async (data: FormData) => {
+      const id = String(data.get('subjectId'));
+      return id === 'beta' ? beta.promise : generated(snap, id);
+    });
+    const cancelPost = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ ok: false, reason: 'already_committed' }), { status: 409 }),
+    );
+    vi.stubGlobal('fetch', cancelPost);
+    renderAtAiStep(snap);
+
+    fireEvent.click(screen.getByTestId('wizard-generate-all'));
+    await screen.findByTestId('wizard-generate-progress-beta');
+    fireEvent.click(screen.getByTestId('wizard-generate-cancel'));
+    await waitFor(() => expect(cancelPost).toHaveBeenCalledTimes(1));
+    // Acknowledged: calm status, nav unlocked, no error toast.
+    await waitFor(() =>
+      expect(screen.getByTestId('wizard-generate-cancelled')).toHaveTextContent(
+        'Generate cancelled. Kept 1 subject already generated.',
+      ),
+    );
+    expect(screen.getByTestId('wizard-back')).toBeEnabled();
+
+    beta.resolve(generated(snap, 'beta'));
+    await waitFor(() =>
+      expect(screen.getByTestId('wizard-generate-cancelled')).toHaveTextContent(
+        'Generate cancelled. Kept 2 subjects already generated.',
+      ),
+    );
+    expect(generatedIds()).toEqual(['alpha', 'beta']);
+    expect(screen.getByTestId('wizard-ir-ready')).toBeVisible();
+    expect(screen.queryByTestId('wizard-error')).toBeNull();
+  });
+
+  it('aborts the in-flight subject of Generate all and reports what was kept', async () => {
+    const snap = batch();
+    const beta = deferred<{ ok: false; reason: 'cancelled' }>();
+    generateOnboardingSubjectAction.mockImplementation(async (data: FormData) => {
+      const id = String(data.get('subjectId'));
+      return id === 'beta' ? beta.promise : generated(snap, id);
+    });
+    const cancelPost = vi.fn(
+      async () => new Response(JSON.stringify({ ok: true }), { status: 200 }),
+    );
+    vi.stubGlobal('fetch', cancelPost);
+    renderAtAiStep(snap);
+
+    fireEvent.click(screen.getByTestId('wizard-generate-all'));
+    await screen.findByTestId('wizard-generate-progress-beta');
+    fireEvent.click(screen.getByTestId('wizard-generate-cancel'));
+    await waitFor(() =>
+      expect(screen.getByTestId('wizard-generate-cancelled')).toHaveTextContent(
+        'Generate cancelled. Kept 1 subject already generated.',
+      ),
+    );
+    // Unlocked while the provider is still unwinding.
+    expect(screen.getByTestId('wizard-back')).toBeEnabled();
+    expect(screen.queryByTestId('wizard-generate-cancel')).toBeNull();
+
+    beta.resolve({ ok: false, reason: 'cancelled' });
+    await waitFor(() => expect(screen.getByTestId('wizard-ir-ready')).toBeVisible());
+    expect(generatedIds()).toEqual(['alpha', 'beta']);
+    expect(screen.getByTestId('wizard-generate-cancelled')).toHaveTextContent(
+      'Generate cancelled. Kept 1 subject already generated.',
+    );
+    expect(screen.queryByTestId('wizard-error')).toBeNull();
+  });
+
+  it('does not claim cancelled when the cancel request fails', async () => {
+    const snap = batch();
+    const beta = deferred<ReturnType<typeof generated>>();
+    generateOnboardingSubjectAction.mockImplementation(async (data: FormData) => {
+      const id = String(data.get('subjectId'));
+      return id === 'beta' ? beta.promise : generated(snap, id);
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('offline');
+      }),
+    );
+    renderAtAiStep(snap);
+
+    fireEvent.click(screen.getByTestId('wizard-generate-all'));
+    await screen.findByTestId('wizard-generate-progress-beta');
+    fireEvent.click(screen.getByTestId('wizard-generate-cancel'));
+    await waitFor(() =>
+      expect(screen.getByTestId('wizard-error')).toHaveTextContent('Could not cancel generate.'),
+    );
+    expect(screen.queryByTestId('wizard-generate-cancelled')).toBeNull();
+    beta.resolve(generated(snap, 'beta'));
+    await waitFor(() => expect(generatedIds()).toEqual(['alpha', 'beta', 'gamma']));
+  });
+
+  it('says a single generate already finished when cancel arrives after its commit', async () => {
+    const snap = snapshot({ aiMode: 'skip-stub', subjects: [sourceSubject('alpha', 'Alpha')] });
+    const alpha = deferred<ReturnType<typeof generated>>();
+    generateOnboardingSubjectAction.mockImplementation(() => alpha.promise);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ ok: false, reason: 'already_committed' }), {
+            status: 409,
+          }),
+      ),
+    );
+    renderAtAiStep(snap);
+
+    fireEvent.click(screen.getByTestId('wizard-generate-alpha'));
+    await screen.findByTestId('wizard-generate-progress-alpha');
+    fireEvent.click(screen.getByTestId('wizard-generate-cancel'));
+    await waitFor(() =>
+      expect(screen.getByTestId('wizard-generate-finished')).toHaveTextContent(
+        'Generate already finished — review the new BankIR.',
+      ),
+    );
+    alpha.resolve(generated(snap, 'alpha'));
+    await waitFor(() => expect(screen.getByTestId('wizard-generate-run-alpha')).toBeVisible());
+    expect(screen.getByTestId('wizard-generate-finished')).toBeVisible();
+    expect(screen.queryByTestId('wizard-generate-cancelled')).toBeNull();
+    expect(screen.queryByTestId('wizard-error')).toBeNull();
+  });
+
+  it('explains provider failures specifically instead of “That input is not valid.”', async () => {
+    const snap = snapshot({ aiMode: 'cloud', subjects: [sourceSubject('alpha', 'Alpha')] });
+    const copy: [string, RegExp][] = [
+      ['provider_auth', /rejected the API key/],
+      ['provider_rate_limited', /rate-limiting this key, or the account is out of quota/],
+      ['provider_timeout', /did not answer within 3 minutes/],
+      ['provider_unavailable', /Could not reach the AI provider/],
+      ['provider_error', /returned an error/],
+      ['provider_output_invalid', /not with questions Examify can use/],
+      ['sources_unreadable', /cannot read PDFs directly/],
+      ['generate_failed', /run the generate command under Power-user commands/],
+    ];
+    renderAtAiStep(snap);
+    for (const [reason, text] of copy) {
+      generateOnboardingSubjectAction.mockResolvedValueOnce({ ok: false, reason });
+      await waitFor(() => expect(screen.getByTestId('wizard-generate-alpha')).toBeEnabled());
+      fireEvent.click(screen.getByTestId('wizard-generate-alpha'));
+      await waitFor(() => expect(screen.getByTestId('wizard-error')).toHaveTextContent(text));
+      expect(screen.getByTestId('wizard-error')).not.toHaveTextContent('That input is not valid.');
+    }
+  });
+
+  it('offers the replace-sample choice on AI setup for a sample-id subject', async () => {
+    const snap = snapshot({
+      aiMode: 'skip-stub',
+      sampleSubjects: [
+        { id: 'maths', label: 'Maths' },
+        { id: 'geography', label: 'Geography' },
+      ],
+      subjects: [sourceSubject('maths', 'Maths'), sourceSubject('history', 'History')],
+    });
+    setReplaceSampleAction.mockResolvedValue({
+      ok: true,
+      snapshot: { ...snap, replaceSample: true },
+    });
+    renderAtAiStep(snap);
+
+    const notice = screen.getByTestId('wizard-generate-sample-ids');
+    expect(notice).toHaveTextContent('Maths (maths) uses the same id as a sample-bank subject');
+    expect(notice).not.toHaveTextContent('History');
+    const toggle = screen.getByTestId('wizard-generate-replace-sample');
+    expect(toggle).not.toBeChecked();
+    fireEvent.click(toggle);
+    await waitFor(() => expect(setReplaceSampleAction).toHaveBeenCalledTimes(1));
+    expect((setReplaceSampleAction.mock.calls[0]?.[0] as FormData).get('replaceSample')).toBe('1');
+    await waitFor(() =>
+      expect(screen.getByTestId('wizard-generate-sample-ids')).toHaveTextContent(
+        'Replacing sample-bank questions is on',
+      ),
+    );
+    expect(screen.getByTestId('wizard-generate-replace-sample')).toBeChecked();
+  });
+
+  it('keeps Generate all going past a sample-id subject and names it', async () => {
+    const snap = snapshot({
+      aiMode: 'skip-stub',
+      subjects: [sourceSubject('maths', 'Maths'), sourceSubject('history', 'History')],
+    });
+    generateOnboardingSubjectAction.mockImplementation(async (data: FormData) => {
+      const id = String(data.get('subjectId'));
+      return id === 'maths' ? { ok: false, reason: 'sample_collision' } : generated(snap, id);
+    });
+    renderAtAiStep(snap);
+
+    fireEvent.click(screen.getByTestId('wizard-generate-all'));
+    await waitFor(() => expect(screen.getByTestId('wizard-generate-run-history')).toBeVisible());
+    expect(generatedIds()).toEqual(['maths', 'history']);
+    const error = screen.getByTestId('wizard-error');
+    expect(error).toHaveTextContent('“Maths” uses the same id as a sample-bank subject');
+    expect(error).toHaveTextContent('Rename the subject id in Subjects');
+    expect(error).not.toHaveTextContent('That input is not valid.');
+    expect(screen.getByTestId('wizard-ir-ready')).toBeVisible();
+  });
+
+  it('warns while adding a subject whose id is a sample-bank subject id', () => {
+    render(
+      <OnboardingWizard
+        snapshot={snapshot({ subjects: [] })}
+        pendingInvites={[]}
+        members={[]}
+        canInvite={false}
+        authMode="magic-link"
+      />,
+    );
+    fireEvent.click(screen.getByTestId('wizard-get-started'));
+    fireEvent.change(screen.getByTestId('wizard-subject-label'), { target: { value: 'Maths' } });
+    expect(screen.getByTestId('wizard-subject-id')).toHaveValue('maths');
+    expect(screen.getByTestId('wizard-subject-id-sample-hint')).toHaveTextContent(
+      'is the id of the sample Maths subject',
+    );
+    fireEvent.change(screen.getByTestId('wizard-subject-label'), { target: { value: 'History' } });
+    expect(screen.queryByTestId('wizard-subject-id-sample-hint')).toBeNull();
   });
 
   it('names the upload problem instead of “Only PDF files” for a bad name', async () => {

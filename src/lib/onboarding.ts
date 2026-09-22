@@ -111,6 +111,16 @@ const ICON_ACCENTS: Record<SubjectIconOption, { l: number; c: number; h: number 
 };
 
 const FROZEN_SAMPLE_IDS = collectQuestionIds(SAMPLE_QUESTIONS);
+const SAMPLE_SUBJECT_IDS = new Set(SAMPLE_SUBJECTS.map((subject) => subject.id));
+
+/**
+ * A wizard subject with a sample subject's id generates `<id>-easy-1`-style
+ * question ids, which are frozen sample-bank ids. Generate refuses it
+ * (`sample_collision`) unless the household turned on replace-sample.
+ */
+export function isSampleSubjectId(id: string): boolean {
+  return SAMPLE_SUBJECT_IDS.has(normalizeSubjectId(id));
+}
 
 export function normalizeSubjectId(raw: string): string {
   return raw.trim().toLowerCase();

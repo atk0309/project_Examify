@@ -1746,7 +1746,131 @@ describe('onboarding actions', () => {
   });
 });
 
-describe('onboarding upload filenames', () => {
+function seedNotesSubject(root: string, id: string) {
+  fs.mkdirSync(path.join(root, 'content/subjects', id), { recursive: true });
+  fs.mkdirSync(path.join(root, 'content/source-pdfs', id), { recursive: true });
+  writeFileSync(path.join(root, 'content/source-pdfs', id, 'notes.txt'), `${id} notes.\n`);
+}
+
+function cancelRequest(token: string): Request {
+  return new Request('http://localhost:3000/api/onboarding/cancel-generate', {
+    method: 'POST',
+    headers: { origin: 'http://localhost:3000', 'content-type': 'application/json' },
+    body: JSON.stringify({ cancelToken: token }),
+  });
+}
+
+describe('onboarding generate + upload fixes', () => {
+  it('generates a sample-id subject only after the household allows replacing the sample bank', async () => {
+    const root = tempRoot();
+    const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
+    setOnboardingContentRootForTests(root);
+    await signInHost();
+    seedNotesSubject(root, 'maths');
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const {
+      generateOnboardingSubjectAction,
+      setOnboardingAiModeAction,
+      setReplaceSampleAction,
+      validateOnboardingAction,
+    } = await import('@/actions/onboarding');
+    const mode = new FormData();
+    mode.set('aiMode', 'skip-stub');
+    expect((await setOnboardingAiModeAction(mode)).ok).toBe(true);
+    const generate = new FormData();
+    generate.set('subjectId', 'maths');
+
+    expect(await generateOnboardingSubjectAction(generate)).toEqual({
+      ok: false,
+      reason: 'sample_collision',
+    });
+    expect(fs.existsSync(path.join(root, 'content/subjects/maths/bank.ir.json'))).toBe(false);
+
+    const allow = new FormData();
+    allow.set('replaceSample', '1');
+    expect((await setReplaceSampleAction(allow)).ok).toBe(true);
+    const result = await generateOnboardingSubjectAction(generate);
+    expect(result.ok).toBe(true);
+    const ir = JSON.parse(
+      readFileSync(path.join(root, 'content/subjects/maths/bank.ir.json'), 'utf8'),
+    ) as { difficulties: { easy: { id: string }[] } };
+    expect(ir.difficulties.easy[0]?.id).toBe('maths-easy-1');
+    // Same household setting drives validate, so the next step agrees.
+    expect((await validateOnboardingAction()).ok).toBe(true);
+  });
+
+  it('returns a specific provider reason code, never the provider message or key', async () => {
+    const root = tempRoot();
+    const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
+    setOnboardingContentRootForTests(root);
+    await signInHost();
+    seedNotesSubject(root, 'history');
+    const previous = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-action-never-echoed';
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('{"error":"invalid x-api-key"}', { status: 401 })),
+    );
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const { generateOnboardingSubjectAction, setOnboardingAiModeAction } =
+        await import('@/actions/onboarding');
+      const mode = new FormData();
+      mode.set('aiMode', 'cloud');
+      expect((await setOnboardingAiModeAction(mode)).ok).toBe(true);
+      const generate = new FormData();
+      generate.set('subjectId', 'history');
+      const result = await generateOnboardingSubjectAction(generate);
+      expect(result).toEqual({ ok: false, reason: 'provider_auth' });
+      expect(JSON.stringify(result)).not.toMatch(/sk-ant|HTTP 401|x-api-key/);
+      expect(warn).toHaveBeenCalledWith('[onboarding] generate failed', {
+        reason: 'provider_auth',
+        subjectId: 'history',
+        status: 401,
+      });
+      expect(fs.existsSync(path.join(root, 'content/subjects/history/bank.ir.json'))).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+      if (previous === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = previous;
+    }
+  });
+
+  it('stops a generate-all batch when cancel lands after the first subject committed', async () => {
+    const root = tempRoot();
+    const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
+    setOnboardingContentRootForTests(root);
+    await signInHost();
+    seedNotesSubject(root, 'alpha');
+    seedNotesSubject(root, 'beta');
+    const { generateOnboardingSubjectAction, setOnboardingAiModeAction } =
+      await import('@/actions/onboarding');
+    const { POST } = await import('@/app/api/onboarding/cancel-generate/route');
+    const mode = new FormData();
+    mode.set('aiMode', 'skip-stub');
+    expect((await setOnboardingAiModeAction(mode)).ok).toBe(true);
+
+    const token = 'batch-token-route';
+    const first = new FormData();
+    first.set('subjectId', 'alpha');
+    first.set('cancelToken', token);
+    expect((await generateOnboardingSubjectAction(first)).ok).toBe(true);
+
+    const late = await POST(cancelRequest(token));
+    expect(late.status).toBe(409);
+    expect(await late.json()).toEqual({ ok: false, reason: 'already_committed' });
+
+    const second = new FormData();
+    second.set('subjectId', 'beta');
+    second.set('cancelToken', token);
+    expect(await generateOnboardingSubjectAction(second)).toEqual({
+      ok: false,
+      reason: 'cancelled',
+    });
+    expect(fs.existsSync(path.join(root, 'content/subjects/alpha/bank.ir.json'))).toBe(true);
+    expect(fs.existsSync(path.join(root, 'content/subjects/beta/bank.ir.json'))).toBe(false);
+  });
+
   it('uploads a PDF with an ordinary school filename and refuses non-PDF / unusable names', async () => {
     const root = tempRoot();
     const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');

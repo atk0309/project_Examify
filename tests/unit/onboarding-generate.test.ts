@@ -79,21 +79,28 @@ describe('onboarding generate mapping', () => {
     const rejected = vi.fn(async () => {
       throw new Error('network');
     });
-    expect(await postOnboardingGenerateCancel('cancel-token-01', rejected)).toBe(false);
+    expect(await postOnboardingGenerateCancel('cancel-token-01', rejected)).toBe('failed');
 
     const forbidden = vi.fn(
       async () => new Response(JSON.stringify({ ok: false, reason: 'forbidden' }), { status: 403 }),
     );
-    expect(await postOnboardingGenerateCancel('cancel-token-01', forbidden)).toBe(false);
+    expect(await postOnboardingGenerateCancel('cancel-token-01', forbidden)).toBe('failed');
+
+    const conflict = vi.fn(
+      async () => new Response(JSON.stringify({ ok: false, reason: 'other' }), { status: 409 }),
+    );
+    expect(await postOnboardingGenerateCancel('cancel-token-01', conflict)).toBe('failed');
 
     const committed = vi.fn(
       async () =>
         new Response(JSON.stringify({ ok: false, reason: 'already_committed' }), { status: 409 }),
     );
-    expect(await postOnboardingGenerateCancel('cancel-token-01', committed)).toBe(false);
+    expect(await postOnboardingGenerateCancel('cancel-token-01', committed)).toBe(
+      'already_committed',
+    );
 
     const ok = vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 }));
-    expect(await postOnboardingGenerateCancel('cancel-token-01', ok)).toBe(true);
+    expect(await postOnboardingGenerateCancel('cancel-token-01', ok)).toBe('cancelled');
     expect(ok).toHaveBeenCalledWith(
       '/api/onboarding/cancel-generate',
       expect.objectContaining({ method: 'POST', credentials: 'same-origin' }),
@@ -210,7 +217,6 @@ describe('onboarding generate graph', () => {
     expect(generate).not.toMatch(/writeFileAtomic\(/);
     expect(generate).toMatch(/never leak CLI `--force`/);
     expect(generate).toMatch(/signal: controller\.signal/);
-    expect(generate).toMatch(/abortControllers\.get\(token\)\?\.abort\(\)/);
     expect(generate).toMatch(/GenerateAbortedError/);
     expect(generate).not.toMatch(/isAbortError/);
     expect(generate).toMatch(/dropGenerateAbort\(token\)/);
@@ -357,12 +363,6 @@ describe('onboarding generate graph', () => {
     expect(wizard).toMatch(
       /if \(result\.reason === 'cancelled' \|\| generateCancelRef\.current\) \{\s*cancelled = true;/,
     );
-    expect(wizard).toMatch(
-      /const recorded = await postOnboardingGenerateCancel\(token\);\s*if \(!recorded\) \{\s*setError\('Could not cancel generate\.'\)/,
-    );
-    expect(wizard).toMatch(
-      /generateCancelRef\.current = true;\s*if \(generateCancelTokenRef\.current !== token\) return;\s*setError\(null\);\s*setGenerateNoteKind\('cancelled'\);\s*setGenerateNote\('Generate cancelled'\);\s*setGenerateBusy\(false\);\s*setGenerateCancelAck\(true\)/,
-    );
     expect(wizard).toMatch(/postOnboardingGenerateCancel\(token\)/);
     expect(wizard).not.toMatch(/cancelOnboardingGenerateAction/);
     expect(wizard).toMatch(
@@ -377,20 +377,6 @@ describe('onboarding generate graph', () => {
     expect(backAt).toBeGreaterThan(-1);
     const backDisabled = wizard.lastIndexOf('disabled=', backAt);
     expect(wizard.slice(backDisabled, backAt)).toMatch(/disabled=\{navLocked\}/);
-  });
-
-  it('keeps irReady on generate-all cancel after a subject finished', () => {
-    const wizard = readFileSync(
-      path.join(process.cwd(), 'src/components/exam/OnboardingWizard.tsx'),
-      'utf8',
-    );
-    expect(wizard).toMatch(
-      /\/\/ Keep IR-ready for subjects that already finished \(including generate-all cancel\)\./,
-    );
-    expect(wizard).toMatch(/if \(wroteAny\) setIrReady\(true\)/);
-    expect(wizard).toMatch(
-      /if \(cancelled\) \{\s*setGenerateNoteKind\('cancelled'\);\s*setGenerateNote\('Generate cancelled'\)/,
-    );
   });
 
   it('keeps dry-run step id and testids while the rail label is Review', () => {
@@ -1077,7 +1063,7 @@ describe('generateOnboardingSubject', () => {
     expect(readFileSync(irPath, 'utf8')).toBe(prior);
   });
 
-  it('does not treat a bare AbortError timeout as cancelled', async () => {
+  it('maps a bare AbortError timeout to provider_timeout, not cancelled', async () => {
     const ingest = await import('examify-ingest/generate');
     const { generateOnboardingSubject } = await import('@/lib/onboarding-generate');
     const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
@@ -1100,7 +1086,7 @@ describe('generateOnboardingSubject', () => {
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
     expect(result.reason).not.toBe('cancelled');
-    expect(result.reason).toBe('invalid');
+    expect(result.reason).toBe('provider_timeout');
     expect(result.message).not.toBe('Generate cancelled.');
     expect(ingest.isAbortError(timeout)).toBe(true);
     expect(writeSpy).not.toHaveBeenCalled();
@@ -1240,5 +1226,390 @@ describe('generateOnboardingSubject', () => {
       if (prevUrl === undefined) delete process.env.EXAMIFY_LLM_BASE_URL;
       else process.env.EXAMIFY_LLM_BASE_URL = prevUrl;
     }
+  });
+});
+
+function seedNotesSubject(root: string, id: string) {
+  mkdirSync(path.join(root, 'content/subjects', id), { recursive: true });
+  mkdirSync(path.join(root, 'content/source-pdfs', id), { recursive: true });
+  writeFileSync(path.join(root, 'content/source-pdfs', id, 'notes.txt'), `${id} study notes.\n`);
+}
+
+function irPathFor(root: string, id: string): string {
+  return path.join(root, 'content/subjects', id, 'bank.ir.json');
+}
+
+describe('generateOnboardingSubject sample-bank ids (C09)', () => {
+  it('refuses a sample subject id before any provider call unless replace-sample is on', async () => {
+    const ingest = await import('examify-ingest/generate');
+    const { generateOnboardingSubject } = await import('@/lib/onboarding-generate');
+    const root = tempRoot();
+    seedNotesSubject(root, 'maths');
+    const generateSpy = vi.spyOn(ingest, 'generateSubject');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const refused = await generateOnboardingSubject({
+      subjectId: 'maths',
+      provider: 'test',
+      seed: 0,
+      root,
+    });
+    expect(refused.ok).toBe(false);
+    if (refused.ok) throw new Error('expected sample_collision');
+    expect(refused.reason).toBe('sample_collision');
+    expect(generateSpy).not.toHaveBeenCalled();
+    expect(existsSync(irPathFor(root, 'maths'))).toBe(false);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith('[onboarding] generate failed', {
+      reason: 'sample_collision',
+      subjectId: 'maths',
+    });
+
+    const allowed = await generateOnboardingSubject({
+      subjectId: 'maths',
+      provider: 'test',
+      seed: 0,
+      root,
+      replaceSample: true,
+    });
+    expect(allowed.ok).toBe(true);
+    expect(generateSpy).toHaveBeenCalledWith(expect.objectContaining({ replaceSample: true }));
+    const ir = JSON.parse(readFileSync(irPathFor(root, 'maths'), 'utf8')) as {
+      difficulties: { easy: { id: string }[] };
+    };
+    expect(ir.difficulties.easy[0]?.id).toBe('maths-easy-1');
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('maps a sample-bank freeze from generate to sample_collision, not a generic failure', async () => {
+    const ingest = await import('examify-ingest/generate');
+    const { generateOnboardingSubject } = await import('@/lib/onboarding-generate');
+    const root = tempRoot();
+    seedSubject(root);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(ingest, 'generateSubject').mockRejectedValue(
+      new ingest.SampleIdCollisionError('history', ['maths-easy-1'], 'raw freeze text'),
+    );
+
+    const result = await generateOnboardingSubject({
+      subjectId: 'history',
+      provider: 'test',
+      seed: 0,
+      root,
+      force: true,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected sample_collision');
+    expect(result.reason).toBe('sample_collision');
+  });
+});
+
+describe('generateOnboardingSubject provider failures (C10)', () => {
+  const KEY = 'sk-ant-unit-never-logged';
+  const MODEL_TEXT = 'I am sorry, I cannot help with that request.';
+
+  function historyBank() {
+    return {
+      version: 1,
+      subject: { id: 'history', label: 'History', icon: 'geography', l: 0.6, c: 0.08, h: 40 },
+      difficulties: {
+        easy: [
+          {
+            id: 'history-easy-1',
+            type: 'mcq',
+            q: 'Generated?',
+            choices: ['A', 'B', 'C', 'D'],
+            answer: 0,
+            provenance: { pdf: 'notes.txt', locator: 'p1' },
+          },
+        ],
+        medium: [],
+        hard: [],
+      },
+    };
+  }
+
+  const cases: {
+    name: string;
+    fetch: () => Promise<Response>;
+    reason: string;
+    status?: number;
+  }[] = [
+    {
+      name: '401',
+      fetch: async () => new Response('{}', { status: 401 }),
+      reason: 'provider_auth',
+      status: 401,
+    },
+    {
+      name: '403',
+      fetch: async () => new Response('{}', { status: 403 }),
+      reason: 'provider_auth',
+      status: 403,
+    },
+    {
+      name: '429',
+      fetch: async () => new Response('{}', { status: 429 }),
+      reason: 'provider_rate_limited',
+      status: 429,
+    },
+    {
+      name: '529 overloaded',
+      fetch: async () => new Response('{}', { status: 529 }),
+      reason: 'provider_unavailable',
+      status: 529,
+    },
+    {
+      name: '400 (e.g. no credit)',
+      fetch: async () => new Response('{}', { status: 400 }),
+      reason: 'provider_error',
+      status: 400,
+    },
+    {
+      name: 'network failure',
+      fetch: async () => {
+        throw new TypeError('fetch failed');
+      },
+      reason: 'provider_unavailable',
+    },
+    {
+      name: 'deadline',
+      fetch: async () => {
+        throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+      },
+      reason: 'provider_timeout',
+    },
+    {
+      name: 'prose instead of JSON',
+      fetch: async () =>
+        new Response(JSON.stringify({ content: [{ type: 'text', text: MODEL_TEXT }] }), {
+          status: 200,
+        }),
+      reason: 'provider_output_invalid',
+    },
+    {
+      name: 'JSON that is not BankIR',
+      fetch: async () =>
+        new Response(
+          JSON.stringify({
+            content: [{ type: 'text', text: JSON.stringify({ hello: MODEL_TEXT }) }],
+          }),
+          { status: 200 },
+        ),
+      reason: 'provider_output_invalid',
+    },
+  ];
+
+  for (const row of cases) {
+    it(`maps ${row.name} to ${row.reason}, writes nothing, and logs the code only`, async () => {
+      const { generateOnboardingSubject } = await import('@/lib/onboarding-generate');
+      const root = tempRoot();
+      seedNotesSubject(root, 'history');
+      const previous = process.env.ANTHROPIC_API_KEY;
+      process.env.ANTHROPIC_API_KEY = KEY;
+      const fetchSpy = vi.fn(row.fetch);
+      vi.stubGlobal('fetch', fetchSpy);
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      try {
+        const result = await generateOnboardingSubject({
+          subjectId: 'history',
+          provider: 'anthropic',
+          seed: 0,
+          root,
+        });
+        expect(fetchSpy).toHaveBeenCalledTimes(1);
+        expect(result.ok).toBe(false);
+        if (result.ok) throw new Error('expected failure');
+        expect(result.reason).toBe(row.reason);
+        expect(existsSync(irPathFor(root, 'history'))).toBe(false);
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(warn).toHaveBeenCalledWith('[onboarding] generate failed', {
+          reason: row.reason,
+          subjectId: 'history',
+          ...(row.status ? { status: row.status } : {}),
+        });
+        const logged = JSON.stringify(warn.mock.calls);
+        expect(logged).not.toContain(KEY);
+        expect(logged).not.toContain(MODEL_TEXT);
+        expect(logged).not.toMatch(/returned HTTP|fetch failed|not a JSON object/);
+      } finally {
+        vi.unstubAllGlobals();
+        if (previous === undefined) delete process.env.ANTHROPIC_API_KEY;
+        else process.env.ANTHROPIC_API_KEY = previous;
+      }
+    });
+  }
+
+  it('still succeeds on a usable provider answer and logs nothing', async () => {
+    const { generateOnboardingSubject } = await import('@/lib/onboarding-generate');
+    const root = tempRoot();
+    seedNotesSubject(root, 'history');
+    const previous = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = KEY;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({ content: [{ type: 'text', text: JSON.stringify(historyBank()) }] }),
+            { status: 200 },
+          ),
+      ),
+    );
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const result = await generateOnboardingSubject({
+        subjectId: 'history',
+        provider: 'anthropic',
+        seed: 0,
+        root,
+      });
+      expect(result.ok).toBe(true);
+      expect(existsSync(irPathFor(root, 'history'))).toBe(true);
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+      if (previous === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = previous;
+    }
+  });
+
+  it('maps a PDF-only source the provider cannot read to sources_unreadable', async () => {
+    const ingest = await import('examify-ingest/generate');
+    const { generateOnboardingSubject } = await import('@/lib/onboarding-generate');
+    const root = tempRoot();
+    seedSubject(root);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(ingest, 'generateSubject').mockRejectedValue(
+      new ingest.UnreadableSourcesError('cannot read PDF bytes'),
+    );
+    const result = await generateOnboardingSubject({
+      subjectId: 'history',
+      provider: 'openai',
+      seed: 0,
+      root,
+      force: true,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected failure');
+    expect(result.reason).toBe('sources_unreadable');
+  });
+
+  it('does not log cancel, skip, or overwrite-confirm outcomes as failures', async () => {
+    const { generateOnboardingSubject, requestOnboardingGenerateCancel } =
+      await import('@/lib/onboarding-generate');
+    const root = tempRoot();
+    seedSubject(root);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const confirm = await generateOnboardingSubject({
+      subjectId: 'history',
+      provider: 'test',
+      seed: 0,
+      root,
+    });
+    expect(confirm.ok ? null : confirm.reason).toBe('needs_confirm');
+    const skipped = await generateOnboardingSubject({
+      subjectId: 'history',
+      provider: 'test',
+      seed: 0,
+      root,
+      overwrite: 'skip',
+    });
+    expect(skipped.ok ? null : skipped.reason).toBe('skipped');
+    requestOnboardingGenerateCancel('cancel-token-quiet');
+    const cancelled = await generateOnboardingSubject({
+      subjectId: 'history',
+      provider: 'test',
+      seed: 0,
+      root,
+      force: true,
+      cancelToken: 'cancel-token-quiet',
+    });
+    expect(cancelled.ok ? null : cancelled.reason).toBe('cancelled');
+    expect(warn).not.toHaveBeenCalled();
+  });
+});
+
+describe('generate-all cancel (C11)', () => {
+  it('refuses the next subject of a batch once cancel lands after an earlier commit', async () => {
+    const ingest = await import('examify-ingest/generate');
+    const { generateOnboardingSubject, requestOnboardingGenerateCancel } =
+      await import('@/lib/onboarding-generate');
+    const root = tempRoot();
+    seedNotesSubject(root, 'alpha');
+    seedNotesSubject(root, 'beta');
+    const generateSpy = vi.spyOn(ingest, 'generateSubject');
+    const token = 'batch-token-01';
+
+    const first = await generateOnboardingSubject({
+      subjectId: 'alpha',
+      provider: 'test',
+      seed: 0,
+      root,
+      cancelToken: token,
+    });
+    expect(first.ok).toBe(true);
+    // Nothing in flight and alpha already wrote IR: that subject is kept.
+    expect(requestOnboardingGenerateCancel(token)).toBe(false);
+
+    const second = await generateOnboardingSubject({
+      subjectId: 'beta',
+      provider: 'test',
+      seed: 0,
+      root,
+      cancelToken: token,
+    });
+    expect(second.ok).toBe(false);
+    if (second.ok) throw new Error('expected cancelled');
+    expect(second.reason).toBe('cancelled');
+    expect(generateSpy).toHaveBeenCalledTimes(1);
+    expect(existsSync(irPathFor(root, 'alpha'))).toBe(true);
+    expect(existsSync(irPathFor(root, 'beta'))).toBe(false);
+  });
+
+  it('aborts the in-flight subject of a batch after an earlier subject committed', async () => {
+    const ingest = await import('examify-ingest/generate');
+    const { generateOnboardingSubject, requestOnboardingGenerateCancel } =
+      await import('@/lib/onboarding-generate');
+    const root = tempRoot();
+    seedNotesSubject(root, 'alpha');
+    seedNotesSubject(root, 'beta');
+    const token = 'batch-token-02';
+    const first = await generateOnboardingSubject({
+      subjectId: 'alpha',
+      provider: 'test',
+      seed: 0,
+      root,
+      cancelToken: token,
+    });
+    expect(first.ok).toBe(true);
+    const alphaIr = readFileSync(irPathFor(root, 'alpha'), 'utf8');
+
+    let seenSignal: AbortSignal | undefined;
+    vi.spyOn(ingest, 'generateSubject').mockImplementation(
+      (request) =>
+        new Promise<never>((_resolve, reject) => {
+          seenSignal = request.signal;
+          request.signal?.addEventListener(
+            'abort',
+            () => reject(new ingest.GenerateAbortedError()),
+            { once: true },
+          );
+        }),
+    );
+    const pending = generateOnboardingSubject({
+      subjectId: 'beta',
+      provider: 'test',
+      seed: 0,
+      root,
+      cancelToken: token,
+    });
+    await vi.waitFor(() => expect(seenSignal).toBeInstanceOf(AbortSignal));
+    expect(requestOnboardingGenerateCancel(token)).toBe(true);
+    expect(seenSignal?.aborted).toBe(true);
+    const second = await pending;
+    expect(second.ok ? null : second.reason).toBe('cancelled');
+    expect(existsSync(irPathFor(root, 'beta'))).toBe(false);
+    expect(readFileSync(irPathFor(root, 'alpha'), 'utf8')).toBe(alphaIr);
   });
 });
