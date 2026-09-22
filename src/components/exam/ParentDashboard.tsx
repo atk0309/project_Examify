@@ -159,7 +159,7 @@ export function ParentDashboard({
             </section>
           ) : (
             students.map((child) => (
-              <section className="progress-view" key={child.id}>
+              <section className="progress-view" key={child.id} data-testid="student-attempts">
                 <p className="eyebrow">{child.label}’s attempts</p>
                 <ProgressView
                   data={child.progress}

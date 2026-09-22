@@ -7,13 +7,15 @@
  * which doesn't exist until migrations run. globalSetup-driven migration
  * therefore deadlocks the webServer healthcheck.
  *
- * Wired in via `pnpm test:e2e` -> `pnpm test:e2e:prepare && pnpm build && playwright test`.
+ * Wired in via `pnpm test:e2e` -> `pnpm test:e2e:prepare && pnpm build && playwright test`
+ * (and the `:fresh` / `:password` prepare scripts before their own suites).
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
+import { seedExampleFamily } from './seed';
 
 const cwd = process.cwd();
 const tmp = path.join(cwd, 'tests', '.tmp');
@@ -47,22 +49,16 @@ sqlite.pragma('foreign_keys = ON');
 
 migrate(drizzle(sqlite), { migrationsFolder });
 
-const empty = process.argv.includes('--empty');
-if (!empty) {
-  const now = Date.now();
-  const insertUser = sqlite.prepare(
-    'INSERT INTO users (email, email_verified_at, created_at) VALUES (?, ?, ?)',
-  );
-  const student = insertUser.run('student@example.com', now, now);
-  const parent = insertUser.run('parent@example.com', now, now);
-  const household = sqlite
-    .prepare('INSERT INTO households (name, created_at, onboarding_complete) VALUES (?, ?, ?)')
-    .run('Example family', now, 1);
-  const insertMember = sqlite.prepare(
-    'INSERT INTO household_members (household_id, user_id, role, created_at) VALUES (?, ?, ?, ?)',
-  );
-  insertMember.run(household.lastInsertRowid, parent.lastInsertRowid, 'admin', now);
-  insertMember.run(household.lastInsertRowid, student.lastInsertRowid, 'student', now);
+// `--empty`: no household (fresh first-run suite). `--password`: the example
+// family with known passwords (AUTH_MODE=password suite). Default: the example
+// family without password hashes (magic-link suite).
+const seed = process.argv.includes('--empty')
+  ? 'empty'
+  : process.argv.includes('--password')
+    ? 'example-family-password'
+    : 'example-family';
+if (seed !== 'empty') {
+  seedExampleFamily(sqlite, { withPasswords: seed === 'example-family-password' });
 }
 
 const tables = sqlite
@@ -89,5 +85,5 @@ if (missing.length > 0) {
 sqlite.close();
 const size = fs.statSync(dbPath).size;
 console.log(
-  `[e2e:prepare] migrated ${expected.length} tables into ${dbPath} (${size} bytes), seed=${empty ? 'empty' : 'example-family'}, journal=DELETE`,
+  `[e2e:prepare] migrated ${expected.length} tables into ${dbPath} (${size} bytes), seed=${seed}, journal=DELETE`,
 );

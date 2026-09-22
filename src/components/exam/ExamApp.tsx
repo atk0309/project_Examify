@@ -83,7 +83,12 @@ function SubjectCard({
 }) {
   const count = questionCount;
   return (
-    <button className="subject-card" style={accentCSS(subject, sat)} onClick={onClick}>
+    <button
+      className="subject-card"
+      style={accentCSS(subject, sat)}
+      onClick={onClick}
+      data-testid={`subject-card-${subject.id}`}
+    >
       <span className="icon-chip">
         <SubjectIcon name={subject.icon} />
       </span>
@@ -108,7 +113,11 @@ function DifficultyCard({
   onClick: () => void;
 }) {
   return (
-    <button className={'diff-card' + (selected ? ' selected' : '')} onClick={onClick}>
+    <button
+      className={'diff-card' + (selected ? ' selected' : '')}
+      onClick={onClick}
+      data-testid={`difficulty-${diff.id}`}
+    >
       <span className={'diff-rank ' + rankClass}>
         <i />
         <i />
@@ -136,7 +145,11 @@ function Choice({
 }) {
   const key = String.fromCharCode(65 + index);
   return (
-    <button className={'choice' + (selected ? ' selected' : '')} onClick={onClick}>
+    <button
+      className={'choice' + (selected ? ' selected' : '')}
+      onClick={onClick}
+      data-testid="exam-choice"
+    >
       <span className="choice-key">{key}</span>
       <span className="choice-label">{label}</span>
     </button>
@@ -164,7 +177,11 @@ function ResumeCard({
   const at = Math.min(session.currentIndex + 1, session.questions.length);
   return (
     <div className="resume-card" style={accentCSS(subject, sat)}>
-      <button className="resume-main" onClick={() => onResume(session)}>
+      <button
+        className="resume-main"
+        onClick={() => onResume(session)}
+        data-testid={`resume-${session.subject}-${session.difficulty}`}
+      >
         <span className="icon-chip">
           <SubjectIcon name={subject.icon} />
         </span>
@@ -230,7 +247,7 @@ function Dashboard({
         <p className="subtitle">
           Short, focused mini exams. Take your time — every attempt makes the real thing easier.
         </p>
-        <button className="progress-link" onClick={onProgress}>
+        <button className="progress-link" onClick={onProgress} data-testid="progress-link">
           {UIcon.retry}
           <span>Your progress{attemptCount > 0 ? ` · ${attemptCount} done` : ''}</span>
           {UIcon.arrow}
@@ -350,6 +367,7 @@ function DifficultyScreen({
             className="btn btn-primary"
             disabled={available.length === 0}
             onClick={() => onStart(sel)}
+            data-testid="start-exam"
           >
             Start mini exam {UIcon.arrow}
           </button>
@@ -417,7 +435,7 @@ function ExamScreen({
       <div className="screen-body">
         <div className="exam-top">
           <div className="progress-row">
-            <span className="progress-count">
+            <span className="progress-count" data-testid="exam-progress">
               Question {i + 1} of {total}
             </span>
             <span className="progress-subject">
@@ -441,6 +459,7 @@ function ExamScreen({
               rows={6}
               maxLength={4000}
               aria-label="Your answer"
+              data-testid="exam-free-answer"
             />
           ) : (
             <div className="choices">
@@ -458,7 +477,12 @@ function ExamScreen({
         </div>
 
         <div className="action-dock">
-          <button className="btn btn-primary" disabled={!answered} onClick={advance}>
+          <button
+            className="btn btn-primary"
+            disabled={!answered}
+            onClick={advance}
+            data-testid="exam-next"
+          >
             {isLast ? 'Finish exam' : 'Next question'} {!isLast && UIcon.arrow}
           </button>
         </div>
@@ -556,7 +580,7 @@ function FreeReviewRow({
 }) {
   if (status === 'needs_review' || verdict === null) {
     return (
-      <div className="review-row">
+      <div className="review-row" data-testid="review-row-free">
         <span className="review-mark pending">{UIcon.retry}</span>
         <div>
           <p className="review-q">{q}</p>
@@ -567,7 +591,7 @@ function FreeReviewRow({
   }
   const ok = isFreePass(score ?? 0, maxScore);
   return (
-    <div className="review-row">
+    <div className="review-row" data-testid="review-row-free">
       <span className={'review-mark ' + (ok ? 'ok' : 'err')}>{ok ? UIcon.check : UIcon.cross}</span>
       <div>
         <p className="review-q">{q}</p>
@@ -611,7 +635,11 @@ function ResultsScreen({
       <TopBar onHome={onHome} label="Results" />
       <div className="screen-body">
         <div className="results-head">
-          <div className="score-ring" style={{ '--pct': pct } as CSSProperties}>
+          <div
+            className="score-ring"
+            style={{ '--pct': pct } as CSSProperties}
+            data-testid="results-score"
+          >
             <div>
               <div className="score-num">
                 {correct}
@@ -654,7 +682,7 @@ function ResultsScreen({
             const mcq = n.item;
             const ok = mcq.chosen === mcq.answer;
             return (
-              <div className="review-row" key={idx}>
+              <div className="review-row" key={idx} data-testid="review-row-mcq">
                 <span className={'review-mark ' + (ok ? 'ok' : 'err')}>
                   {ok ? UIcon.check : UIcon.cross}
                 </span>
@@ -679,7 +707,7 @@ function ResultsScreen({
           <button className="btn btn-ghost" onClick={onChangeDiff}>
             Choose another difficulty
           </button>
-          <button className="btn btn-quiet" onClick={onHome}>
+          <button className="btn btn-quiet" onClick={onHome} data-testid="results-home">
             Back to subjects
           </button>
         </div>
