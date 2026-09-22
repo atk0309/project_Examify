@@ -153,7 +153,9 @@ function PasswordInviteForm({
     });
   }
 
-  if (state.status === 'sent' && !editing) {
+  // Keep the OTP screen closed while a replacement request is in flight so the
+  // previous code cannot be submitted before the revoke lands.
+  if (state.status === 'sent' && !editing && !pending) {
     return (
       <PasswordInviteOtpForm
         email={state.email}

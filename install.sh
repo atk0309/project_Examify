@@ -26,8 +26,8 @@
 #   (mailbox proof) can be read from data/outbox — only when this run writes
 #   .env. Set SMTP_* / RESEND_* to use real mail instead. Invite accept never
 #   skips that OTP. RESEND_API_KEY=test is not a mail path.
-#   Turnstile stays off unless TURNSTILE_ENABLED=1 and both Turnstile keys are
-#   set (keys alone do not enable captcha).
+#   Turnstile stays off unless TURNSTILE_ENABLED=1 (or true) and both Turnstile
+#   keys are set (keys alone do not enable captcha).
 #
 # Flags:
 #   --write-env-only   write .env and exit (used by tests)
@@ -65,8 +65,8 @@ Non-interactive (CI / automation):
   (mailbox proof) can be read from data/outbox — only when this run writes
   .env. Set SMTP_* / RESEND_* to use real mail instead. Invite accept never
   skips that OTP. RESEND_API_KEY=test is not a mail path.
-  Turnstile stays off unless TURNSTILE_ENABLED=1 and both Turnstile keys are
-  set (keys alone do not enable captcha).
+  Turnstile stays off unless TURNSTILE_ENABLED=1 (or true) and both Turnstile
+  keys are set (keys alone do not enable captcha).
 
 Flags:
   --write-env-only   write .env and exit (used by tests)
@@ -438,9 +438,9 @@ write_env() {
   local old_umask
   # Keys alone do not enable captcha — same rule as parseEnv / isTurnstileEnabled.
   # Interactive confirm sets TURNSTILE_ENABLED=1 before prompting for keys;
-  # non-interactive hosts must export TURNSTILE_ENABLED=1 with both keys.
+  # non-interactive hosts must export TURNSTILE_ENABLED=1 (or true) with both keys.
   # Validate before creating dest so a refuse leaves no half-written .env.
-  if [ "${TURNSTILE_ENABLED-}" = "1" ]; then
+  if [ "${TURNSTILE_ENABLED-}" = "1" ] || [ "${TURNSTILE_ENABLED-}" = "true" ]; then
     if [ -z "${NEXT_PUBLIC_TURNSTILE_SITE_KEY-}" ] || [ -z "${TURNSTILE_SECRET_KEY-}" ]; then
       echo "TURNSTILE_ENABLED=1 requires both NEXT_PUBLIC_TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY." >&2
       exit 1
@@ -485,7 +485,8 @@ write_env() {
   if [ "${ALLOW_LOCAL_OUTBOX-}" = "1" ]; then
     printf 'ALLOW_LOCAL_OUTBOX=1\n' >> "$dest"
   fi
-  if [ "${TURNSTILE_ENABLED-}" = "1" ]; then
+  if [ "${TURNSTILE_ENABLED-}" = "1" ] || [ "${TURNSTILE_ENABLED-}" = "true" ]; then
+    # Canonical form matches interactive confirm and docs (parseEnv also accepts true).
     printf 'TURNSTILE_ENABLED=1\n' >> "$dest"
     printf 'NEXT_PUBLIC_TURNSTILE_SITE_KEY=%s\n' "$NEXT_PUBLIC_TURNSTILE_SITE_KEY" >> "$dest"
     printf 'TURNSTILE_SECRET_KEY=%s\n' "$TURNSTILE_SECRET_KEY" >> "$dest"

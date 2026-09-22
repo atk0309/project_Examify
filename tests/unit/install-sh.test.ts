@@ -103,6 +103,29 @@ describe('install.sh', () => {
     }
   });
 
+  it('accepts TURNSTILE_ENABLED=true (same as parseEnv) and writes canonical =1', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-install-'));
+    try {
+      const result = spawnSync('bash', [SCRIPT, '--write-env-only'], {
+        cwd: dir,
+        env: installEnv({
+          TURNSTILE_ENABLED: 'true',
+          NEXT_PUBLIC_TURNSTILE_SITE_KEY: '1x00000000000000000000AA',
+          TURNSTILE_SECRET_KEY: '1x0000000000000000000000000000000AA',
+        }),
+        encoding: 'utf8',
+      });
+      expect(result.status).toBe(0);
+      const envFile = fs.readFileSync(path.join(dir, '.env'), 'utf8');
+      expect(envFile).toContain('TURNSTILE_ENABLED=1');
+      expect(envFile).not.toContain('TURNSTILE_ENABLED=true');
+      expect(envFile).toContain('NEXT_PUBLIC_TURNSTILE_SITE_KEY=1x00000000000000000000AA');
+      expect(envFile).toContain('TURNSTILE_SECRET_KEY=1x0000000000000000000000000000000AA');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('refuses TURNSTILE_ENABLED=1 without both keys', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-install-'));
     try {
@@ -111,6 +134,25 @@ describe('install.sh', () => {
         env: installEnv({
           TURNSTILE_ENABLED: '1',
           NEXT_PUBLIC_TURNSTILE_SITE_KEY: '1x00000000000000000000AA',
+        }),
+        encoding: 'utf8',
+      });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('TURNSTILE_ENABLED=1 requires both');
+      expect(fs.existsSync(path.join(dir, '.env'))).toBe(false);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses TURNSTILE_ENABLED=true without both keys', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-install-'));
+    try {
+      const result = spawnSync('bash', [SCRIPT, '--write-env-only'], {
+        cwd: dir,
+        env: installEnv({
+          TURNSTILE_ENABLED: 'true',
+          TURNSTILE_SECRET_KEY: '1x0000000000000000000000000000000AA',
         }),
         encoding: 'utf8',
       });
