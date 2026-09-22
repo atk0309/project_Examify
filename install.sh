@@ -565,7 +565,9 @@ if [ "$NONINTERACTIVE" = "1" ]; then
   ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-test}"
 fi
 
-if [ "$WRITE_ENV_ONLY" != "1" ]; then
+# Any run a person answers (interactive), plus every full install, shows the
+# banner; only non-interactive --write-env-only stays quiet for scripts.
+if [ "$WRITE_ENV_ONLY" != "1" ] || [ "$NONINTERACTIVE" != "1" ]; then
   echo
   echo "Examify installer"
   echo "A self-hosted exam-practice app for one family. Invite-only; accounts and progress stay on this server."
