@@ -66,7 +66,7 @@ const STAGE_HELP: Record<StepId, string> = {
   welcome: '',
   subjects: 'Add the subjects you want in the practice bank. One is enough to continue.',
   files:
-    'Keep study files on this host — PDFs you upload, plus notes.txt and other CLI sources generate already reads. They never enter the question bank.',
+    'Study files are stored on this host — PDFs you upload, plus notes.txt and other CLI sources generate already reads. They go to Anthropic or OpenAI only when you generate with that provider, and never enter the question bank.',
   ai: 'Choose how generate talks to a model, then optionally draft BankIR from local sources (PDFs, notes.txt, and other files generate already reads).',
   validate: 'Check BankIR before anything is written to the generated bank.',
   'dry-run': 'Preview the emit plan, including planned deletes. Apply is the only write.',
@@ -864,8 +864,8 @@ function WelcomeStep() {
       <p className="eyebrow">First-run</p>
       <h1 className="display-title">Set up your family’s content</h1>
       <p className="wizard-help wizard-help-lead">
-        Add subjects, keep study files on this host, then generate and review BankIR before anything
-        is applied. The sample bank stays usable if you skip.
+        Add subjects, store study files on this host, then generate and review BankIR before
+        anything is applied. The sample bank stays usable if you skip.
       </p>
       <ul className="wizard-benefits">
         <li>
@@ -884,8 +884,9 @@ function WelcomeStep() {
           <span>
             <strong>Local study files</strong>
             <span>
-              PDFs you upload, plus notes.txt and other CLI sources generate already reads. They
-              stay on this host — never in the public bank.
+              PDFs you upload, plus notes.txt and other CLI sources generate already reads. Stored
+              on this host, sent to Anthropic or OpenAI only when you generate with that provider,
+              and never in the public bank.
             </span>
           </span>
         </li>
@@ -1346,6 +1347,7 @@ function EnvKeyPanel({
   testId,
   label,
   hostName,
+  sends,
   configured,
   liveTest,
   writeBlocked,
@@ -1356,6 +1358,8 @@ function EnvKeyPanel({
   testId: string;
   label: string;
   hostName: string;
+  /** Short, honest note on what this key sends off the host. */
+  sends?: string;
   configured: boolean;
   liveTest: boolean;
   writeBlocked: boolean;
@@ -1382,6 +1386,11 @@ function EnvKeyPanel({
             ? 'A test sentinel is present (not a usable key). Clear it, or save a real key. The value is never shown.'
             : 'Saved on this host in the same .env store as install.sh. The value is never shown again.'}
       </p>
+      {sends ? (
+        <p className="login-fine" data-testid={`${testId}-sends`}>
+          {sends}
+        </p>
+      ) : null}
       {locked ? null : showField ? (
         <form
           className="wizard-secret-form"
@@ -1546,6 +1555,11 @@ function AiStep({
         {snapshot.openaiConfigured ? 'configured' : 'not configured'} · Local{' '}
         {snapshot.localAgentConfigured ? 'configured' : 'not configured'}
       </p>
+      <p className="login-fine" data-testid="wizard-ai-sends">
+        When you generate, the subject’s source files (PDFs, notes, images) go to the mode you pick:
+        Anthropic or OpenAI for cloud, your own endpoint or command for local. The test stub sends
+        nothing.
+      </p>
       <div className="wizard-modes" role="radiogroup" aria-label="AI setup mode">
         {(Object.keys(AI_COPY) as OnboardingAiMode[]).map((mode) => {
           const selected = snapshot.aiMode === mode;
@@ -1576,6 +1590,7 @@ function AiStep({
           testId="wizard-anthropic-key"
           label="Anthropic API key"
           hostName="Anthropic"
+          sends="This key also marks free-text answers: each answer goes to Anthropic with its question and rubric. Without a key, those answers are saved but not marked (they count as not correct)."
           configured={snapshot.anthropicConfigured}
           liveTest={snapshot.anthropicLiveTest}
           writeBlocked={snapshot.anthropicWriteBlocked}

@@ -541,7 +541,8 @@ fi
 if [ "$WRITE_ENV_ONLY" != "1" ]; then
   echo
   echo "Examify installer"
-  echo "A self-hosted exam-practice app for one family. Invite-only; data stays on this box."
+  echo "A self-hosted exam-practice app for one family. Invite-only; accounts and progress stay on this server."
+  echo "AI marking and cloud generate send answer text or study PDFs to the provider you choose."
   echo
 fi
 
@@ -637,12 +638,17 @@ fi
 
 if [ "$NONINTERACTIVE" != "1" ]; then
   echo
-  echo "ANTHROPIC_API_KEY for /onboarding Cloud (Anthropic) generate."
-  echo "Same .env store as the wizard. Leave blank to keep the test sentinel (you can set it later)."
+  echo "Optional: ANTHROPIC_API_KEY marks free-text answers by sending each answer, its question,"
+  echo "and its rubric to Anthropic. It also powers /onboarding Cloud (Anthropic) generate."
+  echo "Leave blank to skip: free-text answers are saved but not marked (they count as not correct)."
+  echo "Add it later in /onboarding content setup, or in .env (then restart)."
   prompt ANTHROPIC_API_KEY "Anthropic API key" "" secret
+  # Blank keeps the `test` placeholder: the wizard shows "not configured" and
+  # production grading treats it as no key (answers saved, not marked).
   ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-test}"
   echo
   echo "Optional: OPENAI_API_KEY for /onboarding Cloud (OpenAI) generate."
+  echo "That generate sends the subject's study files (PDF pages, notes) to OpenAI."
   echo "Same .env store as the wizard. Leave blank to skip (you can set it later)."
   echo "OpenAI generate from PDFs needs pdftoppm (poppler-utils) on PATH; without it,"
   echo "PDF-only generate fails closed. Install: apt install poppler-utils  (or brew install poppler)"

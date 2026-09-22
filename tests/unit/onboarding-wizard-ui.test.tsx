@@ -134,6 +134,49 @@ describe('OnboardingWizard majors UI', () => {
     expect(screen.queryByTestId('wizard-file-sources-biology')).toBeNull();
   });
 
+  it('says honestly what leaves the host: files on generate, answers for marking', async () => {
+    setOnboardingAiModeAction.mockResolvedValue({
+      ok: true,
+      snapshot: snapshot({ aiMode: 'cloud' }),
+    });
+    render(
+      <OnboardingWizard
+        snapshot={snapshot()}
+        pendingInvites={[]}
+        members={[]}
+        canInvite={false}
+        authMode="magic-link"
+      />,
+    );
+    const welcome = screen.getByTestId('wizard-welcome');
+    expect(welcome).toHaveTextContent('Stored on this host');
+    expect(welcome).toHaveTextContent(
+      'sent to Anthropic or OpenAI only when you generate with that provider',
+    );
+    expect(welcome).toHaveTextContent('never in the public bank');
+    expect(welcome).not.toHaveTextContent('stay on this host');
+
+    fireEvent.click(screen.getByTestId('wizard-get-started'));
+    fireEvent.click(screen.getByTestId('wizard-next'));
+    expect(screen.getByTestId('wizard-files')).toBeVisible();
+    expect(screen.getByText(/Study files are stored on this host/)).toHaveTextContent(
+      'They go to Anthropic or OpenAI only when you generate with that provider',
+    );
+
+    fireEvent.click(screen.getByTestId('wizard-next'));
+    expect(screen.getByTestId('wizard-ai-sends')).toHaveTextContent(
+      'the subject’s source files (PDFs, notes, images) go to the mode you pick',
+    );
+    expect(screen.queryByTestId('wizard-anthropic-key-sends')).toBeNull();
+
+    fireEvent.click(screen.getByTestId('wizard-ai-cloud'));
+    const sends = await screen.findByTestId('wizard-anthropic-key-sends');
+    expect(sends).toHaveTextContent('marks free-text answers');
+    expect(sends).toHaveTextContent('goes to Anthropic with its question and rubric');
+    expect(sends).toHaveTextContent('saved but not marked (they count as not correct)');
+    expect(screen.getByTestId('wizard-anthropic-key')).toContainElement(sends);
+  });
+
   it('keeps Clear and Rotate visible for a boot test sentinel', async () => {
     setOnboardingAiModeAction.mockResolvedValue({
       ok: true,

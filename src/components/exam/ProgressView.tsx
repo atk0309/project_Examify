@@ -109,7 +109,9 @@ function AttemptRow({
                     <span className="review-mark pending">{UIcon.retry}</span>
                     <div>
                       <p className="review-q">{f.q}</p>
-                      <p className="review-a">Saved for review.</p>
+                      <p className="review-a">
+                        We couldn&rsquo;t mark this one automatically, so it counts as not correct.
+                      </p>
                     </div>
                   </div>
                 );
