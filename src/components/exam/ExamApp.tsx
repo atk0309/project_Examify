@@ -801,6 +801,11 @@ export function ExamApp({
   // Combos hidden from the resume list this session (discarded or just finished),
   // so a card disappears immediately without waiting for a server refresh.
   const [dismissed, setDismissed] = useState<Set<string>>(() => new Set());
+  // Exams left mid-way this session for another one, newest first. Nothing
+  // refreshes the page-load `resumable` prop while ExamApp is mounted, so for
+  // the same combo these always win over it: resuming the older server copy
+  // would roll back answers given since, and the next autosave would store that.
+  const [parked, setParked] = useState<Resumable[]>([]);
   const [scored, setScored] = useState<AttemptRecord | null>(null);
   // The last submitted payload, kept so the error screen can re-send the exact
   // answers (the exam screen has unmounted by then) without re-grading anything.
@@ -889,6 +894,22 @@ export function ExamApp({
   const dismiss = (subjectId: string, diff: string) =>
     setDismissed((prev) => new Set(prev).add(comboKey(subjectId, diff)));
 
+  // Another exam is about to become the live one: keep the current live exam
+  // (answers + position) as a parked draft, and drop any parked copy of the
+  // incoming combo — the incoming exam supersedes it.
+  const replaceLiveExam = (incoming: string) => {
+    const live: Resumable | null = examSubject
+      ? { subject: examSubject.id, difficulty, questions, answers, currentIndex: current }
+      : null;
+    setParked((prev) => {
+      const rest = prev.filter((p) => {
+        const k = comboKey(p.subject, p.difficulty);
+        return k !== incoming && (!live || k !== comboKey(live.subject, live.difficulty));
+      });
+      return live && comboKey(live.subject, live.difficulty) !== incoming ? [live, ...rest] : rest;
+    });
+  };
+
   const goHome = () => {
     // Leaving to the dashboard does NOT discard — the autosaved draft stays
     // resumable (the live card covers it while ExamApp is still mounted).
@@ -904,6 +925,7 @@ export function ExamApp({
     const qs = buildExam(subject.id, diff, questionBank);
     if (qs.length === 0) return;
     flushPendingSave(); // the exam being left keeps its latest answers
+    replaceLiveExam(comboKey(subject.id, diff));
     const blank: Answer[] = qs.map(() => null);
     setDifficulty(diff);
     setQuestions(qs);
@@ -922,10 +944,13 @@ export function ExamApp({
   };
 
   // Restore a saved draft straight into the exam at the question it left off.
+  // `s` is the newest copy of that combo: the resume list puts in-memory drafts
+  // ahead of the page-load snapshot.
   const resumeSession = (s: Resumable) => {
     const subj = subjects.find((x) => x.id === s.subject);
     if (!subj) return;
     flushPendingSave();
+    replaceLiveExam(comboKey(s.subject, s.difficulty));
     setSubject(subj);
     setDifficulty(s.difficulty);
     setQuestions(s.questions);
@@ -939,6 +964,7 @@ export function ExamApp({
     const key = comboKey(s.subject, s.difficulty);
     dismiss(s.subject, s.difficulty);
     uncreated.current.delete(key); // nothing may recreate it now
+    setParked((prev) => prev.filter((p) => comboKey(p.subject, p.difficulty) !== key));
     if (examSubject?.id === s.subject && difficulty === s.difficulty) {
       cancelPendingSave();
       setExamSubject(null);
@@ -1029,18 +1055,19 @@ export function ExamApp({
     startExam(difficulty);
   };
 
-  // The resume cards: the live in-memory exam (if any) plus the server-fetched
-  // drafts, de-duped by combo and minus anything dismissed this session.
+  // The resume cards: the live in-memory exam (if any), then the exams parked
+  // this session, then the server-fetched drafts. An in-memory copy always wins
+  // over the page-load snapshot of the same combo; dismissed combos are hidden.
   const liveCard: Resumable | null = examSubject
     ? { subject: examSubject.id, difficulty, questions, answers, currentIndex: current }
     : null;
+  const local = [...(liveCard ? [liveCard] : []), ...parked];
+  const localKeys = new Set(local.map((r) => comboKey(r.subject, r.difficulty)));
   const resumables: Resumable[] = [
-    ...(liveCard ? [liveCard] : []),
+    ...local,
     ...resumable.filter((r) => {
       const k = comboKey(r.subject, r.difficulty);
-      if (dismissed.has(k)) return false;
-      if (liveCard && k === comboKey(liveCard.subject, liveCard.difficulty)) return false;
-      return true;
+      return !dismissed.has(k) && !localKeys.has(k);
     }),
   ];
 

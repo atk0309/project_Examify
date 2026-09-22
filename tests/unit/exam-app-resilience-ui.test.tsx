@@ -362,3 +362,80 @@ describe('ExamApp sends the waiting autosave when the exam is left', () => {
     expect(screen.getByTestId('results-score')).toBeInTheDocument();
   });
 });
+
+describe('ExamApp resume prefers the newest copy of a draft', () => {
+  it('never lets the page-load snapshot overwrite answers given since', async () => {
+    // The page loaded with a Maths draft at question 2 (question 1 answered).
+    const saved: Draft = {
+      questionIds: ['m1', 'm2', 'm3'],
+      answers: [0, null, null],
+      currentIndex: 1,
+    };
+    drafts.set('maths::easy', saved);
+    renderApp({
+      resumable: [
+        {
+          subject: 'maths',
+          difficulty: 'easy',
+          questions: bank.maths!.easy!,
+          answers: saved.answers,
+          currentIndex: saved.currentIndex,
+        },
+      ],
+    });
+
+    fireEvent.click(screen.getByTestId('resume-maths-easy'));
+    expect(progress()).toBe('Question 2 of 3');
+    answer(undefined, 1);
+    clickNext();
+    await settle();
+    answer(undefined, 2);
+    goHome();
+    await settle();
+    expect(drafts.get('maths::easy')).toEqual({
+      questionIds: ['m1', 'm2', 'm3'],
+      answers: [0, 1, 2],
+      currentIndex: 2,
+    });
+
+    // Another exam, then back to the dashboard: Maths is offered once, as left.
+    await startExam('geo');
+    goHome();
+    await settle();
+    expect(screen.getAllByTestId('resume-maths-easy')).toHaveLength(1);
+    expect(screen.getByTestId('resume-maths-easy')).toHaveTextContent('Question 3 of 3');
+    expect(screen.getByTestId('resume-geo-easy')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('resume-maths-easy'));
+    expect(progress()).toBe('Question 3 of 3');
+    expect(choices()[2]).toHaveClass('selected');
+    fireEvent.click(screen.getByRole('button', { name: 'Go back' }));
+    expect(choices()[1]).toHaveClass('selected');
+    clickNext();
+    await settle();
+
+    expect(drafts.get('maths::easy')?.answers).toEqual([0, 1, 2]);
+  });
+
+  it('keeps an exam started this session on the resume list after starting another', async () => {
+    renderApp();
+    await startExam('maths');
+    answer(undefined, 2);
+    clickNext();
+    await settle();
+    goHome();
+    await startExam('geo');
+    goHome();
+    await settle();
+
+    expect(screen.getByTestId('resume-maths-easy')).toHaveTextContent('Question 2 of 3');
+    fireEvent.click(screen.getByTestId('resume-maths-easy'));
+    expect(progress()).toBe('Question 2 of 3');
+    fireEvent.click(screen.getByRole('button', { name: 'Go back' }));
+    expect(choices()[2]).toHaveClass('selected');
+
+    // Geography, left for Maths, is still offered too.
+    goHome();
+    expect(screen.getByTestId('resume-geo-easy')).toBeInTheDocument();
+  });
+});
