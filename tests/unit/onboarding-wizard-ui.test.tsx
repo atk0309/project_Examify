@@ -85,6 +85,7 @@ function snapshot(overrides: Partial<OnboardingSnapshot> = {}): OnboardingSnapsh
     anthropicWriteBlocked: false,
     openaiWriteBlocked: false,
     localAgentConfigured: false,
+    gradingStubActive: false,
     liveSubjects: [
       { id: 'maths', label: 'Maths', questionCount: 12 },
       { id: 'biology', label: 'Biology', questionCount: 6 },
@@ -177,6 +178,24 @@ describe('OnboardingWizard majors UI', () => {
     fireEvent.click(screen.getByTestId('wizard-ai-cloud'));
     await screen.findByTestId('wizard-anthropic-key');
     expect(screen.getAllByTestId('wizard-ai-grading')).toHaveLength(1);
+  });
+
+  it('says the test placeholder stub-marks answers when that stub is active', () => {
+    render(
+      <OnboardingWizard
+        snapshot={snapshot({ aiMode: 'skip-stub', gradingStubActive: true })}
+        pendingInvites={[]}
+        members={[]}
+        canInvite={false}
+        authMode="magic-link"
+      />,
+    );
+    fireEvent.click(screen.getByTestId('wizard-get-started'));
+    fireEvent.click(screen.getByTestId('wizard-next'));
+    fireEvent.click(screen.getByTestId('wizard-next'));
+    const grading = screen.getByTestId('wizard-ai-grading');
+    expect(grading).toHaveTextContent('local stub full mark and nothing is sent');
+    expect(grading).not.toHaveTextContent('saved but not marked');
   });
 
   it.each(['cloud-openai', 'local-agent', 'skip-stub'] as const)(

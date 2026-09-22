@@ -1556,7 +1556,9 @@ function AiStep({
       <p className="login-fine" data-testid="wizard-ai-grading">
         {snapshot.anthropicConfigured
           ? 'Marking is separate from generate: with the Anthropic key set, each free-text answer is sent to Anthropic with its question and rubric, whichever mode you pick here.'
-          : 'Marking is separate from generate: without an Anthropic key, free-text answers are saved but not marked (they count as not correct). With a key, each answer is sent to Anthropic with its question and rubric.'}
+          : snapshot.gradingStubActive
+            ? 'Marking is separate from generate: the Anthropic key is the test placeholder, so free-text answers get a local stub full mark and nothing is sent. Set a real key before real use.'
+            : 'Marking is separate from generate: without an Anthropic key, free-text answers are saved but not marked (they count as not correct). With a key, each answer is sent to Anthropic with its question and rubric.'}
       </p>
       <div className="wizard-modes" role="radiogroup" aria-label="AI setup mode">
         {(Object.keys(AI_COPY) as OnboardingAiMode[]).map((mode) => {
