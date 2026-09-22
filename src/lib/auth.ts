@@ -6,7 +6,7 @@ import { getIronSession, type SessionOptions } from 'iron-session';
 import { and, eq, gte, isNull, ne } from 'drizzle-orm';
 import { db, schema } from './db';
 import { isOtpShapedBearer, isResetShapedBearer, usesMagicLink } from './auth-mode';
-import { env, getAuthMode, isProd } from './env';
+import { env, getAuthMode, sessionCookieConfig } from './env';
 import { hashPassword, verifyPasswordOrDummy } from './password';
 import {
   attachMembershipFromInvite,
@@ -31,13 +31,18 @@ export type SessionData = {
   studentMode?: boolean;
 };
 
+// Name + Secure follow SITE_URL (https → Secure `__Host-` cookie; plain http
+// → non-Secure `examify_session`). Every set / clear goes through these
+// options, so /signin/invalidate and signOut clear the same cookie.
+const sessionCookie = sessionCookieConfig();
+
 const sessionOptions: SessionOptions = {
   password: env.AUTH_SECRET,
-  cookieName: env.SESSION_COOKIE_NAME,
+  cookieName: sessionCookie.name,
   cookieOptions: {
     httpOnly: true,
     sameSite: 'lax',
-    secure: isProd,
+    secure: sessionCookie.secure,
     path: '/',
     maxAge: 60 * 60 * 24 * 30,
   },
