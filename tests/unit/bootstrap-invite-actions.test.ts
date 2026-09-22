@@ -25,7 +25,7 @@ vi.mock('@/lib/auth', async () => {
 });
 
 vi.mock('next/headers', () => ({
-  headers: async () => new Headers({ 'x-real-ip': '203.0.113.21' }),
+  headers: async () => new Headers({ 'x-forwarded-for': '203.0.113.21' }),
 }));
 
 vi.mock('next/navigation', () => ({

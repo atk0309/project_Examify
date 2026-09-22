@@ -145,6 +145,28 @@ describe('parseEnv production fail-closed', () => {
     ).toBe('local-otp');
   });
 
+  it('defaults CLIENT_IP_HEADER to x-forwarded-for and accepts the opt-in headers', () => {
+    expect(parseEnv(prodBase).CLIENT_IP_HEADER).toBe('x-forwarded-for');
+    expect(parseEnv({ ...prodBase, CLIENT_IP_HEADER: '' }).CLIENT_IP_HEADER).toBe(
+      'x-forwarded-for',
+    );
+    expect(parseEnv({ ...prodBase, CLIENT_IP_HEADER: 'x-real-ip' }).CLIENT_IP_HEADER).toBe(
+      'x-real-ip',
+    );
+    expect(parseEnv({ ...prodBase, CLIENT_IP_HEADER: ' CF-Connecting-IP ' }).CLIENT_IP_HEADER).toBe(
+      'cf-connecting-ip',
+    );
+  });
+
+  it('fails boot on an unknown CLIENT_IP_HEADER instead of guessing', () => {
+    expect(() => parseEnv({ ...prodBase, CLIENT_IP_HEADER: 'true-client-ip' })).toThrow(
+      /Invalid environment variables/,
+    );
+    expect(() => parseEnv({ NODE_ENV: 'test', CLIENT_IP_HEADER: 'x-forwarded' })).toThrow(
+      /Invalid environment variables/,
+    );
+  });
+
   it('requires ALLOW_LOCAL_OUTBOX for local-otp or explicit outbox in production', () => {
     expect(() => parseEnv({ ...prodBase, AUTH_MODE: 'local-otp' })).toThrow(
       /Invalid environment variables/,

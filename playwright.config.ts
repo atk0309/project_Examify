@@ -69,6 +69,10 @@ export default defineConfig({
       TURNSTILE_ENABLED: '1',
       RATE_LIMIT_SIGNIN_MAX: '3',
       RATE_LIMIT_SIGNIN_WINDOW_MS: '60000',
+      // Specs pick a rate-limit bucket with an `x-real-ip` header. The app
+      // ignores that header unless the host opts in (default is the last
+      // X-Forwarded-For hop), so opt in here — there is no proxy in front.
+      CLIENT_IP_HEADER: 'x-real-ip',
     },
   },
 });
