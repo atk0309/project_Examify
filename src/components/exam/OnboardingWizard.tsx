@@ -1347,7 +1347,6 @@ function EnvKeyPanel({
   testId,
   label,
   hostName,
-  sends,
   configured,
   liveTest,
   writeBlocked,
@@ -1358,8 +1357,6 @@ function EnvKeyPanel({
   testId: string;
   label: string;
   hostName: string;
-  /** Short, honest note on what this key sends off the host. */
-  sends?: string;
   configured: boolean;
   liveTest: boolean;
   writeBlocked: boolean;
@@ -1386,11 +1383,6 @@ function EnvKeyPanel({
             ? 'A test sentinel is present (not a usable key). Clear it, or save a real key. The value is never shown.'
             : 'Saved on this host in the same .env store as install.sh. The value is never shown again.'}
       </p>
-      {sends ? (
-        <p className="login-fine" data-testid={`${testId}-sends`}>
-          {sends}
-        </p>
-      ) : null}
       {locked ? null : showField ? (
         <form
           className="wizard-secret-form"
@@ -1561,6 +1553,11 @@ function AiStep({
         Anthropic or OpenAI for cloud, your own endpoint or command for local. The test stub sends
         nothing.
       </p>
+      <p className="login-fine" data-testid="wizard-ai-grading">
+        {snapshot.anthropicConfigured
+          ? 'Marking is separate from generate: with the Anthropic key set, each free-text answer is sent to Anthropic with its question and rubric, whichever mode you pick here.'
+          : 'Marking is separate from generate: without an Anthropic key, free-text answers are saved but not marked (they count as not correct). With a key, each answer is sent to Anthropic with its question and rubric.'}
+      </p>
       <div className="wizard-modes" role="radiogroup" aria-label="AI setup mode">
         {(Object.keys(AI_COPY) as OnboardingAiMode[]).map((mode) => {
           const selected = snapshot.aiMode === mode;
@@ -1591,7 +1588,6 @@ function AiStep({
           testId="wizard-anthropic-key"
           label="Anthropic API key"
           hostName="Anthropic"
-          sends="This key also marks free-text answers: each answer goes to Anthropic with its question and rubric. Without a key, those answers are saved but not marked (they count as not correct)."
           configured={snapshot.anthropicConfigured}
           liveTest={snapshot.anthropicLiveTest}
           writeBlocked={snapshot.anthropicWriteBlocked}

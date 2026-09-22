@@ -167,15 +167,39 @@ describe('OnboardingWizard majors UI', () => {
     expect(screen.getByTestId('wizard-ai-sends')).toHaveTextContent(
       'the subject’s source files (PDFs, notes, images) go to the mode you pick',
     );
-    expect(screen.queryByTestId('wizard-anthropic-key-sends')).toBeNull();
+    // Marking uses the Anthropic key whatever generate mode is picked, so the
+    // disclosure shows before (and independent of) any mode choice.
+    const grading = screen.getByTestId('wizard-ai-grading');
+    expect(grading).toHaveTextContent('Marking is separate from generate');
+    expect(grading).toHaveTextContent('saved but not marked (they count as not correct)');
+    expect(grading).toHaveTextContent('sent to Anthropic with its question and rubric');
 
     fireEvent.click(screen.getByTestId('wizard-ai-cloud'));
-    const sends = await screen.findByTestId('wizard-anthropic-key-sends');
-    expect(sends).toHaveTextContent('marks free-text answers');
-    expect(sends).toHaveTextContent('goes to Anthropic with its question and rubric');
-    expect(sends).toHaveTextContent('saved but not marked (they count as not correct)');
-    expect(screen.getByTestId('wizard-anthropic-key')).toContainElement(sends);
+    await screen.findByTestId('wizard-anthropic-key');
+    expect(screen.getAllByTestId('wizard-ai-grading')).toHaveLength(1);
   });
+
+  it.each(['cloud-openai', 'local-agent', 'skip-stub'] as const)(
+    'discloses marking via Anthropic in %s mode when the key is configured',
+    (aiMode) => {
+      render(
+        <OnboardingWizard
+          snapshot={snapshot({ aiMode, anthropicConfigured: true })}
+          pendingInvites={[]}
+          members={[]}
+          canInvite={false}
+          authMode="magic-link"
+        />,
+      );
+      fireEvent.click(screen.getByTestId('wizard-get-started'));
+      fireEvent.click(screen.getByTestId('wizard-next'));
+      fireEvent.click(screen.getByTestId('wizard-next'));
+      expect(screen.queryByTestId('wizard-anthropic-key')).toBeNull();
+      expect(screen.getByTestId('wizard-ai-grading')).toHaveTextContent(
+        'each free-text answer is sent to Anthropic with its question and rubric, whichever mode you pick here',
+      );
+    },
+  );
 
   it('keeps Clear and Rotate visible for a boot test sentinel', async () => {
     setOnboardingAiModeAction.mockResolvedValue({
