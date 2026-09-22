@@ -53,6 +53,30 @@ function looksLikePlaceholderSecret(value: string, extra: Set<string>): boolean 
   return normalised.includes('replace-me') || normalised.includes('changeme');
 }
 
+/** Browsers only accept a `__Host-` / `__Secure-` cookie when it is Secure. */
+const SECURE_ONLY_COOKIE_PREFIX = /^__(host|secure)-/i;
+
+/**
+ * Whether SITE_URL is an https origin. The session cookie is Secure exactly
+ * when this is true — never keyed off NODE_ENV — so a plain-http LAN host or
+ * `pnpm dev` still gets a cookie the browser keeps.
+ */
+export function isHttpsSiteUrl(siteUrl: string): boolean {
+  try {
+    return new URL(siteUrl).protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+function isSecureOnlyCookieName(name: string): boolean {
+  return SECURE_ONLY_COOKIE_PREFIX.test(name);
+}
+
+function secureOnlyCookieOnHttpMessage(name: string): string {
+  return `SESSION_COOKIE_NAME=${name} needs an https SITE_URL: browsers drop a __Host- / __Secure- cookie that is not Secure, and the session cookie is Secure only when SITE_URL is https, so sign-in would bounce back to /signin. Unset SESSION_COOKIE_NAME (plain http defaults to examify_session) or serve the app over HTTPS and set SITE_URL to that https:// origin.`;
+}
+
 function isProductionRuntime(raw: NodeJS.ProcessEnv): boolean {
   const isBuild = (raw.NEXT_PHASE ?? process.env.NEXT_PHASE) === 'phase-production-build';
   return raw.NODE_ENV === 'production' && !isBuild;
@@ -68,7 +92,8 @@ function buildEnvSchema(isProd: boolean) {
       NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
 
       // Public app URL supplied at runtime. Drives absolute URLs in magic-link
-      // sign-in emails and invite links.
+      // sign-in emails and invite links, and whether the session cookie is
+      // Secure (https only — see sessionCookieConfig).
       SITE_URL: z.preprocess((v) => v ?? dev('http://localhost:3000'), z.string().url()),
 
       // SQLite file path. In production, point this at runtime-mounted persistent storage.
@@ -81,8 +106,10 @@ function buildEnvSchema(isProd: boolean) {
         z.string().min(32),
       ),
 
-      // Cookie name is not security-critical; default is fine everywhere.
-      SESSION_COOKIE_NAME: z.string().min(1).default('__Host-examify_session'),
+      // Optional override. Unset follows SITE_URL: `__Host-examify_session`
+      // on https, `examify_session` on plain http (a `__Host-` / `__Secure-`
+      // cookie is dropped without Secure). See sessionCookieConfig.
+      SESSION_COOKIE_NAME: z.preprocess(emptyToUndef, z.string().min(1).optional()),
 
       // Access is invite-only households in SQLite — there is no FAMILIES env
       // allowlist. A leftover FAMILIES value is imported once when the DB has
@@ -269,6 +296,18 @@ function buildEnvSchema(isProd: boolean) {
           path: ['SETUP_BOOTSTRAP_SECRET'],
         });
       }
+      if (
+        isProd &&
+        data.SESSION_COOKIE_NAME &&
+        isSecureOnlyCookieName(data.SESSION_COOKIE_NAME) &&
+        !isHttpsSiteUrl(data.SITE_URL)
+      ) {
+        ctx.addIssue({
+          code: 'custom',
+          message: secureOnlyCookieOnHttpMessage(data.SESSION_COOKIE_NAME),
+          path: ['SESSION_COOKIE_NAME'],
+        });
+      }
       if (isProd && looksLikePlaceholderSecret(data.AUTH_SECRET, PLACEHOLDER_AUTH_SECRETS)) {
         ctx.addIssue({
           code: 'custom',
@@ -295,6 +334,18 @@ export function parseEnv(raw: NodeJS.ProcessEnv = process.env): Env {
     throw new Error('Invalid environment variables');
   }
 
+  // Outside production an explicit __Host- / __Secure- name on plain http is
+  // kept as given (dev must not crash), but the browser will drop it.
+  const cookieName = parsed.data.SESSION_COOKIE_NAME;
+  if (
+    !isProd &&
+    cookieName &&
+    isSecureOnlyCookieName(cookieName) &&
+    !isHttpsSiteUrl(parsed.data.SITE_URL)
+  ) {
+    console.warn(`Warning: ${secureOnlyCookieOnHttpMessage(cookieName)}`);
+  }
+
   const familiesRaw = raw.FAMILIES;
   if (isProd && familiesRaw && familiesRaw.trim() !== '' && familiesRaw.trim() !== '[]') {
     const families = parseFamilies(familiesRaw);
@@ -311,6 +362,27 @@ export const env: Env = parseEnv();
 
 export const isProd = env.NODE_ENV === 'production';
 export const isTest = env.NODE_ENV === 'test';
+
+/**
+ * Session cookie name + Secure flag, both derived from SITE_URL. The one
+ * place iron-session's cookie options come from, so setting, re-sealing, and
+ * clearing (`session.destroy()`) always agree.
+ *
+ * - `secure` is true exactly when SITE_URL is https (not NODE_ENV): a browser
+ *   drops a Secure cookie set over plain http, so a LAN self-host at
+ *   `http://192.168.x.y:3000` would otherwise bounce to /signin forever.
+ * - `name` is SESSION_COOKIE_NAME when set, else `__Host-examify_session` on
+ *   https and `examify_session` on http (`__Host-` requires Secure).
+ */
+export function sessionCookieConfig(source: Pick<Env, 'SITE_URL' | 'SESSION_COOKIE_NAME'> = env): {
+  name: string;
+  secure: boolean;
+} {
+  const secure = isHttpsSiteUrl(source.SITE_URL);
+  const name =
+    source.SESSION_COOKIE_NAME ?? (secure ? '__Host-examify_session' : 'examify_session');
+  return { name, secure };
+}
 
 /** Local outbox / stub path — no real Resend key configured. */
 export function isResendConfigured(): boolean {
