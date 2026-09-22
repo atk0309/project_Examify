@@ -1,7 +1,8 @@
 /**
  * AUTH_MODE=password (the `install.sh` default) in a real browser, plus the
  * core exam flow: sign in, sit a whole mini exam (MCQ + free-text), results,
- * resume after a reload, progress, and the parent's read-only dashboard.
+ * resume after a reload, progress, the parent's read-only dashboard, and a
+ * retry after a finish that never reached the server.
  * Runs under `playwright.password.config.ts` against the DB seeded by
  * `pnpm test:e2e:prepare:password` (see `tests/e2e/seed.ts`).
  */
@@ -198,4 +199,47 @@ test('a wrong password or role shows the generic sign-in error', async ({ page }
     "Email, password, or role didn't match.",
   );
   await expect(page).toHaveURL(/\/signin$/);
+});
+
+test('a finish that never reaches the server keeps the answers, and Try again marks them', async ({
+  page,
+}) => {
+  await signIn(page, STUDENT, 'Student');
+  await startExam(page, 'computer-science', 'easy');
+  const total = await examTotal(page);
+
+  // Drop the first submit (the recordAttempt Server Action — the only request
+  // carrying `items`) as if the connection went at the moment of Finish.
+  const submits: string[] = [];
+  await page.route(
+    (url) => url.pathname === '/',
+    async (route) => {
+      const request = route.request();
+      const body = request.postData() ?? '';
+      if (request.method() !== 'POST' || !body.includes('"items"')) return route.continue();
+      submits.push(body);
+      if (submits.length === 1) return route.abort('internetdisconnected');
+      return route.continue();
+    },
+  );
+
+  for (let n = 1; n <= total; n++) {
+    await expect(page.getByTestId('exam-progress')).toHaveText(`Question ${n} of ${total}`);
+    await answerCurrent(page, n);
+    await page.getByTestId('exam-next').click();
+  }
+
+  const offline = page.getByTestId('exam-error-unreachable');
+  await expect(offline).toBeVisible();
+  await expect(offline).toContainText('your answers are still here');
+  expect(submits).toHaveLength(1);
+
+  await page.getByTestId('exam-retry').click();
+  const score = page.getByTestId('results-score');
+  await expect(score).toBeVisible({ timeout: 20_000 });
+  await expect(score).toContainText(/\d+% correct/);
+  await expect(page.locator('.review-row')).toHaveCount(total);
+  // The retry re-sent exactly the answers the dropped submit carried.
+  expect(submits).toHaveLength(2);
+  expect(submits[1]).toBe(submits[0]);
 });
