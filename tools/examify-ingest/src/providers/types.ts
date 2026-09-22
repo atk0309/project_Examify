@@ -103,9 +103,12 @@ function isTimeoutError(error: unknown): boolean {
 }
 
 /**
- * Run the provider request (`work` is the HTTP call itself). A caller cancel
- * is `GenerateAbortedError`; the 180s deadline is a `timeout` failure; any
- * other throw means no HTTP answer arrived (`unreachable`).
+ * Run the provider request. `work` is the whole exchange — the HTTP call and
+ * reading its body (use {@link readProviderJson}) — because the deadline and a
+ * cancel can land while the body is still arriving. A caller cancel is
+ * `GenerateAbortedError`; a `ProviderFailureError` from `work` passes through;
+ * the 180s deadline is a `timeout` failure; any other throw means the answer
+ * never fully arrived (`unreachable`).
  */
 export async function withProviderSignal<T>(
   userSignal: AbortSignal | undefined,
@@ -117,6 +120,7 @@ export async function withProviderSignal<T>(
     return await work(signal);
   } catch (error) {
     throwIfAborted(userSignal);
+    if (error instanceof ProviderFailureError) throw error;
     if (signal.aborted || isTimeoutError(error)) {
       throw new ProviderFailureError(
         'timeout',
@@ -126,6 +130,25 @@ export async function withProviderSignal<T>(
     }
     const message = error instanceof Error ? error.message : String(error);
     throw new ProviderFailureError('unreachable', message, { cause: error });
+  }
+}
+
+/**
+ * Non-2xx → `http` failure; a complete body that is not JSON → `output`
+ * failure. A body that stops arriving (deadline, cancel, dropped connection)
+ * rethrows as-is so {@link withProviderSignal} classifies it — call this
+ * inside `work`.
+ */
+export async function readProviderJson<T>(res: Response, label: string): Promise<T> {
+  if (!res.ok) throw providerHttpError(label, res.status);
+  const text = await res.text();
+  try {
+    return JSON.parse(text) as T;
+  } catch (error) {
+    // No parser text: it quotes the body.
+    throw new ProviderFailureError('output', `${label} returned a body that is not JSON`, {
+      cause: error,
+    });
   }
 }
 

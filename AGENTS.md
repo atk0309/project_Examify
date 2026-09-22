@@ -83,8 +83,11 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   that setting is on. Generate
   throws typed errors (`ProviderFailureError` `kind` http / timeout /
   unreachable / output / command + `status`, `SampleIdCollisionError.ids`,
-  `UnreadableSourcesError`); CLI text is unchanged except the fetch deadline
-  (`provider request timed out after 180000ms`). Missing cloud
+  `UnreadableSourcesError`), including failures while the response body is
+  still arriving (the body read is inside `withProviderSignal`); CLI text is
+  unchanged except the fetch deadline (`provider request timed out after
+180000ms`) and a non-JSON 200 body (`<provider> returned a body that is not
+JSON`). Missing cloud
   keys are refused before overwrite messaging when a real key is required;
   `--provider test` still runs without keys. A sourceless sibling blocks
   `generate content/subjects` (hint: `content/subjects/<id>` or

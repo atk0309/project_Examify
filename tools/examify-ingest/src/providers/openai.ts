@@ -3,7 +3,7 @@ import { buildOpenAiCompatibleUserContent } from './content';
 import {
   ProviderFailureError,
   parseProviderBankIr,
-  providerHttpError,
+  readProviderJson,
   readRequiredKey,
   withProviderSignal,
   type GenerateProvider,
@@ -17,8 +17,8 @@ const KEY = 'OPENAI_API_KEY';
 async function callOpenAi(request: ProviderRequest, deps: ProviderDeps): Promise<BankIR> {
   const key = readRequiredKey(deps.env, KEY);
   const fetchFn = deps.fetch ?? fetch;
-  const res = await withProviderSignal(deps.signal, (signal) =>
-    fetchFn(OPENAI_URL, {
+  const payload = await withProviderSignal(deps.signal, async (signal) => {
+    const res = await fetchFn(OPENAI_URL, {
       method: 'POST',
       signal,
       headers: {
@@ -35,12 +35,9 @@ async function callOpenAi(request: ProviderRequest, deps: ProviderDeps): Promise
           { role: 'user', content: buildOpenAiCompatibleUserContent(request) },
         ],
       }),
-    }),
-  );
-  if (!res.ok) {
-    throw providerHttpError('OpenAI', res.status);
-  }
-  const payload = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+    });
+    return readProviderJson<{ choices?: { message?: { content?: string } }[] }>(res, 'OpenAI');
+  });
   const text = payload.choices?.[0]?.message?.content;
   if (!text) throw new ProviderFailureError('output', 'OpenAI returned no message content');
   return parseProviderBankIr(text);

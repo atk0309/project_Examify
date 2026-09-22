@@ -215,8 +215,8 @@ grouped weekly Dependabot PRs in `.github/dependabot.yml`.
   after each later push that changes code, comment `@codex review` so the fix commits
   are reviewed too. Verify each finding and fix the real ones before merging.
   CodeRabbit reviews each PR to `main` once, when it opens (`.coderabbit.yaml`, no
-  incremental re-reviews — it rate-limits); don't re-trigger it after fixes unless a
-  change is large. Both are advisory on top of green CI. `AGENTS.md` → "Review guidelines" is what Codex checks against.
+  incremental re-reviews — it rate-limits); don't re-trigger it after fixes (Codex
+  re-reviews those). Both are advisory on top of green CI. `AGENTS.md` → "Review guidelines" is what Codex checks against.
 
 ## End-of-session ritual (every session)
 
@@ -349,8 +349,11 @@ to provider HTTP/CMD; abort throws and writes no IR, IR cache, page-raster
 cache, or run manifest). Generate throws typed errors so callers never parse
 messages: `ProviderFailureError` (`kind` `http` / `timeout` / `unreachable` /
 `output` / `command`, plus HTTP `status`), `SampleIdCollisionError` (`ids`),
-`UnreadableSourcesError`. CLI messages are unchanged except the fetch
-deadline, now `provider request timed out after 180000ms`. Cloud
+`UnreadableSourcesError`. The provider HTTP call and its body read sit inside
+one `withProviderSignal` boundary, so a deadline / cancel / dropped connection
+while the body is still arriving is typed too. CLI messages are unchanged except
+the fetch deadline (`provider request timed out after 180000ms`) and a 200 whose
+body is not JSON (`<provider> returned a body that is not JSON`). Cloud
 providers fail closed without an env key (generate also fills unset keys from
 repo `.env` / `.env.local`); `--provider test` is the CI
 fixture. OpenAI-compatible generate fails closed when the only sources are

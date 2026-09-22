@@ -2250,6 +2250,94 @@ describe('examify-ingest generate typed failures', () => {
     expect(existsSync(path.join(root, 'content/subjects/plants/bank.ir.json'))).toBe(false);
   });
 
+  /** A 200 whose body fails part-way (headers arrived, the body never finished). */
+  function bodyFailsWith(reason: unknown): () => Promise<Response> {
+    return async () =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('{"content":['));
+            controller.error(reason);
+          },
+        }),
+        { status: 200 },
+      );
+  }
+
+  it('types failures while the response body is still being read', async () => {
+    const root = examifyRepo();
+    for (const [provider, env] of [
+      ['anthropic', { ANTHROPIC_API_KEY: 'sk-ant-typed' }],
+      ['openai', { OPENAI_API_KEY: 'sk-openai-typed' }],
+      ['local', { EXAMIFY_LLM_BASE_URL: 'http://127.0.0.1:9' }],
+    ] as const) {
+      const deadline = await failure(
+        generateSubject(
+          plantsRequest(root, {
+            provider,
+            env,
+            fetch: bodyFailsWith(
+              new DOMException('The operation was aborted due to timeout', 'TimeoutError'),
+            ),
+          }),
+        ),
+      );
+      expect(deadline).toBeInstanceOf(ProviderFailureError);
+      expect((deadline as InstanceType<typeof ProviderFailureError>).kind).toBe('timeout');
+      expect((deadline as Error).message).toBe('provider request timed out after 180000ms');
+
+      const reset = await failure(
+        generateSubject(
+          plantsRequest(root, { provider, env, fetch: bodyFailsWith(new TypeError('terminated')) }),
+        ),
+      );
+      expect((reset as InstanceType<typeof ProviderFailureError>).kind).toBe('unreachable');
+
+      const notJson = await failure(
+        generateSubject(
+          plantsRequest(root, {
+            provider,
+            env,
+            fetch: async () => new Response('<html>busy</html>', { status: 200 }),
+          }),
+        ),
+      );
+      expect(notJson).toBeInstanceOf(ProviderFailureError);
+      expect((notJson as InstanceType<typeof ProviderFailureError>).kind).toBe('output');
+    }
+    expect(existsSync(path.join(root, 'content/subjects/plants/bank.ir.json'))).toBe(false);
+  });
+
+  it('a cancel while the response body is still arriving is the caller’s cancel', async () => {
+    const root = examifyRepo();
+    const controller = new AbortController();
+    let bodyStarted!: () => void;
+    const started = new Promise<void>((resolve) => (bodyStarted = resolve));
+    const pending = generateSubject(
+      plantsRequest(root, {
+        signal: controller.signal,
+        fetch: async (_url, init) =>
+          new Response(
+            new ReadableStream({
+              start(stream) {
+                stream.enqueue(new TextEncoder().encode('{"content":['));
+                const signal = init?.signal;
+                signal?.addEventListener('abort', () => stream.error(signal.reason), {
+                  once: true,
+                });
+                bodyStarted();
+              },
+            }),
+            { status: 200 },
+          ),
+      }),
+    );
+    await started;
+    controller.abort();
+    await expect(pending).rejects.toBeInstanceOf(GenerateAbortedError);
+    expect(existsSync(path.join(root, 'content/subjects/plants/bank.ir.json'))).toBe(false);
+  });
+
   it('types a failing local command without changing its message', async () => {
     const root = examifyRepo();
     const error = await failure(

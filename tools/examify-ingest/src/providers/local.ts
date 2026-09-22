@@ -8,7 +8,7 @@ import {
   ProviderFailureError,
   isAbortError,
   parseProviderBankIr,
-  providerHttpError,
+  readProviderJson,
   providerRequestSignal,
   throwIfAborted,
   withProviderSignal,
@@ -76,8 +76,8 @@ async function generateViaHttp(
 ): Promise<BankIR> {
   const fetchFn = deps.fetch ?? fetch;
   const url = new URL('/v1/chat/completions', baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`);
-  const res = await withProviderSignal(deps.signal, (signal) =>
-    fetchFn(url, {
+  const payload = await withProviderSignal(deps.signal, async (signal) => {
+    const res = await fetchFn(url, {
       method: 'POST',
       signal,
       headers: { 'content-type': 'application/json' },
@@ -91,12 +91,12 @@ async function generateViaHttp(
           { role: 'user', content: buildOpenAiCompatibleUserContent(request) },
         ],
       }),
-    }),
-  );
-  if (!res.ok) {
-    throw providerHttpError('local endpoint', res.status);
-  }
-  const payload = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+    });
+    return readProviderJson<{ choices?: { message?: { content?: string } }[] }>(
+      res,
+      'local endpoint',
+    );
+  });
   const text = payload.choices?.[0]?.message?.content;
   if (!text) throw new ProviderFailureError('output', 'local endpoint returned no message content');
   return parseProviderBankIr(text);

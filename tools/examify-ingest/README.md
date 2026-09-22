@@ -307,8 +307,11 @@ Failures are typed so callers never parse messages (all exported from
 - `UnreadableSourcesError` — the provider cannot read any source
   (OpenAI-compatible, PDF-only, no rasterized pages).
 
-CLI messages are unchanged except the HTTP fetch deadline, which now reads
-`provider request timed out after 180000ms`. The wizard maps these to safe
+The HTTP call and reading its body share one deadline / cancel boundary, so a
+body that stalls or drops part-way is typed like a failed request. CLI messages
+are unchanged except the HTTP fetch deadline, which now reads `provider request
+timed out after 180000ms`, and a 200 whose body is not JSON
+(`<provider> returned a body that is not JSON`). The wizard maps these to safe
 reason codes (`provider_auth` for 401/403, `provider_rate_limited` for 429,
 `provider_unavailable` for 5xx or unreachable, `provider_timeout`,
 `provider_output_invalid`, `provider_error`, `sample_collision`,
