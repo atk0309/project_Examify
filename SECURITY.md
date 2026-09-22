@@ -76,4 +76,16 @@ stamp `emailVerifiedAt` — until the invitee proves the mailbox.
 - Prefer an email lock on every invite. Parent invites are already required to
   be locked; lock student invites too when you know the address.
 - In `magic-link` / `local-otp` modes, accept already sent a mailbox challenge.
-  Password sign-in itself still needs no mail; only invite accept does.
+  Password sign-in itself still needs no mail. Invite accept and forgot
+  password both need a deliverable mailbox code.
+- **Forgot password does not skip the code.** `/signin` can send a reset code
+  to a household member. The response is the same when the address is unknown
+  or the role does not match. `users.password_hash` and `emailVerifiedAt`
+  stay as they were until `completePasswordReset` consumes that code.
+  Reset codes are `reset:` bearers. `/signin/verify` refuses them. A reset
+  code cannot stamp a password onto a sign-in OTP or an invite OTP.
+- **Invite password is bound to the OTP row.** Accept stores a scrypt hash on
+  `magic_tokens.pending_password_hash` and does not put the password in the
+  code form. The hash is written to the user only when that invite-bound code
+  is consumed, then cleared. A failed send clears it too. A caller-supplied
+  password on complete is ignored.

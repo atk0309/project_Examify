@@ -710,7 +710,7 @@ else
   echo
   echo "Invite family from the parent dashboard after setup."
   if [ "$AUTH_MODE" = "password" ]; then
-    echo "Password sign-in needs no mail. Invite accept still sends a mailbox OTP"
+    echo "Password sign-in needs no mail. Invite accept and forgot-password still send a mailbox OTP"
     echo "(never skipped) via ${MAIL_TRANSPORT}."
   fi
   echo "Edit .env and restart to change AUTH_MODE, mail, or Turnstile."

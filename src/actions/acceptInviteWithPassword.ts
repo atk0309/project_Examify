@@ -8,13 +8,14 @@ import { renderOtpEmail, sendEmail } from '@/lib/email';
 import { canDeliverMailboxProof, getAuthMode, isTurnstileEnabled } from '@/lib/env';
 import { emailMayAcceptInvite, lookupInvite } from '@/lib/households';
 import { extractClientIp } from '@/lib/ip';
-import { passwordMeetsPolicy } from '@/lib/password';
+import { hashPassword, passwordMeetsPolicy } from '@/lib/password';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { siteConfig } from '@/lib/site';
 
 const inputSchema = z.object({
   email: z.string().trim().toLowerCase().email(),
   password: z.string().min(1),
+  confirmPassword: z.string().optional(),
   inviteToken: z.string().min(1),
   token: z.string().optional(),
 });
@@ -24,17 +25,24 @@ export type AcceptInvitePasswordState =
   | { status: 'sent'; email: string }
   | {
       status: 'error';
-      reason: 'invalid' | 'captcha' | 'rate_limited' | 'invite_invalid' | 'send_failed';
+      reason:
+        | 'invalid'
+        | 'captcha'
+        | 'rate_limited'
+        | 'invite_invalid'
+        | 'send_failed'
+        | 'password_mismatch';
     };
 
 /**
  * Password-mode invite accept, step 1: validate the invite + password policy
- * and issue a mailbox OTP. Membership and `emailVerifiedAt` wait for
+ * and issue a mailbox OTP. The scrypt hash is stored on that OTP row only.
+ * Membership, `emailVerifiedAt`, and `users.password_hash` wait for
  * `completePasswordInvite`. A bad invite URL is `invite_invalid` (the token
  * is already the secret). Email-lock mismatches stay generic `invalid` so a
  * locked address cannot be enumerated. Missing mail transport fails closed
  * (`send_failed`) instead of trusting the invite URL. If `sendEmail` fails
- * after issue, the unused OTP is invalidated so it cannot be guessed.
+ * after issue, the unused OTP is invalidated and its pending hash is cleared.
  */
 export async function acceptInviteWithPassword(
   _prev: AcceptInvitePasswordState,
@@ -44,16 +52,21 @@ export async function acceptInviteWithPassword(
 
   const rawToken = formData.get('cf-turnstile-response');
   const token = typeof rawToken === 'string' ? rawToken : '';
+  const rawConfirm = formData.get('confirmPassword');
 
   const parsed = inputSchema.safeParse({
     email: formData.get('email'),
     password: formData.get('password'),
+    confirmPassword: typeof rawConfirm === 'string' ? rawConfirm : undefined,
     inviteToken: formData.get('inviteToken'),
     token: token || undefined,
   });
   if (!parsed.success) return { status: 'error', reason: 'invalid' };
   if (!passwordMeetsPolicy(parsed.data.password)) {
     return { status: 'error', reason: 'invalid' };
+  }
+  if ((parsed.data.confirmPassword ?? '') !== parsed.data.password) {
+    return { status: 'error', reason: 'password_mismatch' };
   }
 
   const ip = extractClientIp(await headers());
@@ -76,7 +89,11 @@ export async function acceptInviteWithPassword(
     return { status: 'error', reason: 'invalid' };
   }
 
-  const { id, code } = issueLocalOtp(email, invite.role, { inviteId: invite.id });
+  const pendingPasswordHash = hashPassword(parsed.data.password);
+  const { id, code } = issueLocalOtp(email, invite.role, {
+    inviteId: invite.id,
+    pendingPasswordHash,
+  });
   const rendered = renderOtpEmail({ code, email, siteName: siteConfig.name });
   const result = await sendEmail({
     to: email,

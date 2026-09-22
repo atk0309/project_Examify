@@ -5,9 +5,9 @@ import { redirect } from 'next/navigation';
 import { getIronSession, type SessionOptions } from 'iron-session';
 import { and, eq, gte, isNull, ne } from 'drizzle-orm';
 import { db, schema } from './db';
-import { isOtpShapedBearer, usesMagicLink } from './auth-mode';
+import { isOtpShapedBearer, isResetShapedBearer, usesMagicLink } from './auth-mode';
 import { env, getAuthMode, isProd } from './env';
-import { verifyPasswordOrDummy } from './password';
+import { hashPassword, verifyPasswordOrDummy } from './password';
 import {
   attachMembershipFromInvite,
   getMembershipForUser,
@@ -124,8 +124,16 @@ function otpBearer(email: string, role: SessionRole, code: string): string {
   return `otp:${email}:${role}:${code}`;
 }
 
+function resetBearer(email: string, role: SessionRole, code: string): string {
+  return `reset:${email}:${role}:${code}`;
+}
+
 function otpGuessBucket(email: string, role: SessionRole): string {
   return `otp:${email}:${role}`;
+}
+
+function resetGuessBucket(email: string, role: SessionRole): string {
+  return `reset:${email}:${role}`;
 }
 
 function isUniqueConstraintError(error: unknown): boolean {
@@ -152,7 +160,7 @@ function countOtpGuessFailures(email: string, role: SessionRole, now: number): n
 
 function consumeOutstandingOtps(email: string, role: SessionRole, now: number): void {
   db.update(schema.magicTokens)
-    .set({ consumedAt: new Date(now) })
+    .set({ consumedAt: new Date(now), pendingPasswordHash: null })
     .where(
       and(
         eq(schema.magicTokens.email, email),
@@ -190,7 +198,7 @@ export function generateOtpCode(): string {
 export function issueLocalOtp(
   email: string,
   role: SessionRole,
-  opts?: { inviteId?: number },
+  opts?: { inviteId?: number; pendingPasswordHash?: string },
 ): { id: number; code: string; expiresAt: Date } {
   const now = Date.now();
   const expiresAt = new Date(now + OTP_TTL_MS);
@@ -204,15 +212,24 @@ export function issueLocalOtp(
       // the previous unused code stays valid. SQLite cannot retry inserts
       // after a constraint error in the same transaction.
       return db.transaction((tx) => {
+        const pendingPasswordHash =
+          opts?.inviteId != null && opts.pendingPasswordHash ? opts.pendingPasswordHash : null;
         const inserted = tx
           .insert(schema.magicTokens)
-          .values({ email, role, tokenHash, expiresAt, inviteId: opts?.inviteId })
+          .values({
+            email,
+            role,
+            tokenHash,
+            expiresAt,
+            inviteId: opts?.inviteId,
+            pendingPasswordHash,
+          })
           .returning({ id: schema.magicTokens.id })
           .get();
         if (!inserted) throw new Error('failed to issue OTP');
 
         tx.update(schema.magicTokens)
-          .set({ consumedAt: new Date(now) })
+          .set({ consumedAt: new Date(now), pendingPasswordHash: null })
           .where(
             and(
               eq(schema.magicTokens.email, email),
@@ -250,9 +267,207 @@ export function issueLocalOtp(
  */
 export function invalidateIssuedToken(id: number, now = Date.now()): void {
   db.update(schema.magicTokens)
-    .set({ consumedAt: new Date(now) })
+    .set({ consumedAt: new Date(now), pendingPasswordHash: null })
     .where(and(eq(schema.magicTokens.id, id), isNull(schema.magicTokens.consumedAt)))
     .run();
+}
+
+function countBucketGuessFailures(bucket: string, now: number): number {
+  const windowStart = now - OTP_TTL_MS;
+  return db
+    .select({ id: schema.rateLimitEvents.id })
+    .from(schema.rateLimitEvents)
+    .where(
+      and(
+        eq(schema.rateLimitEvents.ip, bucket),
+        eq(schema.rateLimitEvents.kind, 'signin'),
+        gte(schema.rateLimitEvents.createdAt, new Date(windowStart)),
+      ),
+    )
+    .all().length;
+}
+
+/** Outstanding sign-in / reset bearers with no invite. Invite OTPs stay. */
+function consumeOutstandingUnaffiliated(email: string, role: SessionRole, now: number): void {
+  db.update(schema.magicTokens)
+    .set({ consumedAt: new Date(now), pendingPasswordHash: null })
+    .where(
+      and(
+        eq(schema.magicTokens.email, email),
+        eq(schema.magicTokens.role, role),
+        isNull(schema.magicTokens.consumedAt),
+        isNull(schema.magicTokens.inviteId),
+      ),
+    )
+    .run();
+}
+
+/**
+ * Issue a password-reset code. Previous unused bearers for this email+role
+ * that are not invite OTPs are consumed so only the latest reset code works.
+ * Does not store a password hash — the new password is applied only when
+ * `consumePasswordReset` accepts the code.
+ */
+export function issuePasswordResetOtp(
+  email: string,
+  role: SessionRole,
+): { id: number; code: string; expiresAt: Date } {
+  const now = Date.now();
+  const expiresAt = new Date(now + OTP_TTL_MS);
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < OTP_ISSUE_HASH_ATTEMPTS; attempt++) {
+    const code = generateOtpCode();
+    const tokenHash = sha256(resetBearer(email, role, code));
+    try {
+      return db.transaction((tx) => {
+        const inserted = tx
+          .insert(schema.magicTokens)
+          .values({ email, role, tokenHash, expiresAt })
+          .returning({ id: schema.magicTokens.id })
+          .get();
+        if (!inserted) throw new Error('failed to issue password reset');
+
+        tx.update(schema.magicTokens)
+          .set({ consumedAt: new Date(now), pendingPasswordHash: null })
+          .where(
+            and(
+              eq(schema.magicTokens.email, email),
+              eq(schema.magicTokens.role, role),
+              isNull(schema.magicTokens.consumedAt),
+              isNull(schema.magicTokens.inviteId),
+              ne(schema.magicTokens.id, inserted.id),
+            ),
+          )
+          .run();
+
+        tx.delete(schema.rateLimitEvents)
+          .where(
+            and(
+              eq(schema.rateLimitEvents.ip, resetGuessBucket(email, role)),
+              eq(schema.rateLimitEvents.kind, 'signin'),
+            ),
+          )
+          .run();
+
+        return { id: inserted.id, code, expiresAt };
+      });
+    } catch (error) {
+      lastError = error;
+      if (!isUniqueConstraintError(error)) throw error;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('failed to issue password reset');
+}
+
+/**
+ * Consume a password-reset code and replace `users.password_hash` in the
+ * same transaction. Does not create a user, attach membership, or stamp
+ * `emailVerifiedAt`. A correct code for someone who is no longer a member
+ * is consumed and does not count as a guess. Wrong codes use a separate
+ * 5-guess bucket from sign-in OTPs.
+ */
+export function consumePasswordReset(
+  email: string,
+  role: SessionRole,
+  code: string,
+  password: string,
+): ConsumeResult {
+  const trimmed = code.trim();
+  const normalised = email.trim().toLowerCase();
+  if (!/^\d{6}$/.test(trimmed)) {
+    return { ok: false, reason: 'not-found' };
+  }
+
+  const now = Date.now();
+  const bucket = resetGuessBucket(normalised, role);
+  if (countBucketGuessFailures(bucket, now) >= OTP_GUESS_MAX) {
+    consumeOutstandingUnaffiliated(normalised, role, now);
+    return { ok: false, reason: 'not-found' };
+  }
+
+  const tokenHash = sha256(resetBearer(normalised, role, trimmed));
+  let result: ConsumeResult;
+  try {
+    result = db.transaction((tx) => {
+      const row = tx
+        .select()
+        .from(schema.magicTokens)
+        .where(
+          and(
+            eq(schema.magicTokens.tokenHash, tokenHash),
+            isNull(schema.magicTokens.consumedAt),
+            gte(schema.magicTokens.expiresAt, new Date(now)),
+          ),
+        )
+        .get();
+
+      if (!row) {
+        const anyRow = tx
+          .select()
+          .from(schema.magicTokens)
+          .where(eq(schema.magicTokens.tokenHash, tokenHash))
+          .get();
+        if (!anyRow) return { ok: false, reason: 'not-found' as const };
+        if (anyRow.consumedAt) return { ok: false, reason: 'used' as const };
+        return { ok: false, reason: 'expired' as const };
+      }
+
+      if (row.inviteId != null || row.pendingPasswordHash) {
+        throw new ConsumeRollback({ ok: false, reason: 'invite-invalid' });
+      }
+
+      const existing = tx
+        .select()
+        .from(schema.users)
+        .where(eq(schema.users.email, normalised))
+        .get();
+      const membership = existing
+        ? tx
+            .select()
+            .from(schema.householdMembers)
+            .where(eq(schema.householdMembers.userId, existing.id))
+            .get()
+        : undefined;
+      const allowed = Boolean(
+        existing &&
+        membership &&
+        (role === 'student' ? membership.role === 'student' : isParentLike(membership.role)),
+      );
+
+      tx.update(schema.magicTokens)
+        .set({ consumedAt: new Date(now), pendingPasswordHash: null })
+        .where(eq(schema.magicTokens.id, row.id))
+        .run();
+
+      if (!allowed || !existing) {
+        return { ok: false, reason: 'not-member' as const };
+      }
+
+      const passwordHash = hashPassword(password);
+      tx.update(schema.users).set({ passwordHash }).where(eq(schema.users.id, existing.id)).run();
+
+      return { ok: true, userId: existing.id, role, email: existing.email, isNew: false };
+    });
+  } catch (error) {
+    if (error instanceof ConsumeRollback) return error.result;
+    throw error;
+  }
+
+  if (!result.ok && result.reason !== 'not-member' && result.reason !== 'invite-invalid') {
+    recordResetGuessFailure(normalised, role, now);
+  }
+  return result;
+}
+
+function recordResetGuessFailure(email: string, role: SessionRole, now: number): void {
+  const bucket = resetGuessBucket(email, role);
+  db.insert(schema.rateLimitEvents)
+    .values({ ip: bucket, kind: 'signin', createdAt: new Date(now) })
+    .run();
+  if (countBucketGuessFailures(bucket, now) >= OTP_GUESS_MAX) {
+    consumeOutstandingUnaffiliated(email, role, now);
+  }
 }
 
 /**
@@ -310,7 +525,7 @@ export function authenticatePassword(
 
 export type ConsumeResult =
   | { ok: true; userId: number; role: SessionRole; email: string; isNew: boolean }
-  | { ok: false; reason: 'not-found' | 'expired' | 'used' | 'invite-invalid' };
+  | { ok: false; reason: 'not-found' | 'expired' | 'used' | 'invite-invalid' | 'not-member' };
 
 class ConsumeRollback extends Error {
   constructor(readonly result: ConsumeResult) {
@@ -324,7 +539,7 @@ class ConsumeRollback extends Error {
  * tokens when AUTH_MODE is not magic-link.
  */
 export function consumeMagicToken(token: string): ConsumeResult {
-  if (!usesMagicLink(getAuthMode()) || isOtpShapedBearer(token)) {
+  if (!usesMagicLink(getAuthMode()) || isOtpShapedBearer(token) || isResetShapedBearer(token)) {
     sha256(token);
     return { ok: false, reason: 'not-found' };
   }
@@ -372,16 +587,22 @@ function consumeHashedBearer(
         return { ok: false, reason: 'expired' as const };
       }
 
+      const pendingHash = row.pendingPasswordHash ?? undefined;
       // Password-invite complete is invite-bound: a leftover sign-in OTP
       // (no invite_id) must not stamp emailVerifiedAt or set a password.
-      // Refuse when a password is being set even if the caller omitted
-      // requireInviteId — that flag stays at the complete call site.
-      if (row.inviteId == null && (passwordHash || opts?.requireInviteId)) {
+      // A pending hash on a non-invite row is the same refusal. Require-
+      // invite complete ignores a caller-supplied hash and uses only the
+      // hash stored on this row at issue time.
+      if (row.inviteId == null && (pendingHash || passwordHash || opts?.requireInviteId)) {
         throw new ConsumeRollback({ ok: false, reason: 'invite-invalid' });
       }
+      if (opts?.requireInviteId && !pendingHash) {
+        throw new ConsumeRollback({ ok: false, reason: 'invite-invalid' });
+      }
+      const hashToStore = opts?.requireInviteId ? pendingHash : (pendingHash ?? passwordHash);
 
       tx.update(schema.magicTokens)
-        .set({ consumedAt: new Date(now) })
+        .set({ consumedAt: new Date(now), pendingPasswordHash: null })
         .where(eq(schema.magicTokens.id, row.id))
         .run();
 
@@ -396,7 +617,7 @@ function consumeHashedBearer(
       if (existing) {
         const patch: { emailVerifiedAt?: Date; passwordHash?: string } = {};
         if (!existing.emailVerifiedAt) patch.emailVerifiedAt = new Date(now);
-        if (passwordHash) patch.passwordHash = passwordHash;
+        if (hashToStore) patch.passwordHash = hashToStore;
         if (Object.keys(patch).length > 0) {
           tx.update(schema.users).set(patch).where(eq(schema.users.id, existing.id)).run();
         }
@@ -407,7 +628,7 @@ function consumeHashedBearer(
           .values({
             email: row.email,
             emailVerifiedAt: new Date(now),
-            ...(passwordHash ? { passwordHash } : {}),
+            ...(hashToStore ? { passwordHash: hashToStore } : {}),
           })
           .returning({ id: schema.users.id })
           .get();

@@ -16,6 +16,7 @@ const inputSchema = z.object({
   householdName: z.string().trim().min(1).max(HOUSEHOLD_NAME_MAX),
   setupSecret: z.string().optional(),
   password: z.string().optional(),
+  confirmPassword: z.string().optional(),
   token: z.string().optional(),
 });
 
@@ -23,7 +24,13 @@ export type BootstrapState =
   | { status: 'idle' }
   | {
       status: 'error';
-      reason: 'invalid' | 'already_setup' | 'captcha' | 'rate_limited' | 'forbidden';
+      reason:
+        | 'invalid'
+        | 'already_setup'
+        | 'captcha'
+        | 'rate_limited'
+        | 'forbidden'
+        | 'password_mismatch';
     };
 
 /**
@@ -41,11 +48,13 @@ export async function bootstrapHouseholdAction(
 
   const rawSecret = formData.get('setupSecret');
   const rawPassword = formData.get('password');
+  const rawConfirm = formData.get('confirmPassword');
   const parsed = inputSchema.safeParse({
     email: formData.get('email'),
     householdName: formData.get('householdName'),
     setupSecret: typeof rawSecret === 'string' ? rawSecret : undefined,
     password: typeof rawPassword === 'string' ? rawPassword : undefined,
+    confirmPassword: typeof rawConfirm === 'string' ? rawConfirm : undefined,
     token: token || undefined,
   });
   if (!parsed.success) return { status: 'error', reason: 'invalid' };
@@ -71,8 +80,12 @@ export async function bootstrapHouseholdAction(
     return { status: 'error', reason: 'forbidden' };
   }
 
+  if (mode === 'password' && (parsed.data.confirmPassword ?? '') !== (parsed.data.password ?? '')) {
+    return { status: 'error', reason: 'password_mismatch' };
+  }
+
   // scrypt is expensive — only hash after captcha, rate-limit, and the
-  // setup secret have all passed.
+  // setup secret have all passed. A mismatch returns before this.
   const passwordHash = mode === 'password' ? hashPassword(parsed.data.password ?? '') : undefined;
 
   const result = bootstrapHousehold({

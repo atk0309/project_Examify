@@ -112,6 +112,7 @@ describe('bootstrapHouseholdAction', () => {
 
     const data = setupForm();
     data.set('password', 'admin-password');
+    data.set('confirmPassword', 'admin-password');
     await expect(bootstrapHouseholdAction({ status: 'idle' }, data)).rejects.toMatchObject({
       url: '/onboarding',
     });
@@ -127,6 +128,30 @@ describe('bootstrapHouseholdAction', () => {
       setupForm({ email: 'b@example.com', householdName: 'Two' }),
     );
     expect(state).toEqual({ status: 'error', reason: 'already_setup' });
+  });
+
+  it('refuses a password mismatch after the setup secret, without hashing', async () => {
+    const { env } = await import('@/lib/env');
+    (env as { AUTH_MODE: typeof env.AUTH_MODE }).AUTH_MODE = 'password';
+    const { bootstrapHouseholdAction } = await import('@/actions/bootstrapHousehold');
+    const { hasAnyHousehold } = await import('@/lib/households');
+    const data = setupForm();
+    data.set('password', 'admin-password');
+    data.set('confirmPassword', 'different-password');
+    expect(await bootstrapHouseholdAction({ status: 'idle' }, data)).toEqual({
+      status: 'error',
+      reason: 'password_mismatch',
+    });
+    expect(hasAnyHousehold()).toBe(false);
+
+    const wrongSecret = setupForm({ setupSecret: 'definitely-not-the-setup-secret' });
+    wrongSecret.set('password', 'admin-password');
+    wrongSecret.set('confirmPassword', 'different-password');
+    expect(await bootstrapHouseholdAction({ status: 'idle' }, wrongSecret)).toEqual({
+      status: 'error',
+      reason: 'forbidden',
+    });
+    (env as { AUTH_MODE: typeof env.AUTH_MODE }).AUTH_MODE = 'magic-link';
   });
 });
 

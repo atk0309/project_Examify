@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
 import { LoginForm } from '@/components/exam/LoginForm';
 import { getSession } from '@/lib/auth';
-import { env, getAuthMode, isTurnstileEnabled } from '@/lib/env';
+import { env, getAuthMode, isTurnstileEnabled, mailboxDelivery } from '@/lib/env';
 import { hasAnyHousehold } from '@/lib/households';
 
 export const dynamic = 'force-dynamic';
@@ -26,6 +26,7 @@ export default async function SignInPage() {
       <div className="app-frame">
         <LoginForm
           authMode={getAuthMode()}
+          mailboxDelivery={mailboxDelivery()}
           siteKey={isTurnstileEnabled() ? env.NEXT_PUBLIC_TURNSTILE_SITE_KEY : undefined}
         />
       </div>

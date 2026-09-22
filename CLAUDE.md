@@ -34,6 +34,9 @@ Surface:
   does not seed that snapshot; silent autofill is captured so a remount
   can restore it. A user-cleared password is never resurrected from an
   old snapshot. It never silently disables Create household.
+  Password mode asks for the admin password twice; a mismatch is refused
+  and scrypt still runs only after Turnstile, the sign-in rate limit, and
+  `SETUP_BOOTSTRAP_SECRET`.
   Field-level / `aria-invalid` errors explain what failed and drop on the
   next successful edit of that field or on resubmit. Email is the required
   admin account id in every `AUTH_MODE` (including password).
@@ -86,10 +89,15 @@ Surface:
   `/setup/wizard` redirects here.
 - **`/invite/[token]`** — accept a household invite (password, magic-link, or local OTP).
   In `AUTH_MODE=password` the URL is a secret that starts a join; membership and
-  `emailVerifiedAt` wait for a mailbox OTP (`completePasswordInvite`). Fail closed
-  if mail cannot be delivered. See `SECURITY.md`.
+  `emailVerifiedAt` wait for a mailbox OTP (`completePasswordInvite`). The chosen
+  password's scrypt hash is stored on that OTP row (`pending_password_hash`) and
+  applied only when the code is consumed; the code form does not resubmit it.
+  Fail closed if mail cannot be delivered. See `SECURITY.md`.
 - **`/signin`** — sign-in UI for the configured `AUTH_MODE` (password, magic-link, or
-  local OTP) with a Student/Parent role control. Redirects to
+  local OTP) with a Student/Parent role control. Password mode can reset a
+  forgotten password with a mailbox OTP (`requestPasswordReset` /
+  `completePasswordReset`); the hash does not change until the code is consumed,
+  and unknown addresses get the same sent screen. Redirects to
   `/setup` when the instance has no household yet.
 - **`/signin/verify`** — a **Route Handler** (`route.ts`, not a page): consumes the one-time
   token, establishes the session, redirects to `/`. It must be a route handler because
@@ -187,6 +195,7 @@ src/
     robots.ts           # disallow-all
   actions/              # 'use server' actions (requestMagicLink, signInWithPassword,
                         #   verifyLocalOtp, acceptInviteWithPassword, completePasswordInvite,
+                        #   requestPasswordReset, completePasswordReset,
                         #   bootstrapHousehold,
                         #   onboarding (subjects/PDFs/AI mode + OpenAI key write + generate + ingest validate/dry-run/apply),
                         #   createInvite / revokeInvite / requestInviteLink, signOut,
@@ -347,8 +356,11 @@ These are non-negotiable. Don't "fix" them out.
   `invite-invalid` does not record an OTP guess (leftover sign-in codes stay
   usable). Email-lock only chooses which mailbox we send to. Missing mail
   transport fails closed (`send_failed`) instead of trusting the URL; if
-  `sendEmail` fails after issue, the unused OTP is invalidated. Parent invites
-  stay email-locked; do not post links publicly. See `SECURITY.md`.
+  `sendEmail` fails after issue, the unused OTP is invalidated and its pending
+  hash is cleared. Parent invites stay email-locked; do not post links publicly.
+  Forgot-password (`reset:` bearer) is a separate consume path: it does not
+  stamp `emailVerifiedAt`, does not attach membership, and `/signin/verify`
+  refuses the bearer. See `SECURITY.md`.
 - **No enumeration.** Challenge modes (`magic-link`, `local-otp`): `requestMagicLink`
   always returns the generic `sent` state once Turnstile (when enabled) + rate-limit
   pass; it only issues a link/code when the email is a household member for that

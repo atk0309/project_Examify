@@ -181,7 +181,10 @@ Who may sign in is stored in SQLite, not env:
    is the required admin account id in every `AUTH_MODE` (including password). No
    email round-trip; you are at the keyboard. The form stays submittable after
    browser autofill, keeps those DOM values if Turnstile remounts, and shows
-   field errors (cleared on input) instead of a silent disabled button.
+   field errors (cleared on input) instead of a silent disabled button. Password
+   mode asks for the admin password twice; a mismatch is refused before the
+   password is hashed, and hashing still waits until the setup secret, Turnstile,
+   and the sign-in rate limit have passed.
 2. **Invite** — from the parent dashboard, create a student invite (open or
    email-locked) or a parent invite (**email-locked**). Share `/invite/<token>`.
    Revoke unused links; remove a member if they should no longer have access.
@@ -192,30 +195,36 @@ Who may sign in is stored in SQLite, not env:
    by itself). An open student link lets anyone with the URL start a
    join for an email they control. If no mail transport (or allowed
    outbox) is configured, accept fails closed; a failed send after
-   issue also invalidates that unused OTP. Complete refuses a code
-   that is not bound to the invite. Prefer email-lock
+   issue also invalidates that unused OTP and clears the scrypt hash stored
+   on that row. The password is chosen before the code is sent and is not
+   posted again with the code. Complete refuses a code that is not bound to
+   the invite, and it ignores any password field on that second request.
+   Prefer email-lock
    (already required for parents); never post links publicly. See
    [`SECURITY.md`](SECURITY.md).
 3. **Accept** — the invitee opens `/invite/<token>` and finishes in the configured
    auth mode (set a password then enter the mailbox code, click a magic link, or
    enter a local OTP). Success signs them in and opens the app at `/`. Later
-   visits use `/signin`.
+   visits use `/signin`. Password sign-in and the invite password step stay
+   submittable after browser autofill. Forgot password on `/signin` sends the
+   same kind of mailbox code and does not change `password_hash` until that
+   code is consumed. Unknown addresses get the same “sent” screen.
 4. **Privacy** — a parent/admin only sees students who share their household. One
    household cannot see another.
 
 Challenge modes always show a generic "sent" / "enter your code" screen whether or
 not the email is a member (anti-enumeration), including when delivery fails
-(logged server-side). Password mode always shows a generic "email or password is
-incorrect" error. A silent non-delivery usually means they have not been invited
-yet, or mail could not be sent.
+(logged server-side). Password sign-in always shows one generic "email, password,
+or role didn't match" error. Forgot-password uses the same generic sent screen.
+A silent non-delivery usually means they have not been invited yet, or mail could not be sent.
 
 ### Auth modes
 
-| `AUTH_MODE`  | Sign-in                                  | Mail required                         |
-| ------------ | ---------------------------------------- | ------------------------------------- |
-| `password`   | Email + password                         | Sign-in: no. Invite accept: yes (OTP) |
-| `magic-link` | One-time URL (Resend, SMTP, or outbox)   | Yes, unless outbox opt-in             |
-| `local-otp`  | 6-digit code (outbox, or emailed if set) | Production: `ALLOW_LOCAL_OUTBOX=1`    |
+| `AUTH_MODE`  | Sign-in                                  | Mail required                          |
+| ------------ | ---------------------------------------- | -------------------------------------- |
+| `password`   | Email + password (forgot password: OTP)  | Sign-in: no. Invite + reset: yes (OTP) |
+| `magic-link` | One-time URL (Resend, SMTP, or outbox)   | Yes, unless outbox opt-in              |
+| `local-otp`  | 6-digit code (outbox, or emailed if set) | Production: `ALLOW_LOCAL_OUTBOX=1`     |
 
 `MAIL_TRANSPORT=auto` picks SMTP when `SMTP_HOST` is set, else Resend when a real
 key is set, else the local outbox. `SMTP_FROM` is required only when SMTP is the

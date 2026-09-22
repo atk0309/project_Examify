@@ -1,7 +1,7 @@
 'use client';
 
 import Script from 'next/script';
-import { useActionState, useState } from 'react';
+import { useActionState, useState, type ChangeEvent } from 'react';
 import {
   acceptInviteWithPassword,
   type AcceptInvitePasswordState,
@@ -13,7 +13,8 @@ import {
 import { requestInviteLink, type RequestInviteLinkState } from '@/actions/requestInviteLink';
 import { verifyLocalOtp, type VerifyLocalOtpState } from '@/actions/verifyLocalOtp';
 import type { AuthMode } from '@/lib/auth-mode';
-import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from '@/lib/password-policy';
+import { mailboxWhere, type MailboxDelivery } from '@/lib/mailbox-copy';
+import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, PASSWORD_MISMATCH } from '@/lib/password-policy';
 import { ExplicitTurnstile } from './ExplicitTurnstile';
 import { MailIcon, RoleIcon } from './icons';
 
@@ -39,6 +40,7 @@ const passwordErrorCopy: Record<
   rate_limited: 'Too many attempts from your network. Try again later.',
   invite_invalid: 'This invite is invalid or has expired.',
   send_failed: 'We could not send a confirmation code. Ask the host to configure mail.',
+  password_mismatch: PASSWORD_MISMATCH,
 };
 
 const otpErrorCopy: Record<Exclude<VerifyLocalOtpState, { status: 'idle' }>['reason'], string> = {
@@ -53,12 +55,14 @@ export function InviteAcceptForm({
   lockedEmail,
   siteKey,
   authMode,
+  mailboxDelivery = 'inbox',
 }: {
   inviteToken: string;
   role: 'student' | 'parent';
   lockedEmail: string | null;
   siteKey?: string;
   authMode: AuthMode;
+  mailboxDelivery?: MailboxDelivery;
 }) {
   if (authMode === 'password') {
     return (
@@ -67,6 +71,7 @@ export function InviteAcceptForm({
         role={role}
         lockedEmail={lockedEmail}
         siteKey={siteKey}
+        mailboxDelivery={mailboxDelivery}
       />
     );
   }
@@ -77,6 +82,7 @@ export function InviteAcceptForm({
       lockedEmail={lockedEmail}
       siteKey={siteKey}
       authMode={authMode}
+      mailboxDelivery={mailboxDelivery}
     />
   );
 }
@@ -86,42 +92,78 @@ function PasswordInviteForm({
   role,
   lockedEmail,
   siteKey,
+  mailboxDelivery,
 }: {
   inviteToken: string;
   role: 'student' | 'parent';
   lockedEmail: string | null;
   siteKey?: string;
+  mailboxDelivery: MailboxDelivery;
 }) {
   const [state, formAction, pending] = useActionState<AcceptInvitePasswordState, FormData>(
     acceptInviteWithPassword,
     { status: 'idle' },
   );
-  const [email, setEmail] = useState(lockedEmail ?? '');
-  const [password, setPassword] = useState('');
-  const [submittedPassword, setSubmittedPassword] = useState('');
-  const valid =
-    EMAIL_RE.test(email.trim()) &&
-    password.length >= PASSWORD_MIN_LENGTH &&
-    password.length <= PASSWORD_MAX_LENGTH;
+  const [editing, setEditing] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState<{
+    email?: string;
+    password?: string;
+    confirmPassword?: string;
+  }>({});
 
   const submit = (formData: FormData) => {
-    setSubmittedPassword(String(formData.get('password') ?? ''));
+    const email = String(formData.get('email') ?? '');
+    const password = String(formData.get('password') ?? '');
+    const confirm = String(formData.get('confirmPassword') ?? '');
+    const next: { email?: string; password?: string; confirmPassword?: string } = {};
+    if (!EMAIL_RE.test(email.trim())) next.email = 'Enter a valid email address.';
+    if (password.length < PASSWORD_MIN_LENGTH) {
+      next.password = `Choose a password of at least ${PASSWORD_MIN_LENGTH} characters.`;
+    } else if (password.length > PASSWORD_MAX_LENGTH) {
+      next.password = `Password must be at most ${PASSWORD_MAX_LENGTH} characters.`;
+    } else if (password !== confirm) {
+      next.confirmPassword = PASSWORD_MISMATCH;
+    }
+    setFieldErrors(next);
+    if (Object.keys(next).length > 0) return;
+    setEditing(false);
     formAction(formData);
   };
 
-  if (state.status === 'sent') {
+  if (state.status === 'sent' && !editing) {
     return (
       <PasswordInviteOtpForm
         email={state.email}
-        password={submittedPassword || password}
         role={role}
         siteKey={siteKey}
+        mailboxDelivery={mailboxDelivery}
+        onBack={() => setEditing(true)}
       />
     );
   }
 
+  const confirmError =
+    fieldErrors.confirmPassword ??
+    (state.status === 'error' && state.reason === 'password_mismatch'
+      ? PASSWORD_MISMATCH
+      : undefined);
+  const passwordDescribedBy = [
+    'invite-password-hint',
+    fieldErrors.password ? 'invite-password-error' : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+
   return (
-    <form className="screen login" action={submit} data-testid="invite-form">
+    <form
+      className="screen login"
+      noValidate
+      data-testid="invite-form"
+      onSubmit={(event) => {
+        event.preventDefault();
+        submit(new FormData(event.currentTarget));
+      }}
+    >
       {siteKey ? (
         <Script
           src="https://challenges.cloudflare.com/turnstile/v0/api.js"
@@ -134,7 +176,12 @@ function PasswordInviteForm({
         role={role}
         subtitle="Choose a password, then confirm a one-time code we send to this email."
       />
-      <EmailField email={email} locked={Boolean(lockedEmail)} onChange={setEmail} />
+      <EmailField
+        defaultEmail={lockedEmail ?? ''}
+        locked={Boolean(lockedEmail)}
+        invalid={Boolean(fieldErrors.email)}
+        error={fieldErrors.email}
+      />
       <div className="field">
         <label className="field-label" htmlFor="invite-password">
           Password
@@ -148,12 +195,50 @@ function PasswordInviteForm({
           required
           minLength={PASSWORD_MIN_LENGTH}
           maxLength={PASSWORD_MAX_LENGTH}
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          disabled={pending}
+          aria-invalid={fieldErrors.password ? true : undefined}
+          aria-describedby={passwordDescribedBy}
           data-testid="invite-password-input"
         />
-        <p className="role-hint">At least {PASSWORD_MIN_LENGTH} characters.</p>
+        <p className="role-hint" id="invite-password-hint">
+          At least {PASSWORD_MIN_LENGTH} characters (max {PASSWORD_MAX_LENGTH}).
+        </p>
+        {fieldErrors.password ? (
+          <p
+            className="field-error"
+            id="invite-password-error"
+            role="alert"
+            data-testid="invite-password-error"
+          >
+            {fieldErrors.password}
+          </p>
+        ) : null}
+      </div>
+      <div className="field">
+        <label className="field-label" htmlFor="invite-confirm-password">
+          Confirm password
+        </label>
+        <input
+          id="invite-confirm-password"
+          name="confirmPassword"
+          className="text-input"
+          type="password"
+          autoComplete="new-password"
+          required
+          maxLength={PASSWORD_MAX_LENGTH}
+          aria-invalid={confirmError ? true : undefined}
+          aria-describedby={confirmError ? 'invite-confirm-error' : undefined}
+          data-testid="invite-confirm-password-input"
+        />
+        {confirmError ? (
+          <p
+            className="field-error"
+            id="invite-confirm-error"
+            role="alert"
+            data-testid="invite-confirm-error"
+          >
+            {confirmError}
+          </p>
+        ) : null}
       </div>
       <input type="hidden" name="inviteToken" value={inviteToken} />
       {siteKey ? (
@@ -167,12 +252,18 @@ function PasswordInviteForm({
       <button
         className="btn btn-primary"
         type="submit"
-        disabled={!valid || pending}
+        disabled={pending}
         data-testid="invite-submit"
       >
         {MailIcon.lock} {pending ? 'Sending code…' : 'Send confirmation code'}
       </button>
-      {state.status === 'error' ? (
+      {state.status === 'sent' ? (
+        <p className="login-fine">
+          A code may already be in {mailboxWhere(mailboxDelivery)}. It still matches the password
+          from that request. Send a new code if you want to choose a different password.
+        </p>
+      ) : null}
+      {state.status === 'error' && state.reason !== 'password_mismatch' ? (
         <p className="login-error" role="alert" data-testid={`invite-error-${state.reason}`}>
           {passwordErrorCopy[state.reason]}
         </p>
@@ -190,14 +281,16 @@ function PasswordInviteForm({
 
 function PasswordInviteOtpForm({
   email,
-  password,
   role,
   siteKey,
+  mailboxDelivery,
+  onBack,
 }: {
   email: string;
-  password: string;
   role: 'student' | 'parent';
   siteKey?: string;
+  mailboxDelivery: MailboxDelivery;
+  onBack: () => void;
 }) {
   const [otpState, otpAction, otpPending] = useActionState<CompletePasswordInviteState, FormData>(
     completePasswordInvite,
@@ -219,8 +312,8 @@ function PasswordInviteOtpForm({
         <span className="sent-icon">{MailIcon.inbox}</span>
         <h1 className="sent-title">Enter your code</h1>
         <p className="sent-note">
-          We sent a 6-digit code to <b>{email}</b>. Joining finishes only after you enter it. Check
-          the mail outbox on this host, or your inbox if email is configured.
+          We sent a 6-digit code to <b>{email}</b>. Joining finishes only after you enter it. Check{' '}
+          {mailboxWhere(mailboxDelivery)}.
         </p>
       </div>
       <div className="field">
@@ -242,7 +335,6 @@ function PasswordInviteOtpForm({
       </div>
       <input type="hidden" name="email" value={email} />
       <input type="hidden" name="role" value={role} />
-      <input type="hidden" name="password" value={password} />
       {siteKey ? <ExplicitTurnstile siteKey={siteKey} /> : null}
       <button
         className="btn btn-primary"
@@ -262,6 +354,14 @@ function PasswordInviteOtpForm({
           The code proves this mailbox. The invite link alone is not enough.
         </p>
       )}
+      <button
+        type="button"
+        className="btn btn-quiet"
+        onClick={onBack}
+        data-testid="invite-otp-back"
+      >
+        Back
+      </button>
     </form>
   );
 }
@@ -272,12 +372,14 @@ function ChallengeInviteForm({
   lockedEmail,
   siteKey,
   authMode,
+  mailboxDelivery,
 }: {
   inviteToken: string;
   role: 'student' | 'parent';
   lockedEmail: string | null;
   siteKey?: string;
   authMode: Exclude<AuthMode, 'password'>;
+  mailboxDelivery: MailboxDelivery;
 }) {
   const [state, formAction, pending] = useActionState<RequestInviteLinkState, FormData>(
     requestInviteLink,
@@ -309,7 +411,7 @@ function ChallengeInviteForm({
             <h1 className="sent-title">Enter your code</h1>
             <p className="sent-note">
               If <b>{state.email}</b> can join this household, we&rsquo;ve issued a 6-digit code.
-              Check the mail outbox on this host, or your inbox if email is configured.
+              Check {mailboxWhere(mailboxDelivery)}.
             </p>
           </div>
           <div className="field">
@@ -385,7 +487,12 @@ function ChallengeInviteForm({
             : "You're joining as a member. We'll email a sign-in link — there's no password."
         }
       />
-      <EmailField email={email} locked={Boolean(lockedEmail)} onChange={setEmail} />
+      <EmailField
+        defaultEmail={lockedEmail ?? ''}
+        locked={Boolean(lockedEmail)}
+        value={email}
+        onChange={setEmail}
+      />
       <input type="hidden" name="inviteToken" value={inviteToken} />
       {siteKey ? (
         <div
@@ -439,14 +546,21 @@ function InviteHeader({ role, subtitle }: { role: 'student' | 'parent'; subtitle
 }
 
 function EmailField({
-  email,
+  defaultEmail,
   locked,
+  value,
   onChange,
+  invalid,
+  error,
 }: {
-  email: string;
+  defaultEmail: string;
   locked: boolean;
-  onChange: (value: string) => void;
+  value?: string;
+  onChange?: (value: string) => void;
+  invalid?: boolean;
+  error?: string;
 }) {
+  const controlled = value !== undefined;
   return (
     <div className="field">
       <label className="field-label" htmlFor="invite-email">
@@ -462,10 +576,21 @@ function EmailField({
         required
         readOnly={locked}
         placeholder="you@example.com"
-        value={email}
-        onChange={(e) => onChange(e.target.value)}
+        {...(controlled
+          ? {
+              value,
+              onChange: (event: ChangeEvent<HTMLInputElement>) => onChange?.(event.target.value),
+            }
+          : { defaultValue: defaultEmail })}
+        aria-invalid={invalid || undefined}
+        aria-describedby={error ? 'invite-email-error' : undefined}
         data-testid="invite-email-input"
       />
+      {error ? (
+        <p className="field-error" id="invite-email-error" role="alert">
+          {error}
+        </p>
+      ) : null}
     </div>
   );
 }

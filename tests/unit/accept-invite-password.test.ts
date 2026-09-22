@@ -118,6 +118,7 @@ describe('acceptInviteWithPassword', () => {
     const data = new FormData();
     data.set('email', 'alex@example.com');
     data.set('password', 'student-pass');
+    data.set('confirmPassword', 'student-pass');
     data.set('inviteToken', invite.token);
 
     expect(await acceptInviteWithPassword({ status: 'idle' }, data)).toEqual({
@@ -130,6 +131,12 @@ describe('acceptInviteWithPassword', () => {
     const { getMembershipForEmail } = await import('@/lib/households');
     expect(getMembershipForEmail('alex@example.com')).toBeNull();
     expect(await userByEmail('alex@example.com')).toBeUndefined();
+    const { db, schema } = await import('@/lib/db');
+    const tokens = db.select().from(schema.magicTokens).all();
+    expect(tokens).toHaveLength(1);
+    expect(tokens[0]?.consumedAt).toBeNull();
+    expect(tokens[0]?.pendingPasswordHash).toBeTruthy();
+    expect(tokens[0]?.inviteId).toBeTypeOf('number');
   });
 
   it('reports an invalid invite token', async () => {
@@ -137,6 +144,7 @@ describe('acceptInviteWithPassword', () => {
     const data = new FormData();
     data.set('email', 'alex@example.com');
     data.set('password', 'student-pass');
+    data.set('confirmPassword', 'student-pass');
     data.set('inviteToken', 'not-a-real-token');
     expect(await acceptInviteWithPassword({ status: 'idle' }, data)).toEqual({
       status: 'error',
@@ -160,12 +168,30 @@ describe('acceptInviteWithPassword', () => {
     const data = new FormData();
     data.set('email', 'stranger@example.com');
     data.set('password', 'student-pass');
+    data.set('confirmPassword', 'student-pass');
     data.set('inviteToken', invite.token);
     expect(await acceptInviteWithPassword({ status: 'idle' }, data)).toEqual({
       status: 'error',
       reason: 'invalid',
     });
     expect(sendEmailMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects a confirmation that does not match', async () => {
+    const invite = await seedOpenStudentInvite();
+    const { acceptInviteWithPassword } = await import('@/actions/acceptInviteWithPassword');
+    const data = new FormData();
+    data.set('email', 'alex@example.com');
+    data.set('password', 'student-pass');
+    data.set('confirmPassword', 'different-pass');
+    data.set('inviteToken', invite.token);
+    expect(await acceptInviteWithPassword({ status: 'idle' }, data)).toEqual({
+      status: 'error',
+      reason: 'password_mismatch',
+    });
+    expect(sendEmailMock).not.toHaveBeenCalled();
+    const { db, schema } = await import('@/lib/db');
+    expect(db.select().from(schema.magicTokens).all()).toHaveLength(0);
   });
 
   it('rejects a short password', async () => {
@@ -188,6 +214,7 @@ describe('acceptInviteWithPassword', () => {
     const data = new FormData();
     data.set('email', 'alex@example.com');
     data.set('password', 'student-pass');
+    data.set('confirmPassword', 'student-pass');
     data.set('inviteToken', invite.token);
     expect(await acceptInviteWithPassword({ status: 'idle' }, data)).toEqual({
       status: 'error',
@@ -204,6 +231,7 @@ describe('acceptInviteWithPassword', () => {
     const data = new FormData();
     data.set('email', 'alex@example.com');
     data.set('password', 'student-pass');
+    data.set('confirmPassword', 'student-pass');
     data.set('inviteToken', invite.token);
     expect(await acceptInviteWithPassword({ status: 'idle' }, data)).toEqual({
       status: 'error',
@@ -220,6 +248,7 @@ describe('acceptInviteWithPassword', () => {
     const tokens = db.select().from(schema.magicTokens).all();
     expect(tokens).toHaveLength(1);
     expect(tokens[0]?.consumedAt).toBeInstanceOf(Date);
+    expect(tokens[0]?.pendingPasswordHash).toBeNull();
 
     const { completePasswordInvite } = await import('@/actions/completePasswordInvite');
     const finish = new FormData();
@@ -359,6 +388,7 @@ describe('completePasswordInvite', () => {
     const start = new FormData();
     start.set('email', 'alex@example.com');
     start.set('password', 'student-pass');
+    start.set('confirmPassword', 'student-pass');
     start.set('inviteToken', invite.token);
     expect(await acceptInviteWithPassword({ status: 'idle' }, start)).toMatchObject({
       status: 'sent',
@@ -370,7 +400,7 @@ describe('completePasswordInvite', () => {
     const finish = new FormData();
     finish.set('email', 'alex@example.com');
     finish.set('role', 'student');
-    finish.set('password', 'student-pass');
+    finish.set('password', 'attacker-password');
     finish.set('code', code!);
 
     await expect(completePasswordInvite({ status: 'idle' }, finish)).rejects.toMatchObject({
@@ -385,6 +415,13 @@ describe('completePasswordInvite', () => {
     const user = await userByEmail('alex@example.com');
     expect(user?.emailVerifiedAt).toBeInstanceOf(Date);
     expect(user?.passwordHash).toBeTruthy();
+    const { verifyPassword } = await import('@/lib/password');
+    expect(verifyPassword('student-pass', user!.passwordHash!)).toBe(true);
+    expect(verifyPassword('attacker-password', user!.passwordHash!)).toBe(false);
+    const { db, schema } = await import('@/lib/db');
+    const tokens = db.select().from(schema.magicTokens).all();
+    expect(tokens[0]?.pendingPasswordHash).toBeNull();
+    expect(tokens[0]?.consumedAt).toBeInstanceOf(Date);
   });
 
   it('rolls back verification, membership, and password when the invite is revoked', async () => {
@@ -403,6 +440,7 @@ describe('completePasswordInvite', () => {
     const start = new FormData();
     start.set('email', 'alex@example.com');
     start.set('password', 'student-pass');
+    start.set('confirmPassword', 'student-pass');
     start.set('inviteToken', invite.token);
     await acceptInviteWithPassword({ status: 'idle' }, start);
     const code = sendEmailMock.mock.calls[0]?.[0].code;
@@ -434,6 +472,7 @@ describe('completePasswordInvite', () => {
     const start = new FormData();
     start.set('email', 'alex@example.com');
     start.set('password', 'student-pass');
+    start.set('confirmPassword', 'student-pass');
     start.set('inviteToken', invite.token);
     await acceptInviteWithPassword({ status: 'idle' }, start);
 

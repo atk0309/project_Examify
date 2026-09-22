@@ -1,5 +1,5 @@
 import type { AuthMode } from '@/lib/auth-mode';
-import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from '@/lib/password-policy';
+import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, PASSWORD_MISMATCH } from '@/lib/password-policy';
 
 /**
  * Client-side email shape for first-run `/setup`.
@@ -21,6 +21,7 @@ export const SETUP_FIELD_ERROR = {
   email: 'Enter a valid email. This is the admin account id.',
   password: `Choose a password of at least ${PASSWORD_MIN_LENGTH} characters.`,
   passwordLong: `Password must be at most ${PASSWORD_MAX_LENGTH} characters.`,
+  passwordMismatch: PASSWORD_MISMATCH,
 } as const;
 
 export type SetupFormFields = {
@@ -28,6 +29,7 @@ export type SetupFormFields = {
   setupSecret: string;
   email: string;
   password: string;
+  confirmPassword: string;
 };
 
 export type SetupFieldKey = keyof SetupFormFields;
@@ -39,6 +41,7 @@ export const SETUP_FIELD_KEYS = [
   'setupSecret',
   'email',
   'password',
+  'confirmPassword',
 ] as const satisfies readonly SetupFieldKey[];
 
 export function isSetupEmailValid(email: string): boolean {
@@ -51,6 +54,7 @@ export function readSetupFields(formData: FormData): SetupFormFields {
     setupSecret: String(formData.get('setupSecret') ?? ''),
     email: String(formData.get('email') ?? ''),
     password: String(formData.get('password') ?? ''),
+    confirmPassword: String(formData.get('confirmPassword') ?? ''),
   };
 }
 
@@ -74,6 +78,8 @@ export function validateSetupFields(fields: SetupFormFields, authMode: AuthMode)
       errors.password = SETUP_FIELD_ERROR.password;
     } else if (length > PASSWORD_MAX_LENGTH) {
       errors.password = SETUP_FIELD_ERROR.passwordLong;
+    } else if (fields.password !== fields.confirmPassword) {
+      errors.confirmPassword = SETUP_FIELD_ERROR.passwordMismatch;
     }
   }
   return errors;
@@ -88,6 +94,7 @@ export function writeSetupFields(form: HTMLFormElement, fields: SetupFormFields)
   assign('setupSecret', fields.setupSecret);
   assign('email', fields.email);
   assign('password', fields.password);
+  assign('confirmPassword', fields.confirmPassword);
 }
 
 export function hasSetupFieldErrors(errors: SetupFieldErrors): boolean {
@@ -95,11 +102,11 @@ export function hasSetupFieldErrors(errors: SetupFieldErrors): boolean {
 }
 
 export type SetupBootstrapReason =
-  'invalid' | 'already_setup' | 'captcha' | 'rate_limited' | 'forbidden';
+  'invalid' | 'already_setup' | 'captcha' | 'rate_limited' | 'forbidden' | 'password_mismatch';
 
 /** Reasons already shown on a field — do not also raise the form banner. */
 export function isFieldMappedBootstrapReason(reason: SetupBootstrapReason): boolean {
-  return reason === 'invalid' || reason === 'forbidden';
+  return reason === 'invalid' || reason === 'forbidden' || reason === 'password_mismatch';
 }
 
 export function setupFieldErrorsFromServer(
@@ -108,6 +115,9 @@ export function setupFieldErrorsFromServer(
 ): SetupFieldErrors {
   if (reason === 'forbidden') {
     return { setupSecret: 'That setup code is not valid.' };
+  }
+  if (reason === 'password_mismatch') {
+    return { confirmPassword: SETUP_FIELD_ERROR.passwordMismatch };
   }
   if (reason === 'invalid') {
     return {
@@ -154,15 +164,16 @@ export function isDefaultOnlySetupSnapshot(fields: SetupFormFields): boolean {
     (fields.householdName === '' || isSetupDefaultHouseholdName(fields.householdName)) &&
     fields.setupSecret === '' &&
     fields.email === '' &&
-    fields.password === ''
+    fields.password === '' &&
+    fields.confirmPassword === ''
   );
 }
 
 /**
  * Silent autofill never fires `input`. Adopt richer live FormData into the
  * remount snapshot. First-paint default household name does not seed it.
- * Password is upgrade-only; recover never copies snapshot password onto
- * an empty live field.
+ * Password and confirmation are upgrade-only; recover never copies a
+ * snapshot password onto an empty live field.
  */
 export function captureSilentSetupSnapshot(
   live: SetupFormFields,
@@ -180,6 +191,7 @@ export function captureSilentSetupSnapshot(
     setupSecret: snapshot.setupSecret || live.setupSecret,
     email: snapshot.email || live.email,
     password: snapshot.password || live.password,
+    confirmPassword: snapshot.confirmPassword || live.confirmPassword,
   };
 }
 
@@ -208,5 +220,6 @@ export function recoverSetupFieldsAfterRemount(
     setupSecret: live.setupSecret || snapshot.setupSecret,
     email: live.email || snapshot.email,
     password: live.password,
+    confirmPassword: live.confirmPassword,
   };
 }

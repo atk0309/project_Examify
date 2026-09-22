@@ -199,3 +199,38 @@ export function renderOtpEmail(opts: { code: string; email: string; siteName: st
 </html>`;
   return { subject, html, text };
 }
+
+export function renderPasswordResetEmail(opts: { code: string; siteName: string }): {
+  subject: string;
+  html: string;
+  text: string;
+} {
+  const subject = `Your ${opts.siteName} password reset code`;
+  const text = [
+    `Hello,`,
+    ``,
+    `Your ${opts.siteName} password reset code is:`,
+    ``,
+    opts.code,
+    ``,
+    `It is good for 15 minutes and only works once.`,
+    `Your password does not change until you enter this code.`,
+    `If you didn't request this, you can safely ignore it.`,
+  ].join('\n');
+  const html = `<!doctype html>
+<html lang="en">
+  <body style="margin:0;padding:0;background:#faf6ee;color:#2b2722;font-family:ui-sans-serif,system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;">
+    <div style="max-width:520px;margin:48px auto;padding:32px;background:#fffdf9;border:1px solid #ece2cf;border-radius:16px;">
+      <h1 style="margin:0 0 16px;font-size:22px;color:#2f5142;font-family:Georgia,'Times New Roman',serif;">Reset your password</h1>
+      <p style="margin:0 0 20px;line-height:1.55;color:#756c5e;">
+        Enter this code in ${opts.siteName} with your new password. It is good for 15 minutes and only works once. Your password does not change until then.
+      </p>
+      <p style="margin:0 0 24px;font-size:32px;letter-spacing:0.2em;font-weight:700;color:#2f5142;">${opts.code}</p>
+      <p style="margin:0;font-size:12px;color:#a99e8c;">
+        Didn't request this? You can safely ignore this message.
+      </p>
+    </div>
+  </body>
+</html>`;
+  return { subject, html, text };
+}

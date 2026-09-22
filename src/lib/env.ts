@@ -332,6 +332,11 @@ export function getAuthMode(): AuthMode {
   return env.AUTH_MODE;
 }
 
+/** Where a person should look for a mailbox code on this host. Not per-address. */
+export function mailboxDelivery(): 'inbox' | 'outbox' {
+  return resolveMailTransport() === 'outbox' ? 'outbox' : 'inbox';
+}
+
 /**
  * Resolves an explicit mail transport or, in auto mode, prefers SMTP, then a
  * configured Resend account, and finally the local outbox.

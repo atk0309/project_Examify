@@ -26,6 +26,7 @@ function fields(over: Partial<ReturnType<typeof readSetupFields>> = {}) {
     setupSecret: 'dev-setup-bootstrap-secret',
     email: 'host@example.com',
     password: '',
+    confirmPassword: '',
     ...over,
   };
 }
@@ -74,11 +75,13 @@ describe('readSetupFields / validateSetupFields', () => {
     data.set('setupSecret', 'instance-secret');
     data.set('email', 'autofill@example.com');
     data.set('password', 'admin-password');
+    data.set('confirmPassword', 'admin-password');
     expect(readSetupFields(data)).toEqual({
       householdName: 'Autofill family',
       setupSecret: 'instance-secret',
       email: 'autofill@example.com',
       password: 'admin-password',
+      confirmPassword: 'admin-password',
     });
   });
 
@@ -112,7 +115,18 @@ describe('readSetupFields / validateSetupFields', () => {
     expect(hasSetupFieldErrors(validateSetupFields(fields({ password: '' }), 'password'))).toBe(
       true,
     );
-    expect(validateSetupFields(fields({ password: 'admin-password' }), 'password')).toEqual({});
+    expect(
+      validateSetupFields(
+        fields({ password: 'admin-password', confirmPassword: 'admin-password' }),
+        'password',
+      ),
+    ).toEqual({});
+    expect(
+      validateSetupFields(
+        fields({ password: 'admin-password', confirmPassword: 'other-password' }),
+        'password',
+      ),
+    ).toEqual({ confirmPassword: SETUP_FIELD_ERROR.passwordMismatch });
   });
 
   it('maps server forbidden/invalid onto the fields the operator can fix', () => {
@@ -130,7 +144,11 @@ describe('readSetupFields / validateSetupFields', () => {
     expect(setupFieldErrorsFromServer('captcha', 'magic-link')).toEqual({});
     expect(isFieldMappedBootstrapReason('forbidden')).toBe(true);
     expect(isFieldMappedBootstrapReason('invalid')).toBe(true);
+    expect(setupFieldErrorsFromServer('password_mismatch', 'password')).toEqual({
+      confirmPassword: SETUP_FIELD_ERROR.passwordMismatch,
+    });
     expect(isFieldMappedBootstrapReason('captcha')).toBe(false);
+    expect(isFieldMappedBootstrapReason('password_mismatch')).toBe(true);
   });
 
   it('drops a server field error only after a successful edit of that field', () => {
@@ -177,6 +195,7 @@ describe('readSetupFields / validateSetupFields', () => {
       setupSecret: 'instance-secret',
       email: 'autofill@example.com',
       password: '',
+      confirmPassword: '',
     });
     expect(recoverSetupFieldsAfterRemount(snapshot, snapshot)).toEqual(snapshot);
     expect(recoverSetupFieldsAfterRemount(wiped, null)).toEqual(wiped);
@@ -213,6 +232,7 @@ describe('readSetupFields / validateSetupFields', () => {
       setupSecret: 'instance-secret',
       email: 'autofill@example.com',
       password: 'admin-password',
+      confirmPassword: 'admin-password',
     });
     const afterClear = fields({
       householdName: SETUP_DEFAULT_HOUSEHOLD_NAME,
@@ -225,6 +245,7 @@ describe('readSetupFields / validateSetupFields', () => {
       setupSecret: 'instance-secret',
       email: 'autofill@example.com',
       password: '',
+      confirmPassword: '',
     });
     expect(
       captureSilentSetupSnapshot(fields({ ...snapshot, password: '' }), snapshot)?.password,
