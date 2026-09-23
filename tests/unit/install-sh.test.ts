@@ -1355,6 +1355,14 @@ const GIT_ENV = {
   GIT_AUTHOR_EMAIL: 'test@example.com',
   GIT_COMMITTER_NAME: 'Examify Test',
   GIT_COMMITTER_EMAIL: 'test@example.com',
+  // Newer git (2.47+) detaches `git maintenance run --auto` after fetch/merge;
+  // it can still be writing into .git while a test removes the fixture
+  // (ENOTEMPTY in CI). The fixtures never need it.
+  GIT_CONFIG_COUNT: '2',
+  GIT_CONFIG_KEY_0: 'maintenance.auto',
+  GIT_CONFIG_VALUE_0: 'false',
+  GIT_CONFIG_KEY_1: 'gc.auto',
+  GIT_CONFIG_VALUE_1: '0',
 };
 
 function git(cwd: string, ...args: string[]): string {
@@ -1511,7 +1519,7 @@ function withFixture(options: Parameters<typeof makeFixture>[0], body: (fx: Fixt
   try {
     body(fx);
   } finally {
-    fs.rmSync(fx.base, { recursive: true, force: true });
+    fs.rmSync(fx.base, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 }
 
@@ -1709,7 +1717,7 @@ describe('install.sh --upgrade', () => {
       expect(summary(fx)).toContain('data backup');
     } finally {
       server.close();
-      fs.rmSync(fx.base, { recursive: true, force: true });
+      fs.rmSync(fx.base, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
   }, 60_000);
 
@@ -2390,7 +2398,7 @@ describe('install.sh end to end (real data CLI, fixture checkout)', () => {
       expect(checkoutLeftovers(clone)).toBe('');
       expect(result.stdout).toContain(`Family data folder: ${dataDir}`);
     } finally {
-      fs.rmSync(fx.base, { recursive: true, force: true });
+      fs.rmSync(fx.base, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
   }, 120_000);
 
@@ -2411,7 +2419,7 @@ describe('install.sh end to end (real data CLI, fixture checkout)', () => {
       expect(fs.readdirSync(shared).sort()).toEqual(['app.db', 'notes.txt']);
       expect(pnpmCalls(fx)).toEqual([]);
     } finally {
-      fs.rmSync(fx.base, { recursive: true, force: true });
+      fs.rmSync(fx.base, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
   }, 120_000);
 
@@ -2469,7 +2477,7 @@ describe('install.sh end to end (real data CLI, fixture checkout)', () => {
         expect(listTree(path.join(fx.dataDir, 'content'))).toEqual(dataBefore);
         expect(pnpmCalls(fx)).toContain('pnpm build');
       } finally {
-        fs.rmSync(fx.base, { recursive: true, force: true });
+        fs.rmSync(fx.base, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
       }
     },
     120_000,
@@ -2499,7 +2507,7 @@ describe('install.sh end to end (real data CLI, fixture checkout)', () => {
       expect(result.stdout).toContain('Verify passed.');
       expect(pnpmCalls(fx)).toContain('pnpm build');
     } finally {
-      fs.rmSync(fx.base, { recursive: true, force: true });
+      fs.rmSync(fx.base, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
   }, 120_000);
 
@@ -2537,7 +2545,7 @@ describe('install.sh end to end (real data CLI, fixture checkout)', () => {
       expect(pnpmCalls(fx)).toEqual(['pnpm install --frozen-lockfile', 'pnpm build']);
       expect(result.stdout).toContain(`Rolled back to ${fx.oldSha.slice(0, 7)}`);
     } finally {
-      fs.rmSync(fx.base, { recursive: true, force: true });
+      fs.rmSync(fx.base, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
   }, 120_000);
 
@@ -2584,7 +2592,7 @@ describe('install.sh end to end (real data CLI, fixture checkout)', () => {
       expect(checkoutLeftovers(clone)).toBe('');
       expect(result.stdout).toContain('Examify is ready.');
     } finally {
-      fs.rmSync(fx.base, { recursive: true, force: true });
+      fs.rmSync(fx.base, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
   }, 120_000);
 });
@@ -2608,7 +2616,7 @@ describe('install.sh upgrade recovery (real data CLI, fixture checkout)', () => 
       const rerun = runReal(fx, fx.work, ['--upgrade', '--yes']);
       expect(rerun.status, `${rerun.stdout}\n${rerun.stderr}`).toBe(0);
     } finally {
-      fs.rmSync(fx.base, { recursive: true, force: true });
+      fs.rmSync(fx.base, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
   }, 120_000);
 
@@ -2628,7 +2636,7 @@ describe('install.sh upgrade recovery (real data CLI, fixture checkout)', () => 
       expect(fs.readFileSync(path.join(fx.work, 'NEWFILE'), 'utf8')).toBe('mine\n');
       expect(git(fx.work, 'rev-parse', 'HEAD')).toBe(fx.oldSha);
     } finally {
-      fs.rmSync(fx.base, { recursive: true, force: true });
+      fs.rmSync(fx.base, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
   }, 120_000);
 
@@ -2663,7 +2671,7 @@ describe('install.sh upgrade recovery (real data CLI, fixture checkout)', () => 
       expect(userCount(path.join(fx.dataDir, 'app.db'))).toBe(3);
       expect(fs.existsSync(path.join(fx.dataDir, '.upgrade-state.json'))).toBe(false);
     } finally {
-      fs.rmSync(fx.base, { recursive: true, force: true });
+      fs.rmSync(fx.base, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
   }, 120_000);
 
@@ -2693,7 +2701,7 @@ describe('install.sh upgrade recovery (real data CLI, fixture checkout)', () => 
       expect(git(fx.work, 'rev-parse', 'HEAD')).toBe(fx.oldSha);
       expectLegacyBack(fx, before);
     } finally {
-      fs.rmSync(fx.base, { recursive: true, force: true });
+      fs.rmSync(fx.base, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
   }, 120_000);
 
@@ -2722,7 +2730,7 @@ describe('install.sh upgrade recovery (real data CLI, fixture checkout)', () => 
       expect(fs.readdirSync(path.join(fx.dataDir, 'archives'))).toHaveLength(1);
       expect(pnpmCalls(fx)).toEqual(['pnpm install --frozen-lockfile', 'pnpm build']);
     } finally {
-      fs.rmSync(fx.base, { recursive: true, force: true });
+      fs.rmSync(fx.base, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
   }, 120_000);
 });
@@ -2751,7 +2759,7 @@ describe('install.sh upgrade guards (shimmed pnpm and data CLI)', () => {
       expect(calls(fx)).toEqual([]);
     } finally {
       await server.close();
-      fs.rmSync(fx.base, { recursive: true, force: true });
+      fs.rmSync(fx.base, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
   }, 60_000);
 
@@ -2774,7 +2782,7 @@ describe('install.sh upgrade guards (shimmed pnpm and data CLI)', () => {
       expect(calls(fx)).toEqual([]);
     } finally {
       await server.close();
-      fs.rmSync(fx.base, { recursive: true, force: true });
+      fs.rmSync(fx.base, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
   }, 60_000);
 
@@ -2903,7 +2911,7 @@ describe('install.sh --restore of an install configured through .env.local (real
       expect(pnpmCalls(fx)).toContain(`migrate ${path.join(fx.dataDir, 'app.db')}`);
       expect(fs.existsSync(path.join(clone, 'data'))).toBe(false);
     } finally {
-      fs.rmSync(fx.base, { recursive: true, force: true });
+      fs.rmSync(fx.base, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
   }, 120_000);
 });

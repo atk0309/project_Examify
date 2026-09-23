@@ -28,7 +28,7 @@ function tempRepo(): string {
 
 afterEach(() => {
   for (const dir of temps.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -240,6 +240,8 @@ describe('pnpm db:migrate', () => {
         'user.name=t',
         '-c',
         'commit.gpgsign=false',
+        // No detached auto-maintenance (git 2.47+) writing into .git during cleanup.
+        ...['-c', 'maintenance.auto=false', '-c', 'gc.auto=0'],
         ...args,
       ],
       { cwd: root, encoding: 'utf8' },

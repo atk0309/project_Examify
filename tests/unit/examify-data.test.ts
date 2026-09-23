@@ -26,7 +26,9 @@ const JOURNAL_ENTRIES = (
 const temps: string[] = [];
 
 afterEach(() => {
-  for (const dir of temps.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+  for (const dir of temps.splice(0)) {
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
 });
 
 function tempDir(prefix: string): string {
@@ -54,6 +56,8 @@ function git(cwd: string, ...args: string[]): string {
     [
       ...['-c', 'user.name=Examify Test', '-c', 'user.email=test@example.com'],
       ...['-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null'],
+      // No detached auto-maintenance (git 2.47+) writing into .git during cleanup.
+      ...['-c', 'maintenance.auto=false', '-c', 'gc.auto=0'],
       ...args,
     ],
     { cwd, encoding: 'utf8', env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1' } },
