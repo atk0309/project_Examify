@@ -9,8 +9,9 @@ Optional AI marking and cloud generate send text or files to the provider you pi
 
 It is intentionally small: a static question bank you edit in code, a four-screen client
 flow, host-picked sign-in (`password`, `magic-link`, or `local-otp`) gated by
-**invite-only households** in SQLite, and a single SQLite file. No SaaS account, no
-tracking by default, no env-JSON allowlist to hand-edit.
+**invite-only households** in SQLite, and one family data folder (the SQLite file plus
+uploads and generated questions). No SaaS account, no tracking by default, no env-JSON
+allowlist to hand-edit.
 
 ## Features
 
@@ -43,6 +44,9 @@ tracking by default, no env-JSON allowlist to hand-edit.
    usable keys stay host-managed; a boot `test` sentinel stays “not configured”
    but Clear/Rotate remain available after the first Save), optionally generate BankIR from those
    files, and emit through `examify-ingest` (validate + Review / dry-run HITL, then apply;
+   subjects, uploads and generated questions go to the
+   [family data folder](#where-your-familys-data-lives), never the checkout; a subject
+   with a built-in subject's id is flagged and replaces the built-in one;
    desktop uses a step rail, mobile a compact progress bar; one stage at a time;
    generate never auto-applies; adding a subject does not write empty BankIR;
    real or corrupt BankIR needs a confirm before
@@ -136,10 +140,10 @@ appears in no dashboard.
 
 ### Installer (recommended)
 
-`install.sh` asks a few questions (site URL, secrets, auth mode, mail for
-invite-accept OTP, optional Turnstile, and Anthropic / OpenAI keys), writes `.env`,
-installs, migrates, and builds. OpenAI generate from PDFs also needs
-`pdftoppm` (from **poppler** / `poppler-utils`) on `PATH`.
+`install.sh` asks a few questions (site URL, family data folder, auth mode, mail for
+invite-accept OTP, optional Turnstile, and Anthropic / OpenAI keys), generates the
+secrets, writes `.env`, installs, migrates, and builds. OpenAI generate from PDFs also
+needs `pdftoppm` (from **poppler** / `poppler-utils`) on `PATH`.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/atk0309/project_Examify/main/install.sh | bash
@@ -148,19 +152,21 @@ curl -fsSL https://raw.githubusercontent.com/atk0309/project_Examify/main/instal
 From a clone: `./install.sh`. Help: `./install.sh --help` (piped:
 `curl -fsSL …/install.sh | bash -s -- --help` — not `bash --help`).
 Non-interactive: `EXAMIFY_NONINTERACTIVE=1 ./install.sh` (defaults to
-`AUTH_MODE=password` and a local outbox at `data/outbox` so kid invite
-accept can deliver the mailbox OTP — only when this run writes `.env`;
-set `SMTP_*` / `RESEND_*` for real mail). Keep-broken / keep-good is
-judged from on-disk `.env` (and `.env.local` if present), not a transient
-host env: `ALLOW_LOCAL_OUTBOX=1` on the installer process does not
-greenlight a broken password file. A kept password-mode `.env` with no
-mail path is refused (not described as enabled). A host `AUTH_MODE` that
-differs from effective on-disk `AUTH_MODE` (`.env.local` wins over `.env`,
-including an empty `AUTH_MODE=` that Next treats as the magic-link default)
-is refused with copy that names that effective mode, not the host and
-not `.env` alone when local wins. `RESEND_API_KEY=test` is not a mail path.
-Invite accept
-never skips that OTP.
+`AUTH_MODE=password`, the family data folder `./data`, and a local outbox at
+`<data folder>/outbox` so kid invite accept can deliver the mailbox OTP — only
+when this run writes `.env`; set `SMTP_*` / `RESEND_*` for real mail, and
+`EXAMIFY_DATA_DIR` or `--data-dir <path>` for another folder). Keep-broken /
+keep-good is judged from the on-disk env files (`.env`, `.env.local`,
+`.env.production*`, in Next's order), not a transient host env:
+`ALLOW_LOCAL_OUTBOX=1` on the installer process does not greenlight a broken
+password file. A kept password-mode `.env` with no mail path is refused (not
+described as enabled). A host `AUTH_MODE` that differs from effective on-disk
+`AUTH_MODE` (`.env.local` wins over `.env`, including an empty `AUTH_MODE=`
+that Next treats as the magic-link default) is refused with copy that names
+that effective mode, not the host and not `.env` alone when local wins. A host
+`EXAMIFY_DATA_DIR` / `DATABASE_URL` or `--data-dir` that differs from the kept
+files' data folder or database is refused the same way. `RESEND_API_KEY=test`
+is not a mail path. Invite accept never skips that OTP.
 
 The site URL must be the address family devices open (for example
 `https://exam.example.com` or `http://192.168.1.20:3000`). `localhost` only works on
@@ -179,9 +185,11 @@ cp .env.example .env        # AUTH_MODE=magic-link; dev defaults work
 pnpm dev                    # http://localhost:3000  -> /setup on a fresh DB
 ```
 
-With `RESEND_API_KEY=test`, magic-link / OTP messages are written to a local
-outbox (`MAIL_OUTBOX_DIR` if set, otherwise `tests/.tmp/outbox/*.json`). On a
-fresh database, visit `/setup`, enter the setup code (`SETUP_BOOTSTRAP_SECRET`;
+Family data (the SQLite database, mail outbox, wizard uploads and generated
+questions) goes to `./data`, the default `EXAMIFY_DATA_DIR`. With no Resend key or
+SMTP, magic-link / OTP messages are written to the local outbox, `data/outbox/*.json`
+(`MAIL_OUTBOX_DIR` if set; `RESEND_API_KEY=test` keeps them in `tests/.tmp/outbox/`).
+On a fresh database, visit `/setup`, enter the setup code (`SETUP_BOOTSTRAP_SECRET`;
 the dev default works locally), and create the first household. Invite the
 student from the dashboard. With `ANTHROPIC_API_KEY=test`, free-text grading
 uses a deterministic local stub — no network, no API key needed for development.
@@ -291,18 +299,31 @@ questions. Content lives in two files keyed by a shared, globally-unique questio
 
 `buildExam()` assembles each mini exam from the bank (`EXAM_CONFIG.length` caps the
 paper, `shuffle` randomises order), and a unit-test guard enforces that the two files
-stay in lockstep. You can also author `content/subjects/<id>/bank.ir.json` (by
-hand or `pnpm examify-ingest generate`) and emit the split with
-`pnpm examify-ingest emit content/subjects --dry-run` (or `--apply` to write
-`content/generated/`). Generate writes IR only — still
-`pnpm examify-ingest validate content/subjects`, then
-`emit content/subjects --dry-run`, then `emit content/subjects --apply`. Hand-authored biology has no source file (skip generate). A
-fresh-clone generate fixture is `content/subjects/demo` (`notes.txt` in the
-subject folder; generate also reads `.txt` / `.md` / images there plus PDFs
-under `content/source-pdfs/<id>/`). A real BankIR with questions needs
-`--force`; empty / placeholder IR does not. Corrupt / invalid-schema IR
-also needs `--force` (named as corrupt, not empty). Sample-bank ids fail at generate
-unless `--replace-sample`. The full guide — adding subjects and difficulties, writing
+stay in lockstep.
+
+Generated subjects come from BankIR (`bank.ir.json`, by hand or
+`pnpm examify-ingest generate`) in two layers on top of the sample bank:
+
+- **Family** — what `/onboarding` writes, in the family data folder
+  (`data/content/subjects/<id>/`, uploads in `data/content/source-pdfs/<id>/`,
+  output in `data/content/generated/`). The app reads it on every request, so an
+  Apply shows up without a rebuild. It is never committed.
+- **Committed** — the checkout's `content/subjects` (biology, the `demo` fixture),
+  emitted into tracked `content/generated/` plus the `src/lib/exam/generated-*.ts`
+  registrars that ship with the build.
+
+A family subject with a built-in subject's id replaces it. `examify-ingest` picks
+the layer from the path you name. Generate writes IR only; then run
+`pnpm examify-ingest validate data/content/subjects`,
+`emit data/content/subjects --dry-run` and `emit data/content/subjects --apply`
+(`content/subjects` for the committed layer). Hand-authored biology has no source
+file (skip generate). A fresh-clone generate fixture is `content/subjects/demo`
+(`notes.txt` in the subject folder; generate
+also reads `.txt` / `.md` / images there plus PDFs under `content/source-pdfs/<id>/`
+of the same layer). A real BankIR with questions needs `--force`; empty /
+placeholder IR does not. Corrupt / invalid-schema IR also needs `--force` (named
+as corrupt, not empty). Sample-bank ids fail at generate unless
+`--replace-sample`. The full guide — adding subjects and difficulties, writing
 rubrics the LLM grader marks well, the ingest CLI, and a workflow for
 generating a question bank from your own study-material PDFs and notes — is in
 [`docs/content-authoring.md`](docs/content-authoring.md) and
@@ -337,8 +358,8 @@ Free-text answers are graded server-side by the Anthropic Messages API
 ## What leaves your server
 
 Stored only on your server: household accounts and sessions, exam attempts and progress,
-in-progress drafts, uploaded PDFs and notes, generated question banks and answer keys,
-and the `.env` keys.
+in-progress drafts, uploaded PDFs and notes, generated question banks and answer keys
+(all in the [family data folder](#where-your-familys-data-lives)), and the `.env` keys.
 
 Sent to a third party only when you turn the feature on:
 
@@ -359,6 +380,52 @@ Sent to a third party only when you turn the feature on:
 - **Optional:** Cloudflare Turnstile (`TURNSTILE_ENABLED=1`) and Plausible analytics
   (`PLAUSIBLE_DOMAIN`).
 
+## Where your family's data lives
+
+Everything that belongs to your family lives in one **family data folder**,
+`EXAMIFY_DATA_DIR` (default `./data` inside the checkout, already gitignored). The
+running app never writes inside the checkout except `.env` (the API keys the
+`/onboarding` wizard saves), so `git pull` never conflicts with your content, and a
+folder outside the checkout survives deleting and re-cloning it.
+`pnpm examify:data paths` prints the folder, database and outbox this checkout uses.
+
+| In the data folder                          | Holds                                                                 |
+| ------------------------------------------- | --------------------------------------------------------------------- |
+| `app.db` (+ `-wal`, `-shm`)                 | Accounts, households, progress, drafts (unless `DATABASE_URL` is set) |
+| `outbox/`                                   | Local mail outbox: sign-in links and codes — **secret**               |
+| `content/subjects/<id>/`                    | Wizard subjects: `subject.json`, `bank.ir.json`, notes                |
+| `content/source-pdfs/<id>/`                 | Uploaded study PDFs                                                   |
+| `content/generated/`                        | Generated questions; `keys/` holds the answer keys — **secret**       |
+| `.examify-ingest/`                          | Generate run manifests and caches                                     |
+| `backups/`                                  | Backup archives (database, answer keys, `.env`) — **secret**          |
+| `migration-conflicts/`, `before-restore-*/` | Only after an upgrade or a forced restore — **secret**                |
+| `.examify-data.json`, `.gitignore`          | Marker; `*` so the folder is never committed                          |
+
+`.env` stays in the checkout and holds `AUTH_SECRET`, `SETUP_BOOTSTRAP_SECRET`, API
+keys and mail passwords. `pnpm db:migrate` creates the folder `0700`; answer keys,
+backups and outbox messages are `0600` (see [`SECURITY.md`](SECURITY.md)).
+
+**Outside the checkout.** If you might ever delete and re-clone the checkout, answer the
+installer's "Family data folder" prompt with a folder outside it, such as
+`/var/lib/examify` (or run `./install.sh --data-dir /var/lib/examify`). The user that
+runs Examify must be able to create it, or own it empty
+(`sudo mkdir /var/lib/examify && sudo chown "$USER" /var/lib/examify`). The app refuses
+to boot with a folder that overlaps the checkout: a relative path resolves against the
+checkout (never the working directory); inside the checkout only `./data` or a folder
+under it is allowed; never the checkout itself or a folder that contains it; no leading
+`~` (the installer expands it, `.env` does not), quotes, newlines or ` #`.
+`pnpm db:migrate` also refuses an existing folder that holds files that are not
+Examify's.
+
+**Moving the folder.** Stop the server and run `pnpm examify:backup`. In `.env`, set
+`EXAMIFY_DATA_DIR` to the new folder and delete `DATABASE_URL` (it would keep the
+database where it is). Then `pnpm examify:restore <archive>`, `pnpm db:migrate`, and
+start the server. Delete the old folder once the app works.
+
+> Never run `git clean -x` / `-X` (for example `git clean -fdx`) or `git stash -a` in the
+> checkout: with the default `./data` they delete, or stash away, the database, the
+> answer keys and `.env`. Commit local edits instead of stashing them.
+
 ## Themes
 
 `data-theme` on `<html>` selects the mood: `paper` (default warm cream), `calm`
@@ -368,25 +435,36 @@ applied at runtime via `accentCSS()`.
 
 ## Commands
 
-| Command               | What it does                                                |
-| --------------------- | ----------------------------------------------------------- |
-| `pnpm dev`            | Dev server (Turbopack)                                      |
-| `pnpm build`          | Production build                                            |
-| `pnpm start`          | Run the production build (`PORT` defaults to 3000)          |
-| `pnpm lint`           | ESLint                                                      |
-| `pnpm typecheck`      | `tsc --noEmit`                                              |
-| `pnpm format`         | Prettier write                                              |
-| `pnpm test`           | Vitest unit suite                                           |
-| `pnpm test:e2e`       | Playwright e2e: seeded, fresh and password suites           |
-| `pnpm db:generate`    | Generate a Drizzle migration from schema diffs              |
-| `pnpm db:migrate`     | Apply pending migrations to repo-root `.env` `DATABASE_URL` |
-| `pnpm examify-ingest` | Generate / validate / emit BankIR (`tools/examify-ingest`)  |
+| Command                             | What it does                                                                   |
+| ----------------------------------- | ------------------------------------------------------------------------------ |
+| `pnpm dev`                          | Dev server (Turbopack)                                                         |
+| `pnpm build`                        | Production build                                                               |
+| `pnpm start`                        | Run the production build (`PORT` defaults to 3000)                             |
+| `pnpm lint`                         | ESLint                                                                         |
+| `pnpm typecheck`                    | `tsc --noEmit`                                                                 |
+| `pnpm format`                       | Prettier write                                                                 |
+| `pnpm test`                         | Vitest unit suite                                                              |
+| `pnpm test:e2e`                     | Playwright e2e: seeded, fresh and password suites                              |
+| `pnpm db:generate`                  | Generate a Drizzle migration from schema diffs                                 |
+| `pnpm db:migrate`                   | Create the family data folder, then apply pending migrations to its database   |
+| `pnpm examify-ingest`               | Generate / validate / emit BankIR (`tools/examify-ingest`)                     |
+| `pnpm examify:data`                 | Data folder tool: `paths`, `init`, `backup`, `restore`, `verify`, … (`--help`) |
+| `pnpm examify:backup`               | Back up the database, family content and `.env` to a `0600` archive            |
+| `pnpm examify:restore <archive>`    | Restore a backup (server stopped; `--force`, `--with-env`)                     |
+| `./install.sh --upgrade`            | Back up, move old checkout content out, merge upstream, rebuild                |
+| `./install.sh --rollback <archive>` | Go back to the version and data in a pre-upgrade backup                        |
+| `./install.sh --restore <archive>`  | Set up a new checkout from a backup                                            |
 
 ## Environment
 
 Defined and validated by zod in `src/lib/env.ts`; the canonical reference is
-`.env.example`. Required in production: `SITE_URL`, `AUTH_SECRET`, `DATABASE_URL`,
-`SETUP_BOOTSTRAP_SECRET`. `ANTHROPIC_API_KEY` is optional (wizard clear +
+`.env.example`. Required in production: `SITE_URL`, `AUTH_SECRET`,
+`SETUP_BOOTSTRAP_SECRET`, and `EXAMIFY_DATA_DIR` or `DATABASE_URL` (without either,
+boot fails rather than writing to ephemeral disk; so does a data folder that overlaps
+the checkout — see [Where your family's data lives](#where-your-familys-data-lives)).
+With `EXAMIFY_DATA_DIR` set, `DATABASE_URL` is optional: it defaults to
+`<data folder>/app.db`, and older installs keep `file:./data/app.db`.
+`ANTHROPIC_API_KEY` is optional (wizard clear +
 restart will not brick boot; grading fail-closes without a key). `AUTH_MODE` defaults to
 `magic-link`. Documented placeholder `AUTH_SECRET` / `SETUP_BOOTSTRAP_SECRET`
 values fail production boot. A leftover `FAMILIES` value that is set but invalid
@@ -422,18 +500,22 @@ Or the manual equivalent:
 ```bash
 pnpm install --frozen-lockfile
 pnpm build
-pnpm db:migrate && pnpm start    # repo-root .env DATABASE_URL, then serve
+pnpm db:migrate && pnpm start    # create the data folder + database, then serve
 ```
 
 Run `pnpm db:migrate` before `pnpm start` on every deploy — the server does not migrate
-itself on boot. Point `DATABASE_URL` at a file on **persistent storage** so the database
-survives deploys, set the required env vars above (`AUTH_MODE` included), and healthcheck
-`GET /api/health`.
+itself on boot, and in production it never creates the database: a missing file (say, an
+unmounted volume) fails closed instead of serving a fresh, empty instance, and
+`GET /api/health` answers 503 with a reason code only (`db_missing`; `unsafe_data_dir`
+or `db_error` for the other failures). Put the family data folder on **persistent
+storage** and point `EXAMIFY_DATA_DIR` at it — in a container, mount a volume (for
+example at `/data`) and set `EXAMIFY_DATA_DIR=/data`. `DATABASE_URL` is optional. Set
+the required env vars above (`AUTH_MODE` included), and healthcheck `GET /api/health`.
 
-The checkout itself must be persistent too: `/onboarding` writes subjects, uploaded PDFs,
-generated banks and answer keys under `content/` and `src/lib/exam/generated-*`, and API
-keys into `.env`. Back up the database (use `sqlite3 app.db ".backup backup.db"` while the
-server runs — it uses WAL), `.env`, and `content/`.
+The checkout holds only code, committed content and `.env`. The wizard saves API keys to
+that `.env`; on a host that rebuilds the checkout on every deploy, set them as host env
+vars instead. Back up with `pnpm examify:backup` (see
+[Backups and restore](#backups-and-restore)).
 
 ### Deploying with HTTPS
 
@@ -476,6 +558,114 @@ Cloudflare (a Tunnel, or a firewall that admits only Cloudflare). Don't expose
 X-Forwarded-For. Password sign-in and mailbox codes also have per-account limits that
 don't depend on the IP.
 
+## Upgrading
+
+Stop the server, then run this from the checkout as the user that runs Examify:
+
+```bash
+./install.sh --upgrade
+```
+
+The installer never starts, stops or restarts services. It first checks, changing
+nothing, that this is a git checkout on a branch with an upstream, `.env` exists,
+`node`, `pnpm` and `tar` are installed, the checkout and data belong to you, the
+upstream's Node major matches, and no server answers `/api/health` (on the host `PORT`,
+the `.env` `PORT`, 3000 and `SITE_URL`; pass `--allow-running` if that is another
+service). Uncommitted edits to tracked files outside `content/` and the generated
+registrars are refused — commit them (the upgrade merges your commits and never stashes)
+— and so are local commits that would conflict. Then it:
+
+1. writes a pre-upgrade backup (database, family data, `.env`, and everything under the
+   checkout's `content/`) to `<data folder>/backups/`;
+2. moves family content an older version left in the checkout (wizard subjects, uploaded
+   PDFs, generated questions and keys, `.examify-ingest/`) into the data folder and
+   restores the checkout's tracked files;
+3. sets the old build aside, merges the upstream branch, and runs the updated installer:
+   `pnpm install --frozen-lockfile`, `pnpm db:migrate`, `pnpm build` (skip with
+   `--skip-build`) and `node scripts/examify-data.mjs verify`;
+4. prints the backup path. Start or restart the server.
+
+If a step fails, the message names the backup: fix the problem and re-run
+`./install.sh --upgrade`, or go back with `./install.sh --rollback <archive>`. A file the
+data folder already holds with different contents is kept, and the checkout's copy goes
+to `<data folder>/migration-conflicts/<time>/`. A built-in subject deleted in an older
+version comes back. Existing installs keep their `DATABASE_URL`; the upgrade does not move
+the database (see "Moving the folder" above).
+
+**First upgrade from an older install.** Its `install.sh` has no `--upgrade`, and a plain
+`git pull` strands your wizard content in the checkout: this version no longer reads it
+there, and `pnpm db:migrate` refuses until it is moved. Run the new installer from inside
+the checkout instead:
+
+```bash
+cd /path/to/examify    # your checkout
+git fetch origin && git show origin/main:install.sh | bash -s -- --upgrade
+```
+
+That runs exactly the installer the upgrade moves to (no download; it works for a private
+fork too). `curl -fsSL https://raw.githubusercontent.com/atk0309/project_Examify/main/install.sh | bash -s -- --upgrade`
+does the same from the public repo. Stop the server first; without a terminal, add
+`--yes` to answer the "is the server stopped?" question. Later upgrades use
+`./install.sh --upgrade`.
+
+## Backups and restore
+
+```bash
+pnpm examify:backup    # same as: node scripts/examify-data.mjs backup
+```
+
+This writes `<data folder>/backups/examify-backup-<time>-<id>.tar.gz` (`0600`): a
+consistent snapshot of the database (safe while the server runs), the family content,
+generate run manifests, and the checkout's `.env` / `.env.local`. It leaves out the mail
+outbox, earlier backups and the generate cache (`--include-cache` adds the cache).
+`--no-env` leaves out `.env`; `--out DIR` writes somewhere else outside the checkout.
+
+**An archive holds secrets and answer keys.** Copy it off the machine (another computer,
+an encrypted drive) and keep it private: a backup that lives only next to the data does
+not survive a lost disk. Nothing deletes old archives.
+
+Nightly, from the crontab of the user that runs Examify (`crontab -e`). Cron starts in
+your home folder with a minimal `PATH`, so use absolute paths (`command -v node` prints
+node's):
+
+```cron
+30 3 * * * /usr/bin/node /home/examify/examify/scripts/examify-data.mjs backup --repo /home/examify/examify >> /home/examify/examify-backup.log 2>&1
+```
+
+It reads `EXAMIFY_DATA_DIR` / `DATABASE_URL` from the checkout's env files, like the app.
+If your service manager sets them instead, set them on the cron line too.
+
+**Restore on this machine.** Stop the server, then `pnpm examify:restore <archive>`. It
+refuses while the server answers, checks every file against the archive's manifest, and
+refuses a backup from a newer Examify. When the data folder already holds a database or
+content, add `--force`: the current data is moved aside to
+`<data folder>/before-restore-<time>/`, never deleted. `--with-env` also puts back `.env`
+(the current one is kept as `.env.before-restore-<time>.local`), and the data then goes
+to the folder that restored `.env` names. Then run `pnpm db:migrate` and start the
+server.
+
+**Restore on a new machine.** Copy the archive over, then:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/atk0309/project_Examify/main/install.sh | bash -s -- --restore /path/to/examify-backup-….tar.gz
+# or, in a clone: ./install.sh --restore /path/to/examify-backup-….tar.gz
+```
+
+The installer clones if needed, installs, restores the database, the family content and
+the archived `.env` (or asks for a new `.env` when the backup has none), then migrates and
+builds. The data goes to the family data folder that archived `.env` names (`./data`
+unless the old install used another one); if the user that runs Examify cannot create
+that folder, create it for them first. Don't set `EXAMIFY_DATA_DIR` / `DATABASE_URL` or
+`--data-dir` for such a restore: the restored `.env` decides. Change `SITE_URL` in `.env`
+if the new machine has a different address.
+
+**Roll back an upgrade.** `./install.sh --rollback <archive>` takes a pre-upgrade backup
+(only those record the version to go back to). With the server stopped, it resets the
+checkout to that commit (`git reset --keep`, which refuses to overwrite local changes),
+restores the database, family content, `.env` and the checkout's content from the
+archive — the current data and `.env` are moved aside as above, not deleted — then
+reinstalls and puts back the pre-upgrade build, or rebuilds.
+
 ## Testing
 
 `pnpm test` runs the Vitest unit suite (content guards, scoring, grading, auth, actions)
@@ -493,6 +683,9 @@ three Playwright suites (run `pnpm test:e2e:install` once first):
 
 All suites start with `next start` against the production `.next` and do not create it.
 Ports default to 3100 / 3101 / 3102 (`E2E_PORT`, `E2E_FRESH_PORT`, `E2E_PASSWORD_PORT`).
+Every run keeps its family data under `tests/.tmp/` (never your `EXAMIFY_DATA_DIR`), and
+CI fails when the build or the e2e suites leave any file under `content/`,
+`.examify-ingest/` or `src/`.
 
 ## Contributing, security, license
 

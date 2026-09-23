@@ -46,8 +46,10 @@ get an initial response within a week.
 - **Do not write magic-link bearer tokens or OTP codes to disk in production
   unless you opt in.** Unset Resend / `RESEND_API_KEY=test` uses a local outbox
   only in dev/test. Production with no real mail transport returns the generic
-  “sent” response and logs server-side — it does **not** write `data/outbox`,
-  even if `RESEND_API_KEY=test`. `ALLOW_LOCAL_OUTBOX=1` is a dangerous opt-in
+  “sent” response and logs server-side — it does **not** write the outbox
+  (`<family data folder>/outbox`), even if `RESEND_API_KEY=test`. The `test`
+  sentinel never moves the production outbox into the checkout
+  (`tests/.tmp/outbox` is dev/test only). `ALLOW_LOCAL_OUTBOX=1` is a dangerous opt-in
   that stores raw sign-in URLs or OTP codes on the host filesystem; treat that
   directory as secret material and never enable it on a shared or exposed disk.
   `AUTH_MODE=local-otp` and `MAIL_TRANSPORT=outbox` require this opt-in in
@@ -68,6 +70,53 @@ get an initial response within a week.
   default password mode enables that outbox when no SMTP / Resend is set so
   kid invites are not stranded. `AUTH_SECRET` and `SETUP_BOOTSTRAP_SECRET`
   remain the host secrets.
+
+## Family data folder and backups
+
+All family state lives in the family data folder (`EXAMIFY_DATA_DIR`, default
+`./data`): the database, the mail outbox, uploaded PDFs, generated questions and
+answer keys, ingest caches and backups. The running app never writes inside the
+checkout except `.env` (wizard API keys). See README → "Where your family's data
+lives".
+
+- **Permissions.** `pnpm db:migrate` / `examify-data init` create the folder `0700`
+  (and tighten an existing one to `0700` when this user owns it; a folder owned
+  by another user keeps its mode, with a warning). Answer-key files
+  (`content/generated/keys/*.json`) are `0600` in a `0700` folder; outbox
+  messages are `0600` in a `0700` folder; backup archives are `0600` in
+  `backups/` (`0700`). The folder gets a `.gitignore` of `*` so it is never
+  committed wherever it lives. An existing, unmarked folder that holds files
+  Examify does not recognise is refused before anything is chmodded or written.
+- **Fail closed.** Production refuses to boot without `EXAMIFY_DATA_DIR` or
+  `DATABASE_URL`, or with a data folder that overlaps the checkout (checked on
+  realpaths). It never creates a missing database: an unmounted volume fails
+  closed instead of coming up as a fresh instance whose `/setup` could be
+  claimed. `/api/health` returns reason codes only (`unsafe_data_dir`,
+  `db_missing`, `db_error`), never an error message or path.
+- **Backups hold secrets.** A backup archive contains the database, every answer
+  key, uploaded PDFs and, unless `--no-env`, the checkout's `.env` / `.env.local`
+  (`AUTH_SECRET`, `SETUP_BOOTSTRAP_SECRET`, API keys, mail passwords). A
+  pre-upgrade backup also holds the checkout's `content/`. So do the folders an
+  upgrade or a restore leaves behind: `migration-conflicts/` (checkout copies,
+  answer keys included), `before-restore-*/` (the replaced database and
+  content), and `.env.before-restore-*.local` in the checkout. Treat them all
+  like `.env`: keep them private, copy archives off the machine to storage only
+  you can read, and delete what you no longer need.
+- **The outbox is never backed up** (raw sign-in links and codes are short-lived
+  bearer secrets); neither are earlier backups. The generate cache is left out
+  unless `--include-cache`.
+- **Run the installer and backups as the app's user.** Every writing command of
+  `scripts/examify-data.mjs` (and so `install.sh`, `--upgrade` and
+  `--rollback`) refuses when the checkout, the data folder or the database
+  belongs to another uid: a `sudo` or root-cron run would leave root-owned
+  keys, WAL files or builds the app cannot read. `--allow-owner-mismatch`
+  overrides this if you will fix ownership yourself.
+- **Restore checks the archive.** It refuses while the server answers, rejects
+  links, special files, absolute paths and `..` in the archive, extracts
+  without the archive's owners, copies only files listed in its `MANIFEST.json`
+  after checking each sha256, and refuses a database from a newer Examify.
+  Existing data is moved aside to `before-restore-<time>/`, never deleted; `.env`
+  is replaced only with `--with-env`.
 
 ## Password-mode invite links are secrets
 

@@ -16,7 +16,9 @@ their kid(s). It turns content (optionally sourced from the family's own study P
 added by hand to a static data file) into short practice exams. It is intentionally
 small: a static question bank, a four-screen client flow, host-picked sign-in
 (`password`, `magic-link`, or `local-otp`) gated by invite-only households in SQLite,
-and a single file on runtime-mounted persistent storage.
+and one **family data folder** (`EXAMIFY_DATA_DIR`: the SQLite file, the mail outbox and
+everything the wizard writes) on persistent storage. The running app never writes inside
+the checkout (see "Family data folder invariants").
 
 Surface:
 
@@ -51,7 +53,19 @@ Surface:
   remain available after the first Save) → validate → Review
   (dry-run HITL) → apply → ready. The wizard is one stage at a time: desktop
   (≥900px) uses a left step rail + stage + sticky footer; mobile uses compact
-  “Step N of M · Label” progress and a sticky bottom bar. Generate writes BankIR
+  “Step N of M · Label” progress and a sticky bottom bar. Everything the
+  wizard reads and writes — subjects, uploaded PDFs, BankIR, generated JSON,
+  `.examify-ingest/` — is the **family layer** in the family data folder
+  (`getOnboardingContentRoot()` → `getDataPaths().familyRoot`), never the
+  checkout; only API keys go to the checkout `.env`. Its emit never plans the
+  registrars, and Apply refuses (`invalid`, “refusing to write outside the
+  family data folder”) any planned path outside `<familyRoot>/content/generated`.
+  The subject list shows family subjects only (committed biology / demo are
+  not there); the dry-run's `shadows` (family ids that are committed generated
+  ids) render as a Review notice (“Replaces built-in subject: Biology”), the
+  add form shows `wizard-subject-id-builtin-hint` for a committed id, and the
+  power-user CLI hints name the folder via the snapshot's `dataDirDisplay`
+  (`data`, `data/<sub>`, or the absolute path). Generate writes BankIR
   only and never auto-applies. Adding a subject writes `subject.json`
   only — no empty/placeholder `bank.ir.json`. Overwrite / skip / generate
   use shared `hasExistingBankIr` (empty / valid zero-item ≠ existing;
@@ -112,8 +126,10 @@ Surface:
   Skip-without-emit is Welcome “Use sample bank for now” / later “Skip to
   dashboard” — same skip semantics, sample bank stays usable, parent-dashboard
   “Finish content setup” chip remains. Invited students and parents never see
-  it. Directory-only `examify-ingest` emit (dry-run before apply, empty catalog
-  refused). Delete removes IR/source dirs only; prune of leftover generated JSON
+  it. Directory-only `examify-ingest` emit (dry-run before apply). An empty family
+  tree is refused unless the family generated layer still serves subjects (the family
+  deleted its last one): then Review offers a prune-only plan (catalog `[]` + deletes)
+  behind the same confirmed hash and named prune confirm. Delete removes IR/source dirs only; prune of leftover generated JSON
   waits for a named HITL confirm on Apply (cancel = no deletes/writes). Ready
   lists live bank subject ids/names and question counts. Not a replacement for `install.sh`
   auth-mode picking. Existing households are backfilled complete.
@@ -156,7 +172,9 @@ Surface:
 - **`/signin/invalidate`** — a **Route Handler** that destroys a stale session cookie
   and redirects to `/signin`. `getSession` sends the browser here when membership
   no longer matches (cookie writes are illegal in a Server Component render).
-- **`/api/health`** — lightweight platform healthcheck.
+- **`/api/health`** — lightweight platform healthcheck (touches the DB). Failures are
+  503 `{ ok:false, reason }` with a reason code only (`unsafe_data_dir`, `db_missing`,
+  `db_error`) — never `error.message`, which can carry a filesystem path.
 - **`/api/onboarding/cancel-generate`** — POST; household-admin generate
   cancel. A Route Handler so the token is not queued behind the in-flight
   generate Server Action. Same-origin + session; aborts the in-flight
@@ -176,7 +194,7 @@ grouped weekly Dependabot PRs in `.github/dependabot.yml`.
 | Runtime     | Node 22 LTS (`>=22.22.2 <23`, `.nvmrc`), pnpm 10                                                  |
 | Framework   | Next.js 16 (App Router, Turbopack), React 19.2, TypeScript 6 strict                               |
 | Styling     | Tailwind v4 with a CSS-first `@theme` token block, three `data-theme` moods                       |
-| DB          | SQLite on runtime-mounted storage, accessed through Drizzle + better-sqlite3                      |
+| DB          | SQLite in the family data folder (persistent storage), via Drizzle + better-sqlite3               |
 | Auth        | Host-picked mode (`password` / `magic-link` / `local-otp`) + iron-session, invite-only households |
 | Captcha     | Optional Cloudflare Turnstile (off when keys unset; server-verified when set)                     |
 | Email       | Resend, SMTP, or local outbox (`MAIL_TRANSPORT`); outbox gated in production                      |
@@ -188,22 +206,28 @@ grouped weekly Dependabot PRs in `.github/dependabot.yml`.
 
 ## Commands cheat-sheet
 
-| Command               | What it does                                                        |
-| --------------------- | ------------------------------------------------------------------- |
-| `pnpm dev`            | Next.js dev server with Turbopack                                   |
-| `pnpm build`          | Production build                                                    |
-| `pnpm start`          | Run the production build (`PORT` defaults to 3000)                  |
-| `pnpm lint`           | ESLint flat-config across the repo                                  |
-| `pnpm format`         | Prettier write                                                      |
-| `pnpm format:check`   | Prettier dry-run (CI guard)                                         |
-| `pnpm typecheck`      | `tsc --noEmit`                                                      |
-| `pnpm test`           | Vitest unit suite                                                   |
-| `pnpm test:e2e`       | Playwright e2e (`pnpm build`, then seeded + fresh + password)       |
-| `pnpm db:generate`    | Generate a new Drizzle migration from schema diffs                  |
-| `pnpm db:migrate`     | Apply pending migrations to repo-root `.env` `DATABASE_URL`         |
-| `pnpm db:studio`      | Drizzle Studio against the local DB                                 |
-| `pnpm examify-ingest` | Generate / validate / emit BankIR (`tools/examify-ingest`)          |
-| `./install.sh`        | Interactive self-host install (env + mail/outbox + migrate + build) |
+| Command                             | What it does                                                                                   |
+| ----------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `pnpm dev`                          | Next.js dev server with Turbopack                                                              |
+| `pnpm build`                        | Production build                                                                               |
+| `pnpm start`                        | Run the production build (`PORT` defaults to 3000)                                             |
+| `pnpm lint`                         | ESLint flat-config across the repo                                                             |
+| `pnpm format`                       | Prettier write                                                                                 |
+| `pnpm format:check`                 | Prettier dry-run (CI guard)                                                                    |
+| `pnpm typecheck`                    | `tsc --noEmit`                                                                                 |
+| `pnpm test`                         | Vitest unit suite                                                                              |
+| `pnpm test:e2e`                     | Playwright e2e (`pnpm build`, then seeded + fresh + password)                                  |
+| `pnpm db:generate`                  | Generate a new Drizzle migration from schema diffs                                             |
+| `pnpm db:migrate`                   | Init the data folder (refuses leftover checkout content), migrate its DB                       |
+| `pnpm db:studio`                    | Drizzle Studio against the local DB                                                            |
+| `pnpm examify-ingest`               | Generate / validate / emit BankIR (`tools/examify-ingest`); layer from the paths               |
+| `pnpm examify:data`                 | Data folder CLI `scripts/examify-data.mjs` (`paths`, `init`, `backup`, `restore`, `verify`, …) |
+| `pnpm examify:backup`               | `0600` archive: DB snapshot + family content + `.env` (`--no-env`, `--out`)                    |
+| `pnpm examify:restore`              | Restore an archive (server stopped; `--force` moves data aside, `--with-env`)                  |
+| `./install.sh`                      | Interactive self-host install (env + data folder + mail/outbox + migrate + build)              |
+| `./install.sh --upgrade`            | Backup → move checkout content → merge → install / migrate / build / verify                    |
+| `./install.sh --rollback <archive>` | Back to a pre-upgrade backup's commit, data and `.env`                                         |
+| `./install.sh --restore <archive>`  | New machine: install, restore the archive (and its `.env`), migrate, build                     |
 
 ## Branch + PR rules
 
@@ -256,6 +280,8 @@ src/
     analytics/          # Plausible (opt-in)
   lib/
     exam/data.ts        # SAMPLE + generated SUBJECTS/QUESTIONS + accentCSS + buildExam
+    exam/live-bank.server.ts # sample + committed (registrars) + family (data folder, per request) bank + keys
+    exam/merge-generated.ts  # client-safe layer merge (composeGeneratedLayers / composeGeneratedKeys)
     exam/attempts.ts    # validate + re-score a submitted attempt; aggregate helpers (pure)
     progress.ts         # persist/read attempts; resolveChildren(parentEmail) per-family (server-only)
     exam-session.ts     # save/list/clear an in-progress exam for resume (server-only)
@@ -266,7 +292,12 @@ src/
                         #   maps failures to safe reason codes + one `[onboarding] generate failed` log line
     onboarding-admin.ts # shared household-admin gate for wizard actions + cancel route
     onboarding-types.ts # client-safe wizard snapshot / AI mode types
-    repo-root.ts        # shared `findRepoRoot` (env-store, content I/O, ingest keys, db:migrate)
+    repo-root.ts        # shared `findRepoRoot` (checkout root: env-store `.env`, data-dir, ingest keys)
+    data-dir.ts         # THE family data folder resolver (getDataPaths / resolveCliDataPaths,
+                        #   assertSafeDataDir, UnsafeDataDirError); relative imports, no server-only
+    data-folder.ts      # initDataFolder: 0700 + `.gitignore` + marker; refuses a shared folder
+    env-file.ts         # the one `.env` parser + `next start` file order (readProductionEnvFiles)
+    content-root.ts     # getOnboardingContentRoot() = the family data folder (test override)
     env-store.ts        # server-only `.env` upsert/clear (ANTHROPIC_API_KEY / OPENAI_API_KEY write path)
     families.ts         # leftover FAMILIES JSON parser (optional one-shot import only)
     allowlist.ts        # isAllowedEmail(role,email), derived from household membership
@@ -278,11 +309,16 @@ tests/
   e2e/                  # playwright specs (setup-db.ts runs pre-Playwright)
   stubs/                # vitest-only stubs (e.g. server-only no-op)
 tools/
-  examify-ingest/       # BankIR generate + validate + emit (generate writes IR only)
-content/
-  subjects/             # BankIR sources (*/bank.ir.json)
-  generated/            # public subjects/questions + server-only keys (committed)
-  source-pdfs/          # gitignored local PDFs
+  examify-ingest/       # BankIR generate + validate + emit (generate writes IR only; roots.ts picks the layer)
+scripts/
+  examify-data.mjs      # data folder CLI: paths / init / backup / restore / legacy-check /
+                        #   migrate-checkout / verify (plain ESM, Node builtins + better-sqlite3)
+content/                # the COMMITTED layer only (never written at runtime)
+  subjects/             # BankIR sources (*/bank.ir.json): biology, demo fixture
+  generated/            # public subjects/questions + server-only keys (committed; read via registrars)
+  source-pdfs/          # gitignored local PDFs (committed-layer CLI work)
+data/                   # gitignored default family data folder (EXAMIFY_DATA_DIR)
+  app.db, outbox/, content/{subjects,source-pdfs,generated}/, .examify-ingest/, backups/
 ```
 
 `@/*` resolves to `src/*`.
@@ -315,11 +351,52 @@ validate → emit path, adding subjects (all 13 original duotone icons remain in
 bank from source PDFs (and notes/text in the subject folder) kept local-only
 in the gitignored `content/source-pdfs/` / subject directory.
 
+**Two generated layers** sit on top of the sample bank (`live-bank.server.ts`):
+
+- **Committed** (the checkout): `content/subjects/<id>/bank.ir.json` →
+  `emit content/subjects --apply` writes tracked `content/generated/` **and** rewrites the
+  registrars `src/lib/exam/generated-public.ts` / `generated-keys.server.ts`. The
+  registrars _are_ the committed layer: they import the JSON, so it ships with the build
+  (a change needs a rebuild and a commit). This is the shipped content (biology, the demo
+  fixture) and what CI runs. It is not a "missing-catalog fallback".
+- **Family** (the data folder): `<data>/content/subjects/<id>/`,
+  `<data>/content/source-pdfs/<id>/`, `<data>/content/generated/`. `/onboarding` reads
+  and writes only this layer, and the CLI uses it for `data/content/subjects` paths.
+  `readGeneratedOverlay` reads its catalog on every request, so Apply → dashboard needs
+  no rebuild. It is never committed and never has registrars.
+- **Precedence:** the family layer overlays the committed layer, and the result merges
+  onto the sample bank under the unchanged sample-freeze rules. A family subject with a
+  committed id **replaces it entirely** (its questions and keys; the tile keeps the
+  committed position; `composeGeneratedLayers` / `composeGeneratedKeys` in
+  `merge-generated.ts`);
+  family-only subjects append. A family row counts only when its id is kebab-case, its
+  `questions/<id>.json` parses with ids that subject may own, and every public question
+  has a key of its type; otherwise it is dropped with one reason-coded
+  `[live-bank] family subject dropped` warning (code + subject id, never a path) and a
+  committed subject it would have replaced stays. No family catalog ⇒ no family layer; an
+  unreadable one ⇒ none plus one `[live-bank] family catalog unreadable`.
+- **The ingest CLI infers the layer** (`tools/examify-ingest/src/roots.ts`,
+  `resolveIngestRoot`): each positional path is realpathed; inside the data folder ⇒
+  family (tested first — `./data` is inside the checkout), else inside the checkout ⇒
+  committed, else error; mixed ⇒ error. The first stderr line is
+  `layer: family (<display>)` / `layer: committed (checkout)`. Emit passes
+  `registrars: layer === 'committed'` (`planEmit` defaults to false, so nothing at
+  runtime ever rewrites registrars); a committed `--apply` that changes files prints a
+  note that it writes tracked files; a family validate / emit notes each subject that
+  replaces a committed one. API keys come from the checkout `.env` / `.env.local`
+  (`mergeRepoEnvFiles(repoRoot)`) in both layers.
+- **Dev checkouts:** committed-layer generate / emit leaves `bank.ir.json`,
+  `.examify-ingest/` and changed generated files in the checkout, which `pnpm db:migrate`
+  and `install.sh` treat as leftover family content and refuse. Use
+  `EXAMIFY_IGNORE_LEGACY_CONTENT=1` for `db:migrate` there; never on a real install.
+
 Automated path: author or `pnpm examify-ingest generate` a
-`content/subjects/<id>/bank.ir.json`, then `pnpm examify-ingest validate content/subjects`,
-`emit content/subjects --dry-run`, and only afterward `emit content/subjects --apply`
-(or use `/onboarding` after first-run bootstrap — AI-step generate is optional,
-then the same directory emit, HITL dry-run before apply, empty tree refused).
+`content/subjects/<id>/bank.ir.json` (in the layer's root), then
+`pnpm examify-ingest validate content/subjects`, `emit content/subjects --dry-run`, and
+only afterward `emit content/subjects --apply` (family work: the same with
+`data/content/subjects`; or use `/onboarding` after first-run bootstrap — AI-step
+generate is optional, then the same directory emit on the family layer, HITL dry-run
+before apply; an empty family tree is only a confirmed prune of leftover family files).
 Hand-authored biology has no source file — skip generate (validate/emit only).
 A committed generate fixture is `content/subjects/demo/notes.txt`
 (`pnpm examify-ingest generate --provider test --seed 0 content/subjects/demo`).
@@ -359,20 +436,19 @@ repo `.env` / `.env.local`); `--provider test` is the CI
 fixture. OpenAI-compatible generate fails closed when the only sources are
 PDFs and no page images were rasterized (`pdftoppm` from poppler-utils).
 `emit` is dry-run by default;
-`--apply` writes `content/generated/` (public
-subjects/questions + server-only keys). The running app reads that JSON at
-request time (`src/lib/exam/live-bank.server.ts`) and merges it onto the
-sample bank, so Apply → dashboard shows new subjects without a rebuild.
-Registrars (`generated-public.ts` / `generated-keys.server.ts`) stay as the
-committed / missing-catalog fallback. Keys stay server-only. Any id already in
+`--apply` writes the layer's `content/generated/` (public
+subjects/questions + server-only keys, `0600` in a `0700` folder). Keys stay
+server-only. Any id already in
 the sample bank is refused unless
 `--replace-sample`. A partial emit (explicit IR files or mixed file+directory
 argv) merges `subjects.json` by id and leaves other generated subject files in
 place. A whole-tree emit of subjects directories only (`content/subjects`) is
 authoritative for generated subjects: leftover `questions/<id>.json` /
 `keys/<id>.json` (and the `subjects.json` row) for an id with no IR in that
-tree are deleted. `--apply` rewrites catalog and registrars before unlinking
-leftovers. The sample bank is never touched.
+tree are deleted. `--apply` writes every file atomically (temp + rename, `writeFileAtomic`)
+in a fixed order — questions + keys, then registrars (committed layer only), then
+`subjects.json` last (the live bank reads the catalog first, so it is the commit point)
+— and unlinks leftovers only after every write. The sample bank is never touched.
 
 ## Styling / theming
 
@@ -653,14 +729,146 @@ These are non-negotiable. Don't "fix" them out.
   calm app-level boundary (retry, or a full reload to `/`). Every `ExamApp` instance can submit (the `/` gate
   only renders it for a student or a parent in student mode), so there is no `canRecord` prop.
 
+## Family data folder invariants
+
+These are non-negotiable. Don't "fix" them out.
+
+- **The running app never writes inside the checkout.** Every piece of family state —
+  SQLite DB, mail outbox, wizard subjects / uploaded PDFs / BankIR / generated questions +
+  keys, ingest caches and run manifests, backups — lives under one family data folder
+  resolved by `src/lib/data-dir.ts` (`getDataPaths()` at runtime; content I/O goes through
+  `getOnboardingContentRoot()`). The one runtime checkout write is the repo-root `.env`
+  through `env-store.ts` (wizard API keys, `findRepoRoot`), besides Next's own `.next/`.
+  Dev/test only: outside production `RESEND_API_KEY=test` (or `NODE_ENV=test`) keeps the
+  outbox in `tests/.tmp/outbox`. Never resolve a runtime content path from
+  `process.cwd()` / `findRepoRoot`, never rewrite registrars at runtime, and never write
+  `content/`, `.examify-ingest/` or `src/` from the app or a test (CI fails on it). So
+  `git pull` never conflicts with family content, and a re-clone loses nothing when the
+  folder is outside the checkout.
+- **Resolution** (`resolveDataPaths`): data folder = `EXAMIFY_DATA_DIR` (relative → the
+  checkout root, never cwd) → else the folder of an explicit SQLite `DATABASE_URL` when it
+  is fully outside the checkout (a `file:/data/app.db` volume keeps family content next to
+  its DB) → else `./data` (gitignored `/data`). DB = explicit `DATABASE_URL` (existing
+  installs keep theirs), else `<data>/app.db`. Outbox = `MAIL_OUTBOX_DIR` (relative → the
+  checkout), else `<data>/outbox`; a production host with the `test` sentinel still gets
+  `<data>/outbox`, and only with `ALLOW_LOCAL_OUTBOX=1`. The runtime reads `process.env`
+  (Next loaded the env files). CLIs (`db:migrate`, drizzle-kit, `examify-ingest`,
+  `examify-data.mjs`) use `resolveCliDataPaths`: the repo env files in `next start` order
+  (`.env.production.local` > `.env.local` > `.env.production` > `.env`; the first file
+  that defines a key wins, even empty; a non-blank process env value wins over files)
+  via `env-file.ts`, the single `.env` parser.
+- **Safety** (`assertSafeDataDir`, on realpaths so a symlink can't route around it): never
+  the checkout or a folder that contains it (`checkout_root`); inside the checkout only
+  `data/…` (plus `tests/.tmp/…` for the suites) (`inside_checkout`); a value starting
+  with `~` or containing a quote, newline, `$` or ` #` is `bad_value` (`.env` can't carry
+  it / Next expands `$VAR` but CLIs reading the files do not; `install.sh` expands a
+  leading `~` before writing). `UnsafeDataDirError` messages never name the path.
+  Production boot fails on an unsafe folder, on a folder shared with other software
+  (an existing folder without the marker holding files Examify does not recognise —
+  e.g. the folder of `DATABASE_URL=file:/root/examify.db` is `$HOME`), and when neither
+  `EXAMIFY_DATA_DIR` nor `DATABASE_URL` is set. A `DATABASE_URL` inside the checkout
+  outside `./data` still boots, with a `[env]` warning.
+- **Production never creates the database.** `openSqliteFile(dbPath, { mustExist: isProd })`
+  throws `DatabaseMissingError` for a missing file and creates nothing: an unmounted
+  volume must fail closed, not come up as a fresh household whose `/setup` could be
+  claimed. Dev/test keep mkdir + create. `/api/health` maps failures to reason codes.
+- **Initialising.** `pnpm db:migrate` (`initDataFolder`, `src/lib/data-folder.ts`) and
+  `examify-data init` create the folder `0700` (chmod only when this uid owns it, else one
+  warning), a `.gitignore` of `*`, and the marker `.examify-data.json`
+  (`{layout:1, createdAt, migrations}`, `0600`); existing files are never rewritten. An
+  existing, unmarked folder holding anything but known Examify names is refused
+  (`SharedDataFolderError`, exit 5 in the CLI) before any chmod or write — a
+  `DATABASE_URL`-derived folder could be `/var/lib`. `db:migrate` first refuses (exit 1,
+  with `./install.sh --upgrade` / `migrate-checkout` instructions) while family content
+  from an older version is still in the checkout (`detectLegacyCheckoutContent` from
+  `scripts/examify-data.mjs`; skipped when git can't answer), unless
+  `EXAMIFY_IGNORE_LEGACY_CONTENT=1` (dev checkouts doing committed-layer CLI work only).
+- **`scripts/examify-data.mjs` is a cross-version tool.** `install.sh --upgrade` runs the
+  _upstream_ copy (`git show @{u}:scripts/examify-data.mjs`) against the _old_ checkout's
+  `node_modules`, so it stays plain ESM on Node ≥22 builtins plus the checkout's
+  better-sqlite3 (`createRequire(<repo>/package.json)`, or `--sqlite-module` /
+  `EXAMIFY_SQLITE_MODULE`), and imports nothing from `src/`. It carries a copy of the
+  resolver + env parser; `tests/unit/examify-data.test.ts` runs both over one table, so
+  change them together. Exit codes are a contract with `install.sh`: 0 ok, 1 unexpected,
+  2 usage, 3 unsafe data folder, 4 legacy content, 5 refused (server running, owner
+  mismatch, target not empty, shared folder), 6 verify failed. Every writing command —
+  and `verify`, whose read-only open still creates `-wal` / `-shm` — refuses (5) when the
+  euid differs from the owner of the checkout, the data folder or the DB, unless
+  `--allow-owner-mismatch`.
+- **Backup** (`backup`): `VACUUM INTO` on a read-only connection (one read transaction,
+  WAL frames included; `SQLITE_BUSY` retried 3×; never copies the live file or
+  `-wal` / `-shm`), then `integrity_check` + the `__drizzle_migrations` count on the
+  snapshot. Family files: `content/{subjects,source-pdfs,generated}`,
+  `.examify-ingest/runs` (+ `cache` with `--include-cache`), `migration-conflicts/`, the
+  marker — never `outbox/` or `backups/`. Repo `.env` / `.env.local` unless `--no-env`.
+  `--include-checkout` (pre-upgrade) adds the checkout's `content/**` (tracked, untracked
+  and ignored), the registrars and `.examify-ingest/{runs,cache/ir}`, and records the git
+  sha. `content/generated` is re-copied until every catalog row has questions + keys (no
+  cross-process lock). `MANIFEST.json` lists every file with its sha256. Staged `0700`,
+  tarred to a temp file, fsynced, published with `link()` + `unlink` (no clobber) as
+  `examify-backup-<UTC>-<rand>[-pre-upgrade-<sha7>].tar.gz`, `0600`, in `$DATA/backups/`
+  (`--out` must be outside the checkout or inside the data folder).
+- **Restore** (`restore`): refuses while `/api/health` answers (host `PORT`, `.env` `PORT`,
+  3000); lists members first and rejects links / special files / absolute / `..` paths;
+  extracts with `--no-same-owner`; copies only MANIFEST-listed regular files under
+  allowed prefixes after a sha256 check; refuses a snapshot with more migrations than the
+  checkout's journal; refuses a non-empty target unless `--force`, which moves the DB and
+  family content aside into `$DATA/before-restore-<ts>/` (never `backups/`); removes stale
+  `-wal` / `-shm` before placing the DB; restores `.env` only with `--with-env` (the
+  current one saved as `.env.before-restore-<ts>.local`, `0600`), checkout files only
+  with `--include-checkout`. Target: with `--with-env` and no `--data-dir`, the folder
+  the **restored** env files name (each archived env file, else the checkout's, in
+  `next start` order — what the app will read), checked for safety, ownership and a
+  shared folder like any other; otherwise the folder resolved now (`--data-dir`
+  overrides). `install.sh --restore` refuses a host `EXAMIFY_DATA_DIR` / `DATABASE_URL`
+  or `--data-dir` when the archive brings its own `.env`.
+- **`migrate-checkout`** (the upgrade step): classifies with `git status --ignored` plus
+  an lstat walk (OS junk ignored). Family = subjects with a real difference from `HEAD`,
+  everything under `content/source-pdfs/`, `subjects.json` rows added or changed
+  (compared per id with `HEAD`; questions + keys copied verbatim, missing rows rebuilt
+  from the IR / `subject.json`), `.examify-ingest/`. Registrars are never copied, only
+  restored. Copy with a journal (`$DATA/.migrate-journal.json`): identical ⇒ skip, a
+  destination its own unfinished run wrote ⇒ overwrite, any other difference ⇒ the
+  checkout copy goes to `$DATA/migration-conflicts/<ts>/`; keys `0600`; every copy
+  sha256-verified; then `checkout-content-v1` is appended to the marker. Only then
+  `git checkout HEAD --` the content + registrars and unlink exactly the verified
+  untracked / ignored files (never `git clean`, never through a symlinked folder), and
+  assert `git status -- content src/lib/exam` is clean. Idempotent; `--dry-run` writes
+  nothing. Deleted committed subjects are reported (`hiddenCommitted`) and come back.
+- **`install.sh`** runs from `main()` (last line `main "$@"`), so a merge that replaces it
+  mid-run can't change what executes. It never starts / stops services, never
+  `git stash`es or `git clean`s, and refuses (never chmods / chowns) on an owner
+  mismatch. `--upgrade` phase 1 (the invoked script) = read-only preflight → upstream
+  `examify-data.mjs backup --kind pre-upgrade --include-checkout` → `migrate-checkout` →
+  `.next` parked as `.next.pre-upgrade-<ts>` → `git merge --ff-only @{u}` (else
+  `--no-edit`, aborted on conflict) → `$DATA/.upgrade-state.json` →
+  `exec bash ./install.sh --upgrade-phase2`. Phase 2 (the merged installer; unknown flags
+  only warn — phase-2 flags are a cross-version contract) = frozen-lockfile
+  `pnpm install` → `pnpm db:migrate` → `pnpm build` (unless `--skip-build`) →
+  `examify-data verify` → drop the state file and the parked build. `--rollback <archive>`
+  = `git reset --keep` to the archive's `checkout.gitSha` → `restore` with `--force`,
+  `--with-env` and `--include-checkout` → reinstall → put back the parked build or
+  rebuild. `--restore <archive>` = install → `restore` (with the archived `.env` when
+  present) → `db:migrate` → build.
+- **Secrets on disk.** Data folder `0700`; answer-key files `0600` in a `0700` `keys/`
+  (emit, migrate and restore all set it; `verify` fails on a group/world-readable key);
+  outbox `0700` / messages `0600`; `backups/` `0700` / archives `0600`. Archives hold the
+  DB, every answer key and (unless `--no-env`) `.env` secrets; `migration-conflicts/`
+  and `before-restore-*/` hold answer keys too; the outbox is never backed up. Every
+  user-facing doc tells operators to copy archives off the machine, run the installer and
+  backups as the app's user, upgrade with `./install.sh --upgrade` (never a plain
+  `git pull` over an older install's wizard content), and never `git clean -x` /
+  `git stash -a` a checkout whose data folder is the default `./data`.
+
 ## Environment
 
 Defined and validated by zod in `src/lib/env.ts`. **Fails closed in production:** dev
 defaults attach only when `NODE_ENV !== 'production'` (and during `next build`, which Next
 distinguishes via `NEXT_PHASE=phase-production-build`). The production server boots under
 `NEXT_PHASE=phase-production-server` and `NODE_ENV=production`, so a missing `AUTH_SECRET`,
-`DATABASE_URL`, etc. crashes boot with a readable zod error (and fails the platform
-healthcheck). Don't add dev defaults to security-critical vars without weighing that.
+a missing data location (neither `EXAMIFY_DATA_DIR` nor `DATABASE_URL`), etc. crashes
+boot with a readable zod error (and fails the platform healthcheck). Don't add dev
+defaults to security-critical vars without weighing that.
 Access is DB-backed: empty households fail closed (nobody can sign in until `/setup`
 or a leftover `FAMILIES` import). A leftover `FAMILIES` value that is set but
 unparsable **crashes production boot**. `/setup` itself is gated by
@@ -668,8 +876,25 @@ unparsable **crashes production boot**. `/setup` itself is gated by
 placeholder); captcha is not identity. Documented placeholder `AUTH_SECRET` /
 `SETUP_BOOTSTRAP_SECRET` values also fail production boot.
 
-Required in production: `SITE_URL`, `AUTH_SECRET`, `DATABASE_URL`,
-`SETUP_BOOTSTRAP_SECRET`. `SITE_URL` must be the public origin family devices open:
+Required in production: `SITE_URL`, `AUTH_SECRET`, `SETUP_BOOTSTRAP_SECRET`, and
+`EXAMIFY_DATA_DIR` **or** `DATABASE_URL` (otherwise boot fails with
+`Set EXAMIFY_DATA_DIR (or DATABASE_URL) in production`), so a deploy without persistent
+storage fails boot instead of writing to ephemeral disk. Both are optional in `env.ts`
+otherwise (no dev default for either; the resolver defaults to `./data` and
+`<data>/app.db`). Production validation also resolves
+the data folder once, so an unsafe `EXAMIFY_DATA_DIR` fails boot with the
+`UnsafeDataDirError` message (no path). `EXAMIFY_DATA_DIR` is the one setting for where
+family data lives (see "Family data folder invariants"); `DATABASE_URL` is an optional
+override that older installs keep (`file:./data/app.db`, the same file). `install.sh`
+writes `EXAMIFY_DATA_DIR` (prompt “Family data folder”, `--data-dir`, or a host
+`EXAMIFY_DATA_DIR`; a leading `~` is expanded, quotes / newline / ` #` refused) and writes
+`DATABASE_URL` only when the host supplied one. It runs `examify-data paths --check`,
+`legacy-check` and `init` before installing; reuses a folder that already holds an
+Examify DB / `outbox/` / marker; and refuses a non-empty folder with none of those. With a
+kept `.env`, the effective folder comes from the on-disk env files (Next's order, an empty
+value counts); a host `EXAMIFY_DATA_DIR` / `DATABASE_URL` or `--data-dir` that differs is
+refused with copy naming both, like the `AUTH_MODE` conflict.
+`SITE_URL` must be the public origin family devices open:
 it builds invite / sign-in links and decides the session cookie (see Auth
 invariants); `install.sh` warns when it is localhost or plain http beyond the host.
 `CLIENT_IP_HEADER` (`x-forwarded-for` default | `x-real-ip` | `cf-connecting-ip`)
@@ -680,9 +905,9 @@ default `install.sh` (`AUTH_MODE=password`) prompts for mail or enables a
 local outbox (`ALLOW_LOCAL_OUTBOX=1`) when it **writes** `.env` so kid
 invites are not stranded — it does not skip mailbox proof. A kept
 password-mode `.env` with no mail path is refused (no false “enabled
-outbox” claim). Keep-broken / keep-good is judged from on-disk `.env`
-(and `.env.local` if present), not a transient host process env —
-`ALLOW_LOCAL_OUTBOX=1` on the installer must not greenlight a broken
+outbox” claim). Keep-broken / keep-good is judged from the on-disk env files
+(`.env`, `.env.local`, `.env.production*`, in Next's order), not a transient host
+process env — `ALLOW_LOCAL_OUTBOX=1` on the installer must not greenlight a broken
 file. A host `AUTH_MODE` that differs from effective on-disk `AUTH_MODE`
 (`.env.local` wins over `.env`, including an empty `AUTH_MODE=` that
 Next treats as the magic-link default) is refused with copy that names
@@ -695,7 +920,7 @@ leftover `SMTP_HOST` does not fail `resend` / `outbox`. SMTP AUTH/DATA on a
 connection that never upgraded to TLS is refused unless `SMTP_ALLOW_INSECURE=1`.
 `resend` needs a real key + `RESEND_FROM`; `outbox`
 in production needs `ALLOW_LOCAL_OUTBOX=1`. Production with no real mail
-transport does not write bearer tokens to `data/outbox` unless
+transport does not write bearer tokens to the outbox (`<data>/outbox`) unless
 `ALLOW_LOCAL_OUTBOX=1`. Turnstile captcha is off by default; set
 `TURNSTILE_ENABLED=1` with both keys to enable (exactly one key in
 production crashes boot; keys alone do not enable captcha).
@@ -725,6 +950,21 @@ See `.env.example` for the canonical list.
   `pnpm test:e2e` runs _before_ `pnpm build` and `playwright test`. All three Playwright
   configs require an existing `.next` (they start with `next start`; they do not
   create the production build).
+- **Test data folders, never a real one.** `tests/unit/setup.ts` sets
+  `EXAMIFY_DATA_DIR=tests/.tmp/unit-data-<pid>` (wiped at start) and
+  `DATABASE_URL=file:tests/.tmp/unit.db` **unconditionally**, so a developer's exported
+  values can't point unit tests at real family data. Each Playwright config sets its own
+  `EXAMIFY_DATA_DIR=tests/.tmp/e2e-{seeded,fresh,password}-data` in the webServer env;
+  the prepare scripts pass `E2E_DATA_DIR` and `setup-db.ts` wipes + initialises it
+  (refusing anything outside `tests/.tmp`). `--empty` seeds the committed `demo` fixture
+  (`subject.json` + `notes.txt`) into the fresh data folder, since the wizard lists
+  family subjects only; `fresh.spec.ts` asserts the subject landed there and the checkout
+  is untouched. Unit tests of the family layer use a temp family root **and** a separate
+  temp fake checkout (registrar bytes and checkout `content/generated` must stay
+  unchanged). CI fails when
+  `git status --porcelain --ignored=traditional -- content .examify-ingest src` is
+  non-empty after the unit suite (unit job) and after the build and the three suites
+  (e2e job).
 - Default sign-in e2e uses the documented always-pass Turnstile dummy key. The widget
   owns the single `cf-turnstile-response` field when captcha is on; never add a second
   fallback field with that name. When the widget CDN is unavailable, the Playwright
