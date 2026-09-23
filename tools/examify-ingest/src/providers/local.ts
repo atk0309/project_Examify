@@ -1,4 +1,4 @@
-import type { BankIR } from '../schema';
+import type { BankIR, LocalTransport } from '../schema';
 import { runProviderCommand } from './command';
 import { UNTRUSTED_SOURCE_NOTE, buildOpenAiCompatibleUserContent } from './content';
 import {
@@ -18,6 +18,23 @@ const LOCAL_CMD = 'EXAMIFY_INGEST_LOCAL_CMD';
 const LOCAL_URL = 'EXAMIFY_LLM_BASE_URL';
 /** Model name sent to the OpenAI-compatible endpoint (Ollama needs a pulled model's name). */
 export const LOCAL_MODEL_ENV = 'EXAMIFY_LLM_MODEL';
+
+/**
+ * The env for one chosen transport. The provider runs EXAMIFY_INGEST_LOCAL_CMD
+ * whenever it is set, so `endpoint` drops it; `command` drops the URL and the
+ * endpoint's model name (the command never gets it). Without this, a host with
+ * both settings always runs the command.
+ */
+export function localTransportEnv(env: ProviderEnv, transport: LocalTransport): ProviderEnv {
+  const out = { ...env };
+  if (transport === 'endpoint') {
+    delete out[LOCAL_CMD];
+  } else {
+    delete out[LOCAL_URL];
+    delete out[LOCAL_MODEL_ENV];
+  }
+  return out;
+}
 
 function requireLocalReady(env: ProviderEnv): void {
   const cmd = env[LOCAL_CMD]?.trim() ?? '';
@@ -156,7 +173,7 @@ export const localProvider: GenerateProvider = {
   defaultModel: 'local',
   modelEnv: LOCAL_MODEL_ENV,
   // Same precedence as generate below: the command wins when both are set.
-  transport: (env) => (env[LOCAL_CMD]?.trim() ? 'command' : 'endpoint'),
+  transport: (env): LocalTransport => (env[LOCAL_CMD]?.trim() ? 'command' : 'endpoint'),
   keyEnv: null,
   seedHonored: true,
   requireReady: requireLocalReady,

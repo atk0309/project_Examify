@@ -3,15 +3,21 @@ import { applyEmit, formatEmitPlan, planEmit, readGeneratedSubjects } from './em
 import { sampleBankFrozenIds } from './frozen-ids';
 import { isAuthoritativeCatalogInput, loadIrFiles, resolveIrFiles } from './load';
 import { formatLayerLine, resolveIngestRoot, subjectsArgFor, type IngestRoot } from './roots';
-import { DEFAULT_GENERATE_SEED, GENERATE_PROVIDERS, type GenerateProviderId } from './schema';
+import {
+  DEFAULT_GENERATE_SEED,
+  GENERATE_PROVIDERS,
+  LOCAL_TRANSPORTS,
+  type GenerateProviderId,
+  type LocalTransport,
+} from './schema';
 import { validateIrCollection, type ValidatedBank } from './validate';
 
 export const USAGE = `Usage:
   examify-ingest validate <subjects-dir|ir.json...> [--replace-sample]
   examify-ingest emit <subjects-dir|ir.json...> [--dry-run] [--apply] [--replace-sample]
   examify-ingest generate [--provider anthropic|openai|local|claude-cli|codex-cli|test] [--seed <n>]
-      [--subject <id>] [--model <name>] [--dry-run-ir] [--force] [--replace-sample]
-      <subjects-dir|content/subjects/<id>>
+      [--subject <id>] [--model <name>] [--local-transport endpoint|command]
+      [--dry-run-ir] [--force] [--replace-sample] <subjects-dir|content/subjects/<id>>
 
 emit is dry-run by default. Writes only with --apply.
 Two layers, picked from the paths you name (never mixed in one run):
@@ -44,8 +50,10 @@ cacheKey IR is already cached. --provider claude-cli runs Claude Code
 sign-in (no API key; install and sign in as this user; EXAMIFY_CLAUDE_BIN /
 EXAMIFY_CODEX_BIN name the binary, EXAMIFY_CLAUDE_MODEL / EXAMIFY_CODEX_MODEL
 the model). They get no tools and none of Examify's secrets. --provider local
-sends EXAMIFY_LLM_MODEL (or --model) to EXAMIFY_LLM_BASE_URL. Use --provider
-test in CI. --dry-run-ir
+runs EXAMIFY_INGEST_LOCAL_CMD when it is set, else sends EXAMIFY_LLM_MODEL (or
+--model) to EXAMIFY_LLM_BASE_URL; --local-transport endpoint|command uses only
+that one (the other setting is ignored), as the wizard's Local modes do. Use
+--provider test in CI. --dry-run-ir
 writes nothing durable. A real BankIR with questions is not overwritten
 unless --force (dry-run says "would overwrite"). Empty / placeholder IR
 (empty file, valid zero-item schema) is treated as missing. Corrupt /
@@ -81,6 +89,7 @@ export type ParsedCli = {
   seed: number;
   subject: string | null;
   model: string | null;
+  localTransport: LocalTransport | null;
   dryRunIr: boolean;
   force: boolean;
 };
@@ -93,12 +102,16 @@ const BOOLEAN_FLAGS = new Set([
   '--dry-run-ir',
   '--force',
 ]);
-const VALUE_FLAGS = new Set(['--provider', '--seed', '--subject', '--model']);
+const VALUE_FLAGS = new Set(['--provider', '--seed', '--subject', '--model', '--local-transport']);
 const GENERATE_VALUE_FLAGS = VALUE_FLAGS;
 const GENERATE_BOOL_FLAGS = new Set(['--dry-run-ir', '--dry-run', '--force', '--replace-sample']);
 
 function isGenerateProvider(value: string): value is GenerateProviderId {
   return (GENERATE_PROVIDERS as readonly string[]).includes(value);
+}
+
+function isLocalTransport(value: string): value is LocalTransport {
+  return (LOCAL_TRANSPORTS as readonly string[]).includes(value);
 }
 
 export function parseArgs(argv: readonly string[]): ParsedCli | { error: string } {
@@ -145,6 +158,7 @@ export function parseArgs(argv: readonly string[]): ParsedCli | { error: string 
       seed: DEFAULT_GENERATE_SEED,
       subject: null,
       model: null,
+      localTransport: null,
       dryRunIr: false,
       force: false,
     };
@@ -199,6 +213,17 @@ export function parseArgs(argv: readonly string[]): ParsedCli | { error: string 
     provider = raw;
   }
 
+  let localTransport: LocalTransport | null = null;
+  if (values.has('--local-transport')) {
+    const raw = values.get('--local-transport')!;
+    if (!isLocalTransport(raw)) {
+      return { error: `--local-transport must be ${LOCAL_TRANSPORTS.join(' or ')} (got ${raw})` };
+    }
+    if (provider !== 'local')
+      return { error: '--local-transport is only valid with --provider local' };
+    localTransport = raw;
+  }
+
   let seed = DEFAULT_GENERATE_SEED;
   if (values.has('--seed')) {
     const raw = values.get('--seed')!;
@@ -219,6 +244,7 @@ export function parseArgs(argv: readonly string[]): ParsedCli | { error: string 
     seed,
     subject: values.get('--subject') ?? null,
     model: values.get('--model') ?? null,
+    localTransport,
     dryRunIr: flags.has('--dry-run-ir') || (command === 'generate' && flags.has('--dry-run')),
     force: flags.has('--force'),
   };

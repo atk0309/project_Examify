@@ -1237,6 +1237,16 @@ describe('OnboardingWizard AI modes: Claude Code, Codex and local', () => {
     expect(screen.getByTestId('wizard-cli-generate')).toHaveTextContent('--provider claude-cli');
   });
 
+  it.each([
+    ['local-agent', 'endpoint'],
+    ['local-cli', 'command'],
+  ] as const)('shows %s’s transport in the power-user generate command', (aiMode, transport) => {
+    renderAtAiStep(snapshot({ aiMode, subjects: [sourceSubject('alpha', 'Alpha')] }));
+    expect(screen.getByTestId('wizard-cli-generate')).toHaveTextContent(
+      `--provider local --local-transport ${transport}`,
+    );
+  });
+
   it('asks for the model name when Local endpoint has a URL but no EXAMIFY_LLM_MODEL', () => {
     renderAtAiStep(
       snapshot({

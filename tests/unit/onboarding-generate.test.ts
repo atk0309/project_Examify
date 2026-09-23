@@ -155,6 +155,19 @@ describe('onboarding generate mapping', () => {
     expect(onboardingIngestCli('.')).toEqual([...ONBOARDING_INGEST_CLI]);
   });
 
+  it('keeps a local mode’s transport in its power-user generate command', () => {
+    expect(onboardingGenerateAndEmitCli('local', 0, 'data', 'endpoint')[0]).toBe(
+      'pnpm examify-ingest generate --provider local --local-transport endpoint --seed 0 data/content/subjects/<id>',
+    );
+    expect(onboardingGenerateCli('local', 1, 'history', undefined, 'command')).toBe(
+      'pnpm examify-ingest generate --provider local --local-transport command --seed 1 content/subjects/history',
+    );
+    // Only the local provider has transports.
+    expect(onboardingGenerateCli('openai', 0, undefined, undefined, 'endpoint')).not.toContain(
+      '--local-transport',
+    );
+  });
+
   it('words the built-in replacement notice', () => {
     expect(onboardingShadowNotice([])).toBeNull();
     expect(onboardingShadowNotice([{ label: 'Biology' }])).toBe(
@@ -1884,7 +1897,7 @@ describe('onboarding generate: Claude Code, Codex and local transports', () => {
         generateOnboardingSubject({
           subjectId: 'history',
           provider: 'local',
-          localTransport: 'http',
+          localTransport: 'endpoint',
           seed: 0,
           root,
           force: true,
@@ -1897,7 +1910,7 @@ describe('onboarding generate: Claude Code, Codex and local transports', () => {
         generateOnboardingSubject({
           subjectId: 'history',
           provider: 'local',
-          localTransport: 'http',
+          localTransport: 'endpoint',
           seed: 0,
           root,
           force: true,
@@ -1936,7 +1949,7 @@ describe('onboarding generate: Claude Code, Codex and local transports', () => {
           generateOnboardingSubject({
             subjectId: 'history',
             provider: 'local',
-            localTransport: 'cmd',
+            localTransport: 'command',
             seed: 0,
             root,
             force: true,
@@ -1970,7 +1983,7 @@ describe('onboarding generate: Claude Code, Codex and local transports', () => {
           generateOnboardingSubject({
             subjectId: 'history',
             provider: 'local',
-            localTransport: 'cmd',
+            localTransport: 'command',
             seed: 0,
             root,
             force: true,
@@ -1989,8 +2002,8 @@ describe('onboarding AI modes: providers, transports and copy', () => {
     const types = await import('@/lib/onboarding-types');
     expect(types.providerForOnboardingAiMode('claude-cli')).toBe('claude-cli');
     expect(types.providerForOnboardingAiMode('codex-cli')).toBe('codex-cli');
-    expect(types.localTransportForOnboardingAiMode('local-agent')).toBe('http');
-    expect(types.localTransportForOnboardingAiMode('local-cli')).toBe('cmd');
+    expect(types.localTransportForOnboardingAiMode('local-agent')).toBe('endpoint');
+    expect(types.localTransportForOnboardingAiMode('local-cli')).toBe('command');
     expect(types.localTransportForOnboardingAiMode('claude-cli')).toBeNull();
     for (const mode of types.ONBOARDING_AI_MODES) {
       expect(types.ONBOARDING_GENERATE_PROVIDERS).toContain(
@@ -2006,6 +2019,9 @@ describe('onboarding AI modes: providers, transports and copy', () => {
     expect([...types.ONBOARDING_GENERATE_PROVIDERS].sort()).toEqual(
       [...ingest.GENERATE_PROVIDERS].sort(),
     );
+    // The local modes' transports are the CLI's --local-transport values.
+    const transports = types.ONBOARDING_AI_MODES.map(types.localTransportForOnboardingAiMode);
+    expect(transports.filter(Boolean).sort()).toEqual([...ingest.LOCAL_TRANSPORTS].sort());
   });
 
   it('states the agent CLI deadline the provider actually uses', async () => {

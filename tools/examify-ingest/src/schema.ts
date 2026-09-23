@@ -48,6 +48,10 @@ export const GENERATE_PROVIDERS = [
 ] as const;
 export type GenerateProviderId = (typeof GENERATE_PROVIDERS)[number];
 
+/** The local provider's transports (`--local-transport`, the wizard's Local modes). */
+export const LOCAL_TRANSPORTS = ['endpoint', 'command'] as const;
+export type LocalTransport = (typeof LOCAL_TRANSPORTS)[number];
+
 export const DEFAULT_GENERATE_SEED = 0;
 export const GENERATE_TEMPERATURE = 0;
 export const PROMPT_VERSION = 'v2';

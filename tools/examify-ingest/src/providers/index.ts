@@ -24,7 +24,7 @@ export {
 } from './types';
 export type { ProviderDeps, ProviderEnv, ProviderFailureKind, ProviderRequest } from './types';
 export { UNTRUSTED_SOURCE_NOTE, fenceUntrustedText } from './content';
-export { LOCAL_MODEL_ENV, splitCommandLine } from './local';
+export { LOCAL_MODEL_ENV, localTransportEnv, splitCommandLine } from './local';
 export {
   AGENT_CLI_BIN_ENV,
   AGENT_CLI_DEFAULT_MODEL,

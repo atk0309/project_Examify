@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { parseArgs, resolveCliLayer, runCli, USAGE, type CliIo, type ParsedCli } from './cli';
 import { NEXT_INGEST_COMMANDS, generateTargets } from './generate';
+import { localTransportEnv } from './providers/local';
 import { mergeRepoEnvFiles } from './repo-env';
 import { subjectsArgFor, type IngestRoot } from './roots';
 import { resolveGenerateTargets } from './sources';
@@ -38,7 +39,9 @@ async function runGenerate(parsed: ParsedCli, io: CliIo): Promise<number> {
     return 1;
   }
 
-  const env = mergeRepoEnvFiles(repoRoot, io.env ?? process.env);
+  const merged = mergeRepoEnvFiles(repoRoot, io.env ?? process.env);
+  // --local-transport: only that transport's settings, like the wizard's Local modes.
+  const env = parsed.localTransport ? localTransportEnv(merged, parsed.localTransport) : merged;
 
   try {
     const results = await generateTargets(targets, {

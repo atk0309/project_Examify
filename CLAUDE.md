@@ -55,7 +55,9 @@ Surface:
   key, and the card says “Found” when the binary resolves, never its path;
   Local endpoint passes only `EXAMIFY_LLM_BASE_URL` and needs
   `EXAMIFY_LLM_MODEL`, Local command passes only `EXAMIFY_INGEST_LOCAL_CMD`
-  (`localTransportForOnboardingAiMode`); every card shows
+  (`localTransportForOnboardingAiMode` → ingest `localTransportEnv`), and their
+  power-user generate command carries `--local-transport endpoint|command` so it
+  uses the same transport; every card shows
   `onboardingAiCapabilityLine`: how it reads PDFs, how it signs in) → validate → Review
   (dry-run HITL) → apply → ready. The wizard is one stage at a time: desktop
   (≥900px) uses a left step rail + stage + sticky footer; mobile uses compact
@@ -476,7 +478,10 @@ process group). Local HTTP sends `--model`, else `EXAMIFY_LLM_MODEL`, else `loca
 (`GenerateProvider.modelEnv`). The local transport (command / endpoint) is part of
 the cacheKey (`GenerateProvider.transport`; absent for every other provider, so their
 keys are unchanged), so one transport never serves the other's cached IR; wizard
-Local command also drops `EXAMIFY_LLM_MODEL`, which the command never gets.
+Local command also drops `EXAMIFY_LLM_MODEL`, which the command never gets. The
+command wins when both settings are set; `--local-transport endpoint|command` keeps
+only that one's settings (`localTransportEnv`, the same filter the wizard's Local
+modes use).
 `emit` is dry-run by default;
 `--apply` writes the layer's `content/generated/` (public
 subjects/questions + server-only keys, `0600` in a `0700` folder). Keys stay

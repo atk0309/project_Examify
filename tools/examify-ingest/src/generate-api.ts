@@ -61,6 +61,7 @@ export {
   CliNotFoundError,
   GenerateAbortedError,
   LOCAL_MODEL_ENV,
+  localTransportEnv,
   PROVIDER_TIMEOUT_MS,
   ProviderConfigError,
   ProviderFailureError,

@@ -304,21 +304,15 @@ function mapGenerateError(error: unknown): GenerateOnboardingError {
 }
 
 /**
- * Generate's environment. Local modes keep only their own transport: the
- * ingest `local` provider runs `EXAMIFY_INGEST_LOCAL_CMD` whenever it is set,
- * so "Local endpoint" drops it, and "Local command" drops the URL and the
- * endpoint's model name (the command never gets it).
+ * Generate's environment. Local modes keep only their own transport
+ * (`localTransportEnv`, the same filter as the CLI's `--local-transport`): the
+ * ingest `local` provider runs `EXAMIFY_INGEST_LOCAL_CMD` whenever it is set.
  */
 function onboardingGenerateEnv(
   transport: OnboardingLocalTransport | undefined,
 ): Record<string, string | undefined> {
   const env = onboardingHostEnv();
-  if (transport === 'http') delete env.EXAMIFY_INGEST_LOCAL_CMD;
-  if (transport === 'cmd') {
-    delete env.EXAMIFY_LLM_BASE_URL;
-    delete env.EXAMIFY_LLM_MODEL;
-  }
-  return env;
+  return transport ? ingestGenerate.localTransportEnv(env, transport) : env;
 }
 
 function publicGenerateResult(
@@ -441,7 +435,7 @@ async function generateOnboardingSubjectUnlocked(input: {
 
   // Keys live in the checkout `.env` (env store), not the family data folder.
   const env = onboardingGenerateEnv(input.localTransport);
-  if (input.localTransport === 'http' && !env[ingestGenerate.LOCAL_MODEL_ENV]?.trim()) {
+  if (input.localTransport === 'endpoint' && !env[ingestGenerate.LOCAL_MODEL_ENV]?.trim()) {
     return {
       ok: false,
       reason: 'missing_local',

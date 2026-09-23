@@ -185,7 +185,9 @@ stdin JSON includes full source text / `dataBase64` bytes plus page-image
 bytes — never hashes-only) or `EXAMIFY_LLM_BASE_URL`
 (OpenAI-compatible `/v1/chat/completions` with the same multimodal user
 content as `--provider openai`: fenced text + images / page images). The
-command wins when both are set. The endpoint gets `--model`, else
+command wins when both are set; `--local-transport endpoint|command` uses
+only that one (the other's settings are dropped, as in the wizard's Local
+endpoint / Local command modes). The endpoint gets `--model`, else
 `EXAMIFY_LLM_MODEL`, else `local`. The transport in use (`command` /
 `endpoint`) is part of the `cacheKey`, so a bank cached by one is never
 served to the other.

@@ -172,7 +172,9 @@ file first.
    JSON includes full source text/bytes, not hashes-only) or
    `EXAMIFY_LLM_BASE_URL` (same multimodal payload as OpenAI — source text and
    page images, not hashes-only) with the model named in `EXAMIFY_LLM_MODEL`
-   (or `--model`; Ollama needs a pulled model's name). `--dry-run-ir` writes nothing durable;
+   (or `--model`; Ollama needs a pulled model's name). The command wins when
+   both are set; `--local-transport endpoint` or `--local-transport command`
+   uses only that one. `--dry-run-ir` writes nothing durable;
    when a real BankIR with questions already exists it says **would overwrite**.
    Persist over that IR requires `--force`. A sourceless sibling (biology on a
    fresh clone) blocks `generate content/subjects` — target

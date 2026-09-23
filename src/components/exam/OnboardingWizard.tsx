@@ -30,6 +30,7 @@ import {
   confirmOnboardingIrOverwrite,
   generateIrWriteLabel,
   isOnboardingAgentCliMode,
+  localTransportForOnboardingAiMode,
   onboardingAgentCliSetupNote,
   onboardingAiCapabilityLine,
   onboardingGenerateAndEmitCli,
@@ -1829,7 +1830,12 @@ function GeneratePanel({
     <div className="wizard-generate-panel">
       <PowerUserCommands
         testId="wizard-cli-generate"
-        commands={onboardingGenerateAndEmitCli(provider, generateSeed, snapshot.dataDirDisplay)}
+        commands={onboardingGenerateAndEmitCli(
+          provider,
+          generateSeed,
+          snapshot.dataDirDisplay,
+          snapshot.aiMode ? localTransportForOnboardingAiMode(snapshot.aiMode) : null,
+        )}
       />
       {sampleIdSubjects.length > 0 ? (
         <div className="wizard-callout wizard-sample-ids" data-testid="wizard-generate-sample-ids">

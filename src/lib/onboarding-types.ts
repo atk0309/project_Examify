@@ -34,17 +34,18 @@ export function isOnboardingAgentCliMode(
 export const ONBOARDING_AGENT_CLI_TIMEOUT_MINUTES = 10;
 
 /**
- * Which local transport a local mode uses. The ingest `local` provider prefers
- * the command when both are set; the wizard passes only the chosen one, so
- * "Local endpoint" never runs the command and vice versa.
+ * Which local transport a local mode uses (the ingest `LOCAL_TRANSPORTS`). The
+ * ingest `local` provider prefers the command when both are set; the wizard
+ * passes only the chosen one, and its power-user command says
+ * `--local-transport`, so "Local endpoint" never runs the command and vice versa.
  */
-export type OnboardingLocalTransport = 'http' | 'cmd';
+export type OnboardingLocalTransport = 'endpoint' | 'command';
 
 export function localTransportForOnboardingAiMode(
   mode: OnboardingAiMode,
 ): OnboardingLocalTransport | null {
-  if (mode === 'local-agent') return 'http';
-  if (mode === 'local-cli') return 'cmd';
+  if (mode === 'local-agent') return 'endpoint';
+  if (mode === 'local-cli') return 'command';
   return null;
 }
 
@@ -469,23 +470,31 @@ export function onboardingIngestCli(dataDirDisplay?: string): string[] {
 
 export const ONBOARDING_INGEST_CLI: readonly string[] = onboardingIngestCli();
 
+/**
+ * The generate command for a mode. Local modes add `--local-transport`, so the
+ * command uses the same transport as the wizard even when the host sets both.
+ */
 export function onboardingGenerateCli(
   provider: OnboardingGenerateProvider,
   seed = ONBOARDING_GENERATE_SEED_DEFAULT,
   subjectId?: string,
   dataDirDisplay?: string,
+  localTransport?: OnboardingLocalTransport | null,
 ): string {
   const target = onboardingSubjectsArg(dataDirDisplay, subjectId ?? '<id>');
-  return `pnpm examify-ingest generate --provider ${provider} --seed ${seed} ${target}`;
+  const transport =
+    provider === 'local' && localTransport ? ` --local-transport ${localTransport}` : '';
+  return `pnpm examify-ingest generate --provider ${provider}${transport} --seed ${seed} ${target}`;
 }
 
 export function onboardingGenerateAndEmitCli(
   provider: OnboardingGenerateProvider,
   seed = ONBOARDING_GENERATE_SEED_DEFAULT,
   dataDirDisplay?: string,
+  localTransport?: OnboardingLocalTransport | null,
 ): string[] {
   return [
-    onboardingGenerateCli(provider, seed, undefined, dataDirDisplay),
+    onboardingGenerateCli(provider, seed, undefined, dataDirDisplay, localTransport),
     ...onboardingIngestCli(dataDirDisplay),
   ];
 }

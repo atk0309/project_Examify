@@ -133,7 +133,10 @@ JSON`). Missing cloud
   `--model`, `EXAMIFY_CLAUDE_MODEL` / `EXAMIFY_CODEX_MODEL`, else the CLI's). Local HTTP
   sends `--model`, else `EXAMIFY_LLM_MODEL`, else `local`; the local transport
   (command / endpoint) is in the cacheKey so one never serves the other's cached IR,
-  and wizard Local command drops `EXAMIFY_LLM_MODEL`. Run cache/manifests live under
+  and wizard Local command drops `EXAMIFY_LLM_MODEL`. The generate flag
+  `--local-transport endpoint|command` keeps only that transport's settings
+  (`localTransportEnv`, shared with the wizard's Local modes, whose power-user
+  command carries it). Run cache/manifests live under
   the layer's `.examify-ingest/` (gitignored in the checkout).
 - **The running app never writes into tracked checkout content.** All runtime state
   (SQLite DB, outbox, wizard subjects / uploads / BankIR / generated questions + keys,
@@ -281,7 +284,8 @@ JSON`). Missing cloud
   Claude Code / Codex (`claude-cli` / `codex-cli`: the CLI's own sign-in; the card
   says Found when the binary resolves, never its path), Local endpoint (passes only
   `EXAMIFY_LLM_BASE_URL`, needs `EXAMIFY_LLM_MODEL`) and Local command (passes only
-  `EXAMIFY_INGEST_LOCAL_CMD`), and the test stub; each card shows
+  `EXAMIFY_INGEST_LOCAL_CMD`; both show `--local-transport` in their CLI command), and
+  the test stub; each card shows
   `onboardingAiCapabilityLine` (how PDFs are read, how it signs in); Anthropic / OpenAI modes can set /
   rotate / clear `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` in the same
   repo-root `.env` as `install.sh` and `examify-ingest generate` (shared
