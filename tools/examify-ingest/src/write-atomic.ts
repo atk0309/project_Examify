@@ -1,4 +1,5 @@
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -127,8 +128,17 @@ export function writeBankIrAtomic(
   return { existed };
 }
 
+export type WriteFileAtomicOptions = {
+  /** File mode, set on the temp file before the rename (so it is never briefly wider). */
+  mode?: number;
+};
+
 /** Write `body` via a sibling temp file, then rename over `absPath`. */
-export function writeFileAtomic(absPath: string, body: string): void {
+export function writeFileAtomic(
+  absPath: string,
+  body: string,
+  options: WriteFileAtomicOptions = {},
+): void {
   const dir = path.dirname(absPath);
   mkdirSync(dir, { recursive: true });
   const tmp = path.join(
@@ -136,7 +146,13 @@ export function writeFileAtomic(absPath: string, body: string): void {
     `.${path.basename(absPath)}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`,
   );
   try {
-    writeFileSync(tmp, body, 'utf8');
+    if (options.mode === undefined) {
+      writeFileSync(tmp, body, 'utf8');
+    } else {
+      writeFileSync(tmp, body, { encoding: 'utf8', mode: options.mode });
+      // Creation mode is masked by the umask; chmod makes it exact.
+      chmodSync(tmp, options.mode);
+    }
     renameSync(tmp, absPath);
   } catch (error) {
     try {

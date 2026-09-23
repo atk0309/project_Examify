@@ -1,18 +1,17 @@
-import {
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  unlinkSync,
-  writeFileSync,
-} from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync } from 'node:fs';
 import path from 'node:path';
 import { formatFileDiff, stableJson } from './diff';
 import { renderGeneratedKeys, renderGeneratedPublic } from './registrars';
 import { SUBJECT_ID_RE, subjectSchema, type BankIrSubject } from './schema';
 import type { ValidatedBank } from './validate';
+import { writeFileAtomic } from './write-atomic';
 
 export const GENERATED_DIR = 'content/generated';
+const CATALOG_REL = `${GENERATED_DIR}/subjects.json`;
+const KEYS_DIR_REL = `${GENERATED_DIR}/keys`;
+/** Answer keys are secrets: owner-only files in an owner-only folder. */
+const KEYS_FILE_MODE = 0o600;
+const KEYS_DIR_MODE = 0o700;
 
 export type PlannedFile = {
   relPath: string;
@@ -31,6 +30,13 @@ export type PlanEmitOptions = {
    * Default false: upsert this run and keep other generated subjects.
    */
   pruneMissing?: boolean;
+  /**
+   * When true (and `src/lib/exam/generated-*.ts` exist under the root), also
+   * rewrite the build-time registrars. Only the committed layer (a checkout
+   * emit from the CLI) has registrars; the family data folder never does.
+   * Default false.
+   */
+  registrars?: boolean;
 };
 
 function isEnoent(error: unknown): boolean {
@@ -191,7 +197,7 @@ export function planEmit(
   );
   const files: PlannedFile[] = [];
 
-  pushFile(files, repoRoot, `${GENERATED_DIR}/subjects.json`, stableJson(subjects));
+  pushFile(files, repoRoot, CATALOG_REL, stableJson(subjects));
 
   for (const entry of banks) {
     const id = entry.split.subject.id;
@@ -206,7 +212,7 @@ export function planEmit(
 
   const publicRegistrar = path.join(repoRoot, 'src/lib/exam/generated-public.ts');
   const keysRegistrar = path.join(repoRoot, 'src/lib/exam/generated-keys.server.ts');
-  if (existsSync(publicRegistrar) || existsSync(keysRegistrar)) {
+  if (options.registrars === true && (existsSync(publicRegistrar) || existsSync(keysRegistrar))) {
     pushFile(files, repoRoot, 'src/lib/exam/generated-public.ts', renderGeneratedPublic(subjects));
     pushFile(
       files,
@@ -233,6 +239,19 @@ export function formatEmitPlan(files: readonly PlannedFile[]): string {
     .join('\n\n');
 }
 
+function isKeysFile(file: PlannedFile): boolean {
+  return file.relPath.startsWith(`${KEYS_DIR_REL}/`);
+}
+
+/** Best effort: a folder or file this user does not own keeps its mode. */
+function tighten(absPath: string, mode: number): void {
+  try {
+    chmodSync(absPath, mode);
+  } catch {
+    // not ours to change
+  }
+}
+
 function applyOne(file: PlannedFile): PlannedFile | null {
   if (file.delete) {
     if (file.existing === null) return null;
@@ -243,20 +262,38 @@ function applyOne(file: PlannedFile): PlannedFile | null {
     }
     return file;
   }
-  if (file.existing === file.contents) return null;
-  mkdirSync(path.dirname(file.absPath), { recursive: true });
-  writeFileSync(file.absPath, file.contents, 'utf8');
+  const secret = isKeysFile(file);
+  if (secret) {
+    const dir = path.dirname(file.absPath);
+    mkdirSync(dir, { recursive: true, mode: KEYS_DIR_MODE });
+    tighten(dir, KEYS_DIR_MODE);
+  }
+  if (file.existing === file.contents) {
+    if (secret) tighten(file.absPath, KEYS_FILE_MODE);
+    return null;
+  }
+  writeFileAtomic(file.absPath, file.contents, secret ? { mode: KEYS_FILE_MODE } : {});
   return file;
 }
 
+/** Questions + keys, then registrars, then the catalog (the commit point). */
+function writeRank(file: PlannedFile): number {
+  if (file.relPath === CATALOG_REL) return 2;
+  return file.relPath.startsWith(`${GENERATED_DIR}/`) ? 0 : 1;
+}
+
 /**
- * Apply writes first (catalog, questions/keys, registrars), then unlinks.
- * Order is independent of `planEmit` so a crash cannot leave registrar
- * imports pointing at already-deleted JSON.
+ * Apply in a fixed order, independent of `planEmit`: every file is written
+ * atomically (temp + rename), questions + keys first, registrars next,
+ * `subjects.json` last — the live bank reads the catalog first, so a crash
+ * never lists a subject whose files are not there yet — and unlinks after
+ * every write, so registrar imports never point at deleted JSON. Keys files
+ * are 0600 in a 0700 folder.
  */
 export function applyEmit(files: readonly PlannedFile[]): PlannedFile[] {
   const written: PlannedFile[] = [];
-  const writes = files.filter((file) => !file.delete);
+  // Array#sort is stable: plan order holds within a rank.
+  const writes = files.filter((file) => !file.delete).sort((a, b) => writeRank(a) - writeRank(b));
   const deletes = files.filter((file) => file.delete === true);
   for (const file of [...writes, ...deletes]) {
     const applied = applyOne(file);

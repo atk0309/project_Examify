@@ -3,8 +3,10 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -24,12 +26,16 @@ import {
   parseArgs,
   planEmit,
   readGeneratedSubjects,
+  formatDataDirDisplay,
+  resolveIngestRoot,
   resolveIrFiles,
   runCli,
   USAGE,
   splitIr,
   validateIrCollection,
+  writeFileAtomic,
   type BankIR,
+  type PlannedFile,
 } from '../../tools/examify-ingest/src/index';
 import { MAX_DIFF_CELLS } from '../../tools/examify-ingest/src/diff';
 import { renderGeneratedPublic } from '../../tools/examify-ingest/src/registrars';
@@ -254,7 +260,7 @@ describe('examify-ingest emit plan', () => {
 
     expect([...collectGeneratedSubjectIds(tmp)].sort()).toEqual(['chemistry']);
 
-    const planned = planEmit(validated.banks, tmp, { pruneMissing: true });
+    const planned = planEmit(validated.banks, tmp, { pruneMissing: true, registrars: true });
     expect(
       planned
         .filter((file) => file.delete)
@@ -475,8 +481,8 @@ describe('examify-ingest CLI', () => {
     for (const text of [authoring, ingestReadme]) {
       expect(text).toContain('pnpm examify-ingest validate content/subjects');
       expect(text).toContain('pnpm examify-ingest emit content/subjects --dry-run');
-      expect(text).not.toMatch(/pnpm examify-ingest validate(?! content\/subjects)/);
-      expect(text).not.toMatch(/pnpm examify-ingest emit(?! content\/subjects)/);
+      expect(text).not.toMatch(/pnpm examify-ingest validate(?! (?:data\/)?content\/subjects)/);
+      expect(text).not.toMatch(/pnpm examify-ingest emit(?! (?:data\/)?content\/subjects)/);
       expect(text).not.toMatch(/`emit --dry-run`/);
       expect(text).not.toMatch(/→ emit --dry-run →/);
     }
@@ -512,14 +518,17 @@ describe('examify-ingest CLI', () => {
     );
 
     const chunks: string[] = [];
+    const errors: string[] = [];
     const code = runCli(['validate', 'content/subjects'], {
       cwd: tmp,
+      env: {},
       stdout: { write: (chunk) => void chunks.push(chunk) },
-      stderr: { write: (chunk) => void chunks.push(chunk) },
+      stderr: { write: (chunk) => void errors.push(chunk) },
     });
     expect(code).toBe(0);
     // Prefix match would also pass "ok 1 BankIR files" — require the exact singular line.
     expect(chunks.join('')).toBe('ok 1 BankIR file\n');
+    expect(errors.join('')).toBe('layer: committed (checkout)\n');
   });
 
   it('CLI validate reports BankIR file count from the catalog it was given', () => {
@@ -557,8 +566,9 @@ describe('examify-ingest CLI', () => {
     const chunks: string[] = [];
     const code = runCli(['validate', 'content/subjects'], {
       cwd: tmp,
+      env: {},
       stdout: { write: (chunk) => void chunks.push(chunk) },
-      stderr: { write: (chunk) => void chunks.push(chunk) },
+      stderr: { write: () => undefined },
     });
     expect(code).toBe(0);
     expect(chunks.join('')).toBe('ok 2 BankIR files\n');
@@ -583,11 +593,13 @@ describe('examify-ingest CLI', () => {
 
   it('CLI validate refuses a non-fixture sample-bank id without --replace-sample', () => {
     const tmp = mkdtempSync(path.join(tmpdir(), 'examify-ir-'));
+    writeFileSync(path.join(tmp, 'package.json'), JSON.stringify({ name: 'project-examify' }));
     const irPath = path.join(tmp, 'bank.ir.json');
     writeFileSync(irPath, JSON.stringify(collidingSampleIr('maths-easy-2')), 'utf8');
     const stderr: string[] = [];
     const code = runCli(['validate', irPath], {
-      cwd: repoRoot,
+      cwd: tmp,
+      env: {},
       stdout: { write: () => undefined },
       stderr: { write: (chunk) => void stderr.push(chunk) },
     });
@@ -777,5 +789,332 @@ describe('examify-ingest CLI', () => {
     expect(readFileSync(path.join(tmp, 'src/lib/exam/generated-keys.server.ts'), 'utf8')).toBe(
       registrarBefore,
     );
+  });
+});
+
+const REGISTRAR_PUBLIC = 'src/lib/exam/generated-public.ts';
+const REGISTRAR_KEYS = 'src/lib/exam/generated-keys.server.ts';
+
+function historyIr(): BankIR {
+  return {
+    version: 1,
+    subject: { id: 'history', label: 'History', icon: 'geography', l: 0.6, c: 0.08, h: 40 },
+    difficulties: {
+      easy: [
+        {
+          id: 'history-easy-1',
+          type: 'mcq',
+          q: 'A family history question?',
+          choices: ['A', 'B', 'C', 'D'],
+          answer: 1,
+          provenance: { pdf: 'hand-authored', locator: 'unit' },
+        },
+      ],
+      medium: [],
+      hard: [],
+    },
+  };
+}
+
+/**
+ * A fake checkout with committed biology (IR, generated JSON, registrars) and
+ * an empty default family data folder (`./data`).
+ */
+function fakeCheckout(): string {
+  const root = mkdtempSync(path.join(tmpdir(), 'examify-layers-'));
+  writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'project-examify' }));
+  mkdirSync(path.join(root, 'content/subjects/biology'), { recursive: true });
+  writeFileSync(
+    path.join(root, 'content/subjects/biology/bank.ir.json'),
+    readFileSync(path.join(repoRoot, 'content/subjects/biology/bank.ir.json')),
+  );
+  for (const rel of [
+    'content/generated/subjects.json',
+    'content/generated/questions/biology.json',
+    'content/generated/keys/biology.json',
+  ]) {
+    mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
+    writeFileSync(path.join(root, rel), readFileSync(path.join(repoRoot, rel)));
+  }
+  mkdirSync(path.join(root, 'src/lib/exam'), { recursive: true });
+  writeFileSync(path.join(root, REGISTRAR_PUBLIC), '// committed public registrar\n');
+  writeFileSync(path.join(root, REGISTRAR_KEYS), '// committed keys registrar\n');
+  return root;
+}
+
+function writeFamilyIr(dataDir: string, ir: BankIR): void {
+  const dir = path.join(dataDir, 'content/subjects', ir.subject.id);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path.join(dir, 'bank.ir.json'), JSON.stringify(ir));
+}
+
+/** Every file under `dir` (relative path → bytes), for before/after comparisons. */
+function snapshotTree(dir: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  const walk = (abs: string) => {
+    for (const entry of readdirSync(abs, { withFileTypes: true })) {
+      const child = path.join(abs, entry.name);
+      if (entry.isDirectory()) walk(child);
+      else out[path.relative(dir, child)] = readFileSync(child, 'utf8');
+    }
+  };
+  if (existsSync(dir)) walk(dir);
+  return out;
+}
+
+function checkoutBytes(root: string): Record<string, string> {
+  return {
+    ...snapshotTree(path.join(root, 'content/generated')),
+    [REGISTRAR_PUBLIC]: readFileSync(path.join(root, REGISTRAR_PUBLIC), 'utf8'),
+    [REGISTRAR_KEYS]: readFileSync(path.join(root, REGISTRAR_KEYS), 'utf8'),
+  };
+}
+
+function capture() {
+  const out: string[] = [];
+  const err: string[] = [];
+  return {
+    out: () => out.join(''),
+    err: () => err.join(''),
+    stdout: { write: (chunk: string) => void out.push(chunk) },
+    stderr: { write: (chunk: string) => void err.push(chunk) },
+  };
+}
+
+function mode(abs: string): number {
+  return statSync(abs).mode & 0o777;
+}
+
+describe('examify-ingest layers', () => {
+  it('names the data folder relative to the checkout when it is inside it', () => {
+    expect(formatDataDirDisplay('/srv/examify', '/srv/examify/data')).toBe('data');
+    expect(formatDataDirDisplay('/srv/examify', '/srv/examify/data/family')).toBe('data/family');
+    expect(formatDataDirDisplay('/srv/examify', '/var/lib/examify')).toBe('/var/lib/examify');
+    expect(formatDataDirDisplay('/srv/examify', '/srv/examify-data')).toBe('/srv/examify-data');
+  });
+
+  it('classifies paths: data folder first, then the checkout, else refuse', () => {
+    const root = fakeCheckout();
+    writeFamilyIr(path.join(root, 'data'), historyIr());
+    const outside = mkdtempSync(path.join(tmpdir(), 'examify-layers-data-'));
+    writeFamilyIr(outside, historyIr());
+
+    expect(resolveIngestRoot(['content/subjects'], root, {})).toMatchObject({
+      layer: 'committed',
+      root,
+      repoRoot: root,
+      dataDirDisplay: 'data',
+    });
+    // `./data` is inside the checkout, but the data folder wins.
+    expect(resolveIngestRoot(['data/content/subjects'], root, {})).toMatchObject({
+      layer: 'family',
+      root: path.join(root, 'data'),
+      repoRoot: root,
+    });
+    expect(
+      resolveIngestRoot([path.join(outside, 'content/subjects')], root, {
+        EXAMIFY_DATA_DIR: outside,
+      }),
+    ).toMatchObject({ layer: 'family', root: outside, repoRoot: root, dataDirDisplay: outside });
+    // A symlink in the checkout that points into the data folder is the family layer.
+    symlinkSync(outside, path.join(root, 'family-link'));
+    expect(
+      resolveIngestRoot(['family-link/content/subjects'], root, { EXAMIFY_DATA_DIR: outside }),
+    ).toMatchObject({ layer: 'family', root: outside });
+
+    expect(() => resolveIngestRoot([path.join(outside, 'content/subjects')], root, {})).toThrow(
+      'path is outside the checkout and the family data folder',
+    );
+    expect(() =>
+      resolveIngestRoot(['content/subjects', 'data/content/subjects'], root, {}),
+    ).toThrow('inputs span the family data folder and the checkout; run them separately');
+  });
+
+  it('reads the data folder from the checkout env files like the app', () => {
+    const root = fakeCheckout();
+    const outside = mkdtempSync(path.join(tmpdir(), 'examify-layers-envfile-'));
+    writeFileSync(path.join(root, '.env'), `EXAMIFY_DATA_DIR=${outside}\n`);
+    writeFamilyIr(outside, historyIr());
+    expect(resolveIngestRoot([path.join(outside, 'content/subjects')], root, {})).toMatchObject({
+      layer: 'family',
+      root: outside,
+    });
+  });
+
+  it('refuses a mixed or outside run before reading anything', () => {
+    const root = fakeCheckout();
+    writeFamilyIr(path.join(root, 'data'), historyIr());
+    const mixed = capture();
+    expect(
+      runCli(['validate', 'content/subjects', 'data/content/subjects'], {
+        cwd: root,
+        env: {},
+        ...mixed,
+      }),
+    ).toBe(1);
+    expect(mixed.err()).toContain('run them separately');
+    expect(mixed.out()).toBe('');
+
+    const elsewhere = mkdtempSync(path.join(tmpdir(), 'examify-layers-elsewhere-'));
+    writeFamilyIr(elsewhere, historyIr());
+    const outside = capture();
+    expect(
+      runCli(['emit', path.join(elsewhere, 'content/subjects'), '--apply'], {
+        cwd: root,
+        env: {},
+        ...outside,
+      }),
+    ).toBe(1);
+    expect(outside.err()).toContain('path is outside the checkout and the family data folder');
+    expect(existsSync(path.join(elsewhere, 'content/generated'))).toBe(false);
+  });
+
+  it('family emit writes only <data>/content/generated (keys 0600 in 0700), never registrars', () => {
+    const root = fakeCheckout();
+    const data = path.join(root, 'data');
+    writeFamilyIr(data, historyIr());
+    writeFamilyIr(data, loadBiologyIr());
+    const before = checkoutBytes(root);
+
+    const dry = capture();
+    expect(
+      runCli(['emit', 'data/content/subjects', '--dry-run'], { cwd: root, env: {}, ...dry }),
+    ).toBe(0);
+    expect(dry.err()).toContain('layer: family (data)\n');
+    expect(dry.err()).toContain(
+      'note: family subject biology replaces the committed subject biology',
+    );
+    expect(dry.out()).not.toContain('generated-public.ts');
+    expect(dry.out()).not.toContain('generated-keys.server.ts');
+
+    const apply = capture();
+    expect(
+      runCli(['emit', 'data/content/subjects', '--apply'], { cwd: root, env: {}, ...apply }),
+    ).toBe(0);
+    expect(apply.err()).not.toContain('writes tracked files');
+    expect(checkoutBytes(root)).toEqual(before);
+    expect(Object.keys(snapshotTree(path.join(data, 'content/generated'))).sort()).toEqual([
+      'keys/biology.json',
+      'keys/history.json',
+      'questions/biology.json',
+      'questions/history.json',
+      'subjects.json',
+    ]);
+    expect(mode(path.join(data, 'content/generated/keys'))).toBe(0o700);
+    expect(mode(path.join(data, 'content/generated/keys/history.json'))).toBe(0o600);
+    expect(mode(path.join(data, 'content/generated/keys/biology.json'))).toBe(0o600);
+    expect(existsSync(path.join(data, 'src'))).toBe(false);
+  });
+
+  it('family emit never plans registrars even when the data folder has some', () => {
+    const root = fakeCheckout();
+    const data = path.join(root, 'data');
+    writeFamilyIr(data, historyIr());
+    mkdirSync(path.join(data, 'src/lib/exam'), { recursive: true });
+    writeFileSync(path.join(data, REGISTRAR_PUBLIC), 'export {}\n');
+    const apply = capture();
+    expect(
+      runCli(['emit', 'data/content/subjects', '--apply'], { cwd: root, env: {}, ...apply }),
+    ).toBe(0);
+    expect(readFileSync(path.join(data, REGISTRAR_PUBLIC), 'utf8')).toBe('export {}\n');
+    expect(apply.out()).not.toContain('src/lib/exam');
+  });
+
+  it('committed emit --apply still rewrites registrars and says it writes tracked files', () => {
+    const root = fakeCheckout();
+    mkdirSync(path.join(root, 'content/subjects/history'), { recursive: true });
+    writeFileSync(
+      path.join(root, 'content/subjects/history/bank.ir.json'),
+      JSON.stringify(historyIr()),
+    );
+    const apply = capture();
+    expect(runCli(['emit', 'content/subjects', '--apply'], { cwd: root, env: {}, ...apply })).toBe(
+      0,
+    );
+    expect(apply.err()).toContain('layer: committed (checkout)\n');
+    expect(apply.err()).toContain(
+      'note: this writes tracked files in the checkout (committed content). Family content belongs in data/content/subjects.',
+    );
+    expect(readFileSync(path.join(root, REGISTRAR_PUBLIC), 'utf8')).toContain('history');
+    expect(readFileSync(path.join(root, REGISTRAR_KEYS), 'utf8')).toContain('history');
+    expect(existsSync(path.join(root, 'data'))).toBe(false);
+  });
+});
+
+describe('examify-ingest emit writes', () => {
+  it('planEmit plans registrars only with registrars: true', () => {
+    const validated = validateIrCollection([{ path: 'history/bank.ir.json', data: historyIr() }]);
+    if (!validated.ok) throw new Error('fixture must validate');
+    const root = fakeCheckout();
+    const rels = (files: PlannedFile[]) => files.map((file) => file.relPath);
+    expect(rels(planEmit(validated.banks, root))).not.toContain(REGISTRAR_PUBLIC);
+    expect(rels(planEmit(validated.banks, root, { registrars: false }))).not.toContain(
+      REGISTRAR_KEYS,
+    );
+    expect(rels(planEmit(validated.banks, root, { registrars: true }))).toEqual(
+      expect.arrayContaining([REGISTRAR_PUBLIC, REGISTRAR_KEYS]),
+    );
+  });
+
+  it('applies questions + keys, then registrars, then subjects.json, then unlinks', () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'examify-apply-rank-'));
+    const file = (relPath: string, extra: Partial<PlannedFile> = {}): PlannedFile => ({
+      relPath,
+      absPath: path.join(root, relPath),
+      contents: `${relPath}\n`,
+      existing: null,
+      ...extra,
+    });
+    mkdirSync(path.join(root, 'content/generated/questions'), { recursive: true });
+    writeFileSync(path.join(root, 'content/generated/questions/old.json'), '{}\n');
+    const applied = applyEmit([
+      file('content/generated/subjects.json'),
+      file('content/generated/questions/old.json', { delete: true, contents: '', existing: '{}' }),
+      file(REGISTRAR_PUBLIC),
+      file('content/generated/questions/history.json'),
+      file('content/generated/keys/history.json'),
+    ]);
+    expect(applied.map((entry) => entry.relPath)).toEqual([
+      'content/generated/questions/history.json',
+      'content/generated/keys/history.json',
+      REGISTRAR_PUBLIC,
+      'content/generated/subjects.json',
+      'content/generated/questions/old.json',
+    ]);
+    expect(mode(path.join(root, 'content/generated/keys/history.json'))).toBe(0o600);
+    expect(mode(path.join(root, 'content/generated/keys'))).toBe(0o700);
+    // Atomic writes leave no temp files behind.
+    expect(readdirSync(path.join(root, 'content/generated/keys'))).toEqual(['history.json']);
+  });
+
+  it('tightens an unchanged keys file without counting it as written', () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'examify-apply-tighten-'));
+    const keysPath = path.join(root, 'content/generated/keys/history.json');
+    mkdirSync(path.dirname(keysPath), { recursive: true, mode: 0o755 });
+    writeFileSync(keysPath, '{}\n', { mode: 0o644 });
+    chmodSync(keysPath, 0o644);
+    const applied = applyEmit([
+      {
+        relPath: 'content/generated/keys/history.json',
+        absPath: keysPath,
+        contents: '{}\n',
+        existing: '{}\n',
+      },
+    ]);
+    expect(applied).toEqual([]);
+    expect(mode(keysPath)).toBe(0o600);
+    expect(mode(path.dirname(keysPath))).toBe(0o700);
+  });
+
+  it('writeFileAtomic sets the requested mode and replaces the file', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'examify-atomic-mode-'));
+    const target = path.join(dir, 'keys.json');
+    writeFileSync(target, 'old\n');
+    chmodSync(target, 0o644);
+    writeFileAtomic(target, 'new\n', { mode: 0o600 });
+    expect(readFileSync(target, 'utf8')).toBe('new\n');
+    expect(mode(target)).toBe(0o600);
+    writeFileAtomic(path.join(dir, 'plain.json'), 'x\n');
+    expect(readdirSync(dir).sort()).toEqual(['keys.json', 'plain.json']);
   });
 });
