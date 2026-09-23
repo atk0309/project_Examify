@@ -1387,6 +1387,24 @@ function git(cwd: string, ...args: string[]): string {
   }).trim();
 }
 
+/**
+ * A local bare origin whose own config turns auto-maintenance off: git drops
+ * GIT_CONFIG_COUNT from the receive-pack it runs for a local push, so GIT_ENV
+ * never reaches it, and a repack started there after a push can still be
+ * writing pack files while the next clone hardlinks them (newer git then
+ * fails with "hardlink different from source").
+ */
+function initBareOrigin(base: string, origin: string): void {
+  git(base, 'init', '-q', '--bare', '-b', 'main', origin);
+  for (const [key, value] of [
+    ['receive.autogc', 'false'],
+    ['maintenance.auto', 'false'],
+    ['gc.auto', '0'],
+  ]) {
+    git(origin, 'config', key, value);
+  }
+}
+
 function writeFile(file: string, body: string, mode?: number) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, body, mode === undefined ? undefined : { mode });
@@ -1411,7 +1429,7 @@ function makeFixture(options: { upstream?: boolean; env?: boolean } = {}): Fixtu
   const bin = path.join(base, 'bin');
   const home = path.join(base, 'home');
   fs.mkdirSync(home);
-  git(base, 'init', '-q', '--bare', '-b', 'main', origin);
+  initBareOrigin(base, origin);
   git(base, 'clone', '-q', origin, seed);
   writeFile(path.join(seed, 'package.json'), JSON.stringify({ name: 'project-examify' }));
   writeFile(path.join(seed, 'install.sh'), fs.readFileSync(SCRIPT, 'utf8'), 0o755);
@@ -2211,7 +2229,7 @@ async function makeRealFixture({
   const dataDir = dataInCheckout ? path.join(work, 'data') : path.join(base, 'family-data');
   const port = await unusedPort();
   fs.mkdirSync(home);
-  git(base, 'init', '-q', '--bare', '-b', 'main', origin);
+  initBareOrigin(base, origin);
   git(base, 'clone', '-q', origin, seed);
   writeFile(
     path.join(seed, 'package.json'),
