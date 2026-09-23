@@ -1006,9 +1006,11 @@ refuse_kept_data_dir_conflict() {
 # refused here, before anything is installed (db:migrate refuses it too).
 # Then init creates the folder 0700 with its marker.
 prepare_data_folder() {
-  local err code=0
+  local err out error_code code=0
   err="$(node scripts/examify-data.mjs paths --check --repo "$ROOT" 2>&1 >/dev/null)" || code=$?
   if [ "$code" -eq 3 ]; then
+    # stderr is "examify-data paths: <reason>: <message>"
+    err="${err#examify-data paths: }"
     die "The family data folder is not safe to use (${err:-unsafe_data_dir})." \
       "Fix EXAMIFY_DATA_DIR in .env and re-run."
   elif [ "$code" -ne 0 ]; then
@@ -1031,10 +1033,16 @@ prepare_data_folder() {
     esac
   fi
   code=0
-  node scripts/examify-data.mjs init --repo "$ROOT" ${DATA_CLI_WRITE_FLAGS[@]+"${DATA_CLI_WRITE_FLAGS[@]}"} || code=$?
+  out="$(node scripts/examify-data.mjs init --repo "$ROOT" --json ${DATA_CLI_WRITE_FLAGS[@]+"${DATA_CLI_WRITE_FLAGS[@]}"})" || code=$?
   case "$code" in
     0) ;;
     5)
+      # Exit 5 is owner_mismatch or shared_folder; --json says which.
+      error_code="$(printf '%s' "$out" | json_field error)" || error_code=""
+      if [ "$error_code" = "shared_folder" ]; then
+        die "Refused to set up the family data folder: it already holds files that are not Examify's." \
+          "Point EXAMIFY_DATA_DIR in .env at an empty or new folder of its own and re-run."
+      fi
       die "Refused to set up the family data folder: it or this checkout belongs to another user." \
         "Run the installer as that user, or pass --allow-owner-mismatch."
       ;;
@@ -1505,7 +1513,9 @@ upgrade_phase2() {
     pnpm build || upgrade_step_failed "pnpm build" "$archive"
   fi
   echo "Checking the upgrade…"
-  node scripts/examify-data.mjs verify --repo "$ROOT" || upgrade_step_failed "examify-data verify" "$archive"
+  # verify opens the database, so it checks ownership like the writing commands.
+  node scripts/examify-data.mjs verify --repo "$ROOT" ${DATA_CLI_WRITE_FLAGS[@]+"${DATA_CLI_WRITE_FLAGS[@]}"} ||
+    upgrade_step_failed "examify-data verify" "$archive"
 
   if [ -n "$state" ]; then
     rm -f "$state"
@@ -1731,6 +1741,12 @@ main() {
     # The backup brings its own .env (and with it the data folder).
     if [ -n "$(trim "$FLAG_DATA_DIR")" ]; then
       die "--data-dir is for a new .env; this backup brings its own .env and family data folder."
+    fi
+    # The restore follows the restored env files (what the app will read);
+    # a host value would be silently ignored, so name it instead.
+    if [ -n "$(trim "$HOST_DATA_DIR_RAW")" ] || [ -n "$(trim "$HOST_DATABASE_URL_RAW")" ]; then
+      die "Host EXAMIFY_DATA_DIR / DATABASE_URL is for a new .env; this backup brings its own .env and family data folder." \
+        "Unset them and re-run: the restored .env decides where the data goes."
     fi
     unset EXAMIFY_DATA_DIR DATABASE_URL
     echo "Restoring ${RESTORE_ARCHIVE} with its .env (a current .env is kept aside as .env.before-restore-…)."

@@ -9,6 +9,7 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
+import Database from 'better-sqlite3';
 import { describe, expect, it } from 'vitest';
 
 const SCRIPT = path.join(process.cwd(), 'install.sh');
@@ -1272,8 +1273,9 @@ describe('install.sh family data folder (.env)', () => {
 // --- fixtures for full runs: a checkout with a local bare origin, shims on PATH ---
 
 /**
- * Stand-in for scripts/examify-data.mjs (Lane B contract): records argv, exits
- * with STUB_EXIT_<COMMAND> when set, and prints the contracted JSON.
+ * Stand-in for scripts/examify-data.mjs: records argv, exits with
+ * STUB_EXIT_<COMMAND> when set (stderr and `--json` error shaped like the real
+ * CLI's, error code STUB_ERROR), and prints the contracted JSON.
  */
 function dataCliStub(version: string): string {
   return `import { execFileSync } from 'node:child_process';
@@ -1295,7 +1297,12 @@ if (process.env.STUB_LOG) {
 }
 const code = Number(process.env['STUB_EXIT_' + cmd.toUpperCase().replace(/-/g, '_')] || 0);
 if (code) {
-  process.stderr.write((process.env.STUB_REASON || 'refused') + '\\n');
+  const reason = process.env.STUB_REASON ? process.env.STUB_REASON + ': ' : '';
+  process.stderr.write('examify-data ' + cmd + ': ' + reason + 'stub refusal\\n');
+  if (argv.includes('--json')) {
+    const error = process.env.STUB_ERROR || 'refused';
+    process.stdout.write(JSON.stringify({ ok: false, command: cmd, error }) + '\\n');
+  }
   process.exit(code);
 }
 if (cmd === 'paths' && argv.includes('--json')) {
@@ -1304,7 +1311,9 @@ if (cmd === 'paths' && argv.includes('--json')) {
   const out = { repoRoot: repo, dataDir, dataDirSource: 'default', dbPath, outboxDir, databaseUrlExplicit: false };
   process.stdout.write(JSON.stringify(out));
 } else if (cmd === 'init') {
+  const created = !fs.existsSync(dataDir);
   fs.mkdirSync(dataDir, { recursive: true });
+  if (argv.includes('--json')) process.stdout.write(JSON.stringify({ ok: true, command: cmd, dataDir, created }));
 } else if (cmd === 'backup') {
   const dir = path.join(dataDir, 'backups');
   fs.mkdirSync(dir, { recursive: true });
@@ -1523,7 +1532,7 @@ describe('install.sh full install (shimmed pnpm and data CLI)', () => {
       const paths = dataCall(fx, 'paths');
       const init = dataCall(fx, 'init');
       expect(paths.argv).toEqual(['paths', '--check', '--repo', fx.work]);
-      expect(init.argv).toEqual(['init', '--repo', fx.work]);
+      expect(init.argv).toEqual(['init', '--repo', fx.work, '--json']);
       expect(result.stdout).toContain(`Family data folder: ${fx.work}/data`);
       expect(result.stdout).toContain('Local outbox path: ./data/outbox');
       expect(fs.readFileSync(path.join(fx.work, '.env'), 'utf8')).toContain(
@@ -1540,7 +1549,7 @@ describe('install.sh full install (shimmed pnpm and data CLI)', () => {
       });
       expect(result.status).toBe(1);
       expect(result.stderr).toContain(
-        'The family data folder is not safe to use (inside_checkout)',
+        'The family data folder is not safe to use (inside_checkout: stub refusal)',
       );
       expect(summary(fx)).toEqual(['data paths']);
     });
@@ -1548,7 +1557,7 @@ describe('install.sh full install (shimmed pnpm and data CLI)', () => {
 
   it('refuses when init reports another owner (exit 5)', () => {
     withFixture({ upstream: false, env: false }, (fx) => {
-      const result = runInstaller(fx, [], { STUB_EXIT_INIT: '5' });
+      const result = runInstaller(fx, [], { STUB_EXIT_INIT: '5', STUB_ERROR: 'owner_mismatch' });
       expect(result.status).toBe(1);
       expect(result.stderr).toContain('belongs to another user');
       expect(summary(fx)).toEqual(['data paths', 'data legacy-check', 'data init']);
@@ -1720,7 +1729,10 @@ describe('install.sh --upgrade', () => {
 
       const allowed = runInstaller(fx, ['--upgrade', '--allow-owner-mismatch']);
       expect(allowed.status).toBe(0);
-      expect(dataCall(fx, 'backup').argv).toContain('--allow-owner-mismatch');
+      // Every data CLI command that checks ownership gets the flag, phase 2's verify included.
+      for (const command of ['backup', 'migrate-checkout', 'verify']) {
+        expect(dataCall(fx, command).argv, command).toContain('--allow-owner-mismatch');
+      }
     });
   }, 60_000);
 
@@ -1923,6 +1935,22 @@ describe('install.sh --rollback / --restore', () => {
     });
   });
 
+  it('--restore refuses a host data folder when the backup brings its own .env', () => {
+    withFixture({ upstream: false, env: false }, (fx) => {
+      const archive = makeArchive(fx.base, { format: 1 }, true);
+      for (const extra of [
+        { EXAMIFY_DATA_DIR: path.join(fx.base, 'elsewhere') },
+        { DATABASE_URL: `file:${path.join(fx.base, 'elsewhere', 'app.db')}` },
+      ]) {
+        const result = runInstaller(fx, ['--restore', archive], extra);
+        expect(result.status).toBe(1);
+        expect(result.stderr).toContain('Host EXAMIFY_DATA_DIR / DATABASE_URL is for a new .env');
+        expect(calls(fx)).toEqual([]);
+        expect(fs.existsSync(path.join(fx.work, '.env'))).toBe(false);
+      }
+    });
+  });
+
   it('--restore writes a new .env when the backup has none', () => {
     withFixture({ upstream: false, env: false }, (fx) => {
       const archive = makeArchive(fx.base, { format: 1 });
@@ -1943,4 +1971,580 @@ describe('install.sh --rollback / --restore', () => {
       ]);
     });
   });
+});
+
+// --- real end to end: the real install.sh + scripts/examify-data.mjs on a fixture checkout ---
+//
+// No network and no real build: a local bare `origin`, a pnpm shim on PATH
+// (records argv; `db:migrate` stands in for src/lib/db/migrate.ts through the
+// checkout's own data CLI and a real SQLite file) and the repo's better-sqlite3
+// via EXAMIFY_SQLITE_MODULE.
+
+const REPO_ROOT = process.cwd();
+const SQLITE_MODULE = path.join(REPO_ROOT, 'node_modules', 'better-sqlite3');
+const JOURNAL = 'src/lib/db/migrations/meta/_journal.json';
+const JOURNAL_ENTRIES = (
+  JSON.parse(fs.readFileSync(path.join(REPO_ROOT, JOURNAL), 'utf8')) as { entries: unknown[] }
+).entries.length;
+
+/** What the fixture checkout commits, copied from this repo. */
+const REAL_COMMITTED = [
+  'install.sh',
+  'scripts/examify-data.mjs',
+  '.gitignore',
+  JOURNAL,
+  'content/subjects/demo/subject.json',
+  'content/subjects/demo/notes.txt',
+  'content/generated/subjects.json',
+  'content/generated/questions/biology.json',
+  'content/generated/keys/biology.json',
+  'src/lib/exam/generated-public.ts',
+  'src/lib/exam/generated-keys.server.ts',
+];
+
+const UPSTREAM_MARKER = 'echo "Upgrade complete. [fixture upstream]"';
+
+/** `pnpm` on PATH: logs argv; `db:migrate` refuses legacy content, inits the folder, migrates. */
+const REAL_PNPM_SHIM = `#!/usr/bin/env node
+const { spawnSync } = require('node:child_process');
+const fs = require('node:fs');
+const argv = process.argv.slice(2);
+const log = (entry) => fs.appendFileSync(process.env.STUB_LOG, JSON.stringify(entry) + '\\n');
+log({ tool: 'pnpm', argv });
+if (argv[0] !== 'db:migrate') process.exit(0);
+const cli = (...args) =>
+  spawnSync(process.execPath, ['scripts/examify-data.mjs', ...args, '--repo', process.cwd()], {
+    encoding: 'utf8',
+  });
+const must = (result) => {
+  if (result.status === 0) return result;
+  process.stderr.write(result.stderr);
+  process.exit(1);
+};
+if (process.env.EXAMIFY_IGNORE_LEGACY_CONTENT !== '1') must(cli('legacy-check'));
+const { dbPath } = JSON.parse(must(cli('paths', '--json')).stdout);
+must(cli('init'));
+const Database = require(process.env.SHIM_SQLITE_MODULE);
+const journal = JSON.parse(fs.readFileSync('${JOURNAL}', 'utf8'));
+const db = new Database(dbPath);
+db.pragma('journal_mode = WAL');
+db.exec('create table if not exists __drizzle_migrations (id integer primary key autoincrement, hash text not null, created_at numeric)');
+db.exec('create table if not exists users (id integer primary key, email text not null)');
+const have = db.prepare('select count(*) as n from __drizzle_migrations').get().n;
+const add = db.prepare('insert into __drizzle_migrations (hash, created_at) values (?, ?)');
+for (let i = have; i < journal.entries.length; i += 1) add.run('m' + i, i);
+db.close();
+log({ tool: 'migrate', dbPath });
+`;
+
+type RealFixture = {
+  base: string;
+  origin: string;
+  work: string;
+  dataDir: string;
+  bin: string;
+  home: string;
+  log: string;
+  port: string;
+  oldSha: string;
+  upstreamSha: string;
+};
+
+const HISTORY = { id: 'history', label: 'History', icon: 'history', l: 0.6, c: 0.1, h: 40 };
+
+async function unusedPort(): Promise<string> {
+  const server = http.createServer();
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address() as AddressInfo;
+  await new Promise((resolve) => server.close(resolve));
+  return String(port);
+}
+
+function makeDbWithUsers(file: string, users: number): void {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const db = new Database(file);
+  db.pragma('journal_mode = WAL');
+  db.exec(
+    'create table __drizzle_migrations (id integer primary key autoincrement, hash text not null, created_at numeric)',
+  );
+  db.exec('create table users (id integer primary key, email text not null)');
+  const add = db.prepare('insert into __drizzle_migrations (hash, created_at) values (?, ?)');
+  for (let i = 0; i < JOURNAL_ENTRIES; i += 1) add.run(`m${i}`, i);
+  const addUser = db.prepare('insert into users (email) values (?)');
+  for (let i = 0; i < users; i += 1) addUser.run(`user${i}@example.com`);
+  db.close();
+}
+
+function userCount(file: string): number {
+  const db = new Database(file, { readonly: true, fileMustExist: true });
+  try {
+    return (db.prepare('select count(*) as n from users').get() as { n: number }).n;
+  } finally {
+    db.close();
+  }
+}
+
+function addUser(file: string, email: string): void {
+  const db = new Database(file, { fileMustExist: true });
+  try {
+    db.prepare('insert into users (email) values (?)').run(email);
+  } finally {
+    db.close();
+  }
+}
+
+/** Family content an older runtime left in the checkout. */
+function seedLegacyContent(work: string): void {
+  writeFile(path.join(work, 'content/subjects/history/subject.json'), JSON.stringify(HISTORY));
+  writeFile(
+    path.join(work, 'content/subjects/history/bank.ir.json'),
+    JSON.stringify({ subject: HISTORY, items: [] }),
+  );
+  writeFile(path.join(work, 'content/source-pdfs/history/chapter-1.pdf'), '%PDF-1.4 history');
+  const catalog = path.join(work, 'content/generated/subjects.json');
+  const rows = JSON.parse(fs.readFileSync(catalog, 'utf8')) as unknown[];
+  writeFile(catalog, `${JSON.stringify([...rows, HISTORY], null, 2)}\n`);
+  writeFile(path.join(work, 'content/generated/questions/history.json'), '{"easy":[]}\n');
+  writeFile(path.join(work, 'content/generated/keys/history.json'), '{"history-easy-1":{}}\n');
+  fs.appendFileSync(
+    path.join(work, 'src/lib/exam/generated-public.ts'),
+    '// history registered by the wizard\n',
+  );
+  writeFile(path.join(work, '.examify-ingest/runs/history.json'), '{"run":1}\n');
+}
+
+/** An installer from before the family data folder (no --upgrade, no data CLI). */
+const OLD_INSTALLER = '#!/usr/bin/env bash\necho "old installer: $*"\nexit 3\n';
+
+/**
+ * `dataInCheckout`: the older layout (DATABASE_URL=file:./data/app.db, no
+ * EXAMIFY_DATA_DIR); otherwise EXAMIFY_DATA_DIR names a folder outside.
+ * `predatesDataCli`: the checkout's commit has no scripts/examify-data.mjs
+ * and an old install.sh; upstream adds both.
+ */
+async function makeRealFixture({
+  dataInCheckout = false,
+  predatesDataCli = false,
+} = {}): Promise<RealFixture> {
+  const base = tmpDir('examify-real-');
+  const origin = path.join(base, 'origin.git');
+  const seed = path.join(base, 'seed');
+  const work = path.join(base, 'work');
+  const bin = path.join(base, 'bin');
+  const home = path.join(base, 'home');
+  const dataDir = dataInCheckout ? path.join(work, 'data') : path.join(base, 'family-data');
+  const port = await unusedPort();
+  fs.mkdirSync(home);
+  git(base, 'init', '-q', '--bare', '-b', 'main', origin);
+  git(base, 'clone', '-q', origin, seed);
+  writeFile(
+    path.join(seed, 'package.json'),
+    JSON.stringify({ name: 'project-examify', version: '1.0.0' }),
+  );
+  writeFile(path.join(seed, '.nvmrc'), `${process.versions.node}\n`);
+  const copyFromRepo = (rel: string) => {
+    fs.mkdirSync(path.dirname(path.join(seed, rel)), { recursive: true });
+    fs.copyFileSync(path.join(REPO_ROOT, rel), path.join(seed, rel));
+  };
+  for (const rel of REAL_COMMITTED) copyFromRepo(rel);
+  if (predatesDataCli) {
+    fs.rmSync(path.join(seed, 'scripts'), { recursive: true });
+    writeFile(path.join(seed, 'install.sh'), OLD_INSTALLER, 0o755);
+  }
+  git(seed, 'add', '-A');
+  git(seed, 'commit', '-q', '-m', 'initial');
+  git(seed, 'push', '-q', '-u', 'origin', 'main');
+  const oldSha = git(seed, 'rev-parse', 'HEAD');
+  git(base, 'clone', '-q', origin, work);
+
+  const installer = fs.readFileSync(path.join(REPO_ROOT, 'install.sh'), 'utf8');
+  const upstream = installer.replace('echo "Upgrade complete."', UPSTREAM_MARKER);
+  expect(upstream).not.toBe(installer);
+  writeFile(path.join(seed, 'install.sh'), upstream, 0o755);
+  if (predatesDataCli) copyFromRepo('scripts/examify-data.mjs');
+  git(seed, 'add', '-A');
+  git(seed, 'commit', '-q', '-m', 'upstream release');
+  git(seed, 'push', '-q');
+  const upstreamSha = git(seed, 'rev-parse', 'HEAD');
+
+  writeFile(
+    path.join(work, '.env'),
+    [
+      `SITE_URL=http://127.0.0.1:${port}`,
+      `PORT=${port}`,
+      'AUTH_SECRET=real-fixture-auth-secret-0123456789abcdef',
+      'AUTH_MODE=password',
+      'MAIL_TRANSPORT=outbox',
+      'ALLOW_LOCAL_OUTBOX=1',
+      dataInCheckout ? 'DATABASE_URL=file:./data/app.db' : `EXAMIFY_DATA_DIR=${dataDir}`,
+      '',
+    ].join('\n'),
+    0o600,
+  );
+  makeDbWithUsers(path.join(dataDir, 'app.db'), 3);
+  seedLegacyContent(work);
+  fs.mkdirSync(path.join(work, '.next'));
+  writeFile(path.join(bin, 'pnpm'), REAL_PNPM_SHIM, 0o755);
+  writeFile(path.join(bin, 'corepack'), '#!/usr/bin/env bash\nexit 0\n', 0o755);
+  return {
+    base,
+    origin,
+    work,
+    dataDir,
+    bin,
+    home,
+    log: path.join(base, 'calls.log'),
+    port,
+    oldSha,
+    upstreamSha,
+  };
+}
+
+/** `script`: pipe this installer text into `bash -s --` (curl | bash) instead of running cwd's. */
+function runReal(
+  fx: RealFixture,
+  cwd: string,
+  args: string[],
+  extra: Record<string, string | undefined> = {},
+  script?: string,
+) {
+  const argv =
+    script === undefined ? [path.join(cwd, 'install.sh'), ...args] : ['-s', '--', ...args];
+  // No NODE_ENV: a host shell running the installer does not set one.
+  const env: Record<string, string | undefined> = {
+    PATH: `${fx.bin}:${process.env.PATH}`,
+    HOME: fx.home,
+    TMPDIR: process.env.TMPDIR,
+    EXAMIFY_SQLITE_MODULE: SQLITE_MODULE,
+    SHIM_SQLITE_MODULE: SQLITE_MODULE,
+    PORT: fx.port,
+    STUB_LOG: fx.log,
+    ...GIT_ENV,
+    ...extra,
+  };
+  return spawnSync('bash', argv, {
+    cwd,
+    input: script,
+    env: env as NodeJS.ProcessEnv,
+    encoding: 'utf8',
+    timeout: 120_000,
+  });
+}
+
+function pnpmCalls(fx: RealFixture): string[] {
+  if (!fs.existsSync(fx.log)) return [];
+  return fs
+    .readFileSync(fx.log, 'utf8')
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as { tool: string; argv?: string[]; dbPath?: string })
+    .map((entry) =>
+      entry.tool === 'pnpm' ? `pnpm ${entry.argv?.join(' ')}` : `migrate ${entry.dbPath}`,
+    );
+}
+
+/** Every file under `dir`, relative, sorted (so trees compare as lists). */
+function listTree(dir: string): string[] {
+  if (!fs.existsSync(dir)) return [];
+  return (fs.readdirSync(dir, { recursive: true }) as string[])
+    .filter((rel) => fs.statSync(path.join(dir, rel)).isFile())
+    .sort();
+}
+
+function checkoutLeftovers(work: string): string {
+  return git(work, 'status', '--porcelain', '--ignored=traditional', '--', 'content', 'src');
+}
+
+function preUpgradeArchives(dataDir: string): string[] {
+  const dir = path.join(dataDir, 'backups');
+  return fs
+    .readdirSync(dir)
+    .filter((name) => /-pre-upgrade-[0-9a-f]{7}\.tar\.gz$/.test(name))
+    .map((name) => path.join(dir, name));
+}
+
+async function upgradedFixture(options: Parameters<typeof makeRealFixture>[0] = {}): Promise<{
+  fx: RealFixture;
+  result: ReturnType<typeof runReal>;
+  archive: string;
+  before: { status: string; files: Record<string, string>; env: string };
+}> {
+  const fx = await makeRealFixture(options);
+  const legacyFiles = [
+    'content/subjects/history/subject.json',
+    'content/subjects/history/bank.ir.json',
+    'content/source-pdfs/history/chapter-1.pdf',
+    'content/generated/subjects.json',
+    'content/generated/questions/history.json',
+    'content/generated/keys/history.json',
+    'src/lib/exam/generated-public.ts',
+    '.examify-ingest/runs/history.json',
+  ];
+  const before = {
+    status: git(
+      fx.work,
+      'status',
+      '--porcelain',
+      '--untracked-files=all',
+      '--ignored=traditional',
+      '--',
+      'content',
+      'src',
+      '.examify-ingest',
+    ),
+    files: Object.fromEntries(
+      legacyFiles.map((rel) => [rel, fs.readFileSync(path.join(fx.work, rel), 'utf8')]),
+    ),
+    env: fs.readFileSync(path.join(fx.work, '.env'), 'utf8'),
+  };
+  const result = runReal(fx, fx.work, ['--upgrade', '--yes']);
+  expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+  const archives = preUpgradeArchives(fx.dataDir);
+  expect(archives).toHaveLength(1);
+  return { fx, result, archive: archives[0]!, before };
+}
+
+describe('install.sh end to end (real data CLI, fixture checkout)', () => {
+  it('a fresh install sets up the data folder before pnpm install, without better-sqlite3', async () => {
+    const fx = await makeRealFixture();
+    try {
+      // Anything that loads better-sqlite3 before `pnpm install` fails loudly.
+      const noSqlite = path.join(fx.base, 'no-sqlite.cjs');
+      writeFile(noSqlite, "throw new Error('better-sqlite3 loaded before pnpm install');\n");
+      const clone = path.join(fx.base, 'fresh');
+      git(fx.base, 'clone', '-q', fx.origin, clone);
+      const dataDir = path.join(fx.base, 'fresh-data');
+      const result = runReal(fx, clone, ['--yes', '--data-dir', dataDir], {
+        SITE_URL: 'https://exam.example.com',
+        EXAMIFY_SQLITE_MODULE: noSqlite,
+      });
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(fs.readFileSync(path.join(clone, '.env'), 'utf8')).toContain(
+        `EXAMIFY_DATA_DIR=${dataDir}\n`,
+      );
+      expect(fs.statSync(dataDir).mode & 0o777).toBe(0o700);
+      expect(fs.readFileSync(path.join(dataDir, '.gitignore'), 'utf8')).toBe('*\n');
+      expect(fs.existsSync(path.join(dataDir, '.examify-data.json'))).toBe(true);
+      expect(pnpmCalls(fx)).toEqual([
+        'pnpm install --frozen-lockfile',
+        'pnpm db:migrate',
+        `migrate ${path.join(dataDir, 'app.db')}`,
+        'pnpm build',
+      ]);
+      expect(fs.existsSync(path.join(clone, 'data'))).toBe(false);
+      expect(checkoutLeftovers(clone)).toBe('');
+      expect(result.stdout).toContain(`Family data folder: ${dataDir}`);
+    } finally {
+      fs.rmSync(fx.base, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  it('a fresh install refuses a folder shared with files that are not Examify’s', async () => {
+    const fx = await makeRealFixture();
+    try {
+      const clone = path.join(fx.base, 'fresh');
+      git(fx.base, 'clone', '-q', fx.origin, clone);
+      const shared = path.join(fx.base, 'shared');
+      writeFile(path.join(shared, 'app.db'), '');
+      writeFile(path.join(shared, 'notes.txt'), 'someone else');
+      const result = runReal(fx, clone, ['--yes', '--data-dir', shared], {
+        SITE_URL: 'https://exam.example.com',
+      });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("already holds files that are not Examify's");
+      expect(result.stderr).not.toContain('belongs to another user');
+      expect(fs.readdirSync(shared).sort()).toEqual(['app.db', 'notes.txt']);
+      expect(pnpmCalls(fx)).toEqual([]);
+    } finally {
+      fs.rmSync(fx.base, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  it.each([
+    ['a family data folder outside the checkout', false],
+    ['the older ./data layout (DATABASE_URL only)', true],
+  ])(
+    '--upgrade with %s backs up, moves the family content out, merges and finishes with the new installer',
+    async (_layout, dataInCheckout) => {
+      const { fx, result, archive } = await upgradedFixture({ dataInCheckout });
+      try {
+        // The pre-upgrade backup: private, in the data folder, named after the old commit.
+        expect(fs.statSync(archive).mode & 0o777).toBe(0o600);
+        expect(path.basename(archive)).toContain(`-pre-upgrade-${fx.oldSha.slice(0, 7)}.tar.gz`);
+        expect(result.stdout).toContain(`Pre-upgrade backup: ${archive}`);
+
+        // The family content now lives in the data folder …
+        const family = (rel: string) => fs.readFileSync(path.join(fx.dataDir, rel), 'utf8');
+        expect(JSON.parse(family('content/subjects/history/subject.json'))).toEqual(HISTORY);
+        expect(family('content/source-pdfs/history/chapter-1.pdf')).toBe('%PDF-1.4 history');
+        expect(JSON.parse(family('content/generated/subjects.json'))).toEqual([HISTORY]);
+        expect(family('content/generated/questions/history.json')).toBe('{"easy":[]}\n');
+        const keys = path.join(fx.dataDir, 'content/generated/keys/history.json');
+        expect(fs.statSync(keys).mode & 0o777).toBe(0o600);
+        expect(family('.examify-ingest/runs/history.json')).toBe('{"run":1}\n');
+        expect(userCount(path.join(fx.dataDir, 'app.db'))).toBe(3);
+        // … and the checkout holds only committed content again.
+        expect(checkoutLeftovers(fx.work)).toBe('');
+        expect(fs.existsSync(path.join(fx.work, '.examify-ingest'))).toBe(false);
+        expect(
+          fs.readFileSync(path.join(fx.work, 'src/lib/exam/generated-public.ts'), 'utf8'),
+        ).toBe(fs.readFileSync(path.join(REPO_ROOT, 'src/lib/exam/generated-public.ts'), 'utf8'));
+
+        // Merged, and phase 2 was the upstream installer.
+        expect(git(fx.work, 'rev-parse', 'HEAD')).toBe(fx.upstreamSha);
+        expect(result.stdout).toContain('Upgrade complete. [fixture upstream]');
+        expect(pnpmCalls(fx)).toEqual([
+          'pnpm install --frozen-lockfile',
+          'pnpm db:migrate',
+          `migrate ${path.join(fx.dataDir, 'app.db')}`,
+          'pnpm build',
+        ]);
+        expect(result.stdout).toContain('Verify passed.');
+        expect(fs.existsSync(path.join(fx.dataDir, '.upgrade-state.json'))).toBe(false);
+        expect(fs.readdirSync(fx.work).filter((name) => name.startsWith('.next'))).toEqual([]);
+
+        // A rerun has nothing to move or merge and still succeeds.
+        const dataBefore = listTree(path.join(fx.dataDir, 'content'));
+        fs.rmSync(fx.log);
+        const rerun = runReal(fx, fx.work, ['--upgrade', '--yes']);
+        expect(rerun.status, `${rerun.stdout}\n${rerun.stderr}`).toBe(0);
+        expect(rerun.stdout).toContain('nothing to migrate');
+        expect(git(fx.work, 'rev-parse', 'HEAD')).toBe(fx.upstreamSha);
+        expect(checkoutLeftovers(fx.work)).toBe('');
+        expect(listTree(path.join(fx.dataDir, 'content'))).toEqual(dataBefore);
+        expect(pnpmCalls(fx)).toContain('pnpm build');
+      } finally {
+        fs.rmSync(fx.base, { recursive: true, force: true });
+      }
+    },
+    120_000,
+  );
+
+  it('the first upgrade of a checkout without the data CLI works piped (curl | bash -s -- --upgrade)', async () => {
+    const fx = await makeRealFixture({ predatesDataCli: true });
+    try {
+      expect(fs.existsSync(path.join(fx.work, 'scripts'))).toBe(false);
+      // What `curl …/main/install.sh` serves: the upstream installer.
+      const upstream = git(fx.origin, 'show', 'main:install.sh');
+      const result = runReal(fx, fx.work, ['--upgrade', '--yes'], {}, `${upstream}\n`);
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(result.stdout).not.toContain('old installer');
+      expect(result.stdout).toContain('Upgrade complete. [fixture upstream]');
+      expect(git(fx.work, 'rev-parse', 'HEAD')).toBe(fx.upstreamSha);
+      expect(preUpgradeArchives(fx.dataDir)).toHaveLength(1);
+      expect(
+        JSON.parse(
+          fs.readFileSync(path.join(fx.dataDir, 'content/generated/subjects.json'), 'utf8'),
+        ),
+      ).toEqual([HISTORY]);
+      expect(
+        fs.existsSync(path.join(fx.dataDir, 'content/source-pdfs/history/chapter-1.pdf')),
+      ).toBe(true);
+      expect(checkoutLeftovers(fx.work)).toBe('');
+      expect(result.stdout).toContain('Verify passed.');
+      expect(pnpmCalls(fx)).toContain('pnpm build');
+    } finally {
+      fs.rmSync(fx.base, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  it('--rollback puts back the old commit, the checkout content, the database and .env', async () => {
+    const { fx, archive, before } = await upgradedFixture();
+    try {
+      // Life after the upgrade: a new account, an edited .env.
+      addUser(path.join(fx.dataDir, 'app.db'), 'after-upgrade@example.com');
+      fs.appendFileSync(path.join(fx.work, '.env'), 'SMTP_FROM=after@example.com\n');
+      const envAfter = fs.readFileSync(path.join(fx.work, '.env'), 'utf8');
+      fs.rmSync(fx.log);
+
+      const result = runReal(fx, fx.work, ['--rollback', archive, '--yes']);
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(git(fx.work, 'rev-parse', 'HEAD')).toBe(fx.oldSha);
+      for (const [rel, body] of Object.entries(before.files)) {
+        expect(fs.readFileSync(path.join(fx.work, rel), 'utf8'), rel).toBe(body);
+      }
+      expect(
+        git(
+          fx.work,
+          'status',
+          '--porcelain',
+          '--untracked-files=all',
+          '--ignored=traditional',
+          '--',
+          'content',
+          'src',
+          '.examify-ingest',
+        ),
+      ).toBe(before.status);
+      expect(userCount(path.join(fx.dataDir, 'app.db'))).toBe(3);
+      expect(fs.readFileSync(path.join(fx.work, '.env'), 'utf8')).toBe(before.env);
+      const savedEnv = fs
+        .readdirSync(fx.work)
+        .filter((name) => name.startsWith('.env.before-restore-'));
+      expect(savedEnv).toHaveLength(1);
+      expect(fs.readFileSync(path.join(fx.work, savedEnv[0]!), 'utf8')).toBe(envAfter);
+
+      // The migrated data-folder content was moved aside, not deleted.
+      const aside = fs.readdirSync(fx.dataDir).filter((name) => name.startsWith('before-restore-'));
+      expect(aside).toHaveLength(1);
+      const asideDir = path.join(fx.dataDir, aside[0]!);
+      expect(fs.existsSync(path.join(asideDir, 'content/subjects/history/bank.ir.json'))).toBe(
+        true,
+      );
+      expect(userCount(path.join(asideDir, 'db', 'app.db'))).toBe(4);
+      expect(fs.existsSync(path.join(fx.dataDir, 'content'))).toBe(false);
+      expect(fs.existsSync(archive)).toBe(true);
+      expect(pnpmCalls(fx)).toEqual(['pnpm install --frozen-lockfile', 'pnpm build']);
+      expect(result.stdout).toContain(`Rolled back to ${fx.oldSha.slice(0, 7)}`);
+    } finally {
+      fs.rmSync(fx.base, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  it('--restore on a fresh clone lands the data in the folder the archived .env names', async () => {
+    const { fx } = await upgradedFixture();
+    try {
+      const backupEnv: Record<string, string | undefined> = {
+        PATH: process.env.PATH,
+        HOME: fx.home,
+        EXAMIFY_SQLITE_MODULE: SQLITE_MODULE,
+      };
+      const backup = spawnSync(
+        process.execPath,
+        ['scripts/examify-data.mjs', 'backup', '--out', path.join(fx.base, 'transfer'), '--json'],
+        { cwd: fx.work, env: backupEnv as NodeJS.ProcessEnv, encoding: 'utf8' },
+      );
+      expect(backup.status, backup.stderr).toBe(0);
+      const { archive } = JSON.parse(backup.stdout) as { archive: string };
+      const envBefore = fs.readFileSync(path.join(fx.work, '.env'), 'utf8');
+      const familyBefore = listTree(path.join(fx.dataDir, 'content'));
+      // A new machine: this machine's data folder is not there.
+      fs.renameSync(fx.dataDir, path.join(fx.base, 'old-machine-data'));
+      const clone = path.join(fx.base, 'second');
+      git(fx.base, 'clone', '-q', fx.origin, clone);
+      fs.rmSync(fx.log);
+
+      const result = runReal(fx, clone, ['--restore', archive, '--yes']);
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(fs.readFileSync(path.join(clone, '.env'), 'utf8')).toBe(envBefore);
+      expect(fs.statSync(path.join(clone, '.env')).mode & 0o777).toBe(0o600);
+      expect(userCount(path.join(fx.dataDir, 'app.db'))).toBe(3);
+      expect(listTree(path.join(fx.dataDir, 'content'))).toEqual(familyBefore);
+      expect(
+        fs.statSync(path.join(fx.dataDir, 'content/generated/keys/history.json')).mode & 0o777,
+      ).toBe(0o600);
+      // db:migrate ran against that same database; nothing was left in ./data.
+      expect(pnpmCalls(fx)).toEqual([
+        'pnpm install --frozen-lockfile',
+        'pnpm db:migrate',
+        `migrate ${path.join(fx.dataDir, 'app.db')}`,
+        'pnpm build',
+      ]);
+      expect(fs.existsSync(path.join(clone, 'data'))).toBe(false);
+      expect(checkoutLeftovers(clone)).toBe('');
+      expect(result.stdout).toContain('Examify is ready.');
+    } finally {
+      fs.rmSync(fx.base, { recursive: true, force: true });
+    }
+  }, 120_000);
 });
