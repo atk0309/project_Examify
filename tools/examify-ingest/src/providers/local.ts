@@ -155,6 +155,8 @@ export const localProvider: GenerateProvider = {
   id: 'local',
   defaultModel: 'local',
   modelEnv: LOCAL_MODEL_ENV,
+  // Same precedence as generate below: the command wins when both are set.
+  transport: (env) => (env[LOCAL_CMD]?.trim() ? 'command' : 'endpoint'),
   keyEnv: null,
   seedHonored: true,
   requireReady: requireLocalReady,

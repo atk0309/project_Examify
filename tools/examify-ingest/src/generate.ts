@@ -326,6 +326,7 @@ export async function generateSubject(request: GenerateRequest): Promise<Generat
     subject: request.subject,
     pageImageHashes,
     pageRasterProfile: PAGE_RASTER_PROFILE,
+    ...(adapter.transport ? { transport: adapter.transport(env) } : {}),
   });
 
   await checkpointAbort(request.signal);

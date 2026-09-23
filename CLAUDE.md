@@ -473,7 +473,10 @@ own sign-in: binary from `EXAMIFY_CLAUDE_BIN` / `EXAMIFY_CODEX_BIN`, `PATH`, the
 10-minute deadline (`CLI_PROVIDER_TIMEOUT_MS`). Both run through
 `providers/command.ts` (shared with the local command: abort / deadline kill the
 process group). Local HTTP sends `--model`, else `EXAMIFY_LLM_MODEL`, else `local`
-(`GenerateProvider.modelEnv`).
+(`GenerateProvider.modelEnv`). The local transport (command / endpoint) is part of
+the cacheKey (`GenerateProvider.transport`; absent for every other provider, so their
+keys are unchanged), so one transport never serves the other's cached IR; wizard
+Local command also drops `EXAMIFY_LLM_MODEL`, which the command never gets.
 `emit` is dry-run by default;
 `--apply` writes the layer's `content/generated/` (public
 subjects/questions + server-only keys, `0600` in a `0700` folder). Keys stay
@@ -715,7 +718,9 @@ chosen, answer }`, free-text `{ type:'free', id, q, response, maxScore, score, s
 - **Agent CLIs get nothing but the request.** `claude-cli` / `codex-cli` run with
   no tools (`--tools ""`; Codex: `--sandbox read-only`, shell / apps / plugins /
   browser / image features off, `web_search="disabled"`, `--ignore-user-config`),
-  in an empty private `0700` temp folder (never the checkout, so no project
+  in an empty private `0700` temp folder (`agentCliTempRoot`: the system temp
+  folder, else `/tmp`, whichever realpath is outside every Examify checkout, so a
+  `TMPDIR` pointing into it changes nothing; never the checkout, so no project
   `CLAUDE.md` or settings load; removed afterwards), with no saved session
   (`--no-session-persistence` / `--ephemeral`, `--strict-mcp-config`) and only the
   `agentCliEnv` allowlist (PATH, HOME, locale, temp, XDG, proxy / CA, the CLI's

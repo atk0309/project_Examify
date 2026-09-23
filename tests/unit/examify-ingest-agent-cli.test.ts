@@ -1,4 +1,13 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  realpathSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -17,7 +26,7 @@ import {
   resolveSubjectSources,
 } from '../../tools/examify-ingest/src/generate-api';
 import { runProviderCommand } from '../../tools/examify-ingest/src/providers/command';
-import { agentCliEnv } from '../../tools/examify-ingest/src/providers/agent-cli';
+import { agentCliEnv, agentCliTempRoot } from '../../tools/examify-ingest/src/providers/agent-cli';
 import { claudeResultEvent } from '../../tools/examify-ingest/src/providers/claude-cli';
 import {
   CODEX_DISABLED_FEATURES,
@@ -504,5 +513,40 @@ describe('provider command runner', () => {
 
   it('gives agent CLIs a longer deadline than API calls', () => {
     expect(CLI_PROVIDER_TIMEOUT_MS).toBe(600_000);
+  });
+});
+
+describe('agent CLI scratch folder', () => {
+  it('skips a temp folder inside an Examify checkout (judged on its realpath)', () => {
+    const checkout = plantsRoot();
+    const inside = path.join(checkout, 'tmp');
+    mkdirSync(inside);
+    const outside = mkdtempSync(path.join(tmpdir(), 'examify-tmp-'));
+    expect(agentCliTempRoot([inside, outside])).toBe(realpathSync(outside));
+    const link = path.join(outside, 'into-checkout');
+    symlinkSync(inside, link);
+    expect(agentCliTempRoot([link, outside])).toBe(realpathSync(outside));
+    expect(() => agentCliTempRoot([inside, path.join(outside, 'missing')])).toThrow(
+      /\(TMPDIR\) is inside the Examify checkout/,
+    );
+  });
+
+  it('runs the CLI outside the checkout even when TMPDIR points into it', async () => {
+    const checkout = plantsRoot();
+    const inside = path.join(checkout, 'tmp');
+    mkdirSync(inside);
+    const fake = fakeCli('claude', { mode: 'success', text: JSON.stringify(plantsBank()) });
+    const env = hostEnv({ EXAMIFY_CLAUDE_BIN: fake.bin });
+    const previous = process.env.TMPDIR;
+    process.env.TMPDIR = inside;
+    try {
+      await generatePlants('claude-cli', env, checkout);
+    } finally {
+      if (previous === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = previous;
+    }
+    const record = fake.record();
+    expect(record.cwd.startsWith(`${realpathSync(checkout)}${path.sep}`)).toBe(false);
+    expect(readdirSync(inside)).toEqual([]);
   });
 });

@@ -1915,6 +1915,44 @@ describe('onboarding generate: Claude Code, Codex and local transports', () => {
     }
   });
 
+  it('Local command runs the command without the endpoint’s model name', async () => {
+    const { generateOnboardingSubject } = await import('@/lib/onboarding-generate');
+    const root = tempRoot();
+    seedSubject(root);
+    const script = path.join(root, 'local-bank.cjs');
+    writeFileSync(
+      script,
+      `process.stdin.resume(); process.stdin.on('end', () => process.stdout.write(${JSON.stringify(historyBankJson())}));\n`,
+    );
+    const fetchStub = vi.fn();
+    vi.stubGlobal('fetch', fetchStub);
+    try {
+      const result = await withProcessEnv(
+        {
+          EXAMIFY_LLM_BASE_URL: 'http://127.0.0.1:9',
+          EXAMIFY_LLM_MODEL: 'llama3.2-vision',
+          EXAMIFY_INGEST_LOCAL_CMD: `${JSON.stringify(process.execPath)} ${JSON.stringify(script)}`,
+        },
+        () =>
+          generateOnboardingSubject({
+            subjectId: 'history',
+            provider: 'local',
+            localTransport: 'cmd',
+            seed: 0,
+            root,
+            force: true,
+          }),
+      );
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error(result.reason);
+      // The command never gets a model; the manifest must not claim the endpoint's.
+      expect(result.result.model).toBe('local');
+      expect(fetchStub).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('Local command uses only the command (never the URL)', async () => {
     const { generateOnboardingSubject } = await import('@/lib/onboarding-generate');
     const root = tempRoot();

@@ -185,7 +185,9 @@ bytes — never hashes-only) or `EXAMIFY_LLM_BASE_URL`
 (OpenAI-compatible `/v1/chat/completions` with the same multimodal user
 content as `--provider openai`: fenced text + images / page images). The
 command wins when both are set. The endpoint gets `--model`, else
-`EXAMIFY_LLM_MODEL`, else `local`.
+`EXAMIFY_LLM_MODEL`, else `local`. The transport in use (`command` /
+`endpoint`) is part of the `cacheKey`, so a bank cached by one is never
+served to the other.
 
 `claude-cli` runs Claude Code and `codex-cli` runs Codex with their own
 sign-in (no key env). Both are found via `EXAMIFY_CLAUDE_BIN` /
@@ -195,7 +197,9 @@ sign-in (no key env). Both are found via `EXAMIFY_CLAUDE_BIN` /
 `EXAMIFY_CLAUDE_MODEL` / `EXAMIFY_CODEX_MODEL`, else the CLI's own (recorded
 as `default`). Each run (`providers/command.ts`, shared with the local
 command) has a 10-minute deadline (`CLI_PROVIDER_TIMEOUT_MS`), an empty
-private `0700` temp folder as its working directory (removed afterwards),
+private `0700` temp folder as its working directory (removed afterwards; the
+system temp folder, else `/tmp`, whichever resolves outside every Examify
+checkout, so a `TMPDIR` pointing into the checkout is skipped),
 and an allowlisted environment (`agentCliEnv`: PATH, HOME, locale, temp,
 XDG, proxy / CA, plus `CLAUDE_CONFIG_DIR` / `CLAUDE_CODE_OAUTH_TOKEN` or
 `CODEX_HOME` / `CODEX_API_KEY`) — never `ANTHROPIC_API_KEY`,

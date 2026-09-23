@@ -187,6 +187,11 @@ export type GenerateProvider = {
   defaultModel: string;
   /** Env var naming the model when `--model` is not given (before `defaultModel`). */
   modelEnv?: string;
+  /**
+   * Which of the provider's transports this env selects, when it has more than
+   * one. Part of the cacheKey, so one transport never serves another's cached IR.
+   */
+  transport?: (env: ProviderEnv) => string;
   keyEnv: string | null;
   /** True when the provider request includes a seed the API will honor. */
   seedHonored: boolean;

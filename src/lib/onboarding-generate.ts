@@ -306,14 +306,18 @@ function mapGenerateError(error: unknown): GenerateOnboardingError {
 /**
  * Generate's environment. Local modes keep only their own transport: the
  * ingest `local` provider runs `EXAMIFY_INGEST_LOCAL_CMD` whenever it is set,
- * so "Local endpoint" drops it (and "Local command" drops the URL).
+ * so "Local endpoint" drops it, and "Local command" drops the URL and the
+ * endpoint's model name (the command never gets it).
  */
 function onboardingGenerateEnv(
   transport: OnboardingLocalTransport | undefined,
 ): Record<string, string | undefined> {
   const env = onboardingHostEnv();
   if (transport === 'http') delete env.EXAMIFY_INGEST_LOCAL_CMD;
-  if (transport === 'cmd') delete env.EXAMIFY_LLM_BASE_URL;
+  if (transport === 'cmd') {
+    delete env.EXAMIFY_LLM_BASE_URL;
+    delete env.EXAMIFY_LLM_MODEL;
+  }
   return env;
 }
 

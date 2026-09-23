@@ -131,7 +131,9 @@ JSON`). Missing cloud
   `codex-cli` run Claude Code / Codex with their own sign-in (no key env; binary from
   `EXAMIFY_CLAUDE_BIN` / `EXAMIFY_CODEX_BIN`, `PATH`, `~/.local/bin`; model from
   `--model`, `EXAMIFY_CLAUDE_MODEL` / `EXAMIFY_CODEX_MODEL`, else the CLI's). Local HTTP
-  sends `--model`, else `EXAMIFY_LLM_MODEL`, else `local`. Run cache/manifests live under
+  sends `--model`, else `EXAMIFY_LLM_MODEL`, else `local`; the local transport
+  (command / endpoint) is in the cacheKey so one never serves the other's cached IR,
+  and wizard Local command drops `EXAMIFY_LLM_MODEL`. Run cache/manifests live under
   the layer's `.examify-ingest/` (gitignored in the checkout).
 - **The running app never writes into tracked checkout content.** All runtime state
   (SQLite DB, outbox, wizard subjects / uploads / BankIR / generated questions + keys,
@@ -439,7 +441,8 @@ Before merge, ensure these pass in CI:
   archives hold `.env` secrets); the outbox is never backed up.
 - Agent CLIs (`claude-cli` / `codex-cli`) run with no tools (`--tools ""`; Codex
   read-only sandbox, shell / apps / web search off, `--ignore-user-config`), in an
-  empty private temp folder (never the checkout), with no saved session and only the
+  empty private temp folder (`agentCliTempRoot`: outside every Examify checkout on
+  its realpath, even when `TMPDIR` points into one), with no saved session and only the
   `agentCliEnv` allowlist: never add Examify secrets, `ANTHROPIC_API_KEY` or
   `OPENAI_API_KEY` to it, and never grant file, command or web tools.
 - Preserve rate-limit boundaries and per-kind separation.

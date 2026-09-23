@@ -1246,6 +1246,56 @@ describe('examify-ingest generate', () => {
     expect(models).toEqual(['llama3.2-vision', 'qwen2.5vl']);
   });
 
+  it('local command and local endpoint never share cached IR (transport is in the cacheKey)', async () => {
+    const root = examifyRepo();
+    const subjectDir = path.join(root, 'content/subjects/plants');
+    const fromCommand = realBankIr('plants');
+    fromCommand.difficulties.easy[0]!.q = 'Written by the local command?';
+    const script = path.join(root, 'local-bank.cjs');
+    writeFileSync(
+      script,
+      `process.stdin.resume(); process.stdin.on('end', () => process.stdout.write(${JSON.stringify(JSON.stringify(fromCommand))}));\n`,
+    );
+    const endpoint = {
+      EXAMIFY_LLM_BASE_URL: 'http://127.0.0.1:9',
+      EXAMIFY_LLM_MODEL: 'llama3.2-vision',
+    };
+    const base = {
+      repoRoot: root,
+      subject: fromCommand.subject,
+      subjectDir,
+      sources: resolveSubjectSources(root, 'plants', subjectDir),
+      provider: 'local' as const,
+      seed: 0,
+    };
+    // Command run persists its IR, which fills the IR cache.
+    const viaCommand = await generateSubject({
+      ...base,
+      env: { ...endpoint, EXAMIFY_INGEST_LOCAL_CMD: `node "${script}"` },
+    });
+    expect(viaCommand.bank.difficulties.easy[0]?.q).toBe('Written by the local command?');
+
+    const fromEndpoint = realBankIr('plants');
+    fromEndpoint.difficulties.easy[0]!.q = 'Written by the endpoint?';
+    let fetchCalls = 0;
+    const viaEndpoint = await generateSubject({
+      ...base,
+      env: endpoint,
+      dryRunIr: true,
+      fetch: (async () => {
+        fetchCalls += 1;
+        return new Response(
+          JSON.stringify({ choices: [{ message: { content: JSON.stringify(fromEndpoint) } }] }),
+          { status: 200 },
+        );
+      }) as typeof fetch,
+    });
+    expect(fetchCalls).toBe(1);
+    expect(viaEndpoint.cacheHit).toBe(false);
+    expect(viaEndpoint.cacheKey).not.toBe(viaCommand.cacheKey);
+    expect(viaEndpoint.bank.difficulties.easy[0]?.q).toBe('Written by the endpoint?');
+  });
+
   it('local CMD stdin includes full source text/bytes, not hashes-only', async () => {
     const root = examifyRepo();
     const bank: BankIR = {
