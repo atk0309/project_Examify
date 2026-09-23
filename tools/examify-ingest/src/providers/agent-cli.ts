@@ -97,11 +97,25 @@ const CLI_ENV_SET: Record<AgentCli, Record<string, string>> = {
   codex: {},
 };
 
-export function agentCliEnv(env: ProviderEnv, cli: AgentCli): Record<string, string> {
+const TEMP_ENV_KEYS = ['TMPDIR', 'TMP', 'TEMP'] as const;
+
+/**
+ * The CLI's environment. `runDir` (the private run folder) replaces TMPDIR /
+ * TMP / TEMP, so the CLI's own temp files stay in the folder that is removed
+ * afterwards — never under a host TMPDIR that points into the checkout.
+ */
+export function agentCliEnv(
+  env: ProviderEnv,
+  cli: AgentCli,
+  runDir?: string,
+): Record<string, string> {
   const out: Record<string, string> = {};
   for (const key of [...BASE_ENV_KEYS, ...CLI_ENV_KEYS[cli]]) {
     const value = env[key];
     if (value !== undefined) out[key] = value;
+  }
+  if (runDir) {
+    for (const key of TEMP_ENV_KEYS) out[key] = runDir;
   }
   return { ...out, ...CLI_ENV_SET[cli] };
 }

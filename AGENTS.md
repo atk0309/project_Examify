@@ -446,7 +446,8 @@ Before merge, ensure these pass in CI:
   one), with no saved session, none of
   the service user's customizations (Claude: `--setting-sources project` +
   `CLAUDE_CODE_SAFE_MODE=1`, so no user `CLAUDE.md` / hooks / plugins / skills) and only the
-  `agentCliEnv` allowlist: never add Examify secrets, `ANTHROPIC_API_KEY` or
+  `agentCliEnv` allowlist (its `TMPDIR` / `TMP` / `TEMP` point at the private run
+  folder): never add Examify secrets, `ANTHROPIC_API_KEY` or
   `OPENAI_API_KEY` to it, and never grant file, command or web tools.
 - Preserve rate-limit boundaries and per-kind separation.
 - Keep sign-in role-gated by household membership (student = student member,

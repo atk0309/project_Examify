@@ -227,7 +227,7 @@ async function callCodexCli(request: ProviderRequest, deps: ProviderDeps): Promi
       userSignal: deps.signal,
       timeoutMs: CLI_PROVIDER_TIMEOUT_MS,
       cwd: dir,
-      env: agentCliEnv(deps.env, 'codex'),
+      env: agentCliEnv(deps.env, 'codex', dir),
       maxBuffer: AGENT_CLI_MAX_BUFFER,
       captureStderr: true,
     });

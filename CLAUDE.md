@@ -729,8 +729,9 @@ chosen, answer }`, free-text `{ type:'free', id, q, response, maxScore, score, s
   `CLAUDE.md`, hooks, plugins or skills: a `UserPromptSubmit` hook would otherwise
   get the untrusted study text on stdin; Codex: `--ignore-user-config`, though its
   global `$CODEX_HOME/AGENTS.md` still loads) and only the
-  `agentCliEnv` allowlist (PATH, HOME, locale, temp, XDG, proxy / CA, the CLI's
-  own config dir and headless token). Never add Examify secrets,
+  `agentCliEnv` allowlist (PATH, HOME, locale, XDG, proxy / CA, the CLI's own
+  config dir and headless token; `TMPDIR` / `TMP` / `TEMP` are replaced by the
+  private run folder, never the host's). Never add Examify secrets,
   `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` to that allowlist (the `test` sentinel
   would also break the CLI's own sign-in), and never grant file, command or web
   tools: study files are untrusted input.

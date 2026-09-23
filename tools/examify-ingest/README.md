@@ -201,8 +201,9 @@ command) has a 10-minute deadline (`CLI_PROVIDER_TIMEOUT_MS`), an empty
 private `0700` temp folder as its working directory (removed afterwards; the
 system temp folder, else `/tmp`, whichever resolves outside every Examify
 checkout, so a `TMPDIR` pointing into the checkout is skipped),
-and an allowlisted environment (`agentCliEnv`: PATH, HOME, locale, temp,
-XDG, proxy / CA, plus `CLAUDE_CONFIG_DIR` / `CLAUDE_CODE_OAUTH_TOKEN` or
+and an allowlisted environment (`agentCliEnv`: PATH, HOME, locale, XDG,
+proxy / CA, `TMPDIR` / `TMP` / `TEMP` set to the run folder, plus
+`CLAUDE_CONFIG_DIR` / `CLAUDE_CODE_OAUTH_TOKEN` or
 `CODEX_HOME` / `CODEX_API_KEY`) — never `ANTHROPIC_API_KEY`,
 `OPENAI_API_KEY` or any other Examify secret. Cancel and the deadline kill
 the whole process group.

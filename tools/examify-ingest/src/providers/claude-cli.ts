@@ -87,7 +87,7 @@ async function callClaudeCli(request: ProviderRequest, deps: ProviderDeps): Prom
       userSignal: deps.signal,
       timeoutMs: CLI_PROVIDER_TIMEOUT_MS,
       cwd: dir,
-      env: agentCliEnv(deps.env, 'claude'),
+      env: agentCliEnv(deps.env, 'claude', dir),
       maxBuffer: AGENT_CLI_MAX_BUFFER,
       captureStderr: true,
     }),

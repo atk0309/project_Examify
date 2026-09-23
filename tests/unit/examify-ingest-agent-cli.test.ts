@@ -213,6 +213,9 @@ describe('agent CLI binaries', () => {
     expect(codex).toMatchObject({ CODEX_HOME: '/srv/codex', HTTPS_PROXY: 'http://proxy:3128' });
     expect(codex).not.toHaveProperty('CLAUDE_CODE_OAUTH_TOKEN');
     expect(codex).not.toHaveProperty('CLAUDE_CODE_SAFE_MODE');
+    // With a run folder, its temp variables replace the host's.
+    const inRun = agentCliEnv({ ...env, TMPDIR: '/host/tmp', TMP: '/host/tmp' }, 'codex', '/run');
+    expect(inRun).toMatchObject({ TMPDIR: '/run', TMP: '/run', TEMP: '/run' });
   });
 });
 
@@ -595,7 +598,13 @@ describe('agent CLI scratch folder', () => {
     const inside = path.join(checkout, 'tmp');
     mkdirSync(inside);
     const fake = fakeCli('claude', { mode: 'success', text: JSON.stringify(plantsBank()) });
-    const env = hostEnv({ EXAMIFY_CLAUDE_BIN: fake.bin });
+    // The service's own temp variables point into the checkout too.
+    const env = hostEnv({
+      EXAMIFY_CLAUDE_BIN: fake.bin,
+      TMPDIR: inside,
+      TMP: inside,
+      TEMP: inside,
+    });
     const previous = process.env.TMPDIR;
     process.env.TMPDIR = inside;
     try {
@@ -606,6 +615,10 @@ describe('agent CLI scratch folder', () => {
     }
     const record = fake.record();
     expect(record.cwd.startsWith(`${realpathSync(checkout)}${path.sep}`)).toBe(false);
+    // The CLI's own temp files go to its private run folder, not the service's TMPDIR.
+    expect(record.env.TMPDIR).toBe(record.cwd);
+    expect(record.env.TMP).toBe(record.cwd);
+    expect(record.env.TEMP).toBe(record.cwd);
     expect(readdirSync(inside)).toEqual([]);
   });
 });
