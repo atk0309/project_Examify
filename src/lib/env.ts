@@ -5,7 +5,9 @@ import {
   type AuthMode,
   type ResolvedMailTransport,
 } from './auth-mode';
+import { resolveDataPaths, UnsafeDataDirError } from './data-dir';
 import { parseFamilies } from './families';
+import { findRepoRoot } from './repo-root';
 
 /**
  * In production, security-critical env vars have no defaults — boot fails
@@ -85,6 +87,27 @@ function secureOnlyCookieOnHttpMessage(name: string): string {
 export const CLIENT_IP_HEADERS = ['x-forwarded-for', 'x-real-ip', 'cf-connecting-ip'] as const;
 export type ClientIpHeader = (typeof CLIENT_IP_HEADERS)[number];
 
+/**
+ * Production boot resolves the family data folder once, so an unsafe value
+ * (the checkout itself, a folder inside it other than ./data, a leading `~`)
+ * fails boot instead of the first request. The message never names the path.
+ */
+function unsafeDataDirMessage(values: {
+  EXAMIFY_DATA_DIR?: string;
+  DATABASE_URL?: string;
+}): string | null {
+  try {
+    resolveDataPaths({
+      repoRoot: findRepoRoot(process.cwd()),
+      env: { ...values, NODE_ENV: 'production' },
+    });
+    return null;
+  } catch (error) {
+    if (error instanceof UnsafeDataDirError) return error.message;
+    throw error;
+  }
+}
+
 function isProductionRuntime(raw: NodeJS.ProcessEnv): boolean {
   const isBuild = (raw.NEXT_PHASE ?? process.env.NEXT_PHASE) === 'phase-production-build';
   return raw.NODE_ENV === 'production' && !isBuild;
@@ -104,8 +127,16 @@ function buildEnvSchema(isProd: boolean) {
       // Secure (https only — see sessionCookieConfig).
       SITE_URL: z.preprocess((v) => v ?? dev('http://localhost:3000'), z.string().url()),
 
-      // SQLite file path. In production, point this at runtime-mounted persistent storage.
-      DATABASE_URL: z.preprocess((v) => v ?? dev('file:./data/app.db'), z.string().min(1)),
+      // Family data folder: the SQLite DB (unless DATABASE_URL), mail outbox,
+      // wizard subjects / uploads / generated questions + keys, ingest caches.
+      // Relative → the checkout root. Unset → ./data (src/lib/data-dir.ts).
+      // Production needs this or DATABASE_URL, so a deploy without persistent
+      // storage fails boot instead of writing to ephemeral disk.
+      EXAMIFY_DATA_DIR: z.preprocess(emptyToUndef, z.string().min(1).optional()),
+
+      // Optional SQLite override (existing installs keep file:./data/app.db).
+      // Unset → <data folder>/app.db. Relative → the checkout root.
+      DATABASE_URL: z.preprocess(emptyToUndef, z.string().min(1).optional()),
 
       // Signs the session cookie. If this falls back to a known value in
       // production, an attacker can forge a signed-in session.
@@ -334,6 +365,19 @@ function buildEnvSchema(isProd: boolean) {
             'AUTH_SECRET is a documented placeholder. Set a unique random value in production (openssl rand -base64 32).',
           path: ['AUTH_SECRET'],
         });
+      }
+      if (isProd && !data.EXAMIFY_DATA_DIR && !data.DATABASE_URL) {
+        ctx.addIssue({
+          code: 'custom',
+          message: 'Set EXAMIFY_DATA_DIR (or DATABASE_URL) in production',
+          path: ['EXAMIFY_DATA_DIR'],
+        });
+      } else if (isProd) {
+        const unsafe = unsafeDataDirMessage({
+          EXAMIFY_DATA_DIR: data.EXAMIFY_DATA_DIR,
+          DATABASE_URL: data.DATABASE_URL,
+        });
+        if (unsafe) ctx.addIssue({ code: 'custom', message: unsafe, path: ['EXAMIFY_DATA_DIR'] });
       }
     });
 }

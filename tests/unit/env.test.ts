@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   allowLocalMailOutbox,
@@ -260,6 +261,59 @@ describe('parseEnv production fail-closed', () => {
     expect(parseEnv({ ...prodBase, ANTHROPIC_API_KEY: '   ' }).ANTHROPIC_API_KEY).toBeUndefined();
     expect(parseEnv(prodBase).ANTHROPIC_API_KEY).toBe('sk-ant-real');
     expect(parseEnv({ ...prodBase, ANTHROPIC_API_KEY: 'test' }).ANTHROPIC_API_KEY).toBe('test');
+  });
+});
+
+describe('parseEnv family data folder', () => {
+  const withoutDb: NodeJS.ProcessEnv = { ...prodBase };
+  delete withoutDb.DATABASE_URL;
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function loggedIssues(run: () => unknown): string {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(run).toThrow(/Invalid environment variables/);
+    const logged = error.mock.calls.map((call) => String(call[0])).join('\n');
+    error.mockRestore();
+    return logged;
+  }
+
+  it('fails production boot when neither EXAMIFY_DATA_DIR nor DATABASE_URL is set', () => {
+    for (const env of [
+      withoutDb,
+      { ...withoutDb, EXAMIFY_DATA_DIR: '   ', DATABASE_URL: '' },
+    ] as NodeJS.ProcessEnv[]) {
+      expect(loggedIssues(() => parseEnv(env))).toContain(
+        'Set EXAMIFY_DATA_DIR (or DATABASE_URL) in production',
+      );
+    }
+  });
+
+  it('accepts either EXAMIFY_DATA_DIR or an explicit DATABASE_URL in production', () => {
+    expect(parseEnv({ ...withoutDb, EXAMIFY_DATA_DIR: '/var/lib/examify' }).EXAMIFY_DATA_DIR).toBe(
+      '/var/lib/examify',
+    );
+    expect(parseEnv({ ...withoutDb, EXAMIFY_DATA_DIR: './data' }).DATABASE_URL).toBeUndefined();
+    expect(parseEnv(prodBase).DATABASE_URL).toBe('file:/data/app.db');
+    expect(parseEnv(prodBase).EXAMIFY_DATA_DIR).toBeUndefined();
+  });
+
+  it('fails production boot on an unsafe data folder without naming the path', () => {
+    const checkout = process.cwd();
+    for (const value of ['src/family', '.', '~/examify', path.dirname(checkout)]) {
+      const logged = loggedIssues(() => parseEnv({ ...withoutDb, EXAMIFY_DATA_DIR: value }));
+      expect(logged).toMatch(/EXAMIFY_DATA_DIR: .*(family data folder|starts with ~)/);
+      expect(logged).not.toContain(checkout);
+    }
+  });
+
+  it('leaves the data folder to the resolver default outside production and in next build', () => {
+    const dev = parseEnv({ NODE_ENV: 'development' });
+    expect(dev.EXAMIFY_DATA_DIR).toBeUndefined();
+    expect(dev.DATABASE_URL).toBeUndefined();
+    expect(() => parseEnv({ ...withoutDb, NEXT_PHASE: 'phase-production-build' })).not.toThrow();
   });
 });
 
