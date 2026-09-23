@@ -1396,13 +1396,8 @@ function git(cwd: string, ...args: string[]): string {
  */
 function initBareOrigin(base: string, origin: string): void {
   git(base, 'init', '-q', '--bare', '-b', 'main', origin);
-  for (const [key, value] of [
-    ['receive.autogc', 'false'],
-    ['maintenance.auto', 'false'],
-    ['gc.auto', '0'],
-  ]) {
-    git(origin, 'config', key, value);
-  }
+  const config = { 'receive.autogc': 'false', 'maintenance.auto': 'false', 'gc.auto': '0' };
+  for (const [key, value] of Object.entries(config)) git(origin, 'config', key, value);
 }
 
 function writeFile(file: string, body: string, mode?: number) {
