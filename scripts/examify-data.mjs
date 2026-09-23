@@ -172,6 +172,19 @@ function nonBlank(value) {
 
 const CASE_INSENSITIVE_FS = process.platform === 'darwin' || process.platform === 'win32';
 
+/**
+ * Data-folder trees a backup copies (`--include-cache` walks the whole ingest
+ * folder): the mail outbox may sit inside one, never be or contain one, and
+ * `backup --out` may not be inside one. Mirrors data-dir.ts OUTBOX_EXCLUDED_TREES.
+ */
+const BACKUP_WALKED_TREES = [
+  'content/subjects',
+  'content/source-pdfs',
+  'content/generated',
+  '.examify-ingest',
+  'migration-conflicts',
+];
+
 /** realpath of the nearest existing ancestor + the not-yet-created rest. */
 function canonical(absPath) {
   let existing = path.resolve(absPath);
@@ -316,6 +329,18 @@ export function resolveDataPaths({ repoRoot, env }) {
     throw new UnsafeDataDirError(
       'outbox_inside_checkout',
       'MAIL_OUTBOX_DIR points inside the checkout; keep the mail outbox in the family data folder (./data/outbox) or outside the checkout',
+    );
+  }
+  // The outbox holds live sign-in tokens and is never backed up: as the data
+  // folder, a folder containing it, or a family tree, it would take that
+  // family content out of every backup.
+  const outboxCanonical = canonical(outboxDir);
+  if (
+    BACKUP_WALKED_TREES.some((rel) => contains(outboxCanonical, canonical(path.join(dataDir, rel))))
+  ) {
+    throw new UnsafeDataDirError(
+      'outbox_overlaps_data',
+      "MAIL_OUTBOX_DIR is the family data folder, contains it, or is one of its content folders; give the mail outbox a folder of its own (the default is the data folder's outbox/)",
     );
   }
 
@@ -1074,14 +1099,6 @@ const BACKUP_FAMILY_TREES = [
   'content/source-pdfs',
   'content/generated',
   '.examify-ingest/runs',
-];
-/** Data-folder trees a backup may copy (`--include-cache` adds the whole ingest cache). */
-const BACKUP_WALKED_TREES = [
-  'content/subjects',
-  'content/source-pdfs',
-  'content/generated',
-  '.examify-ingest',
-  'migration-conflicts',
 ];
 
 /** Catalog rows of a (staged) generated folder whose questions or keys file is missing. */

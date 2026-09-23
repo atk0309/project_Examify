@@ -152,7 +152,7 @@ describe('resolveDataPaths', () => {
       expect(reason(dir), dir).toBe('outbox_inside_checkout');
     }
     const outside = tempDir('examify-outbox-');
-    for (const dir of ['data/outbox', 'tests/.tmp/box', outside, '..']) {
+    for (const dir of ['data/outbox', 'tests/.tmp/box', outside]) {
       expect(reason(dir), dir).toBeNull();
     }
     try {
@@ -162,6 +162,51 @@ describe('resolveDataPaths', () => {
       expect((error as Error).message).toContain('MAIL_OUTBOX_DIR points inside the checkout');
       expect((error as Error).message).not.toContain('secret-box');
       expect((error as Error).message).not.toContain(root);
+    }
+  });
+
+  it('refuses a MAIL_OUTBOX_DIR that is, or contains, the data folder or a family tree', () => {
+    const root = tempRepo();
+    const family = path.join(tempDir('examify-outbox-overlap-'), 'secret-family');
+    const reason = (dir: string, dataDir = family) =>
+      unsafeReason(() =>
+        resolveDataPaths({
+          repoRoot: root,
+          env: { EXAMIFY_DATA_DIR: dataDir, MAIL_OUTBOX_DIR: dir },
+        }),
+      );
+    // A backup never copies the outbox, so these would drop family content from it.
+    for (const dir of [
+      family,
+      path.dirname(family),
+      path.join(family, 'content'),
+      path.join(family, 'content/subjects'),
+      path.join(family, 'content/generated'),
+      path.join(family, '.examify-ingest'),
+      path.join(family, 'migration-conflicts'),
+    ]) {
+      expect(reason(dir), dir).toBe('outbox_overlaps_data');
+    }
+    // The default ./data inside a checkout whose parent is the outbox.
+    expect(reason('..', 'data')).toBe('outbox_overlaps_data');
+    // Its own folder, inside the data folder or inside a family tree, is fine.
+    for (const dir of [
+      path.join(family, 'outbox'),
+      path.join(family, 'mail'),
+      path.join(family, 'content/subjects/mail'),
+      path.join(path.dirname(family), 'outbox'),
+    ]) {
+      expect(reason(dir), dir).toBeNull();
+    }
+    try {
+      resolveDataPaths({
+        repoRoot: root,
+        env: { EXAMIFY_DATA_DIR: family, MAIL_OUTBOX_DIR: family },
+      });
+      throw new Error('expected a refusal');
+    } catch (error) {
+      expect((error as Error).message).toContain('MAIL_OUTBOX_DIR is the family data folder');
+      expect((error as Error).message).not.toContain('secret-family');
     }
   });
 

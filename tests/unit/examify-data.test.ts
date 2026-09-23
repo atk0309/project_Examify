@@ -257,6 +257,12 @@ describe('resolver parity with src/lib/data-dir.ts', () => {
         MAIL_OUTBOX_DIR: dir,
       })),
       { MAIL_OUTBOX_DIR: path.join(linkIntoSrc, 'box') },
+      ...['', 'content', 'content/subjects', 'content/subjects/mail', 'outbox', '..'].map(
+        (rel) => ({
+          EXAMIFY_DATA_DIR: path.join(outside, 'fam'),
+          MAIL_OUTBOX_DIR: path.join(outside, 'fam', rel),
+        }),
+      ),
       { DATABASE_URL: 'file:./tests/.tmp/unit.db' },
       ...[
         'file:$HOME/app.db',
@@ -2149,6 +2155,28 @@ describe('backup placement and consistency', () => {
     expect(members).not.toContain('content/source-pdfs/linked');
     expect(warnings.filter((line) => line.startsWith('skipped the mail outbox'))).toHaveLength(2);
     expect(fs.readFileSync(path.join(outbox, 'sign-in.eml'), 'utf8')).toBe('token=secret-bearer');
+  });
+
+  it('refuses a mail outbox that would take the family content out of the backup', async () => {
+    const root = makeCheckout();
+    const dataDir = tempDir('examify-data-outbox-overlap-');
+    makeDb(path.join(dataDir, 'app.db'));
+    write(path.join(dataDir, 'content/subjects/history/subject.json'), '{"id":"history"}');
+    const out = tempDir('examify-data-outbox-overlap-out-');
+    for (const outbox of [dataDir, path.join(dataDir, 'content')]) {
+      const env = {
+        EXAMIFY_DATA_DIR: dataDir,
+        MAIL_OUTBOX_DIR: outbox,
+        EXAMIFY_SQLITE_MODULE: SQLITE_MODULE,
+      };
+      const result = await run(['backup', '--repo', root, '--out', out, '--json'], { env });
+      expect(result.code, outbox).toBe(3);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        error: 'unsafe_data_dir',
+        reason: 'outbox_overlaps_data',
+      });
+    }
+    expect(fs.readdirSync(out)).toEqual([]);
   });
 
   it('refuses --out inside a tree the backup copies, creating nothing there', async () => {
