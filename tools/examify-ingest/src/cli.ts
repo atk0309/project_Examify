@@ -9,7 +9,7 @@ import { validateIrCollection, type ValidatedBank } from './validate';
 export const USAGE = `Usage:
   examify-ingest validate <subjects-dir|ir.json...> [--replace-sample]
   examify-ingest emit <subjects-dir|ir.json...> [--dry-run] [--apply] [--replace-sample]
-  examify-ingest generate [--provider anthropic|openai|local|test] [--seed <n>]
+  examify-ingest generate [--provider anthropic|openai|local|claude-cli|codex-cli|test] [--seed <n>]
       [--subject <id>] [--model <name>] [--dry-run-ir] [--force] [--replace-sample]
       <subjects-dir|content/subjects/<id>>
 
@@ -39,7 +39,13 @@ standalone content/source-pdfs/<id>.<ext>. PDF files stay PDFs — magic-byte
 checks for uploaded PDFs are unchanged. Default seed is 0. Cloud providers
 require ANTHROPIC_API_KEY or OPENAI_API_KEY from the environment or repo
 .env / .env.local (never the CLI; existing env vars win) unless a matching
-cacheKey IR is already cached. Use --provider test in CI. --dry-run-ir
+cacheKey IR is already cached. --provider claude-cli runs Claude Code
+(claude -p) and --provider codex-cli runs Codex (codex exec) with their own
+sign-in (no API key; install and sign in as this user; EXAMIFY_CLAUDE_BIN /
+EXAMIFY_CODEX_BIN name the binary, EXAMIFY_CLAUDE_MODEL / EXAMIFY_CODEX_MODEL
+the model). They get no tools and none of Examify's secrets. --provider local
+sends EXAMIFY_LLM_MODEL (or --model) to EXAMIFY_LLM_BASE_URL. Use --provider
+test in CI. --dry-run-ir
 writes nothing durable. A real BankIR with questions is not overwritten
 unless --force (dry-run says "would overwrite"). Empty / placeholder IR
 (empty file, valid zero-item schema) is treated as missing. Corrupt /
@@ -185,7 +191,10 @@ export function parseArgs(argv: readonly string[]): ParsedCli | { error: string 
   let provider: GenerateProviderId | null = null;
   if (command === 'generate') {
     const raw = values.get('--provider');
-    if (!raw) return { error: 'generate requires --provider anthropic|openai|local|test' };
+    if (!raw)
+      return {
+        error: 'generate requires --provider anthropic|openai|local|claude-cli|codex-cli|test',
+      };
     if (!isGenerateProvider(raw)) return { error: `unknown provider ${raw}` };
     provider = raw;
   }

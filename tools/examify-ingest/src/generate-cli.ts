@@ -17,7 +17,9 @@ export function nextIngestCommands(ingest: Pick<IngestRoot, 'layer' | 'dataDirDi
 
 async function runGenerate(parsed: ParsedCli, io: CliIo): Promise<number> {
   if (!parsed.provider) {
-    io.stderr.write('generate requires --provider anthropic|openai|local|test\n');
+    io.stderr.write(
+      'generate requires --provider anthropic|openai|local|claude-cli|codex-cli|test\n',
+    );
     return 2;
   }
 

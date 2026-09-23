@@ -89,7 +89,11 @@ function snapshot(overrides: Partial<OnboardingSnapshot> = {}): OnboardingSnapsh
     openaiHostManaged: false,
     anthropicWriteBlocked: false,
     openaiWriteBlocked: false,
-    localAgentConfigured: false,
+    localHttpConfigured: false,
+    localModelConfigured: false,
+    localCmdConfigured: false,
+    claudeCliFound: false,
+    codexCliFound: false,
     gradingStubActive: false,
     liveSubjects: [
       { id: 'maths', label: 'Maths', questionCount: 12 },
@@ -1161,5 +1165,87 @@ describe('OnboardingWizard generate fixes', () => {
       ),
     );
     expect(screen.getByTestId('wizard-error')).not.toHaveTextContent('Only PDF files');
+  });
+});
+
+describe('OnboardingWizard AI modes: Claude Code, Codex and local', () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  beforeEach(() => {
+    setOnboardingAiModeAction.mockReset();
+    generateOnboardingSubjectAction.mockReset();
+    window.confirm = vi.fn(() => true);
+  });
+
+  it('lists Claude Code and Codex with what each can do and whether this server has it', () => {
+    renderAtAiStep(
+      snapshot({
+        aiMode: 'skip-stub',
+        subjects: [sourceSubject('alpha', 'Alpha')],
+        claudeCliFound: true,
+      }),
+    );
+    expect(screen.getByTestId('wizard-ai-store')).toHaveTextContent(
+      'Claude Code found · Codex not found',
+    );
+    const claude = screen.getByTestId('wizard-ai-claude-cli');
+    expect(claude).toHaveTextContent('Claude Code (your Claude plan)');
+    expect(claude).toHaveTextContent('Found');
+    expect(screen.getByTestId('wizard-ai-claude-cli-caps')).toHaveTextContent(
+      'Reads PDFs directly · uses the tool’s own sign-in (your plan), no API key.',
+    );
+    const codex = screen.getByTestId('wizard-ai-codex-cli');
+    expect(codex).toHaveTextContent('Codex (your ChatGPT plan)');
+    expect(codex).not.toHaveTextContent('Found');
+    expect(screen.getByTestId('wizard-ai-codex-cli-caps')).toHaveTextContent(
+      'Reads PDFs as page images (the host needs pdftoppm)',
+    );
+    expect(screen.getByTestId('wizard-ai-local-agent')).toHaveTextContent('Local endpoint');
+    expect(screen.getByTestId('wizard-ai-local-cli')).toHaveTextContent('Local command');
+  });
+
+  it('tells the admin how to install and sign in when the chosen CLI is missing', () => {
+    renderAtAiStep(snapshot({ aiMode: 'claude-cli', subjects: [sourceSubject('alpha', 'Alpha')] }));
+    expect(screen.getByTestId('wizard-agent-cli-setup')).toHaveTextContent(
+      'Claude Code was not found on this server',
+    );
+    expect(screen.getByTestId('wizard-agent-cli-setup')).toHaveTextContent('EXAMIFY_CLAUDE_BIN');
+    expect(screen.getByTestId('wizard-cli-generate')).toHaveTextContent('--provider claude-cli');
+  });
+
+  it('asks for the model name when Local endpoint has a URL but no EXAMIFY_LLM_MODEL', () => {
+    renderAtAiStep(
+      snapshot({
+        aiMode: 'local-agent',
+        subjects: [sourceSubject('alpha', 'Alpha')],
+        localHttpConfigured: true,
+      }),
+    );
+    expect(screen.getByTestId('wizard-local-setup')).toHaveTextContent('EXAMIFY_LLM_MODEL');
+    expect(screen.getByTestId('wizard-ai-local-agent')).not.toHaveTextContent('Configured');
+  });
+
+  it('names the CLI and its sign-in in generate failures instead of API-key copy', async () => {
+    const snap = snapshot({
+      aiMode: 'codex-cli',
+      subjects: [sourceSubject('alpha', 'Alpha')],
+      codexCliFound: true,
+    });
+    const copy: [string, RegExp][] = [
+      ['provider_auth', /Codex is not signed in[\s\S]*codex login/],
+      ['missing_cli', /Codex was not found on this server/],
+      ['provider_timeout', /did not answer within 10 minutes/],
+      ['provider_rate_limited', /hit its plan’s usage limit/],
+    ];
+    renderAtAiStep(snap);
+    for (const [reason, text] of copy) {
+      generateOnboardingSubjectAction.mockResolvedValueOnce({ ok: false, reason });
+      await waitFor(() => expect(screen.getByTestId('wizard-generate-alpha')).toBeEnabled());
+      fireEvent.click(screen.getByTestId('wizard-generate-alpha'));
+      await waitFor(() => expect(screen.getByTestId('wizard-error')).toHaveTextContent(text));
+      expect(screen.getByTestId('wizard-error')).not.toHaveTextContent('API key');
+    }
   });
 });

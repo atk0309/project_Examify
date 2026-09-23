@@ -64,6 +64,14 @@ get an initial response within a week.
   user ids). Cloud generate sends a subject's source files to Anthropic or
   OpenAI. Grading failures are logged with a reason code only. See README →
   "What leaves your server".
+- **Claude Code / Codex generate** runs `claude -p` / `codex exec` on the host as
+  the user that runs Examify, with that CLI's own sign-in. Study files are
+  untrusted input, so the CLI gets no tools (no file reads, commands or web
+  search; Codex in its read-only sandbox with your `config.toml` ignored), an
+  empty private temp folder, no saved session, and an allowlist of environment
+  variables that never includes Examify's secrets or API keys. Anyone who can
+  sign in as that OS user can use the same Claude / ChatGPT plan; keep it a
+  dedicated service user.
 - Prefer `AUTH_MODE=password` on a tiny self-host if you do not want to run
   email for **sign-in**. Password-mode invite accept still needs SMTP, Resend,
   or an allowed outbox (and fails closed if none can deliver). `install.sh`

@@ -38,7 +38,14 @@ export const subjectSchema = z.object({
   h: z.number(),
 });
 
-export const GENERATE_PROVIDERS = ['anthropic', 'openai', 'local', 'test'] as const;
+export const GENERATE_PROVIDERS = [
+  'anthropic',
+  'openai',
+  'local',
+  'claude-cli',
+  'codex-cli',
+  'test',
+] as const;
 export type GenerateProviderId = (typeof GENERATE_PROVIDERS)[number];
 
 export const DEFAULT_GENERATE_SEED = 0;

@@ -83,3 +83,6 @@ export {
   type WriteFileAtomicOptions,
 } from './write-atomic';
 export { SUBJECT_META_FILE, BANK_IR_FILE } from './sources';
+// Readiness checks only (the wizard's AI step): no generate / provider calls.
+export { resolveAgentCliBinary, type AgentCli } from './providers/agent-cli';
+export { mergeRepoEnvFiles } from './repo-env';

@@ -104,8 +104,8 @@ verify` fails, `revision`, on such a row). The wizard's Apply
   sample subject id (`sample_collision`) before calling the provider unless
   that setting is on. Generate
   throws typed errors (`ProviderFailureError` `kind` http / timeout /
-  unreachable / output / command + `status`, `SampleIdCollisionError.ids`,
-  `UnreadableSourcesError`), including failures while the response body is
+  unreachable / output / command / auth + `status`, `SampleIdCollisionError.ids`,
+  `UnreadableSourcesError`, `CliNotFoundError.cli`), including failures while the response body is
   still arriving (the body read is inside `withProviderSignal`); CLI text is
   unchanged except the fetch deadline (`provider request timed out after
 180000ms`) and a non-JSON 200 body (`<provider> returned a body that is not
@@ -126,8 +126,12 @@ JSON`). Missing cloud
   run manifest). Cloud
   providers fail closed without an env key (generate also reads repo `.env` /
   `.env.local` for unset keys); `--provider test` is the CI
-  fixture. OpenAI-compatible generate refuses PDF-only input when no page
-  images were rasterized (`pdftoppm` from poppler-utils). Run cache/manifests live under
+  fixture. OpenAI-compatible and Codex generate refuse PDF-only input when no page
+  images were rasterized (`pdftoppm` from poppler-utils). `--provider claude-cli` /
+  `codex-cli` run Claude Code / Codex with their own sign-in (no key env; binary from
+  `EXAMIFY_CLAUDE_BIN` / `EXAMIFY_CODEX_BIN`, `PATH`, `~/.local/bin`; model from
+  `--model`, `EXAMIFY_CLAUDE_MODEL` / `EXAMIFY_CODEX_MODEL`, else the CLI's). Local HTTP
+  sends `--model`, else `EXAMIFY_LLM_MODEL`, else `local`. Run cache/manifests live under
   the layer's `.examify-ingest/` (gitignored in the checkout).
 - **The running app never writes into tracked checkout content.** All runtime state
   (SQLite DB, outbox, wizard subjects / uploads / BankIR / generated questions + keys,
@@ -256,7 +260,9 @@ JSON`). Missing cloud
   async transition so Cancel renders; failures return safe reason codes
   (`provider_auth` / `provider_rate_limited` / `provider_timeout` /
   `provider_unavailable` / `provider_error` / `provider_output_invalid` /
-  `sources_unreadable` / `sample_collision` / `disk` / `generate_failed`),
+  `sources_unreadable` / `sample_collision` / `missing_cli` / `missing_local` /
+  `disk` / `generate_failed`; CLI modes get copy that names the tool and its
+  sign-in, never API-key copy),
   never raw provider text, and log one
   `console.warn('[onboarding] generate failed', { reason, subjectId?, status? })`
   (`subjectId` only when it is a valid kebab id; never message / model text /
@@ -269,7 +275,12 @@ JSON`). Missing cloud
   the provider is still unwinding; cancelled is a
   calm status, not an error toast; delete/rename wait on the generate
   lock and re-check the admin gate after the wait; subject
-  ids must be in the wizard catalog; Anthropic / OpenAI modes can set /
+  ids must be in the wizard catalog; AI modes are Anthropic / OpenAI (API key),
+  Claude Code / Codex (`claude-cli` / `codex-cli`: the CLI's own sign-in; the card
+  says Found when the binary resolves, never its path), Local endpoint (passes only
+  `EXAMIFY_LLM_BASE_URL`, needs `EXAMIFY_LLM_MODEL`) and Local command (passes only
+  `EXAMIFY_INGEST_LOCAL_CMD`), and the test stub; each card shows
+  `onboardingAiCapabilityLine` (how PDFs are read, how it signs in); Anthropic / OpenAI modes can set /
   rotate / clear `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` in the same
   repo-root `.env` as `install.sh` and `examify-ingest generate` (shared
   `findRepoRoot`; never echoed; host-injected usable keys are not rotatable
@@ -426,6 +437,11 @@ Before merge, ensure these pass in CI:
   log lines.
   Backups and `migration-conflicts/` / `before-restore-*/` hold answer keys (and
   archives hold `.env` secrets); the outbox is never backed up.
+- Agent CLIs (`claude-cli` / `codex-cli`) run with no tools (`--tools ""`; Codex
+  read-only sandbox, shell / apps / web search off, `--ignore-user-config`), in an
+  empty private temp folder (never the checkout), with no saved session and only the
+  `agentCliEnv` allowlist: never add Examify secrets, `ANTHROPIC_API_KEY` or
+  `OPENAI_API_KEY` to it, and never grant file, command or web tools.
 - Preserve rate-limit boundaries and per-kind separation.
 - Keep sign-in role-gated by household membership (student = student member,
   parent = parent or admin member), derived via `isAllowedEmail`; never leak

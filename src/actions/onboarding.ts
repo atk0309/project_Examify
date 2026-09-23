@@ -35,6 +35,7 @@ import {
   MAX_SOURCE_PDF_BYTES,
   ONBOARDING_GENERATE_SEED_DEFAULT,
   previewOnboardingEmit,
+  localTransportForOnboardingAiMode,
   providerForOnboardingAiMode,
   publicDryRun,
   renameOnboardingSubject,
@@ -72,6 +73,7 @@ export type OnboardingActionError = {
     | 'missing_provider'
     | 'missing_key'
     | 'missing_local'
+    | 'missing_cli'
     | 'empty_sources'
     | 'sources_unreadable'
     | 'sample_collision'
@@ -225,10 +227,12 @@ export async function generateOnboardingSubjectAction(
   const state = getHouseholdOnboarding(gate.householdId).state;
   if (!state.aiMode) return { ok: false, reason: 'missing_provider' };
   const provider = providerForOnboardingAiMode(state.aiMode);
+  const localTransport = localTransportForOnboardingAiMode(state.aiMode) ?? undefined;
 
   const generated = await generateOnboardingSubject({
     subjectId,
     provider,
+    localTransport,
     seed: seedParsed.data,
     cancelToken,
     force,

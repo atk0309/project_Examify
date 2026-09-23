@@ -304,7 +304,10 @@ export async function generateSubject(request: GenerateRequest): Promise<Generat
 
   const prompt = loadGeneratePrompt();
   const sourceHashes = sourceHashesOf(request.sources);
-  const model = request.model?.trim() || adapter.defaultModel;
+  const model =
+    request.model?.trim() ||
+    (adapter.modelEnv ? env[adapter.modelEnv]?.trim() : '') ||
+    adapter.defaultModel;
   // Rasterize in temp (or reuse existing page cache). Durable page writes wait
   // for the same final abort gate as IR / IR cache / manifest.
   const pageImages = resolvePageImages(request.repoRoot, request.sources, {
@@ -431,12 +434,15 @@ export function assertReadableProviderInput(
   sources: readonly ResolvedSource[],
   pageImages: readonly PageImage[],
 ): void {
-  if (provider === 'test' || provider === 'anthropic') return;
+  // Anthropic and Claude Code read PDFs as documents.
+  if (provider === 'test' || provider === 'anthropic' || provider === 'claude-cli') return;
   if (pageImages.length > 0) return;
   if (sources.some((source) => source.kind === 'text' || source.kind === 'image')) return;
   if (provider === 'local' && (env.EXAMIFY_INGEST_LOCAL_CMD?.trim() ?? '')) return;
   throw new UnreadableSourcesError(
-    'OpenAI-compatible generate cannot read PDF bytes; install pdftoppm so pages rasterize, or add a .txt/.md/.png source',
+    provider === 'codex-cli'
+      ? 'Codex generate cannot read PDF bytes; install pdftoppm so pages rasterize, or add a .txt/.md/.png source'
+      : 'OpenAI-compatible generate cannot read PDF bytes; install pdftoppm so pages rasterize, or add a .txt/.md/.png source',
   );
 }
 

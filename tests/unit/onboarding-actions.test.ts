@@ -1902,3 +1902,81 @@ describe('onboarding generate + upload fixes', () => {
     ]);
   });
 });
+
+describe('onboarding actions: agent CLI and local modes', () => {
+  async function historyWithSources(): Promise<string> {
+    const root = tempRoot();
+    const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
+    setOnboardingContentRootForTests(root);
+    fs.mkdirSync(path.join(root, 'content/subjects/history'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'content/source-pdfs/history'), { recursive: true });
+    writeFileSync(path.join(root, 'content/source-pdfs/history/notes.txt'), 'A source note.\n');
+    // A checkout with no `.env`, so the developer's real settings never apply.
+    const checkout = mkdtempSync(path.join(tmpdir(), 'examify-actions-checkout-'));
+    writeFileSync(path.join(checkout, 'package.json'), JSON.stringify({ name: 'project-examify' }));
+    const { setEnvStoreRootForTests } = await import('@/lib/env-store');
+    setEnvStoreRootForTests(checkout);
+    return root;
+  }
+
+  async function withEnv<T>(vars: Record<string, string | undefined>, run: () => Promise<T>) {
+    const previous = Object.fromEntries(Object.keys(vars).map((key) => [key, process.env[key]]));
+    for (const [key, value] of Object.entries(vars)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    try {
+      return await run();
+    } finally {
+      for (const [key, value] of Object.entries(previous)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  }
+
+  it('saves the Claude Code and Codex modes and forwards missing_cli without its message', async () => {
+    const root = await historyWithSources();
+    await signInHost();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { generateOnboardingSubjectAction, setOnboardingAiModeAction } =
+      await import('@/actions/onboarding');
+    for (const aiMode of ['codex-cli', 'claude-cli']) {
+      const mode = new FormData();
+      mode.set('aiMode', aiMode);
+      const saved = await setOnboardingAiModeAction(mode);
+      expect(saved.ok).toBe(true);
+      if (saved.ok) expect(saved.snapshot.aiMode).toBe(aiMode);
+    }
+    const generate = new FormData();
+    generate.set('subjectId', 'history');
+    const result = await withEnv({ EXAMIFY_CLAUDE_BIN: path.join(root, 'no-such-claude') }, () =>
+      generateOnboardingSubjectAction(generate),
+    );
+    expect(result).toEqual({ ok: false, reason: 'missing_cli' });
+  });
+
+  it('Local endpoint mode never runs EXAMIFY_INGEST_LOCAL_CMD', async () => {
+    const root = await historyWithSources();
+    await signInHost();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const marker = path.join(root, 'command-ran');
+    const { generateOnboardingSubjectAction, setOnboardingAiModeAction } =
+      await import('@/actions/onboarding');
+    const mode = new FormData();
+    mode.set('aiMode', 'local-agent');
+    expect((await setOnboardingAiModeAction(mode)).ok).toBe(true);
+    const generate = new FormData();
+    generate.set('subjectId', 'history');
+    const result = await withEnv(
+      {
+        EXAMIFY_LLM_BASE_URL: 'http://127.0.0.1:9',
+        EXAMIFY_LLM_MODEL: undefined,
+        EXAMIFY_INGEST_LOCAL_CMD: `${JSON.stringify(process.execPath)} -e "require('fs').writeFileSync(process.argv[1], 'x')" ${JSON.stringify(marker)}`,
+      },
+      () => generateOnboardingSubjectAction(generate),
+    );
+    expect(result).toEqual({ ok: false, reason: 'missing_local' });
+    expect(fs.existsSync(marker)).toBe(false);
+  });
+});

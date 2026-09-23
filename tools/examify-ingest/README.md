@@ -183,10 +183,58 @@ for CI. `local` needs `EXAMIFY_INGEST_LOCAL_CMD` (quoted executable + args;
 stdin JSON includes full source text / `dataBase64` bytes plus page-image
 bytes — never hashes-only) or `EXAMIFY_LLM_BASE_URL`
 (OpenAI-compatible `/v1/chat/completions` with the same multimodal user
-content as `--provider openai`: fenced text + images / page images).
+content as `--provider openai`: fenced text + images / page images). The
+command wins when both are set. The endpoint gets `--model`, else
+`EXAMIFY_LLM_MODEL`, else `local`.
+
+`claude-cli` runs Claude Code and `codex-cli` runs Codex with their own
+sign-in (no key env). Both are found via `EXAMIFY_CLAUDE_BIN` /
+`EXAMIFY_CODEX_BIN` (absolute path, or a name on `PATH`), else `PATH`, else
+`~/.local/bin` (and `~/.claude/local` for Claude Code); missing →
+`CliNotFoundError` before anything runs. The model is `--model`, else
+`EXAMIFY_CLAUDE_MODEL` / `EXAMIFY_CODEX_MODEL`, else the CLI's own (recorded
+as `default`). Each run (`providers/command.ts`, shared with the local
+command) has a 10-minute deadline (`CLI_PROVIDER_TIMEOUT_MS`), an empty
+private `0700` temp folder as its working directory (removed afterwards),
+and an allowlisted environment (`agentCliEnv`: PATH, HOME, locale, temp,
+XDG, proxy / CA, plus `CLAUDE_CONFIG_DIR` / `CLAUDE_CODE_OAUTH_TOKEN` or
+`CODEX_HOME` / `CODEX_API_KEY`) — never `ANTHROPIC_API_KEY`,
+`OPENAI_API_KEY` or any other Examify secret. Cancel and the deadline kill
+the whole process group.
+
+Claude Code runs as
+
+```bash
+claude -p --input-format stream-json --output-format stream-json --verbose \
+  --tools "" --strict-mcp-config --no-session-persistence \
+  --system-prompt <prompt> [--model <m>]
+```
+
+Stdin is one user message with the Anthropic provider's content blocks (PDFs
+as documents, so no rasterizer needed). The last `result` event is the answer;
+`is_error` with `api_error_status` is an `http` failure, a sign-in message is
+`auth`, and no result is `command` (with the CLI's stderr). Needs Claude Code
+2.x (`--tools`).
+
+Codex runs as
+
+```bash
+codex exec --json --sandbox read-only --skip-git-repo-check --ephemeral \
+  --ignore-user-config --cd <tmp> --output-last-message <tmp>/last-message.txt \
+  -c features.shell_tool=false -c features.unified_exec=false … \
+  -c 'web_search="disabled"' [--model <m>] [--image <file> …]   # prompt on stdin
+```
+
+Image sources and PDF page images are attached as files; PDF bytes are not,
+so a PDF-only subject needs `pdftoppm` (`UnreadableSourcesError`).
+`turn.failed` with `status NNN` is `http`, a sign-in message is `auth`.
+Unknown feature names only warn, so the list (`CODEX_DISABLED_FEATURES`:
+shell, apps, plugins, browser, image tools) is safe across Codex versions.
+
 Temperature is `0` when the remote API allows it. Anthropic's Messages API
 has no seed field (`seedHonored: false` on the manifest); the seed still
-goes in the user message and `cacheKey`.
+goes in the user message and `cacheKey`. The agent CLIs honour neither
+(`seedHonored: false`).
 
 Every successful (non-dry-run) generate run writes a `RunManifest` under
 `.examify-ingest/runs/` (gitignored): provider, model, promptVersion (`v2`),

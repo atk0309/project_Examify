@@ -1,15 +1,11 @@
-import { spawn, type ChildProcess } from 'node:child_process';
 import type { BankIR } from '../schema';
+import { runProviderCommand } from './command';
 import { UNTRUSTED_SOURCE_NOTE, buildOpenAiCompatibleUserContent } from './content';
 import {
-  GenerateAbortedError,
-  PROVIDER_TIMEOUT_MS,
   ProviderConfigError,
   ProviderFailureError,
-  isAbortError,
   parseProviderBankIr,
   readProviderJson,
-  providerRequestSignal,
   throwIfAborted,
   withProviderSignal,
   type GenerateProvider,
@@ -20,6 +16,8 @@ import {
 
 const LOCAL_CMD = 'EXAMIFY_INGEST_LOCAL_CMD';
 const LOCAL_URL = 'EXAMIFY_LLM_BASE_URL';
+/** Model name sent to the OpenAI-compatible endpoint (Ollama needs a pulled model's name). */
+export const LOCAL_MODEL_ENV = 'EXAMIFY_LLM_MODEL';
 
 function requireLocalReady(env: ProviderEnv): void {
   const cmd = env[LOCAL_CMD]?.trim() ?? '';
@@ -102,55 +100,7 @@ async function generateViaHttp(
   return parseProviderBankIr(text);
 }
 
-const LOCAL_CMD_MAX_BUFFER = 10 * 1024 * 1024;
-const LOCAL_CMD_KILL_GRACE_MS = 250;
-
-function cmdAbortError(userSignal?: AbortSignal): Error {
-  if (userSignal?.aborted) return new GenerateAbortedError();
-  return new ProviderFailureError(
-    'timeout',
-    `local command timed out after ${PROVIDER_TIMEOUT_MS}ms`,
-  );
-}
-
-/** Kill the spawned command and, on POSIX, its process group (descendants). */
-function killLocalCmdTree(child: ChildProcess): ReturnType<typeof setTimeout> | undefined {
-  const pid = child.pid;
-  if (process.platform === 'win32') {
-    if (pid) {
-      spawn('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' });
-    } else {
-      child.kill();
-    }
-    return undefined;
-  }
-  if (pid) {
-    try {
-      process.kill(-pid, 'SIGTERM');
-    } catch {
-      try {
-        child.kill('SIGTERM');
-      } catch {
-        // Already exited.
-      }
-    }
-    return setTimeout(() => {
-      try {
-        process.kill(-pid, 'SIGKILL');
-      } catch {
-        try {
-          child.kill('SIGKILL');
-        } catch {
-          // Already exited.
-        }
-      }
-    }, LOCAL_CMD_KILL_GRACE_MS);
-  }
-  child.kill();
-  return undefined;
-}
-
-function generateViaCmd(
+async function generateViaCmd(
   request: ProviderRequest,
   cmdLine: string,
   userSignal?: AbortSignal,
@@ -161,7 +111,6 @@ function generateViaCmd(
     throw new ProviderConfigError(`${LOCAL_CMD} is empty`);
   }
   throwIfAborted(userSignal);
-  const requestSignal = providerRequestSignal(userSignal);
   const payload = JSON.stringify({
     prompt: request.prompt,
     promptVersion: request.promptVersion,
@@ -188,96 +137,24 @@ function generateViaCmd(
     })),
   });
 
-  return new Promise((resolve, reject) => {
-    let stdout = '';
-    let settled = false;
-    let killing = false;
-    let escalate: ReturnType<typeof setTimeout> | undefined;
-    let child: ChildProcess | undefined;
-    const finish = (error: Error | null, text?: string) => {
-      if (settled) return;
-      settled = true;
-      // Keep the SIGKILL timer after we start a tree kill so descendants
-      // that ignore SIGTERM still die after the parent close settles.
-      if (escalate && !killing) clearTimeout(escalate);
-      if (error) {
-        reject(error);
-        return;
-      }
-      try {
-        resolve(parseProviderBankIr(text ?? ''));
-      } catch (parseError) {
-        reject(parseError instanceof Error ? parseError : new Error(String(parseError)));
-      }
-    };
-
-    const abortChild = () => {
-      if (!child || killing) return;
-      killing = true;
-      escalate = killLocalCmdTree(child);
-    };
-
-    try {
-      // Detached POSIX group so abort/timeout can SIGTERM then SIGKILL descendants.
-      // stderr is ignored so a chatty wrapper cannot fill the pipe and hang (spawnSync drained it).
-      child = spawn(cmd, parts.slice(1), {
-        detached: process.platform !== 'win32',
-        stdio: ['pipe', 'pipe', 'ignore'],
-      });
-    } catch (error) {
-      if (isAbortError(error) || requestSignal.aborted) {
-        finish(cmdAbortError(userSignal));
-        return;
-      }
-      const message = error instanceof Error ? error.message : String(error);
-      finish(new ProviderFailureError('unreachable', `local command failed to start: ${message}`));
-      return;
-    }
-
-    if (requestSignal.aborted) {
-      abortChild();
-    } else {
-      requestSignal.addEventListener('abort', abortChild, { once: true });
-    }
-
-    child.stdout?.setEncoding('utf8');
-    child.stdout?.on('data', (chunk: string) => {
-      stdout += chunk;
-      if (Buffer.byteLength(stdout, 'utf8') > LOCAL_CMD_MAX_BUFFER) {
-        abortChild();
-        finish(new ProviderFailureError('output', 'local command exceeded maxBuffer'));
-      }
-    });
-    child.stdin?.on('error', () => {
-      // Child may exit before stdin closes (abort / early failure).
-    });
-    child.on('error', (error) => {
-      if (isAbortError(error) || requestSignal.aborted) {
-        finish(cmdAbortError(userSignal));
-        return;
-      }
-      finish(
-        new ProviderFailureError('unreachable', `local command failed to start: ${error.message}`),
-      );
-    });
-    child.on('close', (status) => {
-      if (requestSignal.aborted) {
-        finish(cmdAbortError(userSignal));
-        return;
-      }
-      if (status !== 0) {
-        finish(new ProviderFailureError('command', `local command exited ${status ?? 'null'}`));
-        return;
-      }
-      finish(null, stdout);
-    });
-    child.stdin?.end(payload);
+  // stderr is ignored so a chatty wrapper cannot fill the pipe and hang.
+  const { status, stdout } = await runProviderCommand({
+    cmd,
+    args: parts.slice(1),
+    stdin: payload,
+    label: 'local command',
+    userSignal,
   });
+  if (status !== 0) {
+    throw new ProviderFailureError('command', `local command exited ${status ?? 'null'}`);
+  }
+  return parseProviderBankIr(stdout);
 }
 
 export const localProvider: GenerateProvider = {
   id: 'local',
   defaultModel: 'local',
+  modelEnv: LOCAL_MODEL_ENV,
   keyEnv: null,
   seedHonored: true,
   requireReady: requireLocalReady,

@@ -3,14 +3,143 @@
 export const ONBOARDING_AI_MODES = [
   'cloud',
   'cloud-openai',
+  'claude-cli',
+  'codex-cli',
   'local-agent',
   'local-cli',
   'skip-stub',
 ] as const;
 export type OnboardingAiMode = (typeof ONBOARDING_AI_MODES)[number];
 
-export const ONBOARDING_GENERATE_PROVIDERS = ['anthropic', 'openai', 'local', 'test'] as const;
+export const ONBOARDING_GENERATE_PROVIDERS = [
+  'anthropic',
+  'openai',
+  'local',
+  'claude-cli',
+  'codex-cli',
+  'test',
+] as const;
 export type OnboardingGenerateProvider = (typeof ONBOARDING_GENERATE_PROVIDERS)[number];
+
+/** Claude Code / Codex: the household's own AI plan through its command-line tool. */
+export type OnboardingAgentCliMode = Extract<OnboardingAiMode, 'claude-cli' | 'codex-cli'>;
+
+export function isOnboardingAgentCliMode(
+  mode: OnboardingAiMode | null | undefined,
+): mode is OnboardingAgentCliMode {
+  return mode === 'claude-cli' || mode === 'codex-cli';
+}
+
+/** Minutes an agent CLI may take (ingest `CLI_PROVIDER_TIMEOUT_MS`); API providers get 3. */
+export const ONBOARDING_AGENT_CLI_TIMEOUT_MINUTES = 10;
+
+/**
+ * Which local transport a local mode uses. The ingest `local` provider prefers
+ * the command when both are set; the wizard passes only the chosen one, so
+ * "Local endpoint" never runs the command and vice versa.
+ */
+export type OnboardingLocalTransport = 'http' | 'cmd';
+
+export function localTransportForOnboardingAiMode(
+  mode: OnboardingAiMode,
+): OnboardingLocalTransport | null {
+  if (mode === 'local-agent') return 'http';
+  if (mode === 'local-cli') return 'cmd';
+  return null;
+}
+
+/**
+ * What a mode can do, for the AI step. `pdfs`: how study PDFs reach the model
+ * (`direct` = as documents; `page-images` = rasterized with pdftoppm, so the
+ * host needs poppler-utils; `command` = your command gets the PDF bytes).
+ * `signIn`: an API key in the env store, the CLI's own login, host settings,
+ * or nothing.
+ */
+export type OnboardingAiCapabilities = {
+  pdfs: 'direct' | 'page-images' | 'command' | 'none';
+  signIn: 'api-key' | 'cli-login' | 'host-settings' | 'none';
+};
+
+export const ONBOARDING_AI_CAPABILITIES: Record<OnboardingAiMode, OnboardingAiCapabilities> = {
+  cloud: { pdfs: 'direct', signIn: 'api-key' },
+  'cloud-openai': { pdfs: 'page-images', signIn: 'api-key' },
+  'claude-cli': { pdfs: 'direct', signIn: 'cli-login' },
+  'codex-cli': { pdfs: 'page-images', signIn: 'cli-login' },
+  'local-agent': { pdfs: 'page-images', signIn: 'host-settings' },
+  'local-cli': { pdfs: 'command', signIn: 'host-settings' },
+  'skip-stub': { pdfs: 'none', signIn: 'none' },
+};
+
+const AGENT_CLI_COPY: Record<
+  OnboardingAgentCliMode,
+  { name: string; signIn: string; binEnv: string }
+> = {
+  'claude-cli': {
+    name: 'Claude Code',
+    signIn: 'run `claude` once and sign in',
+    binEnv: 'EXAMIFY_CLAUDE_BIN',
+  },
+  'codex-cli': { name: 'Codex', signIn: 'run `codex login`', binEnv: 'EXAMIFY_CODEX_BIN' },
+};
+
+/** AI-step note for Claude Code / Codex: installed here or not, and how it signs in. */
+export function onboardingAgentCliSetupNote(mode: OnboardingAgentCliMode, found: boolean): string {
+  const cli = AGENT_CLI_COPY[mode];
+  return found
+    ? `${cli.name} is installed on this server. Generate uses its own sign-in: if it is not signed in yet, ${cli.signIn} as the user that runs Examify.`
+    : `${cli.name} was not found on this server (PATH or ~/.local/bin). Install it as the user that runs Examify and ${cli.signIn}, then reload this page, or set ${cli.binEnv} in this host’s .env to its full path.`;
+}
+
+/**
+ * Generate-failure copy that depends on the mode (which tool to sign in,
+ * which setting is missing). Null means the shared copy applies.
+ */
+export function onboardingModeErrorCopy(
+  reason: string,
+  mode: OnboardingAiMode | null | undefined,
+): string | null {
+  if (isOnboardingAgentCliMode(mode)) {
+    const cli = AGENT_CLI_COPY[mode];
+    switch (reason) {
+      case 'missing_cli':
+        return `${cli.name} was not found on this server. Install it as the user that runs Examify and ${cli.signIn}, or set ${cli.binEnv} in this host’s .env to its full path. Nothing was written.`;
+      case 'provider_auth':
+        return `${cli.name} is not signed in for the user that runs Examify, or its sign-in was refused. As that user, ${cli.signIn}, then generate again. Nothing was written.`;
+      case 'provider_rate_limited':
+        return `${cli.name} hit its plan’s usage limit, or is being rate-limited. Wait a while, then try again. Nothing was written.`;
+      case 'provider_timeout':
+        return `${cli.name} did not answer within ${ONBOARDING_AGENT_CLI_TIMEOUT_MINUTES} minutes. Try again; very large files take longer. Nothing was written.`;
+      case 'provider_error':
+        return `${cli.name} reported an error (for example, a model its plan does not include, or a version too old for Examify). Run the generate command under Power-user commands on the host to see it. Nothing was written.`;
+    }
+  }
+  if (reason === 'missing_local') {
+    if (mode === 'local-agent') {
+      return 'Local endpoint needs EXAMIFY_LLM_BASE_URL and EXAMIFY_LLM_MODEL (the model’s name; for Ollama, one that `ollama list` shows) in this host’s .env.';
+    }
+    if (mode === 'local-cli')
+      return 'Local command needs EXAMIFY_INGEST_LOCAL_CMD in this host’s .env.';
+  }
+  return null;
+}
+
+/** One line under each mode: how it reads PDFs and how it signs in. */
+export function onboardingAiCapabilityLine(mode: OnboardingAiMode): string {
+  const caps = ONBOARDING_AI_CAPABILITIES[mode];
+  const pdfs = {
+    direct: 'Reads PDFs directly',
+    'page-images': 'Reads PDFs as page images (the host needs pdftoppm)',
+    command: 'Your command gets the PDFs, images and notes',
+    none: 'Reads no sources: fixture questions only',
+  }[caps.pdfs];
+  const signIn = {
+    'api-key': 'uses an API key',
+    'cli-login': 'uses the tool’s own sign-in (your plan), no API key',
+    'host-settings': 'set up on this host',
+    none: 'nothing to set up',
+  }[caps.signIn];
+  return `${pdfs} · ${signIn}.`;
+}
 
 export const ONBOARDING_GENERATE_SEED_DEFAULT = 0;
 
@@ -63,6 +192,10 @@ export function providerForOnboardingAiMode(mode: OnboardingAiMode): OnboardingG
       return 'anthropic';
     case 'cloud-openai':
       return 'openai';
+    case 'claude-cli':
+      return 'claude-cli';
+    case 'codex-cli':
+      return 'codex-cli';
     case 'local-agent':
     case 'local-cli':
       return 'local';
@@ -223,7 +356,19 @@ export type OnboardingSnapshot = {
    */
   anthropicWriteBlocked: boolean;
   openaiWriteBlocked: boolean;
-  localAgentConfigured: boolean;
+  /** `EXAMIFY_LLM_BASE_URL` is set (Local endpoint mode). */
+  localHttpConfigured: boolean;
+  /** `EXAMIFY_LLM_MODEL` is set — the model name the local endpoint gets. */
+  localModelConfigured: boolean;
+  /** `EXAMIFY_INGEST_LOCAL_CMD` is set (Local command mode). */
+  localCmdConfigured: boolean;
+  /**
+   * Claude Code / Codex binary found on this server (`EXAMIFY_CLAUDE_BIN` /
+   * `EXAMIFY_CODEX_BIN`, PATH, `~/.local/bin`). Not whether it is signed in —
+   * generate says so. Never the path.
+   */
+  claudeCliFound: boolean;
+  codexCliFound: boolean;
   /**
    * Free-text marking currently uses the deterministic `test` stub (full
    * marks, no network): the live key is the sentinel and `gradingStubAllowed()`

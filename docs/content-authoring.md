@@ -171,7 +171,8 @@ file first.
    network). `--provider local` uses quoted `EXAMIFY_INGEST_LOCAL_CMD` (stdin
    JSON includes full source text/bytes, not hashes-only) or
    `EXAMIFY_LLM_BASE_URL` (same multimodal payload as OpenAI — source text and
-   page images, not hashes-only). `--dry-run-ir` writes nothing durable;
+   page images, not hashes-only) with the model named in `EXAMIFY_LLM_MODEL`
+   (or `--model`; Ollama needs a pulled model's name). `--dry-run-ir` writes nothing durable;
    when a real BankIR with questions already exists it says **would overwrite**.
    Persist over that IR requires `--force`. A sourceless sibling (biology on a
    fresh clone) blocks `generate content/subjects` — target
@@ -181,6 +182,26 @@ file first.
    `UNTRUSTED SOURCE MATERIAL` fences; still review IR before emit. Run
    manifests land in the layer's `.examify-ingest/` (gitignored in the
    checkout).
+
+   **No API key? Use the AI plan you already have.** `--provider claude-cli`
+   runs Claude Code (`claude -p`) and `--provider codex-cli` runs Codex
+   (`codex exec`) with their own sign-in. Install the CLI as the user that runs
+   Examify and sign in once (`claude`, or `codex login`); Examify finds it on
+   `PATH` or in `~/.local/bin`, else set `EXAMIFY_CLAUDE_BIN` /
+   `EXAMIFY_CODEX_BIN` to its full path. `EXAMIFY_CLAUDE_MODEL` /
+   `EXAMIFY_CODEX_MODEL` (or `--model`) pick the model; otherwise the CLI
+   chooses. Claude Code reads PDFs directly (the same message blocks as the
+   Anthropic provider); Codex reads their page images, so it needs `pdftoppm`
+   for PDF-only subjects. Each run gets an empty private folder, no tools (no
+   file reads, commands or web search; Codex also in its read-only sandbox, with
+   your `config.toml` ignored), no saved session, and only an allowlist of
+   environment variables, never Examify's secrets or API keys. They get 10
+   minutes (API providers 3).
+
+   ```bash
+   pnpm examify-ingest generate --provider claude-cli data/content/subjects/<id>
+   pnpm examify-ingest generate --provider codex-cli data/content/subjects/<id>
+   ```
 
 3. `emit` writes the layer's `content/generated/subjects.json`,
    `content/generated/questions/<id>.json` (public fields only), and

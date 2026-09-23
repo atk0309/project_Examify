@@ -1215,6 +1215,37 @@ describe('examify-ingest generate', () => {
     expect(result.manifest.provider).toBe('local');
   });
 
+  it('local endpoint sends EXAMIFY_LLM_MODEL as the model; --model wins over it', async () => {
+    const bank = realBankIr('plants');
+    bank.difficulties.easy[0]!.provenance = { pdf: 'notes.txt', locator: 'p1' };
+    const models: string[] = [];
+    const fetchModel = async (_input: unknown, init?: RequestInit) => {
+      models.push((JSON.parse(String(init?.body)) as { model: string }).model);
+      return new Response(
+        JSON.stringify({ choices: [{ message: { content: JSON.stringify(bank) } }] }),
+        { status: 200 },
+      );
+    };
+    const run = (model?: string) => {
+      const root = examifyRepo();
+      return generateSubject({
+        repoRoot: root,
+        subject: bank.subject,
+        subjectDir: path.join(root, 'content/subjects/plants'),
+        sources: resolveSubjectSources(root, 'plants', path.join(root, 'content/subjects/plants')),
+        provider: 'local',
+        seed: 0,
+        dryRunIr: true,
+        ...(model ? { model } : {}),
+        env: { EXAMIFY_LLM_BASE_URL: 'http://127.0.0.1:9', EXAMIFY_LLM_MODEL: 'llama3.2-vision' },
+        fetch: fetchModel as typeof fetch,
+      });
+    };
+    expect((await run()).manifest.model).toBe('llama3.2-vision');
+    expect((await run('qwen2.5vl')).manifest.model).toBe('qwen2.5vl');
+    expect(models).toEqual(['llama3.2-vision', 'qwen2.5vl']);
+  });
+
   it('local CMD stdin includes full source text/bytes, not hashes-only', async () => {
     const root = examifyRepo();
     const bank: BankIR = {
