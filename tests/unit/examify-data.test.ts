@@ -1538,6 +1538,34 @@ describe('migrate-checkout', () => {
     },
   );
 
+  it('never publishes a row whose data-folder copy changed after it was found identical', async () => {
+    const root = makeCheckout();
+    const QUESTIONS = 'content/generated/questions/history.json';
+    const KEYS = 'content/generated/keys/history.json';
+    write(
+      path.join(root, 'content/generated/subjects.json'),
+      JSON.stringify([subject('history', 'History')]),
+    );
+    write(path.join(root, QUESTIONS), '{"easy":[]}\n');
+    write(path.join(root, KEYS), '{}\n');
+    const dataDir = familyFolder('examify-data-same-changed-');
+    // An earlier run already copied the questions: this one finds them identical.
+    write(path.join(dataDir, QUESTIONS), '{"easy":[]}\n');
+    await expect(
+      data.migrateCheckout({
+        repo: root,
+        env: { EXAMIFY_DATA_DIR: dataDir },
+        sqliteModule: SQLITE_MODULE,
+        // An Apply rewrites the data-folder questions while the keys are copied.
+        onBeforeCopy: (rel) => {
+          if (rel === KEYS) write(path.join(dataDir, QUESTIONS), '{"easy":[{"id":"x"}]}\n');
+        },
+      }),
+    ).rejects.toMatchObject({ exitCode: 1, code: 'changed_during_migration' });
+    expect(fs.existsSync(path.join(dataDir, 'content/generated/subjects.json'))).toBe(false);
+    expect(fs.existsSync(path.join(root, QUESTIONS))).toBe(true);
+  });
+
   it('refuses (changing nothing) when src/lib/exam has uncommitted hand edits', async () => {
     const root = dirtyCheckout();
     fs.appendFileSync(path.join(root, 'src/lib/exam/data.ts'), 'export const LOCAL = 2;\n');
@@ -1864,6 +1892,39 @@ describe('review regressions', () => {
         expect(fullStatus(root)).toBe(statusBefore);
       }
       expect(fs.readdirSync(dataDir).filter((name) => name.startsWith('.restore-'))).toEqual([]);
+    });
+
+    it('check-archive verifies a whole archive and names its commit, placing nothing', async () => {
+      const root = editedCheckout();
+      const dataDir = familyFolder('examify-data-check-archive-');
+      const env = { EXAMIFY_DATA_DIR: dataDir, EXAMIFY_SQLITE_MODULE: SQLITE_MODULE };
+      const pre = await data.backup({
+        repo: root,
+        env,
+        kind: 'pre-upgrade',
+        includeCheckout: true,
+      });
+      const dataBefore = fs.readdirSync(dataDir).sort();
+      const ok = await run(['check-archive', pre.archive, '--repo', root, '--json'], { env });
+      expect(ok.code, ok.stderr).toBe(0);
+      expect(JSON.parse(ok.stdout)).toMatchObject({
+        ok: true,
+        command: 'check-archive',
+        kind: 'pre-upgrade',
+        checkout: { gitSha: head(root) },
+      });
+      expect(fs.readdirSync(dataDir).sort()).toEqual(dataBefore);
+
+      const unpacked = tempDir('examify-data-check-unpacked-');
+      execFileSync('tar', ['-xzf', pre.archive, '-C', unpacked]);
+      const truncated = path.join(tempDir('examify-data-check-out-'), 'truncated.tar.gz');
+      execFileSync('tar', ['-czf', truncated, '-C', unpacked, 'MANIFEST.json']);
+      const bad = await run(['check-archive', truncated, '--repo', root, '--json'], { env });
+      expect(bad.code).toBe(1);
+      expect(JSON.parse(bad.stdout)).toMatchObject({ error: 'archive_invalid' });
+      expect(fs.readdirSync(dataDir).sort()).toEqual(dataBefore);
+
+      expect((await run(['check-archive', '--repo', root], { env })).code).toBe(2);
     });
 
     it('--backup must hold this checkout at HEAD with the bytes it reverts', async () => {

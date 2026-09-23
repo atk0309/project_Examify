@@ -686,8 +686,9 @@ that folder, create it for them first. Don't set `EXAMIFY_DATA_DIR` / `DATABASE_
 if the new machine has a different address.
 
 **Roll back an upgrade.** `./install.sh --rollback <archive>` takes a pre-upgrade backup
-(only those record the version to go back to). With the server stopped, it resets the
-checkout to that commit (`git reset --keep`, which refuses to overwrite local changes),
+(only those record the version to go back to). With the server stopped, it first checks
+the whole archive (every file against its manifest; a damaged or incomplete one changes
+nothing), then resets the checkout to that commit (`git reset --keep`, which refuses to overwrite local changes),
 restores the database, family content, `.env` and the checkout's content from the
 archive — the current data and `.env` are moved aside as above, not deleted — then
 reinstalls and puts back the pre-upgrade build, or rebuilds. It checks for a running

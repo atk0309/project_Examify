@@ -134,6 +134,19 @@ export declare function backup(
   },
 ): Promise<BackupResult>;
 
+export type CheckArchiveResult = {
+  archive: string;
+  kind: string | null;
+  files: number;
+  /** The commit a pre-upgrade backup was taken at (`--include-checkout`), else null. */
+  checkout: { gitSha: string; files: number } | null;
+  /** Env files the archive holds (`.env`, `.env.local`, …). */
+  env: string[];
+};
+export declare function checkArchive(
+  options?: CommandOptions & { archive?: string },
+): CheckArchiveResult;
+
 export type RestorePlace = { dataDir: string; dbPath: string };
 export type RestoreResult = {
   /** Where the database and family files were placed (`target.after`). */

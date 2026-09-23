@@ -321,8 +321,9 @@ tests/
 tools/
   examify-ingest/       # BankIR generate + validate + emit (generate writes IR only; roots.ts picks the layer)
 scripts/
-  examify-data.mjs      # data folder CLI: paths / init / backup / restore / legacy-check /
-                        #   migrate-checkout / verify (plain ESM, Node builtins + better-sqlite3)
+  examify-data.mjs      # data folder CLI: paths / init / backup / restore / check-archive /
+                        #   legacy-check / migrate-checkout / verify (plain ESM, Node builtins +
+                        #   better-sqlite3)
 content/                # the COMMITTED layer only (never written at runtime)
   subjects/             # BankIR sources (*/bank.ir.json): biology, demo fixture
   generated/            # public subjects/questions + server-only keys (committed; read via registrars)
@@ -878,7 +879,9 @@ These are non-negotiable. Don't "fix" them out.
   (compared per id with `HEAD`; questions + keys copied verbatim, missing rows rebuilt
   from the IR / `subject.json`; each row gets the `rev` of the bytes it copies, hashed
   from the same read as their sha, and neither the family catalog nor a conflict catalog
-  is published if a file changed before its copy verified — `changed_during_migration`),
+  is published if a file changed before its copy verified, or its data-folder copy
+  (one found identical and not copied included) no longer hashes to it —
+  `changed_during_migration`),
   `.examify-ingest/`. Registrars are never copied, only
   restored. Copy with a journal (`$DATA/.migrate-journal.json`): identical ⇒ skip, a
   destination its own unfinished run wrote ⇒ overwrite, any other difference ⇒ the
@@ -921,8 +924,11 @@ These are non-negotiable. Don't "fix" them out.
   `examify-data verify` → drop the state file and the parked build; a failed Node / pnpm
   setup names the backup like any other step. `--rollback <archive>` = the data CLI
   copied first (the checkout's, else `git show @{u}:scripts/examify-data.mjs`) →
-  running-server check (the local ports even with `--allow-running`) before
-  `git reset --keep` to the archive's `checkout.gitSha` → `restore` with `--force`,
+  running-server check (the local ports even with `--allow-running`) →
+  `check-archive` (the whole archive extracted into private staging in the data folder
+  and verified like a restore — members, every MANIFEST file by size and sha256, a DB
+  snapshot — so a truncated or repacked one changes nothing) → `git reset --keep` to
+  that verified MANIFEST's `checkout.gitSha` → `restore` with `--force`,
   `--with-env` and `--include-checkout` → drop the state file → reinstall → put back
   the parked build or rebuild. `--restore <archive>` = install → `restore` (with `--with-env` when
   the archive carries any of the four env files under `env/`) → `db:migrate` → build.

@@ -1741,13 +1741,13 @@ find_pre_upgrade_build() {
   printf '%s' "$found"
 }
 
-# Back to the version and data in a pre-upgrade backup: reset the checkout
-# (--keep refuses to clobber local changes), then restore data, .env and the
-# checkout snapshot with a copy of the data CLI taken first (the old sha may
-# lack it): this checkout's, else the upstream one (a first upgrade that
-# stopped before its merge left the old code).
+# Back to the version and data in a pre-upgrade backup: verify the whole
+# archive (check-archive), reset the checkout (--keep refuses to clobber local
+# changes), then restore data, .env and the checkout snapshot with a copy of
+# the data CLI taken first (the old sha may lack it): this checkout's, else the
+# upstream one (a first upgrade that stopped before its merge left the old code).
 rollback_flow() {
-  local archive="$ROLLBACK_ARCHIVE" manifest sha before tmp pre url data_dir
+  local archive="$ROLLBACK_ARCHIVE" checked sha before tmp pre url data_dir
   require_git_checkout "--rollback"
   if [ ! -f "$archive" ]; then
     die "Backup not found: ${archive}"
@@ -1775,10 +1775,13 @@ rollback_flow() {
     die "An Examify server is answering at ${url}, and the restore will not replace its database." \
       "Stop it, then re-run. Nothing was changed."
   fi
-  manifest="$(tar -xOzf "$archive" MANIFEST.json 2>/dev/null)" ||
-    manifest="$(tar -xOzf "$archive" ./MANIFEST.json 2>/dev/null)" ||
-    die "${archive} is not an Examify backup (no MANIFEST.json)."
-  sha="$(printf '%s' "$manifest" | json_field checkout.gitSha)" || sha=""
+  # The whole archive is verified (every MANIFEST file, by size and sha256)
+  # before git reset moves anything; the commit comes from that MANIFEST.
+  echo "Checking the backup…"
+  checked="$(node "$tmp/examify-data.mjs" check-archive "$archive" --json --repo "$ROOT" \
+    ${DATA_CLI_WRITE_FLAGS[@]+"${DATA_CLI_WRITE_FLAGS[@]}"})" ||
+    die "${archive} is not a complete Examify backup (see above). Nothing was changed."
+  sha="$(printf '%s' "$checked" | json_field checkout.gitSha)" || sha=""
   if [ -z "$sha" ]; then
     die "This backup has no checkout snapshot (it is not a pre-upgrade backup), so there is no version to go back to." \
       "To restore only the family data: node scripts/examify-data.mjs restore ${archive}"

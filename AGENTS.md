@@ -176,7 +176,8 @@ JSON`). Missing cloud
   read-only preflight (an install = any `next start` env file, `.env.local` alone
   included; upstream-added paths that exist untracked / ignored; upstream Node needs) → pre-upgrade backup → `.upgrade-state.json` rollback point →
   `migrate-checkout --backup` → merge → phase 2 (install / `db:migrate` / build /
-  `verify`); `--rollback <archive>` (works from the piped upstream installer too) /
+  `verify`); `--rollback <archive>` (works from the piped upstream installer too; the
+  whole archive is verified with `check-archive` before `git reset`) /
   `--restore <archive>`. It never manages services, never stashes or `git clean`s.
   Details: CLAUDE.md "Family data folder invariants".
 - **Free-text is LLM-graded server-side** (`src/lib/grading/index.ts`,

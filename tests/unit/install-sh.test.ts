@@ -1324,6 +1324,18 @@ if (cmd === 'paths' && argv.includes('--json')) {
 } else if (cmd === 'migrate-checkout') {
   // M4 stand-in: put tracked family edits back to HEAD once "copied".
   execFileSync('git', ['checkout', 'HEAD', '--', 'content'], { cwd: repo });
+} else if (cmd === 'check-archive') {
+  // The real one verifies every file; the stub only reads the MANIFEST it reports from.
+  const archive = argv[1];
+  let manifest = null;
+  for (const member of ['MANIFEST.json', './MANIFEST.json']) {
+    try {
+      manifest = JSON.parse(execFileSync('tar', ['-xOzf', archive, member], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }));
+      break;
+    } catch {}
+  }
+  const gitSha = manifest && manifest.checkout && manifest.checkout.included ? manifest.checkout.gitSha : null;
+  process.stdout.write(JSON.stringify({ ok: true, command: cmd, archive, checkout: gitSha ? { gitSha } : null }));
 }
 `;
 }
@@ -1886,6 +1898,14 @@ describe('install.sh --rollback / --restore', () => {
       const result = runInstaller(fx, ['--rollback', archive]);
       expect(result.status).toBe(0);
       expect(git(fx.work, 'rev-parse', 'HEAD')).toBe(fx.oldSha);
+      // The whole archive is checked before the reset.
+      expect(dataCall(fx, 'check-archive').argv).toEqual([
+        'check-archive',
+        archive,
+        '--json',
+        '--repo',
+        fx.work,
+      ]);
       const restore = dataCall(fx, 'restore');
       expect(restore.argv).toEqual([
         'restore',
@@ -1900,6 +1920,7 @@ describe('install.sh --rollback / --restore', () => {
       expect(restore.version).toBe('upstream');
       expect(restore.script?.startsWith(fx.work)).toBe(false);
       expect(summary(fx)).toEqual([
+        'data check-archive',
         'data restore',
         'data paths',
         'pnpm install --frozen-lockfile',
@@ -1924,7 +1945,12 @@ describe('install.sh --rollback / --restore', () => {
       expect(result.status).toBe(0);
       expect(fs.readFileSync(path.join(fx.work, '.next', 'BUILD_ID'), 'utf8')).toBe('old-build');
       expect(fs.existsSync(pre)).toBe(false);
-      expect(summary(fx)).toEqual(['data restore', 'data paths', 'pnpm install --frozen-lockfile']);
+      expect(summary(fx)).toEqual([
+        'data check-archive',
+        'data restore',
+        'data paths',
+        'pnpm install --frozen-lockfile',
+      ]);
     });
   });
 
@@ -1937,7 +1963,24 @@ describe('install.sh --rollback / --restore', () => {
       expect(result.status).toBe(1);
       expect(result.stderr).toContain('no checkout snapshot');
       expect(git(fx.work, 'rev-parse', 'HEAD')).toBe(head);
-      expect(calls(fx)).toEqual([]);
+      expect(summary(fx)).toEqual(['data check-archive']);
+    });
+  });
+
+  it('refuses an archive the data CLI cannot verify before resetting anything', () => {
+    withFixture({}, (fx) => {
+      git(fx.work, 'pull', '-q');
+      const head = git(fx.work, 'rev-parse', 'HEAD');
+      const archive = makeArchive(fx.base, {
+        format: 1,
+        checkout: { included: true, gitSha: fx.oldSha },
+      });
+      const result = runInstaller(fx, ['--rollback', archive], { STUB_EXIT_CHECK_ARCHIVE: '1' });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('is not a complete Examify backup');
+      expect(result.stderr).toContain('Nothing was changed.');
+      expect(git(fx.work, 'rev-parse', 'HEAD')).toBe(head);
+      expect(summary(fx)).toEqual(['data check-archive']);
     });
   });
 
@@ -2555,6 +2598,35 @@ describe('install.sh end to end (real data CLI, fixture checkout)', () => {
       expect(fs.existsSync(archive)).toBe(true);
       expect(pnpmCalls(fx)).toEqual(['pnpm install --frozen-lockfile', 'pnpm build']);
       expect(result.stdout).toContain(`Rolled back to ${fx.oldSha.slice(0, 7)}`);
+    } finally {
+      fs.rmSync(fx.base, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    }
+  }, 120_000);
+
+  it('--rollback refuses a truncated pre-upgrade archive before resetting the checkout', async () => {
+    const { fx, archive } = await upgradedFixture();
+    try {
+      // Only its MANIFEST, repacked: it names the old commit but cannot restore it.
+      const unpacked = path.join(fx.base, 'unpacked');
+      fs.mkdirSync(unpacked);
+      execFileSync('tar', ['-xzf', archive, '-C', unpacked]);
+      const truncated = path.join(fx.base, 'truncated.tar.gz');
+      execFileSync('tar', ['-czf', truncated, '-C', unpacked, 'MANIFEST.json']);
+      const head = git(fx.work, 'rev-parse', 'HEAD');
+      const status = git(fx.work, 'status', '--porcelain');
+      const envBefore = fs.readFileSync(path.join(fx.work, '.env'), 'utf8');
+      fs.rmSync(fx.log);
+
+      const result = runReal(fx, fx.work, ['--rollback', truncated, '--yes']);
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(1);
+      expect(result.stderr).toContain('is not a complete Examify backup');
+      expect(git(fx.work, 'rev-parse', 'HEAD')).toBe(head);
+      expect(head).not.toBe(fx.oldSha);
+      expect(git(fx.work, 'status', '--porcelain')).toBe(status);
+      expect(fs.readFileSync(path.join(fx.work, '.env'), 'utf8')).toBe(envBefore);
+      expect(userCount(path.join(fx.dataDir, 'app.db'))).toBe(3);
+      expect(fs.readdirSync(fx.dataDir).filter((name) => name.startsWith('.restore-'))).toEqual([]);
+      expect(pnpmCalls(fx)).toEqual([]);
     } finally {
       fs.rmSync(fx.base, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }

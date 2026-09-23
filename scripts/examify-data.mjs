@@ -1851,6 +1851,53 @@ export async function restore(options = {}) {
   }
 }
 
+/**
+ * Check a backup without placing anything: restore's member check, extraction
+ * and MANIFEST size + sha256 verification (every area, env and checkout
+ * included), in private staging in the data folder like restore's.
+ * `install.sh --rollback` runs it before `git reset` and takes the commit from
+ * this verified MANIFEST, so a truncated or repacked archive changes nothing.
+ */
+export function checkArchive(options = {}) {
+  if (!options.archive)
+    throw new CliError(EXIT.USAGE, 'usage', 'check-archive needs an archive path');
+  const ctx = resolveContext(options);
+  const { paths: current } = ctx;
+  const archive = path.resolve(ctx.cwd, options.archive);
+  if (!isFile(archive)) {
+    throw new CliError(
+      EXIT.UNEXPECTED,
+      'archive_missing',
+      'the archive does not exist or is not a file',
+    );
+  }
+  assertOwnership(ctx, options);
+  assertTar();
+  if (dataPathExists(current.dataDir)) assertDedicatedFolder(current.dataDir, current.dbPath);
+  const createdForStaging = fs.mkdirSync(current.dataDir, { recursive: true, mode: 0o700 });
+  const staging = fs.mkdtempSync(path.join(current.dataDir, '.restore-staging-'));
+  try {
+    const { manifest, selected } = extractVerifiedArchive(archive, staging, {
+      withEnv: true,
+      includeCheckout: true,
+    });
+    const gitSha = manifest.checkout?.included ? manifest.checkout.gitSha : undefined;
+    if (gitSha !== undefined && (typeof gitSha !== 'string' || !/^[0-9a-f]{7,64}$/.test(gitSha))) {
+      throw invalidArchive('MANIFEST.json names an invalid checkout commit');
+    }
+    return {
+      archive,
+      kind: typeof manifest.kind === 'string' ? manifest.kind : null,
+      files: manifest.files.length,
+      checkout: gitSha ? { gitSha, files: selected.checkout.length } : null,
+      env: selected.env.map((item) => item.rel.slice('env/'.length)),
+    };
+  } finally {
+    fs.rmSync(staging, { recursive: true, force: true });
+    removeCreatedIfEmpty(current.dataDir, createdForStaging);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // legacy-check / migrate-checkout
 // ---------------------------------------------------------------------------
@@ -2561,11 +2608,13 @@ export async function migrateCheckout(options = {}) {
   for (const item of plan.copies) {
     if (item.state === 'same') {
       item.writtenSha = item.srcSha;
+      item.destAbs = fromPosix(dataDir, item.rel);
       counts.same += 1;
       continue;
     }
     const destRel = item.state === 'conflict' ? `${conflictRoot}/${item.rel}` : item.rel;
     const dest = fromPosix(dataDir, destRel);
+    item.destAbs = dest;
     options.onBeforeCopy?.(item.rel);
     const written = copyFileHashed(item.src, dest, { mode: modeFor(item.rel) });
     if (sha256File(dest) !== written.sha256) {
@@ -2580,11 +2629,15 @@ export async function migrateCheckout(options = {}) {
   }
   saveJournal(dataDir, journal);
   // Each row's `rev` names the bytes read above, in the family catalog and in
-  // a conflict catalog alike: a file that changed since is not published (the
-  // journal lets a rerun take the new bytes).
+  // a conflict catalog alike: a file that changed since, in the checkout or in
+  // the data folder (one this run found identical and did not copy included),
+  // is not published (the journal lets a rerun take the new bytes).
   for (const entry of plan.generatedPlan) {
     for (const item of entry.files) {
-      if (item.writtenSha !== item.srcSha) throw changedWhileMigrating(item.rel);
+      const destSha = isFile(item.destAbs) ? sha256File(item.destAbs) : null;
+      if (item.writtenSha !== item.srcSha || destSha !== item.srcSha) {
+        throw changedWhileMigrating(item.rel);
+      }
     }
   }
   // The family catalog last (the commit point), after its questions + keys.
@@ -2874,6 +2927,7 @@ Commands:
                              Write a 0600 .tar.gz (DB snapshot, family files, .env)
   restore <archive> [--force] [--with-env] [--include-checkout]
                              Restore a backup (stop the server first)
+  check-archive <archive>    Verify a backup against its MANIFEST without restoring it
   legacy-check               Exit 4 when family content is still inside the checkout
   migrate-checkout [--dry-run] [--backup ARCHIVE]
                              Move family content from the checkout into the data folder,
@@ -2910,6 +2964,7 @@ const COMMAND_FLAGS = {
     'include-checkout': 'bool',
   },
   restore: { force: 'bool', 'with-env': 'bool', 'include-checkout': 'bool' },
+  'check-archive': {},
   'legacy-check': {},
   'migrate-checkout': { 'dry-run': 'bool', backup: 'value' },
   verify: {},
@@ -2955,10 +3010,10 @@ export function parseArgs(argv) {
     if (value === undefined || value === '') throw usageError(`--${name} needs a value`);
     flags[name] = value;
   }
-  const wanted = command === 'restore' ? 1 : 0;
+  const wanted = command === 'restore' || command === 'check-archive' ? 1 : 0;
   if (positionals.length !== wanted) {
     throw usageError(
-      wanted === 1 ? 'restore takes exactly one archive path' : `${command} takes no arguments`,
+      wanted === 1 ? `${command} takes exactly one archive path` : `${command} takes no arguments`,
     );
   }
   if (flags.kind !== undefined && !BACKUP_KINDS.includes(flags.kind)) {
@@ -3044,6 +3099,13 @@ async function runCommand(command, flags, positionals, options) {
       if (data.restored.checkoutFiles > 0)
         lines.push(`Restored ${data.restored.checkoutFiles} checkout files.`);
       lines.push('Next: pnpm db:migrate, then start (or restart) the server.');
+      return { exitCode: EXIT.OK, data: { ok: true, command, ...data }, text: lines.join('\n') };
+    }
+    case 'check-archive': {
+      const data = checkArchive({ ...options, archive: positionals[0] });
+      const lines = [`The archive is complete: ${data.files} files match its MANIFEST.json.`];
+      if (data.checkout)
+        lines.push(`It holds the checkout at ${data.checkout.gitSha.slice(0, 7)}.`);
       return { exitCode: EXIT.OK, data: { ok: true, command, ...data }, text: lines.join('\n') };
     }
     case 'legacy-check': {
