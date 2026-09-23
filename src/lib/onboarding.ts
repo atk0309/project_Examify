@@ -17,7 +17,9 @@ import { eq } from 'drizzle-orm';
 import {
   applyEmit,
   collectQuestionIds,
+  formatDataDirDisplay,
   formatFileDiff,
+  GENERATED_DIR,
   isAuthoritativeCatalogInput,
   hasExistingBankIr,
   loadIrFiles,
@@ -35,6 +37,7 @@ import { getOnboardingContentRoot } from '@/lib/content-root';
 import { db, schema } from '@/lib/db';
 import type { HouseholdRole } from '@/lib/db/schema';
 import { SAMPLE_QUESTIONS, SAMPLE_SUBJECTS } from '@/lib/exam/data';
+import { GENERATED_SUBJECTS } from '@/lib/exam/generated-public';
 import { loadLivePublicBank } from '@/lib/exam/live-bank.server';
 import { gradingStubAllowed } from '@/lib/grading';
 import { env } from '@/lib/env';
@@ -46,6 +49,7 @@ import {
   envStoreSecretPresent,
 } from '@/lib/env-store';
 import { getMembershipForUser } from '@/lib/households';
+import { findRepoRoot } from '@/lib/repo-root';
 import {
   EMPTY_AUTHORITATIVE_EMIT,
   ONBOARDING_AI_MODES,
@@ -58,6 +62,7 @@ import {
   type OnboardingLiveSubject,
   type OnboardingPlanAction,
   type OnboardingPlanEntry,
+  type OnboardingSampleSubject,
   type OnboardingSnapshot,
   type OnboardingState,
   type OnboardingSubject,
@@ -77,10 +82,13 @@ export {
   onboardingGenerateBatchIds,
   onboardingGenerateCli,
   onboardingGenerateOverwriteSubjects,
+  onboardingIngestCli,
   onboardingPruneConfirmMessage,
   onboardingPruneEntries,
+  onboardingShadowNotice,
   onboardingSourceCountLabel,
   onboardingSubjectIrRel,
+  onboardingSubjectsArg,
   providerForOnboardingAiMode,
 } from '@/lib/onboarding-types';
 export { getOnboardingContentRoot, setOnboardingContentRootForTests } from '@/lib/content-root';
@@ -112,6 +120,15 @@ const ICON_ACCENTS: Record<SubjectIconOption, { l: number; c: number; h: number 
 
 const FROZEN_SAMPLE_IDS = collectQuestionIds(SAMPLE_QUESTIONS);
 const SAMPLE_SUBJECT_IDS = new Set(SAMPLE_SUBJECTS.map((subject) => subject.id));
+
+/**
+ * Built-in generated subjects: shipped in the checkout (`content/generated`,
+ * compiled through the registrars). A family subject with one of these ids
+ * replaces it after Apply (disclosed, not refused).
+ */
+export const BUILTIN_SUBJECTS: readonly OnboardingSampleSubject[] = GENERATED_SUBJECTS.map(
+  (subject) => ({ id: subject.id, label: subject.label }),
+);
 
 /**
  * A wizard subject with a sample subject's id generates `<id>-easy-1`-style
@@ -485,6 +502,15 @@ function aiFlags(): {
   };
 }
 
+/** How CLI hints name the family root from the checkout root (`data`, `data/x`, or absolute). */
+export function onboardingDataDirDisplay(root = getOnboardingContentRoot()): string {
+  try {
+    return formatDataDirDisplay(findRepoRoot(process.cwd()), root);
+  } catch {
+    return root;
+  }
+}
+
 export function getOnboardingSnapshot(
   householdId: number,
   root = getOnboardingContentRoot(),
@@ -493,6 +519,8 @@ export function getOnboardingSnapshot(
   return {
     subjects: listOnboardingSubjects(root),
     sampleSubjects: SAMPLE_SUBJECTS.map((subject) => ({ id: subject.id, label: subject.label })),
+    builtinSubjects: [...BUILTIN_SUBJECTS],
+    dataDirDisplay: onboardingDataDirDisplay(root),
     aiMode: state.aiMode ?? null,
     replaceSample: state.replaceSample === true,
     hasDryRun: Boolean(state.dryRunHash),
@@ -909,6 +937,31 @@ function collisionsAgainstSample(ids: readonly string[]): string[] {
   return [...new Set(ids.filter((id) => frozen.has(id)))].sort();
 }
 
+/** Family banks that replace a built-in subject (labelled as the built-in one). */
+function builtinShadows(banks: readonly ValidatedBank[]): OnboardingSampleSubject[] {
+  const ids = new Set(banks.map((bank) => bank.split.subject.id));
+  return BUILTIN_SUBJECTS.filter((subject) => ids.has(subject.id)).map(({ id, label }) => ({
+    id,
+    label,
+  }));
+}
+
+/**
+ * True when every planned path is inside `<root>/content/generated`. The
+ * wizard only ever writes the family generated layer — never registrars,
+ * never the checkout.
+ */
+export function isPlanInsideFamilyGenerated(
+  planned: readonly Pick<PlannedFile, 'absPath'>[],
+  root: string,
+): boolean {
+  const generated = path.resolve(root, GENERATED_DIR);
+  return planned.every((file) => {
+    const rel = path.relative(generated, path.resolve(file.absPath));
+    return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
+  });
+}
+
 export type CatalogEmitPreview =
   | { ok: true; dryRun: OnboardingDryRun; planned: PlannedFile[] }
   | { ok: false; reason: 'empty_catalog' | 'invalid'; message: string; issues?: OnboardingIssue[] };
@@ -958,7 +1011,11 @@ export function previewOnboardingEmit(
     };
   }
 
-  const planned = planEmit(result.banks, root, { pruneMissing: loaded.pruneMissing });
+  // Registrars are build-time checkout code: the wizard never plans them.
+  const planned = planEmit(result.banks, root, {
+    pruneMissing: loaded.pruneMissing,
+    registrars: false,
+  });
   return {
     ok: true,
     planned,
@@ -967,6 +1024,7 @@ export function previewOnboardingEmit(
       questionCount: ids.length,
       subjectCount: result.banks.length,
       collisions,
+      shadows: builtinShadows(result.banks),
       replaceSample,
       plan: toPublicPlan(planned),
       diff: formatPublicEmitPlan(planned),
@@ -991,9 +1049,10 @@ export type CatalogEmitApply =
     };
 
 /**
- * Re-preview the current tree, refuse if the plan hash is not the confirmed
- * dry-run, then `applyEmit` that same planned list. Never apply a newer
- * unconfirmed plan (a concurrent IR change after HITL confirm).
+ * Re-preview the current tree, refuse a plan that would write anywhere but
+ * `<familyRoot>/content/generated`, refuse if the plan hash is not the
+ * confirmed dry-run, then `applyEmit` that same planned list. Never apply a
+ * newer unconfirmed plan (a concurrent IR change after HITL confirm).
  */
 export function applyOnboardingEmit(
   input: { replaceSample: boolean; expectedHash: string; confirmPrune?: boolean },
@@ -1001,6 +1060,13 @@ export function applyOnboardingEmit(
 ): CatalogEmitApply {
   const preview = previewOnboardingEmit(input.replaceSample, root);
   if (!preview.ok) return preview;
+  if (!isPlanInsideFamilyGenerated(preview.planned, root)) {
+    return {
+      ok: false,
+      reason: 'invalid',
+      message: 'refusing to write outside the family data folder',
+    };
+  }
   if (preview.dryRun.hash !== input.expectedHash) {
     return {
       ok: false,

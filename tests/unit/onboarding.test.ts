@@ -1,9 +1,11 @@
 import {
+  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -12,7 +14,7 @@ import path from 'node:path';
 import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { collectQuestionIds, FIXTURE_IDS } from 'examify-ingest';
 import { SAMPLE_QUESTIONS } from '@/lib/exam/data';
 import { EMPTY_AUTHORITATIVE_EMIT } from '@/lib/onboarding-types';
@@ -994,5 +996,246 @@ describe('onboarding household gate', () => {
         state: kidInfo.state,
       }),
     ).toBe(false);
+  });
+});
+
+const REPO = process.cwd();
+const REGISTRARS = ['src/lib/exam/generated-public.ts', 'src/lib/exam/generated-keys.server.ts'];
+
+/**
+ * A separate fake checkout (never the real one): committed biology IR,
+ * generated JSON and registrars, copied byte for byte.
+ */
+function fakeCheckout(): string {
+  const root = mkdtempSync(path.join(tmpdir(), 'examify-onboarding-checkout-'));
+  writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'project-examify' }));
+  for (const rel of [
+    ...REGISTRARS,
+    'content/subjects/biology/bank.ir.json',
+    'content/generated/subjects.json',
+    'content/generated/questions/biology.json',
+    'content/generated/keys/biology.json',
+  ]) {
+    mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
+    copyFileSync(path.join(REPO, rel), path.join(root, rel));
+  }
+  return root;
+}
+
+/** Relative path → bytes for every file under `dir` (skipping `skip` subtrees). */
+function treeBytes(dir: string, skip: readonly string[] = []): Record<string, string> {
+  const out: Record<string, string> = {};
+  const walk = (abs: string) => {
+    for (const entry of readdirSync(abs, { withFileTypes: true })) {
+      const child = path.join(abs, entry.name);
+      const rel = path.relative(dir, child);
+      if (skip.includes(rel)) continue;
+      if (entry.isDirectory()) walk(child);
+      else out[rel] = readFileSync(child, 'utf8');
+    }
+  };
+  walk(dir);
+  return out;
+}
+
+function fileMode(abs: string): number {
+  return statSync(abs).mode & 0o777;
+}
+
+describe('onboarding writes only the family data folder', () => {
+  it('preview + apply against a family root leave a fake checkout byte-for-byte unchanged', async () => {
+    const onboarding = await import('@/lib/onboarding');
+    const { generateOnboardingSubject } = await import('@/lib/onboarding-generate');
+    const { setEnvStoreRootForTests } = await import('@/lib/env-store');
+    const checkout = fakeCheckout();
+    const outside = mkdtempSync(path.join(tmpdir(), 'examify-onboarding-family-'));
+
+    // The default layout (`<checkout>/data`) and a folder outside the checkout.
+    for (const family of [path.join(checkout, 'data'), outside]) {
+      onboarding.setOnboardingContentRootForTests(family);
+      setEnvStoreRootForTests(checkout);
+      const before = treeBytes(checkout, ['data']);
+
+      expect(onboarding.addOnboardingSubject({ id: 'history', label: 'History' }, family).ok).toBe(
+        true,
+      );
+      writeFileSync(path.join(family, 'content/subjects/history/notes.txt'), 'Magna Carta.\n');
+      const generated = await generateOnboardingSubject({
+        subjectId: 'history',
+        provider: 'test',
+        seed: 0,
+        root: family,
+      });
+      expect(generated.ok).toBe(true);
+      // A leftover generated subject the whole-tree emit prunes.
+      seedGenerated(family, 'chemistry');
+
+      const preview = onboarding.previewOnboardingEmit(false, family);
+      if (!preview.ok) throw new Error(`expected preview: ${preview.message}`);
+      const generatedDir = path.join(family, 'content/generated');
+      for (const file of preview.planned) {
+        expect(file.relPath.startsWith('content/generated/'), file.relPath).toBe(true);
+        expect(file.relPath).not.toMatch(/^src\/|\.\./);
+        expect(path.relative(generatedDir, file.absPath).startsWith('..'), file.absPath).toBe(
+          false,
+        );
+      }
+      expect(onboarding.isPlanInsideFamilyGenerated(preview.planned, family)).toBe(true);
+      expect(preview.dryRun.plan.some((row) => row.path.includes('generated-'))).toBe(false);
+
+      const applied = onboarding.applyOnboardingEmit(
+        { replaceSample: false, expectedHash: preview.dryRun.hash, confirmPrune: true },
+        family,
+      );
+      expect(applied.ok).toBe(true);
+
+      expect(treeBytes(checkout, ['data'])).toEqual(before);
+      expect(existsSync(path.join(checkout, '.examify-ingest'))).toBe(false);
+      expect(existsSync(path.join(family, 'content/subjects/history/bank.ir.json'))).toBe(true);
+      expect(existsSync(path.join(checkout, 'content/subjects/history'))).toBe(false);
+      expect(Object.keys(treeBytes(generatedDir)).sort()).toEqual([
+        'keys/history.json',
+        'questions/history.json',
+        'subjects.json',
+      ]);
+      expect(fileMode(path.join(generatedDir, 'keys/history.json'))).toBe(0o600);
+      expect(fileMode(path.join(generatedDir, 'keys'))).toBe(0o700);
+    }
+  });
+
+  it('never plans registrars, even when the family root has some', async () => {
+    const { previewOnboardingEmit, applyOnboardingEmit } = await import('@/lib/onboarding');
+    const family = tempRoot();
+    mkdirSync(path.join(family, 'content/subjects/history'), { recursive: true });
+    writeFileSync(
+      path.join(family, 'content/subjects/history/bank.ir.json'),
+      JSON.stringify(fixtureIr('history', 'History')),
+    );
+    for (const rel of REGISTRARS) writeFileSync(path.join(family, rel), 'export {}\n');
+
+    const preview = previewOnboardingEmit(false, family);
+    if (!preview.ok) throw new Error('expected preview');
+    expect(preview.dryRun.plan.map((row) => row.path)).toEqual([
+      'content/generated/subjects.json',
+      'content/generated/questions/history.json',
+      'content/generated/keys/history.json',
+    ]);
+    expect(
+      applyOnboardingEmit({ replaceSample: false, expectedHash: preview.dryRun.hash }, family).ok,
+    ).toBe(true);
+    for (const rel of REGISTRARS) {
+      expect(readFileSync(path.join(family, rel), 'utf8')).toBe('export {}\n');
+    }
+  });
+
+  it('dry-run lists family subjects that replace a built-in subject', async () => {
+    const { previewOnboardingEmit, BUILTIN_SUBJECTS } = await import('@/lib/onboarding');
+    expect(BUILTIN_SUBJECTS).toContainEqual({ id: 'biology', label: 'Biology' });
+    expect(BUILTIN_SUBJECTS.some((subject) => subject.id === 'history')).toBe(false);
+
+    const family = tempRoot();
+    mkdirSync(path.join(family, 'content/subjects/history'), { recursive: true });
+    writeFileSync(
+      path.join(family, 'content/subjects/history/bank.ir.json'),
+      JSON.stringify(fixtureIr('history', 'History')),
+    );
+    const plain = previewOnboardingEmit(false, family);
+    if (!plain.ok) throw new Error('expected preview');
+    expect(plain.dryRun.shadows).toEqual([]);
+
+    mkdirSync(path.join(family, 'content/subjects/biology'), { recursive: true });
+    const biology = JSON.parse(
+      readFileSync(path.join(REPO, 'content/subjects/biology/bank.ir.json'), 'utf8'),
+    ) as { subject: { label: string } };
+    biology.subject.label = 'Our Biology';
+    writeFileSync(
+      path.join(family, 'content/subjects/biology/bank.ir.json'),
+      JSON.stringify(biology),
+    );
+    const shadowed = previewOnboardingEmit(false, family);
+    if (!shadowed.ok) throw new Error('expected preview');
+    expect(shadowed.dryRun.shadows).toEqual([{ id: 'biology', label: 'Biology' }]);
+  });
+
+  it('snapshot lists family subjects only, the built-ins and how hints name the folder', async () => {
+    const { bootstrapHousehold } = await import('@/lib/households');
+    const { getOnboardingSnapshot, onboardingDataDirDisplay } = await import('@/lib/onboarding');
+    const host = bootstrapHousehold({ email: 'snap@example.com', householdName: 'Snap' });
+    if (!host.ok) throw new Error('bootstrap');
+    const family = tempRoot();
+    mkdirSync(path.join(family, 'content/subjects/history'), { recursive: true });
+    writeFileSync(
+      path.join(family, 'content/subjects/history/bank.ir.json'),
+      JSON.stringify(fixtureIr('history', 'History')),
+    );
+
+    const snap = getOnboardingSnapshot(host.householdId, family);
+    expect(snap.subjects.map((row) => row.id)).toEqual(['history']);
+    expect(snap.builtinSubjects).toContainEqual({ id: 'biology', label: 'Biology' });
+    expect(snap.liveSubjects.map((row) => row.id)).toContain('biology');
+    expect(snap.dataDirDisplay).toBe(family);
+
+    expect(onboardingDataDirDisplay(path.join(REPO, 'data'))).toBe('data');
+    expect(onboardingDataDirDisplay(path.join(REPO, 'data', 'family'))).toBe('data/family');
+  });
+
+  it('isPlanInsideFamilyGenerated accepts only files under <root>/content/generated', async () => {
+    const { isPlanInsideFamilyGenerated } = await import('@/lib/onboarding');
+    const root = '/srv/examify-data';
+    const plan = (...rels: string[]) => rels.map((rel) => ({ absPath: path.join(root, rel) }));
+    expect(
+      isPlanInsideFamilyGenerated(
+        plan('content/generated/subjects.json', 'content/generated/keys/history.json'),
+        root,
+      ),
+    ).toBe(true);
+    expect(isPlanInsideFamilyGenerated(plan('src/lib/exam/generated-public.ts'), root)).toBe(false);
+    expect(isPlanInsideFamilyGenerated(plan('content/generated'), root)).toBe(false);
+    expect(isPlanInsideFamilyGenerated(plan('content/generated-x/a.json'), root)).toBe(false);
+    expect(isPlanInsideFamilyGenerated(plan('content/generated/../../app.db'), root)).toBe(false);
+    expect(
+      isPlanInsideFamilyGenerated([{ absPath: '/srv/checkout/content/generated/a.json' }], root),
+    ).toBe(false);
+  });
+
+  it('apply refuses a plan that would write outside the family data folder', async () => {
+    vi.resetModules();
+    vi.doMock('examify-ingest', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('examify-ingest')>();
+      return {
+        ...actual,
+        planEmit: (...args: Parameters<typeof actual.planEmit>) => {
+          const root = args[1];
+          const rel = 'src/lib/exam/generated-public.ts';
+          return [
+            ...actual.planEmit(...args),
+            { relPath: rel, absPath: path.join(root, rel), contents: 'x', existing: null },
+          ];
+        },
+      };
+    });
+    try {
+      const { applyOnboardingEmit, previewOnboardingEmit } = await import('@/lib/onboarding');
+      const family = tempRoot();
+      mkdirSync(path.join(family, 'content/subjects/history'), { recursive: true });
+      writeFileSync(
+        path.join(family, 'content/subjects/history/bank.ir.json'),
+        JSON.stringify(fixtureIr('history', 'History')),
+      );
+      const preview = previewOnboardingEmit(false, family);
+      if (!preview.ok) throw new Error('expected preview');
+      expect(
+        applyOnboardingEmit({ replaceSample: false, expectedHash: preview.dryRun.hash }, family),
+      ).toEqual({
+        ok: false,
+        reason: 'invalid',
+        message: 'refusing to write outside the family data folder',
+      });
+      expect(existsSync(path.join(family, 'content/generated'))).toBe(false);
+      expect(existsSync(path.join(family, 'src/lib/exam/generated-public.ts'))).toBe(false);
+    } finally {
+      vi.doUnmock('examify-ingest');
+      vi.resetModules();
+    }
   });
 });

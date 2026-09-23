@@ -9,7 +9,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ONBOARDING_INGEST_CLI,
   confirmOnboardingIrOverwrite,
@@ -17,7 +17,10 @@ import {
   generateIrWriteVerb,
   onboardingGenerateAndEmitCli,
   onboardingGenerateBatchIds,
+  onboardingGenerateCli,
   onboardingGenerateOverwriteSubjects,
+  onboardingIngestCli,
+  onboardingShadowNotice,
   onboardingSubjectIrRel,
   providerForOnboardingAiMode,
 } from '@/lib/onboarding-types';
@@ -65,10 +68,24 @@ function seedSubject(root: string) {
   writeFileSync(path.join(root, 'content/source-pdfs/history.pdf'), '%PDF-1.4 standalone\n');
 }
 
+/** A fake checkout with no `.env`: generate never reads the developer's real keys. */
+function keylessCheckout(): string {
+  const root = mkdtempSync(path.join(tmpdir(), 'examify-onboard-gen-checkout-'));
+  writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'project-examify' }));
+  return root;
+}
+
+beforeEach(async () => {
+  const { setEnvStoreRootForTests } = await import('@/lib/env-store');
+  setEnvStoreRootForTests(keylessCheckout());
+});
+
 afterEach(async () => {
   const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
   const { resetOnboardingGenerateForTests } = await import('@/lib/onboarding-generate');
+  const { setEnvStoreRootForTests } = await import('@/lib/env-store');
   setOnboardingContentRootForTests(null);
+  setEnvStoreRootForTests(null);
   resetOnboardingGenerateForTests();
   vi.restoreAllMocks();
 });
@@ -120,6 +137,32 @@ describe('onboarding generate mapping', () => {
       'pnpm examify-ingest generate --provider test --seed 0 content/subjects/<id>',
       ...ONBOARDING_INGEST_CLI,
     ]);
+  });
+
+  it('names the family data folder in power-user commands', () => {
+    expect(onboardingGenerateAndEmitCli('openai', 2, 'data')).toEqual([
+      'pnpm examify-ingest generate --provider openai --seed 2 data/content/subjects/<id>',
+      'pnpm examify-ingest validate data/content/subjects',
+      'pnpm examify-ingest emit data/content/subjects --dry-run',
+      'pnpm examify-ingest emit data/content/subjects --apply',
+    ]);
+    expect(onboardingGenerateCli('test', 0, 'history', '/srv/examify-data')).toBe(
+      'pnpm examify-ingest generate --provider test --seed 0 /srv/examify-data/content/subjects/history',
+    );
+    expect(onboardingIngestCli('/srv/family data')[0]).toBe(
+      "pnpm examify-ingest validate '/srv/family data/content/subjects'",
+    );
+    expect(onboardingIngestCli('.')).toEqual([...ONBOARDING_INGEST_CLI]);
+  });
+
+  it('words the built-in replacement notice', () => {
+    expect(onboardingShadowNotice([])).toBeNull();
+    expect(onboardingShadowNotice([{ label: 'Biology' }])).toBe(
+      'Replaces built-in subject: Biology. Your family sees your version after Apply.',
+    );
+    expect(onboardingShadowNotice([{ label: 'Biology' }, { label: 'Demo' }])).toBe(
+      'Replaces built-in subjects: Biology, Demo. Your family sees your version after Apply.',
+    );
   });
 
   it('builds generate-all from source-backed subjects only', () => {
@@ -1611,5 +1654,43 @@ describe('generate-all cancel (C11)', () => {
     expect(second.ok ? null : second.reason).toBe('cancelled');
     expect(existsSync(irPathFor(root, 'beta'))).toBe(false);
     expect(readFileSync(irPathFor(root, 'alpha'), 'utf8')).toBe(alphaIr);
+  });
+});
+
+describe('onboarding generate keys', () => {
+  it('reads API keys from the checkout .env (env store), never the family data folder', async () => {
+    const ingest = await import('examify-ingest/generate');
+    const { setEnvStoreRootForTests } = await import('@/lib/env-store');
+    const { generateOnboardingSubject } = await import('@/lib/onboarding-generate');
+    const checkout = keylessCheckout();
+    writeFileSync(path.join(checkout, '.env'), 'OPENAI_API_KEY=sk-from-checkout-env\n');
+    setEnvStoreRootForTests(checkout);
+    const family = tempRoot();
+    seedSubject(family);
+    writeFileSync(path.join(family, '.env'), 'OPENAI_API_KEY=sk-from-data-folder\n');
+
+    const previous = process.env.OPENAI_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    const seen: (string | undefined)[] = [];
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(ingest, 'generateSubject').mockImplementation(async (request) => {
+      seen.push(request.env?.OPENAI_API_KEY);
+      throw new ingest.ProviderFailureError('http', 'stop here', { status: 401 });
+    });
+    try {
+      const result = await generateOnboardingSubject({
+        subjectId: 'history',
+        provider: 'openai',
+        seed: 0,
+        root: family,
+        force: true,
+      });
+      expect(seen).toEqual(['sk-from-checkout-env']);
+      expect(result.ok ? null : result.reason).toBe('provider_auth');
+      expect(JSON.stringify(result)).not.toContain('sk-from');
+    } finally {
+      if (previous === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = previous;
+    }
   });
 });
