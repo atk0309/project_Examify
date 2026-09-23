@@ -1,4 +1,5 @@
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -336,15 +337,64 @@ describe('resolveCliDataPaths', () => {
     expect(resolveCliDataPaths(root, {}).dataDir).toBe(path.join(root, 'data'));
   });
 
-  it('lets a non-blank process env value win over the files', () => {
+  it('lets a set process env value win over the files, even a blank one (like next start)', () => {
     const root = tempRepo();
     writeFileSync(path.join(root, '.env'), 'EXAMIFY_DATA_DIR=data/from-env\n');
     expect(resolveCliDataPaths(root, { EXAMIFY_DATA_DIR: 'data/host' }).dataDir).toBe(
       path.join(root, 'data', 'host'),
     );
-    expect(resolveCliDataPaths(root, { EXAMIFY_DATA_DIR: '  ' }).dataDir).toBe(
+    // Next keeps a host value the process already has, empty included, so the
+    // app would not read .env here: the CLIs must not either.
+    for (const blank of ['', '  ']) {
+      expect(resolveCliDataPaths(root, { EXAMIFY_DATA_DIR: blank }).dataDir).toBe(
+        path.join(root, 'data'),
+      );
+    }
+    expect(resolveCliDataPaths(root, { EXAMIFY_DATA_DIR: undefined }).dataDir).toBe(
       path.join(root, 'data', 'from-env'),
     );
+  });
+
+  it('opens the database the app would open when the host sets DATABASE_URL empty', async () => {
+    // @next/env is next's own dependency (pnpm does not hoist it): load it from there.
+    const fromNext = createRequire(createRequire(import.meta.url).resolve('next/package.json'));
+    const { loadEnvConfig } = fromNext('@next/env') as {
+      loadEnvConfig: (
+        dir: string,
+        dev?: boolean,
+        log?: { info: (...args: unknown[]) => void; error: (...args: unknown[]) => void },
+        forceReload?: boolean,
+      ) => unknown;
+    };
+    const root = tempRepo();
+    const family = tempDir('examify-cli-empty-host-');
+    writeFileSync(
+      path.join(root, '.env'),
+      `DATABASE_URL=file:${path.join(family, 'old.db')}\nEXAMIFY_DATA_DIR=${family}\n`,
+    );
+    const host = { DATABASE_URL: '' };
+    // What `next start` puts in process.env for the app, from the same host env.
+    const saved = { ...process.env };
+    let appEnv: NodeJS.ProcessEnv;
+    try {
+      for (const key of [
+        'DATABASE_URL',
+        'EXAMIFY_DATA_DIR',
+        'MAIL_OUTBOX_DIR',
+        '__NEXT_PROCESSED_ENV',
+      ])
+        delete process.env[key];
+      process.env.DATABASE_URL = '';
+      loadEnvConfig(root, false, { info: () => {}, error: () => {} }, true);
+      appEnv = { ...process.env };
+    } finally {
+      for (const key of Object.keys(process.env)) if (!(key in saved)) delete process.env[key];
+      Object.assign(process.env, saved);
+    }
+    const app = resolveDataPaths({ repoRoot: root, env: appEnv });
+    const cli = resolveCliDataPaths(root, host);
+    expect(app.dbPath).toBe(path.join(family, 'app.db'));
+    expect(cli.dbPath).toBe(app.dbPath);
   });
 
   it('finds the checkout from a nested cwd', () => {

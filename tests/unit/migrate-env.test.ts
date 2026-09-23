@@ -107,11 +107,15 @@ describe('resolveMigrateConfig', () => {
     expect(cfg.dbPath).toBe('/data/host.db');
   });
 
-  it('treats a blank process DATABASE_URL as unset so the repo .env is used', () => {
+  it('treats a blank process DATABASE_URL as next start does: set, so .env does not fill it', () => {
     const root = tempRepo();
     writeFileSync(path.join(root, '.env'), 'DATABASE_URL=file:./data/from-dotenv.db\n');
+    // Next keeps a host value the process already has (blank included) and the
+    // app treats blank as unset: <data>/app.db. db:migrate must open the same file.
     const cfg = resolveMigrateConfig(root, { DATABASE_URL: '   ' });
-    expect(cfg.dbPath).toBe(path.join(root, 'data', 'from-dotenv.db'));
+    expect(cfg.dbPath).toBe(path.join(root, 'data', 'app.db'));
+    // Not set at all: the repo .env applies.
+    expect(resolveMigrateConfig(root, {}).dbPath).toBe(path.join(root, 'data', 'from-dotenv.db'));
   });
 
   it('falls back to <checkout>/data/app.db in the default data folder', () => {

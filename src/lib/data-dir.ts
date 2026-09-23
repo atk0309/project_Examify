@@ -320,8 +320,8 @@ export function resolveDataPaths(input: { repoRoot: string; env: EnvLike }): Dat
  * CLI processes (`db:migrate`, `examify-ingest`, drizzle-kit) do not get
  * Next's env loading, so read the repo env files the way `next start` does
  * (`.env.production.local` > `.env.local` > `.env.production` > `.env`; the
- * first file that defines a key wins, even empty). A non-blank process env
- * value wins over the files.
+ * first file that defines a key wins, even empty). A process env value that
+ * is set wins over the files, even an empty one, exactly as with Next.
  */
 export function resolveCliDataPaths(
   cwd: string = process.cwd(),
@@ -331,7 +331,11 @@ export function resolveCliDataPaths(
   const files = readProductionEnvFiles(repoRoot);
   const env: EnvLike = {};
   for (const key of DATA_ENV_KEYS) {
-    env[key] = nonBlank(processEnv[key]) ?? envFileValue(files, key);
+    // Like `next start` (@next/env): a key the process already defines keeps
+    // its value, even an empty one, and the files never fill it in; the
+    // resolver then treats a blank value as unset, as the app does.
+    const own = processEnv[key];
+    env[key] = own !== undefined ? own : envFileValue(files, key);
   }
   return resolveDataPaths({ repoRoot, env });
 }

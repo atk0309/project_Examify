@@ -365,12 +365,15 @@ export function resolveDataPaths({ repoRoot, env }) {
 function dataPathsFromFiles(repoRoot, files, processEnv) {
   const env = {};
   for (const key of DATA_ENV_KEYS) {
-    env[key] = nonBlank(processEnv[key]) ?? envFileValue(files, key);
+    // Like `next start`: a key the process defines keeps its value, even an
+    // empty one (the resolver then treats blank as unset, as the app does).
+    const own = processEnv[key];
+    env[key] = own !== undefined ? own : envFileValue(files, key);
   }
   return resolveDataPaths({ repoRoot, env });
 }
 
-/** `resolveCliDataPaths` for a known checkout root: env files, non-blank process env wins. */
+/** `resolveCliDataPaths` for a known checkout root: env files, a set process env value wins. */
 export function resolveRepoDataPaths(repoRoot, processEnv = process.env) {
   return dataPathsFromFiles(repoRoot, readProductionEnvFiles(repoRoot), processEnv);
 }

@@ -133,7 +133,8 @@ JSON`). Missing cloud
   (SQLite DB, outbox, wizard subjects / uploads / BankIR / generated questions + keys,
   ingest caches, backups) lives in the family data folder from `src/lib/data-dir.ts`
   (`getDataPaths()`; CLIs use `resolveCliDataPaths()`, repo env files in `next start`
-  order via `env-file.ts`). Inside the checkout it writes only `./data` (gitignored),
+  order via `env-file.ts`; a process env value that is set wins, even empty, as with
+  Next). Inside the checkout it writes only `./data` (gitignored),
   `tests/.tmp/…` (the suites) and `.env` via env-store (wizard API keys). Folder =
   `EXAMIFY_DATA_DIR` (relative → checkout root, never cwd) → else the folder of an
   explicit SQLite `DATABASE_URL` outside the checkout → else `./data`. DB = explicit

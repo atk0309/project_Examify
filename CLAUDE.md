@@ -780,7 +780,9 @@ These are non-negotiable. Don't "fix" them out.
   (Next loaded the env files). CLIs (`db:migrate`, drizzle-kit, `examify-ingest`,
   `examify-data.mjs`) use `resolveCliDataPaths`: the repo env files in `next start` order
   (`.env.production.local` > `.env.local` > `.env.production` > `.env`; the first file
-  that defines a key wins, even empty; a non-blank process env value wins over files)
+  that defines a key wins, even empty; a process env value that is set wins over the files,
+  even an empty one, exactly as `@next/env` keeps it, and the resolver treats blank as
+  unset like the app)
   via `env-file.ts`, the single `.env` parser.
 - **Safety** (`assertSafeDataDir`, on realpaths so a symlink can't route around it): never
   the checkout or a folder that contains it (`checkout_root`); inside the checkout only
