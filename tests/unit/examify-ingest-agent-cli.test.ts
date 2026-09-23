@@ -256,6 +256,9 @@ describe('agent CLI binaries', () => {
     expect(mergeRepoEnvFiles(root, { examify_claude_bin: '' }, 'win32').EXAMIFY_CLAUDE_BIN).toBe(
       '',
     );
+    // .env.local still overrides .env when the two spell a name differently.
+    writeFileSync(path.join(root, '.env.local'), 'examify_codex_model=from-local\n');
+    expect(mergeRepoEnvFiles(root, {}, 'win32').EXAMIFY_CODEX_MODEL).toBe('from-local');
     // POSIX names are case-sensitive: nothing is folded.
     expect(mergeRepoEnvFiles(root, { Examify_Claude_Bin: '/host/claude' }, 'linux')).toMatchObject({
       Examify_Claude_Bin: '/host/claude',

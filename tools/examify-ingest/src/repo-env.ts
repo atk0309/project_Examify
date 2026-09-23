@@ -18,18 +18,21 @@ export function mergeRepoEnvFiles(
   env: Record<string, string | undefined>,
   platform: NodeJS.Platform = process.platform,
 ): Record<string, string | undefined> {
+  const fold = platform === 'win32' ? (key: string) => key.toUpperCase() : (key: string) => key;
+  // Folded as each file is read, so `.env.local` overrides `.env` whatever
+  // either one's spelling.
   const fromFiles: Record<string, string> = {};
   for (const name of ENV_FILES) {
-    Object.assign(fromFiles, readEnvFile(path.join(repoRoot, name)));
+    for (const [key, value] of Object.entries(readEnvFile(path.join(repoRoot, name)))) {
+      fromFiles[fold(key)] = value;
+    }
   }
-  const fold = platform === 'win32' ? (key: string) => key.toUpperCase() : (key: string) => key;
   const out: Record<string, string | undefined> = {};
   for (const [key, value] of Object.entries(env)) {
     const name = fold(key);
     if (value !== undefined && out[name] === undefined) out[name] = value;
   }
-  for (const [key, value] of Object.entries(fromFiles)) {
-    const name = fold(key);
+  for (const [name, value] of Object.entries(fromFiles)) {
     if (out[name] === undefined) out[name] = value;
   }
   return out;
