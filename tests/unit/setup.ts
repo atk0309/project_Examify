@@ -3,9 +3,15 @@ import path from 'node:path';
 
 const TMP_ROOT = path.join(process.cwd(), 'tests', '.tmp');
 const UNIT_DB = path.join(TMP_ROOT, 'unit.db');
+// Per worker process, wiped before every test file. Set unconditionally: a
+// developer's exported EXAMIFY_DATA_DIR must never point unit tests at a real
+// family data folder (DB, uploads, generated keys).
+const UNIT_DATA_DIR = path.join(TMP_ROOT, `unit-data-${process.pid}`);
 
 Reflect.set(process.env, 'NODE_ENV', 'test');
-if (!process.env.DATABASE_URL) Reflect.set(process.env, 'DATABASE_URL', `file:${UNIT_DB}`);
+Reflect.set(process.env, 'EXAMIFY_DATA_DIR', UNIT_DATA_DIR);
+// Same for the database: never a developer's exported DATABASE_URL.
+Reflect.set(process.env, 'DATABASE_URL', `file:${UNIT_DB}`);
 if (!process.env.AUTH_SECRET)
   Reflect.set(process.env, 'AUTH_SECRET', 'unit-test-secret-must-be-at-least-32-chars-long');
 // Turnstile stays off in unit tests unless a case sets TURNSTILE_ENABLED=1.
@@ -21,4 +27,5 @@ if (!process.env.MAIL_OUTBOX_DIR) {
 }
 
 if (fs.existsSync(UNIT_DB)) fs.unlinkSync(UNIT_DB);
+fs.rmSync(UNIT_DATA_DIR, { recursive: true, force: true });
 fs.mkdirSync(TMP_ROOT, { recursive: true });

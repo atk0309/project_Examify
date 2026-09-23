@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { SAMPLE_ANSWER_KEYS } from './answer-keys.server';
 import type { AnswerKey } from './answer-key-types';
@@ -14,12 +14,18 @@ import {
 } from './data';
 import { GENERATED_QUESTIONS, GENERATED_SUBJECTS } from './generated-public';
 import { GENERATED_KEYS } from './generated-keys.server';
+import { generatedRevision } from './generated-revision';
 import {
+  GENERATED_SUBJECT_ID_RE,
+  composeGeneratedKeys,
+  composeGeneratedLayers,
   generatedReplacesSample,
   generatedReplacesSampleIds,
+  isSubjectQuestionId,
   mergeKeys,
   mergeQuestions,
   mergeSubjects,
+  type GeneratedLayer,
 } from './merge-generated';
 import { getOnboardingContentRoot } from '@/lib/content-root';
 
@@ -32,162 +38,331 @@ export type LivePublicBank = {
   questions: QuestionBank;
 };
 
-type GeneratedOverlay = {
-  subjects: Subject[];
-  questions: QuestionBank;
-  keys: Record<string, AnswerKey>;
-};
+/** The family data folder's generated layer, keys limited to its own question ids. */
+export type FamilyGeneratedLayer = GeneratedLayer & { keys: Record<string, AnswerKey> };
 
-function readJsonFile(abs: string): unknown | undefined {
-  try {
-    if (!existsSync(abs) || !statSync(abs).isFile()) return undefined;
-    return JSON.parse(readFileSync(abs, 'utf8')) as unknown;
-  } catch {
-    return undefined;
-  }
-}
+/** Why a family catalog row was left out. Logged as this code only (never a path). */
+export type FamilySubjectDropReason =
+  /** Not a subject row, or its id is not kebab-case. */
+  | 'invalid_row'
+  | 'duplicate_id'
+  /** `questions/<id>.json` missing, unreadable or not JSON. */
+  | 'questions_unreadable'
+  /** A malformed question, an id the subject cannot own, a repeat, or no questions. */
+  | 'questions_invalid'
+  /** `keys/<id>.json` missing, unreadable or not a JSON object. */
+  | 'keys_unreadable'
+  /** A public question has no usable key of its own type. */
+  | 'keys_incomplete'
+  /**
+   * The questions + keys read do not hash to the row's `rev` (an Apply
+   * mid-write, or one that crashed between its writes) and no earlier
+   * consistent copy of the subject is in memory.
+   */
+  | 'revision_mismatch';
 
-function isSubject(value: unknown): value is Subject {
-  if (!value || typeof value !== 'object') return false;
-  const rec = value as Record<string, unknown>;
+const COMMITTED: GeneratedLayer = { subjects: GENERATED_SUBJECTS, questions: GENERATED_QUESTIONS };
+
+type JsonRead = { ok: true; raw: string; value: unknown } | { ok: false; missing: boolean };
+
+function isEnoent(error: unknown): boolean {
   return (
-    typeof rec.id === 'string' &&
-    rec.id.length > 0 &&
-    typeof rec.label === 'string' &&
-    typeof rec.icon === 'string' &&
-    typeof rec.l === 'number' &&
-    typeof rec.c === 'number' &&
-    typeof rec.h === 'number'
+    error instanceof Error && 'code' in error && (error as NodeJS.ErrnoException).code === 'ENOENT'
   );
 }
 
+function readJson(abs: string): JsonRead {
+  let raw: string;
+  try {
+    // Regular files only: a FIFO or device would block the request.
+    if (!statSync(abs).isFile()) return { ok: false, missing: false };
+    raw = readFileSync(abs, 'utf8');
+  } catch (error) {
+    return { ok: false, missing: isEnoent(error) };
+  }
+  try {
+    return { ok: true, raw, value: JSON.parse(raw) as unknown };
+  } catch {
+    return { ok: false, missing: false };
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function parseSubject(value: unknown): Subject | null {
+  if (!isRecord(value)) return null;
+  const { id, label, icon, l, c, h } = value;
+  if (typeof id !== 'string' || !GENERATED_SUBJECT_ID_RE.test(id)) return null;
+  if (typeof label !== 'string' || !label || typeof icon !== 'string') return null;
+  if (typeof l !== 'number' || typeof c !== 'number' || typeof h !== 'number') return null;
+  return { id, label, icon, l, c, h };
+}
+
 function parseQuestion(value: unknown): Question | null {
-  if (!value || typeof value !== 'object') return null;
-  const rec = value as Record<string, unknown>;
-  if (typeof rec.id !== 'string' || typeof rec.q !== 'string') return null;
-  if (rec.type === 'mcq') {
-    if (!Array.isArray(rec.choices) || !rec.choices.every((choice) => typeof choice === 'string')) {
+  if (!isRecord(value)) return null;
+  if (typeof value.id !== 'string' || typeof value.q !== 'string') return null;
+  if (value.type === 'mcq') {
+    const choices = value.choices;
+    if (!Array.isArray(choices) || !choices.every((choice) => typeof choice === 'string')) {
       return null;
     }
-    return { id: rec.id, type: 'mcq', q: rec.q, choices: rec.choices };
+    return { id: value.id, type: 'mcq', q: value.q, choices };
   }
-  if (rec.type === 'free') return { id: rec.id, type: 'free', q: rec.q };
+  if (value.type === 'free') return { id: value.id, type: 'free', q: value.q };
   return null;
 }
 
-function parseQuestionBank(value: unknown): Partial<Record<DifficultyId, Question[]>> {
-  if (!value || typeof value !== 'object') return {};
-  const rec = value as Record<string, unknown>;
+/** Public fields only; any malformed item, foreign id or repeat rejects the whole file. */
+function parseSubjectQuestions(
+  subjectId: string,
+  value: unknown,
+): Partial<Record<DifficultyId, Question[]>> | null {
+  if (!isRecord(value)) return null;
   const out: Partial<Record<DifficultyId, Question[]>> = {};
+  const seen = new Set<string>();
   for (const difficulty of DIFFICULTIES) {
-    const list = rec[difficulty];
-    if (!Array.isArray(list)) continue;
-    const questions = list
-      .map(parseQuestion)
-      .filter((question): question is Question => question !== null);
+    const list = value[difficulty];
+    if (list === undefined) continue;
+    if (!Array.isArray(list)) return null;
+    const questions: Question[] = [];
+    for (const item of list) {
+      const question = parseQuestion(item);
+      if (!question || seen.has(question.id) || !isSubjectQuestionId(subjectId, question.id)) {
+        return null;
+      }
+      seen.add(question.id);
+      questions.push(question);
+    }
     if (questions.length > 0) out[difficulty] = questions;
   }
-  return out;
+  return seen.size > 0 ? out : null;
 }
 
 function parseAnswerKey(value: unknown): AnswerKey | null {
-  if (!value || typeof value !== 'object') return null;
-  const rec = value as Record<string, unknown>;
-  const provenance = rec.provenance;
-  if (!provenance || typeof provenance !== 'object') return null;
-  const meta = provenance as Record<string, unknown>;
-  if (typeof meta.pdf !== 'string' || typeof meta.locator !== 'string') return null;
-  if (!meta.pdf || !meta.locator) return null;
-  const proven = { pdf: meta.pdf, locator: meta.locator };
-  if (rec.type === 'mcq' && typeof rec.answer === 'number' && Number.isInteger(rec.answer)) {
-    return { type: 'mcq', answer: rec.answer, provenance: proven };
+  if (!isRecord(value)) return null;
+  const provenance = value.provenance;
+  if (!isRecord(provenance)) return null;
+  if (typeof provenance.pdf !== 'string' || typeof provenance.locator !== 'string') return null;
+  if (!provenance.pdf || !provenance.locator) return null;
+  const proven = { pdf: provenance.pdf, locator: provenance.locator };
+  if (value.type === 'mcq' && typeof value.answer === 'number' && Number.isInteger(value.answer)) {
+    return { type: 'mcq', answer: value.answer, provenance: proven };
   }
   if (
-    rec.type === 'free' &&
-    typeof rec.rubric === 'string' &&
-    typeof rec.maxScore === 'number' &&
-    rec.maxScore > 0
+    value.type === 'free' &&
+    typeof value.rubric === 'string' &&
+    typeof value.maxScore === 'number' &&
+    value.maxScore > 0
   ) {
-    return { type: 'free', rubric: rec.rubric, maxScore: rec.maxScore, provenance: proven };
+    return { type: 'free', rubric: value.rubric, maxScore: value.maxScore, provenance: proven };
   }
   return null;
 }
 
-function parseKeys(value: unknown): Record<string, AnswerKey> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+/** Exactly one usable key of the right type per public question, or null. */
+function keysForQuestions(
+  bank: Partial<Record<DifficultyId, Question[]>>,
+  value: Record<string, unknown>,
+): Record<string, AnswerKey> | null {
   const out: Record<string, AnswerKey> = {};
-  for (const [id, raw] of Object.entries(value as Record<string, unknown>)) {
-    const key = parseAnswerKey(raw);
-    if (key) out[id] = key;
+  for (const difficulty of DIFFICULTIES) {
+    for (const question of bank[difficulty] ?? []) {
+      if (!Object.prototype.hasOwnProperty.call(value, question.id)) return null;
+      const key = parseAnswerKey(value[question.id]);
+      if (!key || key.type !== question.type) return null;
+      if (
+        key.type === 'mcq' &&
+        question.type === 'mcq' &&
+        (key.answer < 0 || key.answer >= question.choices.length)
+      ) {
+        return null;
+      }
+      out[question.id] = key;
+    }
   }
   return out;
 }
 
+type FamilyWarning = { reason: FamilySubjectDropReason; subjectId?: string };
+
+type ConsistentSubject = {
+  rev: string;
+  subject: Subject;
+  bank: Partial<Record<DifficultyId, Question[]>>;
+  keys: Record<string, AnswerKey>;
+};
+
 /**
- * Read `content/generated/` from disk. A present, parseable `subjects.json` is
- * authoritative for the generated overlay (including an empty catalog). Missing
- * or unreadable catalog falls back to the build-time registrar imports.
+ * Per root, per subject id: the last copy of a revisioned family subject
+ * whose files matched its `rev`. Served while an Apply is between writes.
  */
-export function readGeneratedOverlay(root = getOnboardingContentRoot()): GeneratedOverlay | null {
-  const catalog = readJsonFile(path.join(root, GENERATED_REL, 'subjects.json'));
-  if (!Array.isArray(catalog)) return null;
+const lastConsistentByRoot = new Map<string, Map<string, ConsistentSubject>>();
+
+/** Last warning set logged per root, so a broken catalog warns once, not on every request. */
+const warnedByRoot = new Map<string, string>();
+
+function reportFamilyProblems(
+  root: string,
+  catalogUnreadable: boolean,
+  dropped: readonly FamilyWarning[],
+): void {
+  const signature = JSON.stringify([catalogUnreadable, dropped]);
+  if (warnedByRoot.get(root) === signature) return;
+  warnedByRoot.set(root, signature);
+  if (catalogUnreadable) console.warn('[live-bank] family catalog unreadable');
+  for (const warning of dropped) console.warn('[live-bank] family subject dropped', warning);
+}
+
+/**
+ * Read the family generated layer (`<familyRoot>/content/generated`) at request
+ * time. A missing catalog is no family layer. An unreadable or non-array
+ * catalog is also no family layer, with one warning. A catalog row counts
+ * only when its id is kebab-case, its questions file parses with ids it may
+ * own, and every public question has a key of its type; otherwise that row is
+ * dropped with one reason-coded warning (a committed subject it would have
+ * replaced stays). A row with `rev` (family emits write one) is served only
+ * when the questions + keys bytes read hash to it; otherwise the last
+ * consistent copy read earlier in this process is served, or the row is
+ * dropped (`revision_mismatch`), so questions and keys of two Applies are
+ * never paired. Warnings carry a code and subject id, never a path.
+ */
+export function readGeneratedOverlay(
+  root = getOnboardingContentRoot(),
+): FamilyGeneratedLayer | null {
+  const dir = path.join(root, GENERATED_REL);
+  const catalog = readJson(path.join(dir, 'subjects.json'));
+  if (!catalog.ok || !Array.isArray(catalog.value)) {
+    const unreadable = catalog.ok || !catalog.missing;
+    reportFamilyProblems(root, unreadable, []);
+    return null;
+  }
 
   const subjects: Subject[] = [];
   const questions: QuestionBank = {};
   const keys: Record<string, AnswerKey> = {};
+  const dropped: FamilyWarning[] = [];
+  const seen = new Set<string>();
+  let lastConsistent = lastConsistentByRoot.get(root);
+  if (!lastConsistent) {
+    lastConsistent = new Map();
+    lastConsistentByRoot.set(root, lastConsistent);
+  }
+  const serve = (entry: Omit<ConsistentSubject, 'rev'>) => {
+    subjects.push(entry.subject);
+    questions[entry.subject.id] = entry.bank;
+    Object.assign(keys, entry.keys);
+  };
 
-  for (const row of catalog) {
-    if (!isSubject(row)) continue;
-    subjects.push({
-      id: row.id,
-      label: row.label,
-      icon: row.icon,
-      l: row.l,
-      c: row.c,
-      h: row.h,
-    });
-    const bank = parseQuestionBank(
-      readJsonFile(path.join(root, GENERATED_REL, 'questions', `${row.id}.json`)),
-    );
-    if (Object.keys(bank).length > 0) questions[row.id] = bank;
-    Object.assign(
-      keys,
-      parseKeys(readJsonFile(path.join(root, GENERATED_REL, 'keys', `${row.id}.json`))),
-    );
+  for (const row of catalog.value) {
+    const subject = parseSubject(row);
+    if (!subject) {
+      dropped.push({ reason: 'invalid_row' });
+      continue;
+    }
+    const subjectId = subject.id;
+    if (seen.has(subjectId)) {
+      dropped.push({ reason: 'duplicate_id', subjectId });
+      continue;
+    }
+    seen.add(subjectId);
+
+    const rawQuestions = readJson(path.join(dir, 'questions', `${subjectId}.json`));
+    if (!rawQuestions.ok) {
+      dropped.push({ reason: 'questions_unreadable', subjectId });
+      continue;
+    }
+    const rawKeys = readJson(path.join(dir, 'keys', `${subjectId}.json`));
+    // A revisioned row is served only as the Apply it names: files of another
+    // (newer questions, older keys) fall back to the last consistent copy.
+    const rev = isRecord(row) && typeof row.rev === 'string' ? row.rev : undefined;
+    if (
+      rev !== undefined &&
+      rawKeys.ok &&
+      generatedRevision(rawQuestions.raw, rawKeys.raw) !== rev
+    ) {
+      const previous = lastConsistent.get(subjectId);
+      if (previous) serve(previous);
+      else dropped.push({ reason: 'revision_mismatch', subjectId });
+      continue;
+    }
+    const bank = parseSubjectQuestions(subjectId, rawQuestions.value);
+    if (!bank) {
+      dropped.push({ reason: 'questions_invalid', subjectId });
+      continue;
+    }
+    if (!rawKeys.ok || !isRecord(rawKeys.value)) {
+      dropped.push({ reason: 'keys_unreadable', subjectId });
+      continue;
+    }
+    const subjectKeys = keysForQuestions(bank, rawKeys.value);
+    if (!subjectKeys) {
+      dropped.push({ reason: 'keys_incomplete', subjectId });
+      continue;
+    }
+
+    serve({ subject, bank, keys: subjectKeys });
+    if (rev !== undefined) lastConsistent.set(subjectId, { rev, subject, bank, keys: subjectKeys });
   }
 
+  reportFamilyProblems(root, false, dropped);
   return { subjects, questions, keys };
 }
 
-function overlayOrFallback(root?: string): GeneratedOverlay {
-  return (
-    readGeneratedOverlay(root) ?? {
-      subjects: GENERATED_SUBJECTS,
-      questions: GENERATED_QUESTIONS,
-      keys: GENERATED_KEYS,
-    }
-  );
+function liveLayers(root: string) {
+  const family = readGeneratedOverlay(root);
+  return { family, layers: composeGeneratedLayers(COMMITTED, family) };
 }
 
-/** Sample + generated public bank, preferring disk over bundled registrar imports. */
-export function loadLivePublicBank(root = getOnboardingContentRoot()): LivePublicBank {
-  const generated = overlayOrFallback(root);
+type LiveLayers = ReturnType<typeof liveLayers>;
+
+function publicBankFrom({ layers }: LiveLayers): LivePublicBank {
   return {
-    subjects: mergeSubjects(SAMPLE_SUBJECTS, generated.subjects),
+    subjects: mergeSubjects(SAMPLE_SUBJECTS, layers.subjects),
     questions: mergeQuestions(
       SAMPLE_QUESTIONS,
-      generated.questions,
-      generatedReplacesSample(generated.questions, SAMPLE_QUESTIONS),
+      layers.questions,
+      generatedReplacesSample(layers.questions, SAMPLE_QUESTIONS),
     ),
   };
 }
 
-/** Sample + generated keys. Server-only; never pass this object to a client component. */
-export function loadLiveAnswerKeys(root = getOnboardingContentRoot()): Record<string, AnswerKey> {
-  const generated = overlayOrFallback(root);
+function answerKeysFrom({ family, layers }: LiveLayers): Record<string, AnswerKey> {
+  const generated = composeGeneratedKeys(
+    GENERATED_KEYS,
+    GENERATED_QUESTIONS,
+    family?.keys ?? {},
+    layers.shadowed,
+  );
   return mergeKeys(
     SAMPLE_ANSWER_KEYS,
-    generated.keys,
-    generatedReplacesSampleIds(Object.keys(generated.keys), Object.keys(SAMPLE_ANSWER_KEYS)),
+    generated,
+    generatedReplacesSampleIds(Object.keys(generated), Object.keys(SAMPLE_ANSWER_KEYS)),
   );
+}
+
+/**
+ * Sample + committed generated (registrars) + family generated (data folder)
+ * public bank. Family subjects replace committed ones with the same id.
+ */
+export function loadLivePublicBank(root = getOnboardingContentRoot()): LivePublicBank {
+  return publicBankFrom(liveLayers(root));
+}
+
+/** Keys twin of {@link loadLivePublicBank}. Server-only; never pass this to a client component. */
+export function loadLiveAnswerKeys(root = getOnboardingContentRoot()): Record<string, AnswerKey> {
+  return answerKeysFrom(liveLayers(root));
+}
+
+/**
+ * Public bank and keys from ONE read of the family folder, so scoring never
+ * pairs questions from one Apply with keys from another. Server-only.
+ */
+export function loadLiveBankAndKeys(root = getOnboardingContentRoot()): {
+  bank: LivePublicBank;
+  keys: Record<string, AnswerKey>;
+} {
+  const live = liveLayers(root);
+  return { bank: publicBankFrom(live), keys: answerKeysFrom(live) };
 }

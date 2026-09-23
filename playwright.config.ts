@@ -14,6 +14,11 @@ const PORT = Number(process.env.E2E_PORT ?? 3100);
 const baseURL = `http://127.0.0.1:${PORT}`;
 
 const E2E_DB = path.join(process.cwd(), 'tests', '.tmp', 'e2e.db');
+// Family data folder (uploads, wizard subjects, generated JSON). Always the
+// suite's own folder under tests/.tmp, never a developer's EXAMIFY_DATA_DIR;
+// `pnpm test:e2e:prepare` wipes it (E2E_DATA_DIR).
+const E2E_DATA_DIR = path.join(process.cwd(), 'tests', '.tmp', 'e2e-seeded-data');
+process.env.EXAMIFY_DATA_DIR = E2E_DATA_DIR;
 const E2E_OUTBOX =
   process.env.MAIL_OUTBOX_DIR ?? path.join(process.cwd(), 'tests', '.tmp', 'e2e-outbox');
 process.env.MAIL_OUTBOX_DIR = E2E_OUTBOX;
@@ -56,6 +61,7 @@ export default defineConfig({
       PORT: String(PORT),
       SITE_URL: baseURL,
       DATABASE_URL: `file:${E2E_DB}`,
+      EXAMIFY_DATA_DIR: E2E_DATA_DIR,
       AUTH_SECRET: 'e2e-secret-must-be-at-least-32-chars-long-yes',
       // Pin empty so a leftover host FAMILIES cannot auto-import into the
       // prepared DB (seeded suite already has a household; still isolate).

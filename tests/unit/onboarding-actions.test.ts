@@ -1039,7 +1039,10 @@ describe('onboarding actions', () => {
   it('refuses cloud generate when the key is the test sentinel', async () => {
     const root = tempRoot();
     const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
+    const { setEnvStoreRootForTests } = await import('@/lib/env-store');
     setOnboardingContentRootForTests(root);
+    // Generate reads keys from the env store (checkout) .env: keep the real one out.
+    setEnvStoreRootForTests(root);
     await signInHost();
     fs.mkdirSync(path.join(root, 'content/subjects/history'), { recursive: true });
     fs.mkdirSync(path.join(root, 'content/source-pdfs/history'), { recursive: true });

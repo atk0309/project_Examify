@@ -5,8 +5,9 @@ question-bank JSON from local source files, **validate** it, and **emit** the
 split public / server-only files the app merges onto the hand-authored sample
 bank.
 
-`generate` writes `content/subjects/<id>/bank.ir.json` only. It never emits or
-applies. Human-in-the-loop is still required.
+`generate` writes `content/subjects/<id>/bank.ir.json` (under the layer root —
+see [Layers](#layers-checkout-committed-and-family-data-folder)) only. It never
+emits or applies. Human-in-the-loop is still required.
 
 **Hand-authored biology** (`content/subjects/biology/bank.ir.json`) has no
 source file. Skip generate; validate / emit only. Generate needs a source
@@ -31,12 +32,64 @@ pnpm examify-ingest emit content/subjects --apply
 
 The first-run `/onboarding` wizard can run generate on the AI step (same
 `generateSubject` entry, BankIR only), then this same directory emit
-(validate, dry-run, then apply). It does not auto-emit or auto-apply after
-generate. `--replace-sample` is off unless the admin enables it: the Review ›
-Advanced toggle, or the same household setting on the AI step, shown next to
-Generate when a subject reuses a sample subject id. Generate uses that setting
-too; without it a sample-id subject is refused (`sample_collision`) before the
-provider call.
+(validate, dry-run, then apply) on the family layer only — it never plans the
+registrars and refuses any write outside `<data folder>/content/generated/`
+("refusing to write outside the family data folder"), judged on realpaths so a
+symlinked `content/generated`, `questions/` or `keys/` into the checkout is
+refused, and re-checked right before each write. Its Review names each
+family subject that replaces a committed one ("Replaces built-in subject: …").
+It does not auto-emit or auto-apply after generate. `--replace-sample` is off
+unless the admin enables it: the Review › Advanced toggle, or the same
+household setting on the AI step, shown next to Generate when a subject reuses
+a sample subject id. Generate uses that setting too; without it a sample-id
+subject is refused (`sample_collision`) before the provider call.
+
+## Layers: checkout (committed) and family data folder
+
+Every `validate` / `emit` / `generate` run works on exactly one layer, picked
+from the paths you name, and says which on stderr first:
+
+- **committed** (`layer: committed (checkout)`): paths in the checkout, such as
+  `content/subjects`. This is how shipped subjects (biology, the demo fixture)
+  are built and what CI runs. `emit --apply` writes tracked files:
+  `content/generated/` and the `src/lib/exam/generated-*.ts` registrars, and
+  prints a note saying so.
+- **family** (`layer: family (data)`): paths in the family data folder
+  (`EXAMIFY_DATA_DIR`, default `./data`; the same resolver as the app, so an
+  `EXAMIFY_DATA_DIR` in `.env` counts). This is the tree `/onboarding` writes.
+  `emit` writes `<data folder>/content/generated/` only (keys `0600` in a
+  `0700` folder) and never the registrars; generate reads sources and writes
+  IR and `.examify-ingest/` there. The app reads this layer on every request,
+  so an apply is live without a rebuild. A family subject with a committed
+  subject's id replaces it in the app, and validate / emit say so:
+  `note: family subject biology replaces the committed subject biology`.
+
+The data folder is checked first (the default `./data` sits inside the
+checkout). A path in neither is refused, and so is a run that names both. A
+path under the checkout's `./data` while `EXAMIFY_DATA_DIR` points elsewhere
+(a leftover folder) is refused rather than treated as committed — an emit
+would put family answer keys into tracked files. A family run warns when the
+data folder belongs to another user (the app could not read what it writes;
+run it as the app's user). API keys come from the checkout `.env` /
+`.env.local` in both layers.
+
+```bash
+pnpm examify-ingest generate --provider test --seed 0 data/content/subjects/<id>
+pnpm examify-ingest validate data/content/subjects
+pnpm examify-ingest emit data/content/subjects --dry-run
+pnpm examify-ingest emit data/content/subjects --apply
+```
+
+With an absolute `EXAMIFY_DATA_DIR`, name that path instead
+(`/srv/examify-data/content/subjects`). The wizard's power-user hints show
+the right one.
+
+Committed-layer runs in a development checkout leave files there
+(`bank.ir.json`, `.examify-ingest/`, changed `content/generated/` and
+registrars; `.examify-ingest/` stays even after a commit). `pnpm db:migrate`
+and `install.sh` read those as family content an older version left in the
+checkout and refuse; set `EXAMIFY_IGNORE_LEGACY_CONTENT=1` for `db:migrate`
+there. Never on a real install (use `./install.sh --upgrade`).
 
 ## Install
 
@@ -153,7 +206,8 @@ rasterized, the run fails closed. Provider HTTP/CMD calls use a 180s deadline,
 optionally combined with `generateSubject({ signal })` via `AbortSignal.any`.
 Abort throws `GenerateAbortedError` and writes no IR, IR cache, page-raster
 cache, or run manifest.
-Sources must stay under `content/subjects/<id>/` or `content/source-pdfs/<id>`.
+Sources must stay under `content/subjects/<id>/` or `content/source-pdfs/<id>`
+of the layer root.
 
 Source blobs are wrapped as `UNTRUSTED SOURCE MATERIAL` with static
 `BEGIN`/`END` markers. Those delimiters stay fixed on prompt v2 on purpose:
@@ -185,12 +239,27 @@ leftover `questions/<id>.json` / `keys/<id>.json` — and the matching
 `subjects.json` row — for an id with no `bank.ir.json` in this run is
 planned for delete. An empty subjects directory (no `bank.ir.json`) is
 refused and never wipes generated files. `validate` of an empty tree also
-fails. Dry-run lists planned deletes; `--apply` writes the catalog and
-registrars first, then removes leftover files. The hand-authored sample
+fails. (The `/onboarding` wizard, which only ever touches the family layer,
+turns an empty family tree with leftover family files into a prune-only plan
+behind its named prune confirm, so a family can remove its last subject.) Dry-run lists planned deletes; `--apply` writes every file first, then
+removes leftover files (order below). The hand-authored sample
 bank in `src/lib/exam/data.ts` and `answer-keys.server.ts` is never touched.
 
 When `src/lib/exam/generated-public.ts` and `generated-keys.server.ts` already
-exist, `--apply` rewrites those registrars from the resulting catalog.
+exist, a committed-layer `--apply` rewrites those registrars from the
+resulting catalog (a family-layer emit never does). Every file is written
+atomically (temp file + rename): questions and keys first, then the
+registrars, then `subjects.json` (the live bank reads the catalog first, so it
+is the commit point), then leftover deletes.
+
+A family-layer emit (the wizard, or the CLI on `data/content/subjects`) also
+gives each catalog row it writes a `rev`: the sha256 of that subject's exact
+`questions/<id>.json` bytes, a newline, then its `keys/<id>.json` bytes (rows
+this run leaves alone keep theirs). The live bank serves a row with `rev` only
+when the files it reads hash to it — otherwise the last consistent copy it read,
+or nothing — so a request or a crash between the writes never pairs new
+questions with old keys. Committed-layer output never has `rev`, and neither do
+the registrars.
 
 ## BankIR shape (version 1)
 
@@ -250,6 +319,8 @@ Rules the validator enforces:
 
 ## Emit targets
 
+Under the layer root (the checkout, or the family data folder):
+
 ```
 content/generated/subjects.json
 content/generated/questions/<subjectId>.json
@@ -257,18 +328,23 @@ content/generated/keys/<subjectId>.json
 ```
 
 Public question JSON never includes answers, rubrics, scores, or provenance.
-Keys are server-only. The running app reads `content/generated/` at request
-time (`src/lib/exam/live-bank.server.ts`) and must never pass key objects to
-the client. Do not import `content/generated/keys/` from client code.
+Keys are server-only. The running app reads the family layer's
+`content/generated/` at request time (`src/lib/exam/live-bank.server.ts`) and
+must never pass key objects to the client. Do not import
+`content/generated/keys/` from client code.
 
-Generated files are meant to be committed. Source PDFs stay in the gitignored
-`content/source-pdfs/` directory.
+Committed-layer files are meant to be committed; source PDFs stay in the
+gitignored `content/source-pdfs/` directory. Nothing in the family data folder
+is committed.
 
-After `emit content/subjects --apply`, `planEmit` rewrites
+After a committed-layer `emit content/subjects --apply`, `planEmit` rewrites
 `src/lib/exam/generated-public.ts` and
-`src/lib/exam/generated-keys.server.ts` from the merged catalog as a
-committed / missing-catalog fallback. Do not add those imports by hand. The
-committed biology sample is already registered.
+`src/lib/exam/generated-keys.server.ts` from the merged catalog (`planEmit`
+option `registrars: true`; the default is false). The registrars are how the
+app loads the committed layer: they import the JSON, so it ships with the
+build and a change needs a rebuild. A family-layer emit never writes them. Do
+not add those imports by hand. The committed biology sample is already
+registered.
 
 ## Library
 

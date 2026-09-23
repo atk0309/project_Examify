@@ -1,8 +1,10 @@
-import { applyEmit, formatEmitPlan, planEmit } from './emit';
+import { statSync } from 'node:fs';
+import { applyEmit, formatEmitPlan, planEmit, readGeneratedSubjects } from './emit';
 import { sampleBankFrozenIds } from './frozen-ids';
-import { findRepoRoot, isAuthoritativeCatalogInput, loadIrFiles, resolveIrFiles } from './load';
+import { isAuthoritativeCatalogInput, loadIrFiles, resolveIrFiles } from './load';
+import { formatLayerLine, resolveIngestRoot, subjectsArgFor, type IngestRoot } from './roots';
 import { DEFAULT_GENERATE_SEED, GENERATE_PROVIDERS, type GenerateProviderId } from './schema';
-import { validateIrCollection } from './validate';
+import { validateIrCollection, type ValidatedBank } from './validate';
 
 export const USAGE = `Usage:
   examify-ingest validate <subjects-dir|ir.json...> [--replace-sample]
@@ -12,6 +14,16 @@ export const USAGE = `Usage:
       <subjects-dir|content/subjects/<id>>
 
 emit is dry-run by default. Writes only with --apply.
+Two layers, picked from the paths you name (never mixed in one run):
+  committed  paths in the checkout (content/subjects). emit --apply writes
+             tracked files: content/generated and the src/lib/exam/generated-*.ts
+             registrars. This is how shipped subjects (biology) are built.
+  family     paths in the family data folder (EXAMIFY_DATA_DIR, default ./data),
+             e.g. data/content/subjects — the same tree /onboarding writes.
+             emit writes <data folder>/content/generated only, never registrars.
+             A family subject with a committed subject's id replaces it.
+A path in neither is refused. API keys come from the checkout .env either way.
+
 A subjects-directory emit (every path is a directory, typically content/subjects)
 prunes leftover generated subject JSON when the tree still has BankIR. An empty
 subjects directory is refused (fail closed) and never wipes generated files.
@@ -210,7 +222,62 @@ function printIssues(io: CliIo, errors: readonly { path?: string; message: strin
   }
 }
 
+/**
+ * Files this run writes into the family folder are owned by the running user
+ * (keys 0600). If the app runs as the folder's owner, it cannot read them and
+ * silently drops the subject — say so up front.
+ */
+export function familyFolderOwnerWarning(
+  ingest: Pick<IngestRoot, 'layer' | 'dataDir'>,
+  getuid: (() => number) | undefined = process.getuid?.bind(process),
+): string | null {
+  if (ingest.layer !== 'family' || !getuid) return null;
+  let owner: number;
+  try {
+    owner = statSync(ingest.dataDir).uid;
+  } catch {
+    return null;
+  }
+  if (owner === getuid()) return null;
+  return 'warning: the family data folder belongs to another user; run this as that user (the app cannot read files written now)';
+}
+
+/** The layer line (stderr), or null after printing why no layer applies. */
+export function resolveCliLayer(parsed: ParsedCli, io: CliIo): IngestRoot | null {
+  try {
+    const ingest = resolveIngestRoot(parsed.paths, io.cwd, io.env ?? process.env);
+    io.stderr.write(`${formatLayerLine(ingest)}\n`);
+    const owner = familyFolderOwnerWarning(ingest);
+    if (owner) io.stderr.write(`${owner}\n`);
+    return ingest;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    io.stderr.write(`${message}\n`);
+    return null;
+  }
+}
+
+/** Family subjects that replace a committed (checkout) subject of the same id. */
+function printShadowNotes(ingest: IngestRoot, banks: readonly ValidatedBank[], io: CliIo): void {
+  if (ingest.layer !== 'family') return;
+  let committed: Set<string>;
+  try {
+    committed = new Set(readGeneratedSubjects(ingest.repoRoot).map((subject) => subject.id));
+  } catch {
+    return;
+  }
+  for (const bank of banks) {
+    const id = bank.split.subject.id;
+    if (committed.has(id)) {
+      io.stderr.write(`note: family subject ${id} replaces the committed subject ${id}\n`);
+    }
+  }
+}
+
 function runValidateOrEmit(parsed: ParsedCli, io: CliIo): number {
+  const ingest = resolveCliLayer(parsed, io);
+  if (!ingest) return 1;
+
   let pruneMissing = false;
   if (parsed.command === 'emit') {
     try {
@@ -253,23 +320,20 @@ function runValidateOrEmit(parsed: ParsedCli, io: CliIo): number {
     return 1;
   }
 
+  printShadowNotes(ingest, result.banks, io);
+
   if (parsed.command === 'validate') {
     io.stdout.write(`${formatValidateOk(result.banks.length)}\n`);
     return 0;
   }
 
-  let repoRoot: string;
-  try {
-    repoRoot = findRepoRoot(io.cwd);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    io.stderr.write(`${message}\n`);
-    return 1;
-  }
-
   let planned;
   try {
-    planned = planEmit(result.banks, repoRoot, { pruneMissing });
+    planned = planEmit(result.banks, ingest.root, {
+      pruneMissing,
+      registrars: ingest.layer === 'committed',
+      revisions: ingest.layer === 'family',
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     io.stderr.write(`${message}\n`);
@@ -281,7 +345,13 @@ function runValidateOrEmit(parsed: ParsedCli, io: CliIo): number {
     return 0;
   }
 
-  const written = applyEmit(planned);
+  const changes = planned.some((file) => file.delete || file.existing !== file.contents);
+  if (ingest.layer === 'committed' && changes) {
+    io.stderr.write(
+      `note: this writes tracked files in the checkout (committed content). Family content belongs in ${subjectsArgFor({ layer: 'family', dataDirDisplay: ingest.dataDirDisplay })}.\n`,
+    );
+  }
+  const written = applyEmit(planned, ingest.layer === 'family' ? { familyRoot: ingest.root } : {});
   if (written.length === 0) {
     io.stdout.write('already up to date\n');
     return 0;

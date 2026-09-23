@@ -2,15 +2,17 @@
 node_modules
 .pnpm-store
 
-# next
+# next (install.sh --upgrade parks the old build here until the new one is verified)
 .next
+/.next.pre-upgrade-*
 out
 build
 
-# env
+# env (all hold secrets; a restore can write any of them)
 .env
 .env.local
 .env.*.local
+/.env.production
 
 # logs
 *.log
@@ -33,6 +35,8 @@ tests/.tmp
 # local sqlite + drizzle generated artifacts
 *.db
 *.db-journal
+*.db-wal
+*.db-shm
 /data
 
 # next typed routes / cache

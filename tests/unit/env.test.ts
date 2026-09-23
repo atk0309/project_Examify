@@ -1,4 +1,7 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import {
   allowLocalMailOutbox,
   canDeliverMailboxProof,
@@ -10,10 +13,18 @@ import {
   sessionCookieConfig,
 } from '@/lib/env';
 
+// Production parses check the data folder on disk (safety, a dedicated
+// folder), so every path here lives under a fresh temp folder — never a real
+// host path such as /data or this checkout's ./data.
+const prodRoot = mkdtempSync(path.join(tmpdir(), 'examify-env-prod-'));
+afterAll(() => rmSync(prodRoot, { recursive: true, force: true }));
+/** A family data folder that does not exist yet (a fresh volume). */
+const prodDataDir = path.join(prodRoot, 'family-data');
+
 const prodBase: NodeJS.ProcessEnv = {
   NODE_ENV: 'production',
   SITE_URL: 'https://examify.example.com',
-  DATABASE_URL: 'file:/data/app.db',
+  DATABASE_URL: `file:${path.join(prodDataDir, 'app.db')}`,
   AUTH_SECRET: 'production-auth-secret-must-be-32-chars',
   ANTHROPIC_API_KEY: 'sk-ant-real',
   SETUP_BOOTSTRAP_SECRET: 'production-setup-secret',
@@ -260,6 +271,145 @@ describe('parseEnv production fail-closed', () => {
     expect(parseEnv({ ...prodBase, ANTHROPIC_API_KEY: '   ' }).ANTHROPIC_API_KEY).toBeUndefined();
     expect(parseEnv(prodBase).ANTHROPIC_API_KEY).toBe('sk-ant-real');
     expect(parseEnv({ ...prodBase, ANTHROPIC_API_KEY: 'test' }).ANTHROPIC_API_KEY).toBe('test');
+  });
+});
+
+describe('parseEnv family data folder', () => {
+  const withoutDb: NodeJS.ProcessEnv = { ...prodBase };
+  delete withoutDb.DATABASE_URL;
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function loggedIssues(run: () => unknown): string {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(run).toThrow(/Invalid environment variables/);
+    const logged = error.mock.calls.map((call) => String(call[0])).join('\n');
+    error.mockRestore();
+    return logged;
+  }
+
+  it('fails production boot when neither EXAMIFY_DATA_DIR nor DATABASE_URL is set', () => {
+    for (const env of [
+      withoutDb,
+      { ...withoutDb, EXAMIFY_DATA_DIR: '   ', DATABASE_URL: '' },
+    ] as NodeJS.ProcessEnv[]) {
+      expect(loggedIssues(() => parseEnv(env))).toContain(
+        'Set EXAMIFY_DATA_DIR (or DATABASE_URL) in production',
+      );
+    }
+  });
+
+  it('accepts either EXAMIFY_DATA_DIR or an explicit DATABASE_URL in production', () => {
+    const absolute = path.join(prodRoot, 'var-lib-examify');
+    expect(parseEnv({ ...withoutDb, EXAMIFY_DATA_DIR: absolute }).EXAMIFY_DATA_DIR).toBe(absolute);
+    // Relative (to the checkout), like ./data, but a folder no one else uses.
+    const relative = path.relative(process.cwd(), path.join(prodRoot, 'data'));
+    expect(parseEnv({ ...withoutDb, EXAMIFY_DATA_DIR: relative }).DATABASE_URL).toBeUndefined();
+    expect(parseEnv(prodBase).DATABASE_URL).toBe(prodBase.DATABASE_URL);
+    expect(parseEnv(prodBase).EXAMIFY_DATA_DIR).toBeUndefined();
+  });
+
+  it('fails production boot on an unsafe data folder without naming the path', () => {
+    const checkout = process.cwd();
+    for (const value of ['src/family', '.', '~/examify', path.dirname(checkout)]) {
+      const logged = loggedIssues(() => parseEnv({ ...withoutDb, EXAMIFY_DATA_DIR: value }));
+      expect(logged).toMatch(/EXAMIFY_DATA_DIR: .*(family data folder|starts with ~)/);
+      expect(logged).not.toContain(checkout);
+    }
+  });
+
+  it('fails production boot on a data folder that is a file, without naming it', () => {
+    const file = path.join(prodRoot, 'secret-family-file');
+    writeFileSync(file, 'not a folder');
+    for (const env of [
+      { ...withoutDb, EXAMIFY_DATA_DIR: file },
+      { ...withoutDb, DATABASE_URL: `file:${path.join(file, 'app.db')}` },
+    ] as NodeJS.ProcessEnv[]) {
+      const logged = loggedIssues(() => parseEnv(env));
+      expect(logged).toContain('the family data folder is not a folder this user can read');
+      expect(logged).not.toContain('secret-family-file');
+      expect(logged).not.toMatch(/ENOTDIR|EACCES/);
+    }
+  });
+
+  it('fails production boot on a data folder it cannot reach instead of passing it as missing', () => {
+    const loop = path.join(prodRoot, 'secret-loop');
+    symlinkSync(loop, loop);
+    const file = path.join(prodRoot, 'secret-parent-file');
+    writeFileSync(file, 'not a folder');
+    for (const env of [
+      { ...withoutDb, EXAMIFY_DATA_DIR: loop },
+      { ...withoutDb, EXAMIFY_DATA_DIR: path.join(file, 'data') },
+      { ...withoutDb, DATABASE_URL: `file:${path.join(loop, 'app.db')}` },
+    ] as NodeJS.ProcessEnv[]) {
+      const logged = loggedIssues(() => parseEnv(env));
+      expect(logged).toContain('the family data folder is not a folder this user can read');
+      expect(logged).not.toMatch(/secret-loop|secret-parent-file|ELOOP|ENOTDIR/);
+    }
+  });
+
+  it('fails production boot on a folder shared with other software, without naming it', () => {
+    const shared = mkdtempSync(path.join(tmpdir(), 'examify-env-shared-'));
+    try {
+      writeFileSync(path.join(shared, 'someone-else.conf'), 'x');
+      for (const env of [
+        { ...withoutDb, EXAMIFY_DATA_DIR: shared },
+        { ...withoutDb, DATABASE_URL: `file:${path.join(shared, 'examify.db')}` },
+      ] as NodeJS.ProcessEnv[]) {
+        const logged = loggedIssues(() => parseEnv(env));
+        expect(logged).toContain('already holds files that are not Examify');
+        expect(logged).not.toContain(shared);
+      }
+      // A marked folder is Examify's, whatever else it holds.
+      writeFileSync(path.join(shared, '.examify-data.json'), '{"layout":1}');
+      expect(() => parseEnv({ ...withoutDb, EXAMIFY_DATA_DIR: shared })).not.toThrow();
+    } finally {
+      rmSync(shared, { recursive: true, force: true });
+    }
+  });
+
+  it('fails production boot on a database or mail outbox inside the checkout, without naming it', () => {
+    const checkout = process.cwd();
+    const cases: Array<[NodeJS.ProcessEnv, string]> = [
+      [{ ...withoutDb, DATABASE_URL: 'file:./app.db' }, 'DATABASE_URL points inside the checkout'],
+      [
+        { ...withoutDb, DATABASE_URL: 'file:./src/examify.db', EXAMIFY_DATA_DIR: prodDataDir },
+        'DATABASE_URL points inside the checkout',
+      ],
+      [{ ...prodBase, MAIL_OUTBOX_DIR: 'outbox' }, 'MAIL_OUTBOX_DIR points inside the checkout'],
+      [{ ...prodBase, MAIL_OUTBOX_DIR: '.' }, 'MAIL_OUTBOX_DIR points inside the checkout'],
+    ];
+    for (const [env, message] of cases) {
+      const logged = loggedIssues(() => parseEnv(env));
+      expect(logged).toContain(message);
+      expect(logged).not.toContain(checkout);
+    }
+    // `$` (Next expands it, the CLIs do not) and friends: the variable is named, never the value.
+    for (const [env, name] of [
+      [{ ...withoutDb, DATABASE_URL: 'file:$HOME/examify.db' }, 'DATABASE_URL'],
+      [{ ...prodBase, MAIL_OUTBOX_DIR: '$HOME/outbox' }, 'MAIL_OUTBOX_DIR'],
+    ] as const) {
+      const logged = loggedIssues(() => parseEnv(env));
+      expect(logged).toContain(`${name} contains a quote, a newline, "$" or " #"`);
+      expect(logged).not.toContain('$HOME');
+    }
+    // Outside the checkout (or under tests/.tmp, the suites' folder) is fine.
+    expect(() =>
+      parseEnv({ ...prodBase, MAIL_OUTBOX_DIR: path.join(prodRoot, 'outbox') }),
+    ).not.toThrow();
+    const suiteDb = `file:./tests/.tmp/env-prod-${path.basename(prodRoot)}/app.db`;
+    expect(() =>
+      parseEnv({ ...withoutDb, EXAMIFY_DATA_DIR: prodDataDir, DATABASE_URL: suiteDb }),
+    ).not.toThrow();
+  });
+
+  it('leaves the data folder to the resolver default outside production and in next build', () => {
+    const dev = parseEnv({ NODE_ENV: 'development' });
+    expect(dev.EXAMIFY_DATA_DIR).toBeUndefined();
+    expect(dev.DATABASE_URL).toBeUndefined();
+    expect(() => parseEnv({ ...withoutDb, NEXT_PHASE: 'phase-production-build' })).not.toThrow();
   });
 });
 

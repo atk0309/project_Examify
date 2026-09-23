@@ -17,11 +17,15 @@ import { eq } from 'drizzle-orm';
 import {
   applyEmit,
   collectQuestionIds,
+  FamilyConfinementError,
+  formatDataDirDisplay,
   formatFileDiff,
+  GENERATED_DIR,
   isAuthoritativeCatalogInput,
   hasExistingBankIr,
   loadIrFiles,
   planEmit,
+  plannedInsideFamilyGenerated,
   publicQuestionIds,
   resolveIrFiles,
   resolveSubjectSources,
@@ -31,10 +35,11 @@ import {
   type PlannedFile,
   type ValidatedBank,
 } from 'examify-ingest';
-import { getOnboardingContentRoot } from '@/lib/content-root';
+import { getOnboardingContentRoot, isFamilyWritePathSafe } from '@/lib/content-root';
 import { db, schema } from '@/lib/db';
 import type { HouseholdRole } from '@/lib/db/schema';
 import { SAMPLE_QUESTIONS, SAMPLE_SUBJECTS } from '@/lib/exam/data';
+import { GENERATED_SUBJECTS } from '@/lib/exam/generated-public';
 import { loadLivePublicBank } from '@/lib/exam/live-bank.server';
 import { gradingStubAllowed } from '@/lib/grading';
 import { env } from '@/lib/env';
@@ -46,6 +51,7 @@ import {
   envStoreSecretPresent,
 } from '@/lib/env-store';
 import { getMembershipForUser } from '@/lib/households';
+import { findRepoRoot } from '@/lib/repo-root';
 import {
   EMPTY_AUTHORITATIVE_EMIT,
   ONBOARDING_AI_MODES,
@@ -58,6 +64,7 @@ import {
   type OnboardingLiveSubject,
   type OnboardingPlanAction,
   type OnboardingPlanEntry,
+  type OnboardingSampleSubject,
   type OnboardingSnapshot,
   type OnboardingState,
   type OnboardingSubject,
@@ -77,10 +84,13 @@ export {
   onboardingGenerateBatchIds,
   onboardingGenerateCli,
   onboardingGenerateOverwriteSubjects,
+  onboardingIngestCli,
   onboardingPruneConfirmMessage,
   onboardingPruneEntries,
+  onboardingShadowNotice,
   onboardingSourceCountLabel,
   onboardingSubjectIrRel,
+  onboardingSubjectsArg,
   providerForOnboardingAiMode,
 } from '@/lib/onboarding-types';
 export { getOnboardingContentRoot, setOnboardingContentRootForTests } from '@/lib/content-root';
@@ -112,6 +122,15 @@ const ICON_ACCENTS: Record<SubjectIconOption, { l: number; c: number; h: number 
 
 const FROZEN_SAMPLE_IDS = collectQuestionIds(SAMPLE_QUESTIONS);
 const SAMPLE_SUBJECT_IDS = new Set(SAMPLE_SUBJECTS.map((subject) => subject.id));
+
+/**
+ * Built-in generated subjects: shipped in the checkout (`content/generated`,
+ * compiled through the registrars). A family subject with one of these ids
+ * replaces it after Apply (disclosed, not refused).
+ */
+export const BUILTIN_SUBJECTS: readonly OnboardingSampleSubject[] = GENERATED_SUBJECTS.map(
+  (subject) => ({ id: subject.id, label: subject.label }),
+);
 
 /**
  * A wizard subject with a sample subject's id generates `<id>-easy-1`-style
@@ -485,6 +504,15 @@ function aiFlags(): {
   };
 }
 
+/** How CLI hints name the family root from the checkout root (`data`, `data/x`, or absolute). */
+export function onboardingDataDirDisplay(root = getOnboardingContentRoot()): string {
+  try {
+    return formatDataDirDisplay(findRepoRoot(process.cwd()), root);
+  } catch {
+    return root;
+  }
+}
+
 export function getOnboardingSnapshot(
   householdId: number,
   root = getOnboardingContentRoot(),
@@ -493,6 +521,8 @@ export function getOnboardingSnapshot(
   return {
     subjects: listOnboardingSubjects(root),
     sampleSubjects: SAMPLE_SUBJECTS.map((subject) => ({ id: subject.id, label: subject.label })),
+    builtinSubjects: [...BUILTIN_SUBJECTS],
+    dataDirDisplay: onboardingDataDirDisplay(root),
     aiMode: state.aiMode ?? null,
     replaceSample: state.replaceSample === true,
     hasDryRun: Boolean(state.dryRunHash),
@@ -524,7 +554,8 @@ function writeSubjectMetaFile(
 }
 
 export type AddSubjectResult =
-  { ok: true; subject: OnboardingSubject } | { ok: false; reason: 'invalid_id' | 'duplicate' };
+  | { ok: true; subject: OnboardingSubject }
+  | { ok: false; reason: 'invalid_id' | 'duplicate' | 'unsafe_path' };
 
 export function addOnboardingSubject(
   input: { id: string; label: string; icon?: string },
@@ -540,6 +571,7 @@ export function addOnboardingSubject(
 
   const dir = path.join(subjectsDir(root), id);
   if (existsSync(dir)) return { ok: false, reason: 'duplicate' };
+  if (!isFamilyWritePathSafe(root, dir)) return { ok: false, reason: 'unsafe_path' };
 
   mkdirSync(dir, { recursive: true });
   // Metadata only — never write an empty/placeholder bank.ir.json.
@@ -551,7 +583,7 @@ export function addOnboardingSubject(
 
 export type RenameSubjectResult =
   | { ok: true; subject: OnboardingSubject }
-  | { ok: false; reason: 'invalid_id' | 'duplicate' | 'missing' | 'disk' };
+  | { ok: false; reason: 'invalid_id' | 'duplicate' | 'missing' | 'disk' | 'unsafe_path' };
 
 /** Wizard actions wait on `withOnboardingGenerateLock` so rename cannot race an IR commit. */
 export function renameOnboardingSubject(
@@ -562,6 +594,16 @@ export function renameOnboardingSubject(
   if (!isValidSubjectId(id)) return { ok: false, reason: 'invalid_id' };
   const fromDir = path.join(subjectsDir(root), id);
   if (!existsSync(fromDir)) return { ok: false, reason: 'missing' };
+  if (
+    !isFamilyWritePathSafe(
+      root,
+      path.join(fromDir, BANK_IR_FILE),
+      path.join(fromDir, SUBJECT_META_FILE),
+      path.join(sourcePdfsDir(root), id),
+    )
+  ) {
+    return { ok: false, reason: 'unsafe_path' };
+  }
 
   const irPath = path.join(fromDir, BANK_IR_FILE);
   const raw = readJsonUnknown(irPath);
@@ -614,6 +656,7 @@ export function renameOnboardingSubject(
     if (existsSync(destIr)) return { ok: false, reason: 'duplicate' };
     const movePdfs = existsSync(fromPdf);
     if (movePdfs && existsSync(destPdf)) return { ok: false, reason: 'duplicate' };
+    if (!isFamilyWritePathSafe(root, destIr, destPdf)) return { ok: false, reason: 'unsafe_path' };
 
     mkdirSync(subjectsDir(root), { recursive: true });
     try {
@@ -669,7 +712,8 @@ export function renameOnboardingSubject(
   };
 }
 
-export type DeleteSubjectResult = { ok: true } | { ok: false; reason: 'invalid_id' | 'missing' };
+export type DeleteSubjectResult =
+  { ok: true } | { ok: false; reason: 'invalid_id' | 'missing' | 'unsafe_path' };
 
 /**
  * Remove the subject's IR + source-pdf dirs. Prune of leftover generated JSON
@@ -685,8 +729,10 @@ export function deleteOnboardingSubject(
   if (!isValidSubjectId(id)) return { ok: false, reason: 'invalid_id' };
   const dir = path.join(subjectsDir(root), id);
   if (!existsSync(dir)) return { ok: false, reason: 'missing' };
+  const pdfDir = path.join(sourcePdfsDir(root), id);
+  if (!isFamilyWritePathSafe(root, dir, pdfDir)) return { ok: false, reason: 'unsafe_path' };
   rmSync(dir, { recursive: true, force: true });
-  rmSync(path.join(sourcePdfsDir(root), id), { recursive: true, force: true });
+  rmSync(pdfDir, { recursive: true, force: true });
   return { ok: true };
 }
 
@@ -694,7 +740,14 @@ export type AttachPdfResult =
   | { ok: true; filename: string }
   | {
       ok: false;
-      reason: 'invalid_id' | 'invalid_type' | 'invalid_name' | 'too_large' | 'disk' | 'missing';
+      reason:
+        | 'invalid_id'
+        | 'invalid_type'
+        | 'invalid_name'
+        | 'too_large'
+        | 'disk'
+        | 'missing'
+        | 'unsafe_path';
     };
 
 /**
@@ -716,6 +769,8 @@ export function attachSourcePdf(
   if (!hasPdfMagic(input.bytes)) return { ok: false, reason: 'invalid_type' };
 
   const dir = path.join(sourcePdfsDir(root), subjectId);
+  // The stored file itself is created with `wx`, which never follows a link.
+  if (!isFamilyWritePathSafe(root, dir)) return { ok: false, reason: 'unsafe_path' };
   try {
     mkdirSync(dir, { recursive: true });
     for (let attempt = 1; attempt <= UPLOAD_NAME_ATTEMPTS; attempt += 1) {
@@ -736,7 +791,8 @@ export function attachSourcePdf(
   return { ok: false, reason: 'invalid_name' };
 }
 
-export type DetachPdfResult = { ok: true } | { ok: false; reason: 'invalid_id' | 'missing' };
+export type DetachPdfResult =
+  { ok: true } | { ok: false; reason: 'invalid_id' | 'missing' | 'unsafe_path' };
 
 export function detachSourcePdf(
   input: { subjectId: string; filename: string },
@@ -748,6 +804,7 @@ export function detachSourcePdf(
   }
   if (!input.filename.toLowerCase().endsWith('.pdf')) return { ok: false, reason: 'invalid_id' };
   const target = path.join(sourcePdfsDir(root), subjectId, input.filename);
+  if (!isFamilyWritePathSafe(root, target)) return { ok: false, reason: 'unsafe_path' };
   if (!existsSync(target) || !statSync(target).isFile()) return { ok: false, reason: 'missing' };
   rmSync(target);
   return { ok: true };
@@ -795,6 +852,7 @@ export function validateOnboardingIr(
       issues: [{ file: SUBJECTS_REL, message: loaded.message }],
     };
   }
+  if (loaded.pruneOnly) return { ok: true };
   const result = validateIrCollection(loaded.files, {
     replaceSample,
     frozenIds: FROZEN_SAMPLE_IDS,
@@ -809,11 +867,45 @@ export function validateOnboardingIr(
   };
 }
 
-function loadSubjectsTree(
-  root: string,
-):
-  | { ok: true; files: ReturnType<typeof loadIrFiles>; pruneMissing: boolean }
-  | { ok: false; reason: 'invalid' | 'empty_catalog'; message: string } {
+/**
+ * True when the family generated layer still serves something: catalog rows
+ * or question / key files. Committed content is never in the family root.
+ */
+function hasFamilyGeneratedContent(root: string): boolean {
+  try {
+    const catalog = JSON.parse(
+      readFileSync(path.join(root, GENERATED_DIR, 'subjects.json'), 'utf8'),
+    );
+    if (Array.isArray(catalog) && catalog.length > 0) return true;
+  } catch {
+    // missing or unreadable catalog: look at the files
+  }
+  for (const dir of ['questions', 'keys']) {
+    try {
+      if (readdirSync(path.join(root, GENERATED_DIR, dir)).some((name) => name.endsWith('.json'))) {
+        return true;
+      }
+    } catch {
+      // no such folder
+    }
+  }
+  return false;
+}
+
+type SubjectsTree =
+  | { ok: true; files: ReturnType<typeof loadIrFiles>; pruneMissing: boolean; pruneOnly: false }
+  /** No BankIR left, but the family generated layer still serves subjects: remove them. */
+  | { ok: true; files: []; pruneMissing: true; pruneOnly: true }
+  | { ok: false; reason: 'invalid' | 'empty_catalog'; message: string };
+
+function emptyTree(root: string): SubjectsTree {
+  if (hasFamilyGeneratedContent(root)) {
+    return { ok: true, files: [], pruneMissing: true, pruneOnly: true };
+  }
+  return { ok: false, reason: 'empty_catalog', message: EMPTY_AUTHORITATIVE_EMIT };
+}
+
+function loadSubjectsTree(root: string): SubjectsTree {
   const inputs = [SUBJECTS_REL];
   let pruneMissing = false;
   try {
@@ -824,9 +916,7 @@ function loadSubjectsTree(
   }
   if (!pruneMissing) {
     const abs = path.resolve(root, SUBJECTS_REL);
-    if (!existsSync(abs)) {
-      return { ok: false, reason: 'empty_catalog', message: EMPTY_AUTHORITATIVE_EMIT };
-    }
+    if (!existsSync(abs)) return emptyTree(root);
     return {
       ok: false,
       reason: 'invalid',
@@ -843,10 +933,8 @@ function loadSubjectsTree(
     return { ok: false, reason: 'invalid', message };
   }
 
-  if (files.length === 0) {
-    return { ok: false, reason: 'empty_catalog', message: EMPTY_AUTHORITATIVE_EMIT };
-  }
-  return { ok: true, files, pruneMissing };
+  if (files.length === 0) return emptyTree(root);
+  return { ok: true, files, pruneMissing, pruneOnly: false };
 }
 
 function toPublicPlan(files: readonly PlannedFile[]): OnboardingPlanEntry[] {
@@ -909,6 +997,29 @@ function collisionsAgainstSample(ids: readonly string[]): string[] {
   return [...new Set(ids.filter((id) => frozen.has(id)))].sort();
 }
 
+/** Family banks that replace a built-in subject (labelled as the built-in one). */
+function builtinShadows(banks: readonly ValidatedBank[]): OnboardingSampleSubject[] {
+  const ids = new Set(banks.map((bank) => bank.split.subject.id));
+  return BUILTIN_SUBJECTS.filter((subject) => ids.has(subject.id)).map(({ id, label }) => ({
+    id,
+    label,
+  }));
+}
+
+/**
+ * True when every planned path is inside `<root>/content/generated`. The
+ * wizard only ever writes the family generated layer — never registrars,
+ * never the checkout.
+ */
+export function isPlanInsideFamilyGenerated(
+  planned: readonly Pick<PlannedFile, 'absPath'>[],
+  root: string,
+): boolean {
+  // On realpaths: a symlinked content/generated (or questions/ / keys/) that
+  // points into the checkout must not route tracked files through it.
+  return plannedInsideFamilyGenerated(planned, root);
+}
+
 export type CatalogEmitPreview =
   | { ok: true; dryRun: OnboardingDryRun; planned: PlannedFile[] }
   | { ok: false; reason: 'empty_catalog' | 'invalid'; message: string; issues?: OnboardingIssue[] };
@@ -925,6 +1036,26 @@ export function previewOnboardingEmit(
 ): CatalogEmitPreview {
   const loaded = loadSubjectsTree(root);
   if (!loaded.ok) return loaded;
+  if (loaded.pruneOnly) {
+    // The family deleted its last subject: empty the family catalog and
+    // delete its leftover files (Apply still needs the named prune confirm).
+    // Only the family layer is touched — committed subjects stay.
+    const planned = planEmit([], root, { pruneMissing: true, registrars: false, revisions: true });
+    return {
+      ok: true,
+      planned,
+      dryRun: {
+        hash: hashPlan(planned),
+        questionCount: 0,
+        subjectCount: 0,
+        collisions: [],
+        shadows: [],
+        replaceSample,
+        plan: toPublicPlan(planned),
+        diff: formatPublicEmitPlan(planned),
+      },
+    };
+  }
 
   const result = validateIrCollection(loaded.files, {
     replaceSample,
@@ -958,7 +1089,14 @@ export function previewOnboardingEmit(
     };
   }
 
-  const planned = planEmit(result.banks, root, { pruneMissing: loaded.pruneMissing });
+  // Registrars are build-time checkout code: the wizard never plans them.
+  // Family rows carry `rev` so the live bank never pairs questions and keys
+  // from different Applies.
+  const planned = planEmit(result.banks, root, {
+    pruneMissing: loaded.pruneMissing,
+    registrars: false,
+    revisions: true,
+  });
   return {
     ok: true,
     planned,
@@ -967,6 +1105,7 @@ export function previewOnboardingEmit(
       questionCount: ids.length,
       subjectCount: result.banks.length,
       collisions,
+      shadows: builtinShadows(result.banks),
       replaceSample,
       plan: toPublicPlan(planned),
       diff: formatPublicEmitPlan(planned),
@@ -991,9 +1130,10 @@ export type CatalogEmitApply =
     };
 
 /**
- * Re-preview the current tree, refuse if the plan hash is not the confirmed
- * dry-run, then `applyEmit` that same planned list. Never apply a newer
- * unconfirmed plan (a concurrent IR change after HITL confirm).
+ * Re-preview the current tree, refuse a plan that would write anywhere but
+ * `<familyRoot>/content/generated`, refuse if the plan hash is not the
+ * confirmed dry-run, then `applyEmit` that same planned list. Never apply a
+ * newer unconfirmed plan (a concurrent IR change after HITL confirm).
  */
 export function applyOnboardingEmit(
   input: { replaceSample: boolean; expectedHash: string; confirmPrune?: boolean },
@@ -1001,6 +1141,13 @@ export function applyOnboardingEmit(
 ): CatalogEmitApply {
   const preview = previewOnboardingEmit(input.replaceSample, root);
   if (!preview.ok) return preview;
+  if (!isPlanInsideFamilyGenerated(preview.planned, root)) {
+    return {
+      ok: false,
+      reason: 'invalid',
+      message: 'refusing to write outside the family data folder',
+    };
+  }
   if (preview.dryRun.hash !== input.expectedHash) {
     return {
       ok: false,
@@ -1019,7 +1166,17 @@ export function applyOnboardingEmit(
       deletes,
     };
   }
-  applyEmit(preview.planned);
+  try {
+    applyEmit(preview.planned, { familyRoot: root });
+  } catch (error) {
+    // Re-checked per file: a folder swapped for a symlink after the check above.
+    if (!(error instanceof FamilyConfinementError)) throw error;
+    return {
+      ok: false,
+      reason: 'invalid',
+      message: 'refusing to write outside the family data folder',
+    };
+  }
   return {
     ok: true,
     written: preview.planned.filter((file) => file.delete || file.existing !== file.contents)

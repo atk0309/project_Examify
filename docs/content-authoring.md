@@ -20,13 +20,63 @@ the build fails if it ever ends up in the client graph. A unit-test guard
 (`tests/unit/answer-keys.test.ts`) additionally asserts no question object carries an
 `answer`/`rubric`/`maxScore`/`provenance` property.
 
+## Two generated layers: committed and family
+
+Generated subjects (emitted from BankIR) come in two layers on top of the
+sample bank:
+
+| Layer     | Lives in                                                                | The app reads it                                                    |
+| --------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| Committed | the checkout: `content/subjects`, `content/generated`                   | at build time, through the `src/lib/exam/generated-*.ts` registrars |
+| Family    | the family data folder: `data/content/{subjects,source-pdfs,generated}` | on every request (`src/lib/exam/live-bank.server.ts`)               |
+
+- **Committed** is the shipped content (biology, the `demo` generate fixture)
+  and what CI runs. Its `--apply` writes tracked files and rewrites the
+  registrars, so a change needs a rebuild and a commit.
+- **Family** is your family's own content. `/onboarding` reads and writes only
+  here (subjects, uploaded PDFs, BankIR, generated JSON; API keys go to the
+  checkout `.env`), it is never committed, and an Apply is live on the next
+  request. The folder is `EXAMIFY_DATA_DIR` (default `./data`; with an absolute
+  value, use that path wherever this guide says `data/`).
+- **A family subject with a committed subject's id replaces it** entirely: its
+  questions and keys, with the tile in the committed position. The wizard's
+  Review says so ("Replaces built-in subject: Biology") and the add-subject form
+  warns when an id is a built-in one. A family subject whose questions file does
+  not parse, or any of whose questions lacks a key, is left out with one
+  reason-coded `[live-bank]` warning, and the committed subject it would have
+  replaced stays.
+- **The CLI picks the layer from the paths you name.** A path inside the data
+  folder is family (checked first — `./data` sits inside the checkout), any
+  other path in the checkout is committed; a path in neither, or a run that
+  names both, is refused. Every run prints `layer: family (data)` or
+  `layer: committed (checkout)` first. Only a committed emit writes the
+  registrars. API keys come from the checkout `.env` in both layers.
+
+Family work from the repo root:
+
+```bash
+pnpm examify-ingest generate --provider test --seed 0 data/content/subjects/<id>
+pnpm examify-ingest validate data/content/subjects
+pnpm examify-ingest emit data/content/subjects --dry-run
+pnpm examify-ingest emit data/content/subjects --apply
+```
+
+**Committed-layer work in a development checkout.** A committed generate or
+emit leaves files in the checkout (`bank.ir.json`, `.examify-ingest/`, changed
+`content/generated/` and registrars) until you commit them, and
+`.examify-ingest/` stays even after that. `pnpm db:migrate` and `install.sh`
+read such files as family content an older version left behind and refuse to
+run; set `EXAMIFY_IGNORE_LEGACY_CONTENT=1` for `db:migrate` in that checkout.
+Never set it on a real install — use `./install.sh --upgrade` there.
+
 ## Automated path (Phase 0 emit + Phase 2 generate)
 
 You can author a **BankIR** JSON document by hand, or generate one from local
 source files, then emit the two-file split with `examify-ingest`. After
 first-run `/setup`, the admin wizard at `/onboarding` can add subjects, attach
-local PDFs (under `content/source-pdfs/<subject>/` only) or notes/text in the
-subject folder, optionally generate
+local PDFs (stored in the family data folder under
+`content/source-pdfs/<subject>/`) or notes/text in the subject folder,
+optionally generate
 BankIR on the AI step (`examify-ingest/generate`, IR only), and run the same
 directory emit (validate, Review / dry-run HITL with planned deletes, then apply). The
 wizard does **not** auto-emit or auto-apply after generate. Adding a subject
@@ -55,7 +105,11 @@ the no-emit exit (sample bank). Deleting a subject removes its IR/source dirs;
 leftover generated JSON is pruned only after a named HITL confirm on Apply
 (cancel keeps those files). Ready lists live bank subject ids/names and
 question counts.
-An empty subjects tree is refused and never wipes generated files. Uploaded
+An empty subjects tree is refused and never wipes generated files — with one
+`/onboarding` exception: when the family deletes its **last** subject while the
+family generated layer still serves subjects, Review offers a prune-only plan
+(catalog `[]` plus deletes), applied only with the confirmed dry-run hash and the
+named prune confirm. With nothing to prune it is still refused. Uploaded
 PDFs must start with `%PDF`; their names are sanitised to a safe basename
 (commas, apostrophes, accents are fine), and a different file with the same
 name is stored as ` (2)`. `--replace-sample` is off unless the admin enables
@@ -75,14 +129,17 @@ written**; that copy does not imply the file already exists).
 source file. Skip generate; validate / emit only. Generate needs a source
 file first.
 
-1. Drop sources in `content/source-pdfs/<subject-id>/` (gitignored) and/or the
-   subject folder (`notes.txt` / `.md` / images / PDFs — generate scans the
-   same extensions the CLI accepts). Optional: author
+1. Drop sources in `content/source-pdfs/<subject-id>/` and/or the subject
+   folder `content/subjects/<subject-id>/` of the layer you work on
+   (`data/content/…` for family content; the checkout's `content/source-pdfs/`
+   is gitignored) — `notes.txt` / `.md` / images / PDFs; generate scans the
+   same extensions the CLI accepts. Optional: author
    `content/subjects/<id>/bank.ir.json` by hand (see the biology sample)
    instead of generating. A committed generate fixture lives at
    `content/subjects/demo/notes.txt`. Uploaded PDFs still need `%PDF` magic
    bytes; notes are text sources, not PDFs.
-2. From the repo root (fresh-clone generate fixture):
+2. From the repo root, committed layer (fresh-clone generate fixture; family
+   work swaps in `data/content/subjects`, as above):
 
    ```bash
    pnpm examify-ingest generate --provider test --seed 0 content/subjects/demo
@@ -122,22 +179,30 @@ file first.
    invent sources.
    Sources are framed as untrusted data (`promptVersion` v2) with static
    `UNTRUSTED SOURCE MATERIAL` fences; still review IR before emit. Run
-   manifests land in gitignored `.examify-ingest/`.
+   manifests land in the layer's `.examify-ingest/` (gitignored in the
+   checkout).
 
-3. `emit` writes `content/generated/subjects.json`,
+3. `emit` writes the layer's `content/generated/subjects.json`,
    `content/generated/questions/<id>.json` (public fields only), and
-   `content/generated/keys/<id>.json` (answers, rubrics, provenance). The
-   running app reads those JSON files at request time and merges them onto the
-   sample bank (`src/lib/exam/live-bank.server.ts`), so an onboarding Apply is
-   visible on `/` without a rebuild. `--apply` also rewrites
-   `src/lib/exam/generated-public.ts` and `src/lib/exam/generated-keys.server.ts`
-   as a committed / missing-catalog fallback. Keys stay server-only. A partial
-   emit (any explicit IR file path, or
+   `content/generated/keys/<id>.json` (answers, rubrics, provenance; `0600` in
+   a `0700` folder). Every file is written atomically, questions and keys
+   first and `subjects.json` last. The running app reads the family layer's
+   JSON at request time and merges it onto the committed layer and the sample
+   bank (`src/lib/exam/live-bank.server.ts`), so an onboarding Apply is
+   visible on `/` without a rebuild. A committed-layer `--apply` also rewrites
+   `src/lib/exam/generated-public.ts` and `src/lib/exam/generated-keys.server.ts`:
+   those registrars are how the app loads the committed layer (bundled at
+   build time, so rebuild). A family emit never writes them. Keys stay
+   server-only. A partial emit (any explicit IR file path, or
    mixed file+directory argv) upserts `subjects.json` and does not clobber
    other generated subjects. Emitting only subjects directories (typically
    `content/subjects`) is authoritative: leftover generated JSON for a subject
    no longer present in that tree is deleted. An empty subjects tree is
-   refused (fail closed) and does not wipe generated files.
+   refused (fail closed) and does not wipe generated files. The only exception
+   is the `/onboarding` wizard after the family deletes its last subject: Review
+   offers a prune-only plan (catalog `[]` plus deletes), applied only with the
+   confirmed dry-run hash and the named prune confirm; the CLI always refuses,
+   and so does the wizard when there is nothing to prune.
 
 Ids that collide with **any** id already in the sample bank (`SAMPLE_QUESTIONS`)
 are refused unless you pass `--replace-sample`. Full IR shape, commands, and the
@@ -269,18 +334,21 @@ Behaviour you can rely on:
 ## Generating a bank from your own PDFs and notes
 
 Phase 2 `examify-ingest generate` can draft BankIR from those files (vision-first
-when `pdftoppm` can rasterize pages; images are cached under
+when `pdftoppm` can rasterize pages; images are cached under the layer's
 `.examify-ingest/cache/pages/<pdf-sha256>/`). Notes/text (`.txt` / `.md`,
 including `notes.txt`) and images in the subject folder are first-class
 sources too — the same set generate actually scans. You still review the IR, then
-`validate content/subjects` and `emit content/subjects --dry-run` /
-`emit content/subjects --apply`. The original 13-subject
+`validate data/content/subjects` and `emit data/content/subjects --dry-run` /
+`emit data/content/subjects --apply` (`content/subjects` for the committed
+layer). The original 13-subject
 deployment was produced from school study guides with this same grounding rule.
 
-1. Drop your source PDFs in `content/source-pdfs/<subject-id>/` and/or
-   notes/text/images in `content/subjects/<subject-id>/`. The PDF directory is
-   **gitignored** — source material often can't be redistributed, so it stays
-   local-only; only the questions you author or generate from it (with
+1. For your family, drop your source PDFs in `data/content/source-pdfs/<subject-id>/`
+   and/or notes/text/images in `data/content/subjects/<subject-id>/` (or upload
+   them in `/onboarding`). Nothing in the family data folder is committed —
+   source material often can't be redistributed, so it stays local-only. For
+   shipped content, the checkout's `content/source-pdfs/` is **gitignored** for
+   the same reason; only the questions you author or generate from it (with
    `provenance`) get committed. Uploaded PDFs must start with `%PDF`; a
    `notes.txt` is a text source, not a PDF.
 2. Ingest **vision-first**: `generate` reuses cached page images when the PDF
@@ -295,10 +363,11 @@ deployment was produced from school study guides with this same grounding rule.
 4. Keep questions grounded: stay close to what the source actually says (a good
    rule of thumb is ~80% direct grounding, ~20% reasonable application of it),
    and record each item's `provenance { pdf, locator }` as you go.
-5. Run `pnpm examify-ingest validate content/subjects` then `pnpm test` — the
-   guards below catch most authoring mistakes immediately. Generate never
-   writes `content/generated/`. Bare `validate` / `emit` (no path) exit 2
-   and are not the happy path.
+5. Run `pnpm examify-ingest validate data/content/subjects` (family) or
+   `pnpm examify-ingest validate content/subjects` then `pnpm test`
+   (committed) — the guards below catch most authoring mistakes immediately.
+   Generate never writes `content/generated/`. Bare `validate` / `emit` (no
+   path) exit 2 and are not the happy path.
 
 ## Guards & test-coupled ids
 

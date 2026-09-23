@@ -62,6 +62,7 @@ export type OnboardingActionError = {
     | 'missing'
     | 'too_large'
     | 'disk'
+    | 'unsafe_path'
     | 'empty_catalog'
     | 'dry_run_required'
     | 'stale_preview'

@@ -110,7 +110,7 @@ describe('env-store', () => {
     expect(process.env.OPENAI_API_KEY).not.toBe('test');
   });
 
-  it('resolves the same repo root as content and ingest from a subdirectory', async () => {
+  it('resolves the same repo root as ingest from a subdirectory; content lives in the data folder', async () => {
     const { getEnvStoreRoot, setEnvStoreSecret } = await import('@/lib/env-store');
     const { getOnboardingContentRoot } = await import('@/lib/content-root');
     const { findRepoRoot } = await import('@/lib/repo-root');
@@ -121,11 +121,22 @@ describe('env-store', () => {
     mkdirSync(nested, { recursive: true });
     const previousCwd = process.cwd();
     const previousKey = process.env.OPENAI_API_KEY;
+    const previousDataDir = process.env.EXAMIFY_DATA_DIR;
+    const previousDbUrl = process.env.DATABASE_URL;
     delete process.env.OPENAI_API_KEY;
     try {
       process.chdir(nested);
       expect(getEnvStoreRoot()).toBe(root);
-      expect(getOnboardingContentRoot()).toBe(root);
+      // Family content is the data folder (default <checkout>/data; relative
+      // values resolve against the checkout, not cwd) — never the checkout.
+      delete process.env.EXAMIFY_DATA_DIR;
+      delete process.env.DATABASE_URL;
+      expect(getOnboardingContentRoot()).toBe(path.join(root, 'data'));
+      process.env.EXAMIFY_DATA_DIR = 'data/family';
+      expect(getOnboardingContentRoot()).toBe(path.join(root, 'data', 'family'));
+      process.env.EXAMIFY_DATA_DIR = previousDataDir!;
+      expect(getOnboardingContentRoot()).toBe(previousDataDir);
+      expect(getOnboardingContentRoot()).not.toBe(getEnvStoreRoot());
       expect(findRepoRoot(process.cwd())).toBe(root);
       expect(ingest.findRepoRoot(process.cwd())).toBe(root);
       expect(getEnvStoreRoot()).toBe(ingest.findRepoRoot(nested));
@@ -138,6 +149,13 @@ describe('env-store', () => {
       expect(JSON.stringify(loaded)).not.toMatch(/NEXT_PUBLIC_/);
     } finally {
       process.chdir(previousCwd);
+      for (const [key, value] of [
+        ['EXAMIFY_DATA_DIR', previousDataDir],
+        ['DATABASE_URL', previousDbUrl],
+      ] as const) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
       if (previousKey === undefined) delete process.env.OPENAI_API_KEY;
       else process.env.OPENAI_API_KEY = previousKey;
     }
@@ -149,7 +167,6 @@ describe('env-store', () => {
     expect(raw).toMatch(/from '@\/lib\/repo-root'/);
     const content = readFileSync(path.join(process.cwd(), 'src/lib/content-root.ts'), 'utf8');
     expect(content).not.toMatch(/from ['"]examify-ingest/);
-    expect(content).toMatch(/from '@\/lib\/repo-root'/);
   });
 
   it('returns disk when the env file cannot be written', async () => {
