@@ -29,8 +29,11 @@ import {
  * no rasterizer. `--tools ""` leaves the model no tools at all: it cannot
  * read, write or run anything, or fetch the web. `--system-prompt` replaces
  * Claude Code's coding-agent prompt; `--strict-mcp-config` loads no MCP
- * servers; the run happens in an empty private folder (so no project
- * CLAUDE.md or settings apply) and is not saved as a session.
+ * servers. `--setting-sources project` skips the service user's own settings
+ * and CLAUDE.md (a user hook would otherwise get the untrusted study text on
+ * stdin), and the project is the empty private folder the run happens in, so
+ * no project CLAUDE.md or settings apply either; `CLAUDE_CODE_SAFE_MODE=1`
+ * (agent-cli.ts) also turns off plugins and skills. Not saved as a session.
  */
 export function claudeCliArgs(request: ProviderRequest): string[] {
   return [
@@ -43,6 +46,8 @@ export function claudeCliArgs(request: ProviderRequest): string[] {
     '--tools',
     '',
     '--strict-mcp-config',
+    '--setting-sources',
+    'project',
     '--no-session-persistence',
     '--system-prompt',
     request.prompt,

@@ -210,15 +210,19 @@ Claude Code runs as
 
 ```bash
 claude -p --input-format stream-json --output-format stream-json --verbose \
-  --tools "" --strict-mcp-config --no-session-persistence \
-  --system-prompt <prompt> [--model <m>]
+  --tools "" --strict-mcp-config --setting-sources project \
+  --no-session-persistence --system-prompt <prompt> [--model <m>]
+# env: CLAUDE_CODE_SAFE_MODE=1 (plus the agentCliEnv allowlist)
 ```
 
 Stdin is one user message with the Anthropic provider's content blocks (PDFs
 as documents, so no rasterizer needed). The last `result` event is the answer;
 `is_error` with `api_error_status` is an `http` failure, a sign-in message is
-`auth`, and no result is `command` (with the CLI's stderr). Needs Claude Code
-2.x (`--tools`).
+`auth`, and no result is `command` (with the CLI's stderr). The service
+user's own settings and `CLAUDE.md` never load (`--setting-sources project`;
+the project is the empty private folder), and safe mode also turns off
+plugins and skills (an older Claude Code ignores the variable). Needs Claude
+Code 2.x (`--tools`, `--setting-sources`).
 
 Codex runs as
 

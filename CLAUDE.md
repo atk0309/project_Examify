@@ -722,7 +722,12 @@ chosen, answer }`, free-text `{ type:'free', id, q, response, maxScore, score, s
   folder, else `/tmp`, whichever realpath is outside every Examify checkout, so a
   `TMPDIR` pointing into it changes nothing; never the checkout, so no project
   `CLAUDE.md` or settings load; removed afterwards), with no saved session
-  (`--no-session-persistence` / `--ephemeral`, `--strict-mcp-config`) and only the
+  (`--no-session-persistence` / `--ephemeral`, `--strict-mcp-config`), none of the
+  service user's own customizations (Claude: `--setting-sources project`, the
+  project being that empty folder, plus `CLAUDE_CODE_SAFE_MODE=1`, so no user
+  `CLAUDE.md`, hooks, plugins or skills: a `UserPromptSubmit` hook would otherwise
+  get the untrusted study text on stdin; Codex: `--ignore-user-config`, though its
+  global `$CODEX_HOME/AGENTS.md` still loads) and only the
   `agentCliEnv` allowlist (PATH, HOME, locale, temp, XDG, proxy / CA, the CLI's
   own config dir and headless token). Never add Examify secrets,
   `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` to that allowlist (the `test` sentinel

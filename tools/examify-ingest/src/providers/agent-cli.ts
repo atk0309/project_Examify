@@ -85,8 +85,15 @@ const CLI_ENV_KEYS: Record<AgentCli, readonly string[]> = {
 };
 
 const CLI_ENV_SET: Record<AgentCli, Record<string, string>> = {
-  // A server-launched run must not update itself or send telemetry.
-  claude: { DISABLE_AUTOUPDATER: '1', CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1' },
+  // A server-launched run must not update itself or send telemetry, and must not
+  // load the user's CLAUDE.md, hooks, plugins, skills or MCP servers (safe mode;
+  // an older Claude Code ignores the variable, and `--setting-sources project`
+  // in claude-cli.ts still keeps user settings and CLAUDE.md out).
+  claude: {
+    DISABLE_AUTOUPDATER: '1',
+    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+    CLAUDE_CODE_SAFE_MODE: '1',
+  },
   codex: {},
 };
 

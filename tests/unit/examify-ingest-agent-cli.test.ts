@@ -204,10 +204,13 @@ describe('agent CLI binaries', () => {
       CLAUDE_CONFIG_DIR: '/srv/claude',
       HTTPS_PROXY: 'http://proxy:3128',
       DISABLE_AUTOUPDATER: '1',
+      // No user CLAUDE.md, hooks, plugins, skills or MCP servers.
+      CLAUDE_CODE_SAFE_MODE: '1',
     });
     expect(claude).not.toHaveProperty('CODEX_HOME');
     expect(codex).toMatchObject({ CODEX_HOME: '/srv/codex', HTTPS_PROXY: 'http://proxy:3128' });
     expect(codex).not.toHaveProperty('CLAUDE_CODE_OAUTH_TOKEN');
+    expect(codex).not.toHaveProperty('CLAUDE_CODE_SAFE_MODE');
   });
 });
 
@@ -240,6 +243,8 @@ describe('claude-cli provider', () => {
     ]);
     expect(args[args.indexOf('--tools') + 1]).toBe('');
     expect(args).toContain('--strict-mcp-config');
+    // The service user's own settings (hooks) and CLAUDE.md stay out.
+    expect(args[args.indexOf('--setting-sources') + 1]).toBe('project');
     expect(args).toContain('--no-session-persistence');
     expect(args[args.indexOf('--system-prompt') + 1]).toBe(loadGeneratePrompt().text);
     expect(args).not.toContain('--model');
@@ -251,6 +256,7 @@ describe('claude-cli provider', () => {
 
     for (const key of SECRET_KEYS) expect(record.env).not.toHaveProperty(key);
     expect(record.env.CLAUDE_CODE_OAUTH_TOKEN).toBe('oauth-token');
+    expect(record.env.CLAUDE_CODE_SAFE_MODE).toBe('1');
 
     const message = JSON.parse(record.stdin.trim()) as {
       type: string;

@@ -68,10 +68,15 @@ get an initial response within a week.
   the user that runs Examify, with that CLI's own sign-in. Study files are
   untrusted input, so the CLI gets no tools (no file reads, commands or web
   search; Codex in its read-only sandbox with your `config.toml` ignored), an
-  empty private temp folder, no saved session, and an allowlist of environment
-  variables that never includes Examify's secrets or API keys. Anyone who can
-  sign in as that OS user can use the same Claude / ChatGPT plan; keep it a
-  dedicated service user.
+  empty private temp folder outside the checkout, no saved session, and an
+  allowlist of environment variables that never includes Examify's secrets or
+  API keys. Claude Code also skips that user's own settings, `CLAUDE.md`,
+  hooks, plugins and skills (`--setting-sources project`,
+  `CLAUDE_CODE_SAFE_MODE=1`), so a hook there never sees the study text.
+  Codex still reads that user's global `$CODEX_HOME/AGENTS.md` (by default
+  `~/.codex/AGENTS.md`); keep it empty on the Examify host, since it steers
+  every generated bank. Anyone who can sign in as that OS user can use the same
+  Claude / ChatGPT plan; keep it a dedicated service user.
 - Prefer `AUTH_MODE=password` on a tiny self-host if you do not want to run
   email for **sign-in**. Password-mode invite accept still needs SMTP, Resend,
   or an allowed outbox (and fails closed if none can deliver). `install.sh`
