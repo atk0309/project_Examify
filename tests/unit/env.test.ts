@@ -320,6 +320,20 @@ describe('parseEnv family data folder', () => {
     }
   });
 
+  it('fails production boot on a data folder that is a file, without naming it', () => {
+    const file = path.join(prodRoot, 'secret-family-file');
+    writeFileSync(file, 'not a folder');
+    for (const env of [
+      { ...withoutDb, EXAMIFY_DATA_DIR: file },
+      { ...withoutDb, DATABASE_URL: `file:${path.join(file, 'app.db')}` },
+    ] as NodeJS.ProcessEnv[]) {
+      const logged = loggedIssues(() => parseEnv(env));
+      expect(logged).toContain('the family data folder is not a folder this user can read');
+      expect(logged).not.toContain('secret-family-file');
+      expect(logged).not.toMatch(/ENOTDIR|EACCES/);
+    }
+  });
+
   it('fails production boot on a folder shared with other software, without naming it', () => {
     const shared = mkdtempSync(path.join(tmpdir(), 'examify-env-shared-'));
     try {

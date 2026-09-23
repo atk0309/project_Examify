@@ -102,15 +102,15 @@ function unsafeDataDirMessage(values: {
   MAIL_OUTBOX_DIR?: string;
 }): string | null {
   const repoRoot = findRepoRoot(process.cwd());
-  let paths;
   try {
-    paths = resolveDataPaths({ repoRoot, env: { ...values, NODE_ENV: 'production' } });
+    const paths = resolveDataPaths({ repoRoot, env: { ...values, NODE_ENV: 'production' } });
+    // Throws `unreadable` (no path) for a file or a folder this user can't read.
+    if (!isDedicatedDataFolder(paths.dataDir, paths.dbPath)) {
+      return new SharedDataFolderError().message;
+    }
   } catch (error) {
     if (error instanceof UnsafeDataDirError) return error.message;
     throw error;
-  }
-  if (!isDedicatedDataFolder(paths.dataDir, paths.dbPath)) {
-    return new SharedDataFolderError().message;
   }
   return null;
 }

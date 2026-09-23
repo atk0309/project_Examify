@@ -1103,6 +1103,11 @@ prepare_data_folder() {
       die "Refused to set up the family data folder: it or this checkout belongs to another user." \
         "Run the installer as that user, or pass --allow-owner-mismatch."
       ;;
+    3)
+      # A file, or a folder this user cannot read or create (the CLI said which, without the path).
+      die "The family data folder cannot be used (see above): ${DATA_DIR_ABS:-${DISK_DATA_DIR-}}." \
+        "Point EXAMIFY_DATA_DIR in .env at a folder this user can create or owns, and re-run."
+      ;;
     *) die "Could not set up the family data folder (examify-data init exited ${code})." ;;
   esac
 }
@@ -1819,15 +1824,17 @@ rollback_flow() {
   echo "Start or restart the server (for example: pnpm start, or restart your service)."
 }
 
-# The archive carries env config: env/.env or env/.env.local (an install
-# configured only through .env.local counts), with or without a leading ./.
+# The archive carries env config: any of the files `next start` reads under
+# env/ (.env, .env.local, .env.production, .env.production.local; an install
+# configured only through one of them counts), with or without a leading ./.
 archive_has_env() {
-  local list nl=$'\n'
+  local list name nl=$'\n'
   list="$(tar -tzf "$1" 2>/dev/null)" || return 1
-  case "${nl}${list}${nl}" in
-    *"${nl}env/.env${nl}"*|*"${nl}./env/.env${nl}"*) return 0 ;;
-    *"${nl}env/.env.local${nl}"*|*"${nl}./env/.env.local${nl}"*) return 0 ;;
-  esac
+  for name in .env .env.local .env.production .env.production.local; do
+    case "${nl}${list}${nl}" in
+      *"${nl}env/${name}${nl}"*|*"${nl}./env/${name}${nl}"*) return 0 ;;
+    esac
+  done
   return 1
 }
 

@@ -8,10 +8,11 @@ node_modules
 out
 build
 
-# env
+# env (all hold secrets; a restore can write any of them)
 .env
 .env.local
 .env.*.local
+/.env.production
 
 # logs
 *.log

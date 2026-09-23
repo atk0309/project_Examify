@@ -72,6 +72,7 @@ export declare function resolveDataPaths(input: { repoRoot: string; env: EnvLike
 export declare function resolveRepoDataPaths(repoRoot: string, processEnv?: EnvLike): DataPaths;
 export declare function resolveCliDataPaths(cwd?: string, processEnv?: EnvLike): DataPaths;
 export declare function isJunkName(name: string): boolean;
+export declare function generatedRevision(questions: string, keys: string): string;
 export declare function initDataFolder(
   paths: Pick<DataPaths, 'dataDir'>,
   options?: {

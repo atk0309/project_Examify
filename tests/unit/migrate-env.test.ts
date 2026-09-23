@@ -220,6 +220,20 @@ describe('pnpm db:migrate', () => {
     }
   });
 
+  it('refuses a data folder path that is a file with a message, not a stack trace', () => {
+    const root = migrateRepo();
+    const file = path.join(root, 'data');
+    writeFileSync(file, 'not a folder');
+    const result = runMigrate(root);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      'db:migrate: the family data folder is not a folder this user can read',
+    );
+    expect(result.stderr).not.toContain(root);
+    expect(result.stderr).not.toMatch(/ENOTDIR|\n\s+at /);
+    expect(readFileSync(file, 'utf8')).toBe('not a folder');
+  });
+
   it('refuses an unsafe data folder without creating it or printing the path', () => {
     const root = migrateRepo();
     const result = runMigrate(root, { EXAMIFY_DATA_DIR: 'src/family' });

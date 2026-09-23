@@ -2877,43 +2877,47 @@ describe('install.sh upgrade guards (shimmed pnpm and data CLI)', () => {
   });
 });
 
-describe('install.sh --restore of an install configured through .env.local (real data CLI)', () => {
-  it('restores the archived .env.local, puts the data where it points, and writes no .env', async () => {
-    const fx = await makeRealFixture();
-    try {
-      fs.renameSync(path.join(fx.work, '.env'), path.join(fx.work, '.env.local'));
-      const envLocal = fs.readFileSync(path.join(fx.work, '.env.local'), 'utf8');
-      const backupEnv: Record<string, string | undefined> = {
-        PATH: process.env.PATH,
-        HOME: fx.home,
-        EXAMIFY_SQLITE_MODULE: SQLITE_MODULE,
-      };
-      const backup = spawnSync(
-        process.execPath,
-        ['scripts/examify-data.mjs', 'backup', '--out', path.join(fx.base, 'transfer'), '--json'],
-        { cwd: fx.work, env: backupEnv as NodeJS.ProcessEnv, encoding: 'utf8' },
-      );
-      expect(backup.status, backup.stderr).toBe(0);
-      const { archive } = JSON.parse(backup.stdout) as { archive: string };
-      expect(execFileSync('tar', ['-tzf', archive], { encoding: 'utf8' })).toContain(
-        'env/.env.local\n',
-      );
-      // A new machine: this machine's data folder is not there.
-      fs.renameSync(fx.dataDir, path.join(fx.base, 'old-machine-data'));
-      const clone = path.join(fx.base, 'second');
-      git(fx.base, 'clone', '-q', fx.origin, clone);
+describe('install.sh --restore of an install configured through .env.local or .env.production.local (real data CLI)', () => {
+  it.each(['.env.local', '.env.production.local'])(
+    'restores the archived %s, puts the data where it points, and writes no .env',
+    async (envName) => {
+      const fx = await makeRealFixture();
+      try {
+        fs.renameSync(path.join(fx.work, '.env'), path.join(fx.work, envName));
+        const envBody = fs.readFileSync(path.join(fx.work, envName), 'utf8');
+        const backupEnv: Record<string, string | undefined> = {
+          PATH: process.env.PATH,
+          HOME: fx.home,
+          EXAMIFY_SQLITE_MODULE: SQLITE_MODULE,
+        };
+        const backup = spawnSync(
+          process.execPath,
+          ['scripts/examify-data.mjs', 'backup', '--out', path.join(fx.base, 'transfer'), '--json'],
+          { cwd: fx.work, env: backupEnv as NodeJS.ProcessEnv, encoding: 'utf8' },
+        );
+        expect(backup.status, backup.stderr).toBe(0);
+        const { archive } = JSON.parse(backup.stdout) as { archive: string };
+        expect(execFileSync('tar', ['-tzf', archive], { encoding: 'utf8' })).toContain(
+          `env/${envName}\n`,
+        );
+        // A new machine: this machine's data folder is not there.
+        fs.renameSync(fx.dataDir, path.join(fx.base, 'old-machine-data'));
+        const clone = path.join(fx.base, 'second');
+        git(fx.base, 'clone', '-q', fx.origin, clone);
 
-      const result = runReal(fx, clone, ['--restore', archive, '--yes']);
-      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-      expect(fs.readFileSync(path.join(clone, '.env.local'), 'utf8')).toBe(envLocal);
-      expect(fs.existsSync(path.join(clone, '.env'))).toBe(false);
-      expect(userCount(path.join(fx.dataDir, 'app.db'))).toBe(3);
-      expect(pnpmCalls(fx)).toContain(`migrate ${path.join(fx.dataDir, 'app.db')}`);
-      expect(fs.existsSync(path.join(clone, 'data'))).toBe(false);
-    } finally {
-      fs.rmSync(fx.base, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
-    }
-  }, 120_000);
+        const result = runReal(fx, clone, ['--restore', archive, '--yes']);
+        expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+        expect(fs.readFileSync(path.join(clone, envName), 'utf8')).toBe(envBody);
+        expect(fs.existsSync(path.join(clone, '.env'))).toBe(false);
+        expect(userCount(path.join(fx.dataDir, 'app.db'))).toBe(3);
+        expect(pnpmCalls(fx)).toContain(`migrate ${path.join(fx.dataDir, 'app.db')}`);
+        expect(fs.existsSync(path.join(clone, 'data'))).toBe(false);
+      } finally {
+        fs.rmSync(fx.base, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      }
+    },
+    120_000,
+  );
 });
 
 describe('install.sh keeps the database and outbox out of the checkout', () => {

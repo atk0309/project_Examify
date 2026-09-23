@@ -9,6 +9,7 @@ import Database from 'better-sqlite3';
 import { afterEach, describe, expect, it } from 'vitest';
 import * as tsDataDir from '@/lib/data-dir';
 import { parseEnvFile as tsParseEnvFile } from '@/lib/env-file';
+import { generatedRevision as tsGeneratedRevision } from '@/lib/exam/generated-revision';
 import * as data from '../../scripts/examify-data.mjs';
 
 // Every case runs in a temp fake checkout (package.json `project-examify`,
@@ -387,6 +388,21 @@ describe('paths / init / usage', () => {
     expect(JSON.parse(second.stdout)).toMatchObject({ created: false });
     expect(fs.readFileSync(marker, 'utf8')).toBe(before);
     expect(mode(dataDir)).toBe(0o700);
+  });
+
+  it('init refuses a data folder that is a file (exit 3, unreadable), without naming it', async () => {
+    const root = makeCheckout();
+    const file = path.join(tempDir('examify-data-file-'), 'secret-family-file');
+    write(file, 'not a folder');
+    const result = await run(['init', '--repo', root, '--data-dir', file, '--json']);
+    expect(result.code).toBe(3);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      error: 'unsafe_data_dir',
+      reason: 'unreadable',
+    });
+    expect(result.stdout + result.stderr).not.toContain('secret-family-file');
+    expect(result.stderr).not.toMatch(/ENOTDIR/);
+    expect(fs.readFileSync(file, 'utf8')).toBe('not a folder');
   });
 
   it('init refuses a shared, unmarked folder without chmodding or writing into it', async () => {
@@ -2036,13 +2052,34 @@ describe('backup placement and consistency', () => {
 });
 
 describe('family catalog rows with rev', () => {
-  it('verify passes and backup copies the catalog verbatim', async () => {
+  /** A family folder whose history row names the questions + keys on disk. */
+  function revisioned() {
     const root = makeCheckout();
     const dataDir = tempDir('examify-data-rev-');
     makeDb(path.join(dataDir, 'app.db'));
     seedFamily(dataDir);
-    const catalog = path.join(dataDir, 'content/generated/subjects.json');
-    write(catalog, JSON.stringify([{ ...subject('history', 'History'), rev: 'a'.repeat(64) }]));
+    const generated = path.join(dataDir, 'content/generated');
+    const read = (rel: string) => fs.readFileSync(path.join(generated, rel), 'utf8');
+    const rev = data.generatedRevision(read('questions/history.json'), read('keys/history.json'));
+    const catalog = path.join(generated, 'subjects.json');
+    write(catalog, JSON.stringify([{ ...subject('history', 'History'), rev }]));
+    return { root, dataDir, generated, catalog };
+  }
+
+  it('hashes like the app (parity with src/lib/exam/generated-revision.ts)', () => {
+    for (const [questions, keys] of [
+      ['', ''],
+      ['{"easy":[]}\n', '{}\n'],
+      ['{"q":"Ünïcode — ✓"}', '{"k":"\\n"}'],
+    ]) {
+      expect(data.generatedRevision(questions!, keys!)).toBe(
+        tsGeneratedRevision(questions!, keys!),
+      );
+    }
+  });
+
+  it('verify passes a consistent family and backup copies the catalog verbatim', async () => {
+    const { root, dataDir, catalog } = revisioned();
     const verified = await run(['verify', '--repo', root, '--data-dir', dataDir, '--json']);
     expect(verified.code, verified.stdout).toBe(0);
     const backedUp = await run(['backup', '--repo', root, '--data-dir', dataDir, '--json']);
@@ -2053,5 +2090,64 @@ describe('family catalog rows with rev', () => {
     expect(fs.readFileSync(path.join(dir, 'family/content/generated/subjects.json'), 'utf8')).toBe(
       fs.readFileSync(catalog, 'utf8'),
     );
+  });
+
+  it('verify fails (exit 6) on an interrupted Apply: new questions, old keys and row', async () => {
+    const { root, dataDir, generated } = revisioned();
+    write(path.join(generated, 'questions/history.json'), '{"easy":[{"id":"history-easy-9"}]}');
+    const result = await run(['verify', '--repo', root, '--data-dir', dataDir, '--json']);
+    expect(result.code).toBe(6);
+    expect((JSON.parse(result.stdout) as data.VerifyResult).failures).toEqual([
+      { check: 'revision', detail: 'history' },
+    ]);
+  });
+});
+
+describe('every env file next start reads is backed up and restored', () => {
+  const ENV_FILES = ['.env', '.env.local', '.env.production', '.env.production.local'] as const;
+
+  it('archives all four and restores them with --with-env, keeping current ones aside', async () => {
+    const source = makeCheckout();
+    const sourceData = tempDir('examify-data-envs-src-');
+    makeDb(path.join(sourceData, 'app.db'), { rows: 2 });
+    const target = path.join(tempDir('examify-data-envs-machine-'), 'family-data');
+    const bodies: Record<string, string> = {
+      '.env': 'AUTH_SECRET=from-env\n',
+      '.env.local': 'SMTP_FROM=local@example.com\n',
+      '.env.production': 'SITE_URL=https://prod.example.com\n',
+      // The highest-precedence file names the data folder.
+      '.env.production.local': `EXAMIFY_DATA_DIR=${target}\n`,
+    };
+    for (const name of ENV_FILES) write(path.join(source, name), bodies[name]!);
+    const { archive } = await data.backup({
+      repo: source,
+      env: { EXAMIFY_DATA_DIR: sourceData },
+      sqliteModule: SQLITE_MODULE,
+      out: tempDir('examify-data-envs-out-'),
+    });
+    const manifest = JSON.parse(
+      execFileSync('tar', ['-xOzf', archive, 'MANIFEST.json'], { encoding: 'utf8' }),
+    ) as { env: { files: string[] } };
+    expect([...manifest.env.files].sort()).toEqual([...ENV_FILES].sort());
+
+    const checkout = makeCheckout();
+    write(path.join(checkout, '.env.production'), 'SITE_URL=https://old.example.com\n');
+    const result = await run(['restore', archive, '--repo', checkout, '--with-env', '--json']);
+    expect(result.code, result.stderr).toBe(0);
+    const report = JSON.parse(result.stdout) as data.RestoreResult;
+    expect(report.dataDir).toBe(target);
+    expect([...report.restored.env].sort()).toEqual([...ENV_FILES].sort());
+    for (const name of ENV_FILES) {
+      expect(fs.readFileSync(path.join(checkout, name), 'utf8'), name).toBe(bodies[name]);
+      expect(mode(path.join(checkout, name))).toBe(0o600);
+    }
+    expect(report.envSaved).toHaveLength(1);
+    expect(path.basename(report.envSaved[0]!)).toMatch(
+      /^\.env\.production\.before-restore-.*\.local$/,
+    );
+    expect(fs.readFileSync(report.envSaved[0]!, 'utf8')).toBe('SITE_URL=https://old.example.com\n');
+    expect(countUsers(path.join(target, 'app.db'))).toBe(2);
+    // Nothing a restore wrote into the checkout is committable.
+    expect(git(checkout, 'status', '--porcelain')).toBe('');
   });
 });

@@ -10,8 +10,13 @@ import {
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { DATA_DIR_MARKER } from '@/lib/data-dir';
-import { initDataFolder, SharedDataFolderError } from '@/lib/data-folder';
+import { DATA_DIR_MARKER, UnsafeDataDirError } from '@/lib/data-dir';
+import {
+  initDataFolder,
+  isDedicatedDataFolder,
+  SharedDataFolderError,
+  UNREADABLE_DATA_FOLDER_MESSAGE,
+} from '@/lib/data-folder';
 
 const temps: string[] = [];
 
@@ -123,9 +128,45 @@ describe('initDataFolder', () => {
     expect(initDataFolder({ dataDir })).toEqual({ created: false });
   });
 
-  it('fails when the data folder path is a file', () => {
-    const file = path.join(tempParent(), 'data');
+  function unusable(run: () => unknown): UnsafeDataDirError {
+    try {
+      run();
+    } catch (error) {
+      if (error instanceof UnsafeDataDirError) return error;
+      throw error;
+    }
+    throw new Error('expected a refusal');
+  }
+
+  it('refuses a data folder path that is a file, without naming it', () => {
+    const file = path.join(tempParent(), 'secret-family-file');
     writeFileSync(file, 'not a folder');
-    expect(() => initDataFolder({ dataDir: file })).toThrow();
+    for (const run of [
+      () => initDataFolder({ dataDir: file }),
+      () => isDedicatedDataFolder(file),
+      // A DATABASE_URL-derived folder: the "folder" of <file>/app.db is the file.
+      () => isDedicatedDataFolder(file, path.join(file, 'app.db')),
+    ]) {
+      const error = unusable(run);
+      expect(error.reason).toBe('unreadable');
+      expect(error.message).toBe(UNREADABLE_DATA_FOLDER_MESSAGE);
+      expect(error.message).not.toContain('secret-family-file');
+    }
+    expect(readFileSync(file, 'utf8')).toBe('not a folder');
+  });
+
+  // Permissions don't bite root (the sandbox and CI containers often run as root).
+  it.skipIf(process.getuid?.() === 0)('refuses a folder this user cannot read', () => {
+    const dataDir = path.join(tempParent(), 'locked');
+    mkdirSync(dataDir);
+    writeFileSync(path.join(dataDir, 'someone.txt'), 'x');
+    chmodSync(dataDir, 0o000);
+    try {
+      const error = unusable(() => isDedicatedDataFolder(dataDir));
+      expect(error.reason).toBe('unreadable');
+      expect(error.message).not.toContain(dataDir);
+    } finally {
+      chmodSync(dataDir, 0o700);
+    }
   });
 });

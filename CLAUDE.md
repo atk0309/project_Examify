@@ -375,6 +375,8 @@ in the gitignored `content/source-pdfs/` / subject directory.
   the row is dropped (`revision_mismatch`). A crash or a request between an Apply's
   writes never pairs new questions with old keys. Rows without `rev` read as before;
   `parseSubject` and the registrars never carry it; committed emits never write it.
+  `examify-data verify` recomputes it (a copy of `generatedRevision`, parity-tested) and
+  fails with exit 6, `{ check: 'revision', detail: <subject id> }`, on a mismatch.
 - **Precedence:** the family layer overlays the committed layer, and the result merges
   onto the sample bank under the unchanged sample-freeze rules. A family subject with a
   committed id **replaces it entirely** (its questions and keys; the tile keeps the
@@ -780,7 +782,10 @@ These are non-negotiable. Don't "fix" them out.
   (`assertPathValue`; `.env` can't carry it / Next expands `$VAR` but CLIs reading the
   files do not, so `db:migrate` could open another database; `install.sh` expands a
   leading `~` in the data folder before writing and refuses such kept values, naming the
-  file). `UnsafeDataDirError` messages name the variable, never the path or value.
+  file). `UnsafeDataDirError` messages name the variable, never the path or value. A
+  data folder that is a file, or one this user cannot read or create (ENOTDIR, EACCES,
+  EPERM, ELOOP, …), is `unreadable`: `data-folder.ts` maps those errors (Node's messages
+  name the path) so boot reports an env issue, `db:migrate` one line, and the CLI exit 3.
   Production boot fails on an unsafe folder, on a folder shared with other software
   (an existing folder without the marker holding files Examify does not recognise —
   e.g. the folder of `DATABASE_URL=file:/root/examify.db` is `$HOME`), and when neither
@@ -822,7 +827,9 @@ These are non-negotiable. Don't "fix" them out.
   `-wal` / `-shm`), then `integrity_check` + the `__drizzle_migrations` count on the
   snapshot. Family files: `content/{subjects,source-pdfs,generated}`,
   `.examify-ingest/runs` (+ `cache` with `--include-cache`), `migration-conflicts/`, the
-  marker — never `outbox/` or `backups/`. Repo `.env` / `.env.local` unless `--no-env`.
+  marker — never `outbox/` or `backups/`. Every repo env file `next start` reads (`.env`,
+  `.env.local`, `.env.production`, `.env.production.local`; all gitignored) unless
+  `--no-env`.
   `--include-checkout` (pre-upgrade) adds the checkout's `content/**` (tracked, untracked
   and ignored), the registrars and `.examify-ingest/{runs,cache/ir}`, and records the git
   sha. `content/generated` is re-copied until every catalog row has questions + keys (no
@@ -844,8 +851,8 @@ These are non-negotiable. Don't "fix" them out.
   allowed prefixes after a sha256 check; refuses a snapshot with more migrations than the
   checkout's journal; refuses a non-empty target unless `--force`, which moves the DB and
   family content aside into `$DATA/before-restore-<ts>/` (never `backups/`); removes stale
-  `-wal` / `-shm` before placing the DB; restores `.env` only with `--with-env` (the
-  current one saved as `.env.before-restore-<ts>.local`, `0600`), checkout files only
+  `-wal` / `-shm` before placing the DB; restores the env files only with `--with-env`
+  (a current one saved as `<name>.before-restore-<ts>.local`, `0600`), checkout files only
   with `--include-checkout`. Target: with `--with-env` and no `--data-dir`, the folder
   the **restored** env files name (each archived env file, else the checkout's, in
   `next start` order — what the app will read), checked for safety, ownership and a
@@ -903,7 +910,7 @@ These are non-negotiable. Don't "fix" them out.
   `git reset --keep` to the archive's `checkout.gitSha` → `restore` with `--force`,
   `--with-env` and `--include-checkout` → drop the state file → reinstall → put back
   the parked build or rebuild. `--restore <archive>` = install → `restore` (with `--with-env` when
-  the archive carries `env/.env` or `env/.env.local`) → `db:migrate` → build.
+  the archive carries any of the four env files under `env/`) → `db:migrate` → build.
 - **Secrets on disk.** Data folder `0700`; answer-key files `0600` in a `0700` `keys/`
   (emit, migrate and restore all set it; `verify` fails on a group/world-readable key);
   outbox `0700` / messages `0600`; `backups/` `0700` / archives `0600`. Archives hold the

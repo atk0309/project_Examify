@@ -438,6 +438,15 @@ function sha256Text(text) {
   return createHash('sha256').update(text).digest('hex');
 }
 
+/**
+ * Copy of src/lib/exam/generated-revision.ts `generatedRevision` (this file
+ * imports nothing from src/): sha256 over a family subject's questions bytes,
+ * "\n", then its keys bytes. A parity test keeps the two equal.
+ */
+export function generatedRevision(questions, keys) {
+  return createHash('sha256').update(questions).update('\n').update(keys).digest('hex');
+}
+
 function fsyncDir(dir) {
   try {
     const fd = fs.openSync(dir, 'r');
@@ -631,7 +640,7 @@ function assertOwnership(ctx, options) {
     } catch (error) {
       // Not there (yet), or cannot be: nothing to own.
       if (isEnoent(error) || error.code === 'ENOTDIR') continue;
-      throw error;
+      asUnreadable(error);
     }
     if (st.uid !== uid) {
       throw new CliError(
@@ -669,6 +678,35 @@ const KNOWN_DATA_ENTRIES = new Set([
 /** Restore leftovers: moved-aside content and an interrupted staging copy. */
 const KNOWN_DATA_PREFIXES = ['before-restore-', '.restore-staging-'];
 
+/** Filesystem failures that mean "not a folder this user can use" (never a bug). */
+const UNUSABLE_FOLDER_CODES = new Set([
+  'EACCES',
+  'EEXIST',
+  'EISDIR',
+  'ELOOP',
+  'ENAMETOOLONG',
+  'ENOTDIR',
+  'EPERM',
+  'EROFS',
+]);
+
+/**
+ * Rethrow a filesystem error from inspecting or creating the data folder as
+ * exit 3 (`unsafe_data_dir`, reason `unreadable`) without a path; Node's own
+ * messages name it. Mirrors src/lib/data-folder.ts.
+ */
+function asUnreadable(error) {
+  if (error && typeof error.code === 'string' && UNUSABLE_FOLDER_CODES.has(error.code)) {
+    throw new CliError(
+      EXIT.UNSAFE_DATA_DIR,
+      'unsafe_data_dir',
+      'the family data folder is not a folder this user can read (or create); check EXAMIFY_DATA_DIR (or DATABASE_URL) and who owns it',
+      { reason: 'unreadable' },
+    );
+  }
+  throw error;
+}
+
 function assertDedicatedFolder(dataDir, dbPath) {
   if (fs.existsSync(path.join(dataDir, DATA_DIR_MARKER))) return;
   const dbFiles = new Set();
@@ -676,7 +714,13 @@ function assertDedicatedFolder(dataDir, dbPath) {
     const base = path.basename(dbPath);
     for (const suffix of ['', '-wal', '-shm', '-journal']) dbFiles.add(`${base}${suffix}`);
   }
-  for (const name of fs.readdirSync(dataDir)) {
+  let names;
+  try {
+    names = fs.readdirSync(dataDir);
+  } catch (error) {
+    asUnreadable(error);
+  }
+  for (const name of names) {
     if (
       KNOWN_DATA_ENTRIES.has(name) ||
       dbFiles.has(name) ||
@@ -707,21 +751,25 @@ export function initDataFolder(
   const { dataDir } = paths;
   const created = !fs.existsSync(dataDir);
   if (!created && !vetted) assertDedicatedFolder(dataDir, paths.dbPath);
-  fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
-  const st = fs.statSync(dataDir);
-  const uid = geteuid();
-  if (uid === undefined || st.uid === uid) {
-    if ((st.mode & 0o777) !== 0o700) fs.chmodSync(dataDir, 0o700);
-  } else {
-    warn('the family data folder belongs to another user; its permissions were left unchanged');
+  try {
+    fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+    const st = fs.statSync(dataDir);
+    const uid = geteuid();
+    if (uid === undefined || st.uid === uid) {
+      if ((st.mode & 0o777) !== 0o700) fs.chmodSync(dataDir, 0o700);
+    } else {
+      warn('the family data folder belongs to another user; its permissions were left unchanged');
+    }
+    writeIfMissing(path.join(dataDir, '.gitignore'), '*\n', 0o644);
+    const marker = { layout: 1, createdAt: new Date().toISOString(), migrations: [] };
+    writeIfMissing(
+      path.join(dataDir, DATA_DIR_MARKER),
+      `${JSON.stringify(marker, null, 2)}\n`,
+      0o600,
+    );
+  } catch (error) {
+    asUnreadable(error);
   }
-  writeIfMissing(path.join(dataDir, '.gitignore'), '*\n', 0o644);
-  const marker = { layout: 1, createdAt: new Date().toISOString(), migrations: [] };
-  writeIfMissing(
-    path.join(dataDir, DATA_DIR_MARKER),
-    `${JSON.stringify(marker, null, 2)}\n`,
-    0o600,
-  );
   return { created };
 }
 
@@ -1238,10 +1286,11 @@ export async function backup(options = {}) {
       await sleep(200 * attempt);
     }
 
-    // 3. Repo env files.
+    // 3. Repo env files: every one `next start` reads (an install may be
+    // configured only through .env.local or .env.production*).
     const envFiles = [];
     if (!options.noEnv) {
-      for (const name of ['.env', '.env.local']) {
+      for (const name of [...PRODUCTION_ENV_FILES].reverse()) {
         const src = path.join(repoRoot, name);
         if (!isFile(src)) continue;
         stageFile(src, `env/${name}`);
@@ -1360,7 +1409,7 @@ function safeMemberPath(raw) {
 
 function archiveArea(rel) {
   if (rel === 'db/app.db') return 'db';
-  if (rel === 'env/.env' || rel === 'env/.env.local') return 'env';
+  if (PRODUCTION_ENV_FILES.some((name) => rel === `env/${name}`)) return 'env';
   if (rel === `family/${DATA_DIR_MARKER}`) return 'family';
   if (FAMILY_PREFIXES.some((prefix) => rel.startsWith(prefix))) return 'family';
   if (REGISTRARS.some((reg) => rel === `checkout/${reg}`)) return 'checkout';
@@ -2706,13 +2755,25 @@ export function verify(options = {}) {
         fail('family catalog', 'a catalog row has an invalid subject id');
         continue;
       }
+      const raw = {};
       for (const dir of ['questions', 'keys']) {
         const file = path.join(generatedDir, dir, `${id}.json`);
         try {
-          JSON.parse(fs.readFileSync(file, 'utf8'));
+          raw[dir] = fs.readFileSync(file, 'utf8');
+          JSON.parse(raw[dir]);
         } catch {
+          raw[dir] = undefined;
           fail('family catalog', `${dir}/${id}.json is missing, unreadable or not JSON`);
         }
+      }
+      // A row's `rev` names the questions + keys one Apply wrote together.
+      if (
+        typeof row.rev === 'string' &&
+        raw.questions !== undefined &&
+        raw.keys !== undefined &&
+        generatedRevision(raw.questions, raw.keys) !== row.rev
+      ) {
+        fail('revision', id);
       }
     }
   }

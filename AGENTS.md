@@ -73,7 +73,8 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   carry `rev` (sha256 of the questions + "\n" + keys bytes; family emits only, never the
   committed layer or registrars): a row whose files do not hash to it serves the last
   consistent copy read in this process, else is dropped (`revision_mismatch`), so an
-  Apply mid-write or crashed never pairs new questions with old keys. The wizard's Apply
+  Apply mid-write or crashed never pairs new questions with old keys (`examify-data
+verify` fails, `revision`, on such a row). The wizard's Apply
   is confined to `<family>/content/generated` on realpaths (a symlink into the checkout
   is refused), re-checked right before each write. The ingest CLI picks the
   layer from its paths (data folder checked first; outside both or mixed ⇒ error;
@@ -139,8 +140,9 @@ JSON`). Missing cloud
   checkout outside those (`db_inside_checkout` / `outbox_inside_checkout`, so boot,
   `db:migrate`, `examify-data paths --check` and the ingest CLI all refuse); a leading
   `~`, quotes, backtick, newline, `$` or ` #` in `EXAMIFY_DATA_DIR`, `DATABASE_URL` or
-  `MAIL_OUTBOX_DIR` refused (`bad_value`, naming the variable); messages never name the
-  path or value. Production boot needs `EXAMIFY_DATA_DIR` or
+  `MAIL_OUTBOX_DIR` refused (`bad_value`, naming the variable); a data folder that is a
+  file or unreadable is `unreadable` (Node's path-bearing errors are mapped); messages
+  never name the path or value. Production boot needs `EXAMIFY_DATA_DIR` or
   `DATABASE_URL` and a safe, dedicated folder (an unmarked folder holding non-Examify
   files is refused), and production never creates a missing DB
   (`DatabaseMissingError`; `/api/health` → reason codes `unsafe_data_dir` /
@@ -154,7 +156,8 @@ JSON`). Missing cloud
   resolver (parity test — change both), and its exit codes (0 ok, 1, 2 usage, 3 unsafe,
   4 legacy, 5 refused, 6 verify failed) are an `install.sh` contract. Writing commands
   (and `verify`) refuse on an owner mismatch unless `--allow-owner-mismatch`. Backups:
-  `VACUUM INTO` snapshot + family content + `.env` (unless `--no-env`), never `outbox/`
+  `VACUUM INTO` snapshot + family content + every `next start` env file (`.env`,
+  `.env.local`, `.env.production*`; unless `--no-env`), never `outbox/`
   or `backups/`, never `backups/` created in a shared folder, `content/generated` staged
   as one revision (hashed before / after; `content_changing` after 3 tries), archives
   `0600` and read back before they are reported; restore

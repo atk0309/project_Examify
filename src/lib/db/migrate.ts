@@ -46,7 +46,7 @@ if (process.env.EXAMIFY_IGNORE_LEGACY_CONTENT !== '1') {
 try {
   initDataFolder({ dataDir, dbPath });
 } catch (error) {
-  if (error instanceof SharedDataFolderError) {
+  if (error instanceof SharedDataFolderError || error instanceof UnsafeDataDirError) {
     console.error(`db:migrate: ${error.message}`);
     process.exit(1);
   }

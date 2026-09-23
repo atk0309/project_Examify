@@ -100,12 +100,14 @@ data lives".
   claimed. `/api/health` returns reason codes only (`unsafe_data_dir`,
   `db_missing`, `db_error`), never an error message or path.
 - **Backups hold secrets.** A backup archive contains the database, every answer
-  key, uploaded PDFs and, unless `--no-env`, the checkout's `.env` / `.env.local`
-  (`AUTH_SECRET`, `SETUP_BOOTSTRAP_SECRET`, API keys, mail passwords). A
+  key, uploaded PDFs and, unless `--no-env`, the checkout's env files (`.env`,
+  `.env.local`, `.env.production`, `.env.production.local`: `AUTH_SECRET`,
+  `SETUP_BOOTSTRAP_SECRET`, API keys, mail passwords). All four are gitignored,
+  so a restore never leaves one committable. A
   pre-upgrade backup also holds the checkout's `content/`. So do the folders an
   upgrade or a restore leaves behind: `migration-conflicts/` (checkout copies,
   answer keys included), `before-restore-*/` (the replaced database and
-  content), and `.env.before-restore-*.local` in the checkout. Treat them all
+  content), and `.env*.before-restore-*.local` in the checkout. Treat them all
   like `.env`: keep them private, copy archives off the machine to storage only
   you can read, and delete what you no longer need.
 - **The outbox is never backed up** (raw sign-in links and codes are short-lived

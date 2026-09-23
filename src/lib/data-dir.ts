@@ -52,7 +52,9 @@ export type UnsafeDataDirReason =
   /** `DATABASE_URL` names a file inside the checkout but not under `data/…` / `tests/.tmp/…`. */
   | 'db_inside_checkout'
   /** `MAIL_OUTBOX_DIR` is inside the checkout but not under `data/…` / `tests/.tmp/…`. */
-  | 'outbox_inside_checkout';
+  | 'outbox_inside_checkout'
+  /** The folder is a file, or one this user cannot read or create (ENOTDIR, EACCES, …). */
+  | 'unreadable';
 
 /** The data folder would overlap the checkout. `message` never includes the path. */
 export class UnsafeDataDirError extends Error {

@@ -633,9 +633,10 @@ pnpm examify:backup    # same as: node scripts/examify-data.mjs backup
 
 This writes `<data folder>/backups/examify-backup-<time>-<id>.tar.gz` (`0600`): a
 consistent snapshot of the database (safe while the server runs), the family content,
-generate run manifests, and the checkout's `.env` / `.env.local`. It leaves out the mail
+generate run manifests, and the checkout's env files (`.env`, `.env.local`,
+`.env.production`, `.env.production.local`, whichever exist). It leaves out the mail
 outbox, earlier backups and the generate cache (`--include-cache` adds the cache).
-`--no-env` leaves out `.env`; `--out DIR` writes somewhere else outside the checkout.
+`--no-env` leaves out the env files; `--out DIR` writes somewhere else outside the checkout.
 Every archive is read back (the whole `tar` stream and its manifest) before it is
 reported; one that does not read back is removed and the backup fails. If the wizard
 applies new questions while a backup runs, it copies the generated questions and keys
@@ -663,9 +664,9 @@ refuses while the server answers, checks every file against the archive's manife
 refuses a backup from a newer Examify. When the data folder already holds a database or
 content, add `--force`: the current data is moved aside to
 `<data folder>/before-restore-<time>/`, never deleted (if the restore fails after that,
-the error names that folder). `--with-env` also puts back `.env`
-(the current one is kept as `.env.before-restore-<time>.local`), and the data then goes
-to the folder that restored `.env` names. Then run `pnpm db:migrate` and start the
+the error names that folder). `--with-env` also puts back the archived env files (a
+current one is kept as `<name>.before-restore-<time>.local`), and the data then goes to
+the folder those restored files name. Then run `pnpm db:migrate` and start the
 server.
 
 **Restore on a new machine.** Copy the archive over, then:
@@ -676,8 +677,9 @@ curl -fsSL https://raw.githubusercontent.com/atk0309/project_Examify/main/instal
 ```
 
 The installer clones if needed, installs, restores the database, the family content and
-the archived `.env` / `.env.local` (or asks for a new `.env` when the backup has neither),
-then migrates and builds. The data goes to the family data folder that archived `.env` names (`./data`
+the archived env files (`.env`, `.env.local`, `.env.production*`; or asks for a new
+`.env` when the backup has none), then migrates and builds. The data goes to the family
+data folder those archived files name (`./data`
 unless the old install used another one); if the user that runs Examify cannot create
 that folder, create it for them first. Don't set `EXAMIFY_DATA_DIR` / `DATABASE_URL` or
 `--data-dir` for such a restore: the restored `.env` decides. Change `SITE_URL` in `.env`
