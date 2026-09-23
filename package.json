@@ -35,6 +35,9 @@
     "db:migrate": "tsx src/lib/db/migrate.ts",
     "db:studio": "drizzle-kit studio",
     "examify-ingest": "tsx tools/examify-ingest/src/main.ts",
+    "examify:data": "node scripts/examify-data.mjs",
+    "examify:backup": "node scripts/examify-data.mjs backup",
+    "examify:restore": "node scripts/examify-data.mjs restore",
     "prepare": "husky"
   },
   "dependencies": {
