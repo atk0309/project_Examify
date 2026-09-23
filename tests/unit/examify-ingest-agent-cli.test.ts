@@ -206,6 +206,32 @@ describe('agent CLI binaries', () => {
     );
   });
 
+  it('on Windows, reads Path / SystemRoot whatever their casing, and takes a bare codex.exe', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'examify-win-path-'));
+    const home = mkdtempSync(path.join(tmpdir(), 'examify-home-'));
+    writeFileSync(path.join(dir, 'codex.exe'), 'MZ');
+    // How a copy of Windows' process.env spells them.
+    const env = {
+      Path: dir,
+      SystemRoot: 'C:\\Windows',
+      ComSpec: 'C:\\Windows\\system32\\cmd.exe',
+      HOME: home,
+    };
+    expect(resolveAgentCliBinary('codex', env, 'win32')).toBe(path.join(dir, 'codex.exe'));
+    // A bare name that already ends in .exe is the file name (not codex.exe.exe).
+    expect(
+      resolveAgentCliBinary('codex', { ...env, EXAMIFY_CODEX_BIN: 'codex.exe' }, 'win32'),
+    ).toBe(path.join(dir, 'codex.exe'));
+    expect(agentCliEnv(env, 'codex', '/run', 'win32')).toMatchObject({
+      PATH: dir,
+      SYSTEMROOT: 'C:\\Windows',
+      COMSPEC: 'C:\\Windows\\system32\\cmd.exe',
+    });
+    expect(agentCliHome('codex', { Codex_Home: '/srv/cx' }, 'win32')).toBe(path.resolve('/srv/cx'));
+    // POSIX names are case-sensitive: `Path` is not PATH there.
+    expect(agentCliEnv(env, 'codex', undefined, 'linux')).not.toHaveProperty('PATH');
+  });
+
   it('skips a non-executable file with the CLI name', () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'examify-noexec-'));
     writeFileSync(path.join(dir, 'claude'), 'not a program');

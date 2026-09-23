@@ -103,18 +103,39 @@ const CLI_ENV_SET: Record<AgentCli, Record<string, string>> = {
 const TEMP_ENV_KEYS = ['TMPDIR', 'TMP', 'TEMP'] as const;
 
 /**
+ * `env[key]`, matched case-insensitively on Windows. `process.env` is
+ * case-insensitive there, but a copy of it (`mergeRepoEnvFiles`, the wizard's
+ * host env) keeps the system's own casing: `Path`, `SystemRoot`, `ComSpec`.
+ */
+export function envValue(
+  env: ProviderEnv,
+  key: string,
+  platform: NodeJS.Platform = process.platform,
+): string | undefined {
+  const exact = env[key];
+  if (exact !== undefined || platform !== 'win32') return exact;
+  const wanted = key.toUpperCase();
+  for (const [name, value] of Object.entries(env)) {
+    if (value !== undefined && name.toUpperCase() === wanted) return value;
+  }
+  return undefined;
+}
+
+/**
  * The CLI's environment. `runDir` (the private run folder) replaces TMPDIR /
  * TMP / TEMP, so the CLI's own temp files stay in the folder that is removed
- * afterwards — never under a host TMPDIR that points into the checkout.
+ * afterwards — never under a host TMPDIR that points into the checkout. On
+ * Windows the allowlist matches names case-insensitively (`Path` → `PATH`).
  */
 export function agentCliEnv(
   env: ProviderEnv,
   cli: AgentCli,
   runDir?: string,
+  platform: NodeJS.Platform = process.platform,
 ): Record<string, string> {
   const out: Record<string, string> = {};
   for (const key of [...BASE_ENV_KEYS, ...CLI_ENV_KEYS[cli]]) {
-    const value = env[key];
+    const value = envValue(env, key, platform);
     if (value !== undefined) out[key] = value;
   }
   if (runDir) {
@@ -129,10 +150,14 @@ const CLI_HOME: Record<AgentCli, { env: string; dir: string; label: string }> = 
 };
 
 /** The CLI's own folder for this user (sign-in, state): CLAUDE_CONFIG_DIR / CODEX_HOME, else ~/.claude / ~/.codex. */
-export function agentCliHome(cli: AgentCli, env: ProviderEnv): string {
-  const configured = env[CLI_HOME[cli].env]?.trim();
+export function agentCliHome(
+  cli: AgentCli,
+  env: ProviderEnv,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  const configured = envValue(env, CLI_HOME[cli].env, platform)?.trim();
   if (configured) return path.resolve(configured);
-  return path.join(env.HOME?.trim() || os.homedir(), CLI_HOME[cli].dir);
+  return path.join(envValue(env, 'HOME', platform)?.trim() || os.homedir(), CLI_HOME[cli].dir);
 }
 
 /**
@@ -142,8 +167,12 @@ export function agentCliHome(cli: AgentCli, env: ProviderEnv): string {
  * (judged on its own realpath too, in case it is a link), but the running
  * app never writes into the checkout.
  */
-export function agentCliHomeOutsideCheckout(cli: AgentCli, env: ProviderEnv): string {
-  const home = agentCliHome(cli, env);
+export function agentCliHomeOutsideCheckout(
+  cli: AgentCli,
+  env: ProviderEnv,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  const home = agentCliHome(cli, env, platform);
   const written = cli === 'codex' ? [home, path.join(home, 'auth.json')] : [home];
   if (written.some((target) => insideExamifyCheckout(target))) {
     const { env: envName, dir, label } = CLI_HOME[cli];
@@ -175,7 +204,9 @@ function isExecutableFile(file: string, platform: NodeJS.Platform): boolean {
 }
 
 function binaryNames(name: string, platform: NodeJS.Platform): string[] {
-  return platform === 'win32' ? [`${name}.exe`] : [name];
+  if (platform !== 'win32') return [name];
+  // `EXAMIFY_CLAUDE_BIN=claude.exe` is already the file name.
+  return [name.toLowerCase().endsWith('.exe') ? name : `${name}.exe`];
 }
 
 function searchDirs(
@@ -193,8 +224,8 @@ function searchDirs(
   return null;
 }
 
-function pathDirs(env: ProviderEnv): string[] {
-  return (env.PATH ?? '').split(path.delimiter).filter(Boolean);
+function pathDirs(env: ProviderEnv, platform: NodeJS.Platform): string[] {
+  return (envValue(env, 'PATH', platform) ?? '').split(path.delimiter).filter(Boolean);
 }
 
 /**
@@ -209,21 +240,21 @@ export function resolveAgentCliBinary(
   env: ProviderEnv,
   platform: NodeJS.Platform = process.platform,
 ): string | null {
-  const configured = env[AGENT_CLI_BIN_ENV[cli]]?.trim() ?? '';
+  const configured = envValue(env, AGENT_CLI_BIN_ENV[cli], platform)?.trim() ?? '';
   if (configured) {
     if (configured.includes('/') || configured.includes(path.sep)) {
       return path.isAbsolute(configured) && isExecutableFile(configured, platform)
         ? configured
         : null;
     }
-    return searchDirs(configured, pathDirs(env), platform);
+    return searchDirs(configured, pathDirs(env, platform), platform);
   }
-  const home = env.HOME?.trim() || os.homedir();
+  const home = envValue(env, 'HOME', platform)?.trim() || os.homedir();
   const userDirs = [
     path.join(home, '.local', 'bin'),
     ...(cli === 'claude' ? [path.join(home, '.claude', 'local')] : []),
   ];
-  return searchDirs(cli, [...pathDirs(env), ...userDirs], platform);
+  return searchDirs(cli, [...pathDirs(env, platform), ...userDirs], platform);
 }
 
 export function requireAgentCliBinary(
@@ -234,7 +265,7 @@ export function requireAgentCliBinary(
   const found = resolveAgentCliBinary(cli, env, platform);
   if (found) return found;
   const envName = AGENT_CLI_BIN_ENV[cli];
-  const configured = env[envName]?.trim();
+  const configured = envValue(env, envName, platform)?.trim();
   const windows =
     platform === 'win32'
       ? ` On Windows it must be the CLI's .exe: an npm ${cli}.cmd shim cannot be started without a shell.`
