@@ -2126,6 +2126,58 @@ describe('review regressions', () => {
 });
 
 describe('backup placement and consistency', () => {
+  it('never archives a mail outbox that sits inside a family tree, even through a link', async () => {
+    const root = makeCheckout();
+    const dataDir = tempDir('examify-data-outbox-inside-');
+    makeDb(path.join(dataDir, 'app.db'));
+    const outbox = path.join(dataDir, 'content/subjects/mail');
+    write(path.join(outbox, 'sign-in.eml'), 'token=secret-bearer');
+    write(path.join(dataDir, 'content/subjects/history/subject.json'), '{"id":"history"}');
+    // A link to the outbox from another staged tree is skipped too.
+    fs.mkdirSync(path.join(dataDir, 'content/source-pdfs'), { recursive: true });
+    fs.symlinkSync(outbox, path.join(dataDir, 'content/source-pdfs/linked'));
+    const { archive, warnings } = await data.backup({
+      repo: root,
+      env: { EXAMIFY_DATA_DIR: dataDir, MAIL_OUTBOX_DIR: outbox },
+      sqliteModule: SQLITE_MODULE,
+      out: tempDir('examify-data-outbox-out-'),
+    });
+    const members = tarList(archive).join('\n');
+    expect(members).toContain('family/content/subjects/history/subject.json');
+    expect(members).not.toContain('sign-in.eml');
+    expect(members).not.toContain('content/subjects/mail');
+    expect(members).not.toContain('content/source-pdfs/linked');
+    expect(warnings.filter((line) => line.startsWith('skipped the mail outbox'))).toHaveLength(2);
+    expect(fs.readFileSync(path.join(outbox, 'sign-in.eml'), 'utf8')).toBe('token=secret-bearer');
+  });
+
+  it('refuses --out inside a tree the backup copies, creating nothing there', async () => {
+    const root = makeCheckout();
+    const dataDir = tempDir('examify-data-out-inside-');
+    makeDb(path.join(dataDir, 'app.db'));
+    write(path.join(dataDir, 'content/subjects/history/subject.json'), '{"id":"history"}');
+    const env = { EXAMIFY_DATA_DIR: dataDir, EXAMIFY_SQLITE_MODULE: SQLITE_MODULE };
+    for (const rel of [
+      'content/subjects/backups',
+      'content/generated',
+      '.examify-ingest/archives',
+      'migration-conflicts/x',
+    ]) {
+      const out = path.join(dataDir, rel);
+      const result = await run(['backup', '--repo', root, '--out', out, '--json'], { env });
+      expect(result.code, rel).toBe(2);
+      expect(JSON.parse(result.stdout)).toMatchObject({ error: 'usage' });
+      expect(result.stderr).toContain('--out must not be inside a folder the backup copies');
+      expect(fs.existsSync(out), rel).toBe(false);
+    }
+    // Elsewhere in the data folder is still fine.
+    const ok = await run(
+      ['backup', '--repo', root, '--out', path.join(dataDir, 'archives'), '--json'],
+      { env },
+    );
+    expect(ok.code, ok.stderr).toBe(0);
+  });
+
   it('restore never stages inside a folder shared with other software', async () => {
     const root = makeCheckout();
     // A corrupt archive: refusing the folder first means it is never even copied

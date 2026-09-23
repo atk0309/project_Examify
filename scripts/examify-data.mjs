@@ -534,7 +534,13 @@ function writeIfMissing(file, body, mode) {
  * current chain is skipped), mapped to `rel`. OS junk and special files are
  * skipped; `warn` gets one line per skipped special file / broken link.
  */
-function filesUnder(abs, rel, warn = () => {}, chain = []) {
+function filesUnder(abs, rel, warn = () => {}, chain = [], skip = []) {
+  // `skip`: canonical folders never walked into, symlink targets included
+  // (backup's mail outbox: its messages are live sign-in tokens).
+  if (skip.length > 0 && skip.some((dir) => contains(dir, canonical(abs)))) {
+    warn(`skipped the mail outbox (sign-in tokens are never backed up): ${rel}`);
+    return [];
+  }
   let st;
   try {
     st = fs.statSync(abs);
@@ -558,7 +564,7 @@ function filesUnder(abs, rel, warn = () => {}, chain = []) {
   const out = [];
   for (const name of fs.readdirSync(abs).sort()) {
     if (isJunkName(name)) continue;
-    out.push(...filesUnder(path.join(abs, name), `${rel}/${name}`, warn, [...chain, real]));
+    out.push(...filesUnder(path.join(abs, name), `${rel}/${name}`, warn, [...chain, real], skip));
   }
   return out;
 }
@@ -1046,9 +1052,11 @@ const GENERATED_TREE = 'content/generated';
  * sha256 of every file `filesUnder` would stage from `abs` (keyed by `rel`
  * paths), or null when a file vanished while hashing.
  */
-function treeDigest(abs, rel) {
+function treeDigest(abs, rel, skip = []) {
   try {
-    return new Map(filesUnder(abs, rel).map((file) => [file.rel, sha256File(file.src)]));
+    return new Map(
+      filesUnder(abs, rel, () => {}, [], skip).map((file) => [file.rel, sha256File(file.src)]),
+    );
   } catch (error) {
     if (isEnoent(error)) return null;
     throw error;
@@ -1066,6 +1074,14 @@ const BACKUP_FAMILY_TREES = [
   'content/source-pdfs',
   'content/generated',
   '.examify-ingest/runs',
+];
+/** Data-folder trees a backup may copy (`--include-cache` adds the whole ingest cache). */
+const BACKUP_WALKED_TREES = [
+  'content/subjects',
+  'content/source-pdfs',
+  'content/generated',
+  '.examify-ingest',
+  'migration-conflicts',
 ];
 
 /** Catalog rows of a (staged) generated folder whose questions or keys file is missing. */
@@ -1116,6 +1132,16 @@ function resolveOutDir(ctx, out) {
       EXIT.USAGE,
       'usage',
       '--out must be outside the checkout (or inside the family data folder): archives hold secrets',
+    );
+  }
+  // Staging and archives inside a tree the backup copies would be copied into
+  // the next archive (and restored as family content).
+  const walked = BACKUP_WALKED_TREES.map((rel) => canonical(fromPosix(resolved.dataDir, rel)));
+  if (walked.some((tree) => contains(tree, canonical(dir)))) {
+    throw new CliError(
+      EXIT.USAGE,
+      'usage',
+      '--out must not be inside a folder the backup copies (content/subjects, content/source-pdfs, content/generated, .examify-ingest, migration-conflicts)',
     );
   }
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -1225,8 +1251,10 @@ export async function backup(options = {}) {
     records.set(rel, { path: rel, sha256, size });
     options.onFileStaged?.(rel);
   };
+  // The mail outbox may sit inside a family tree (MAIL_OUTBOX_DIR): never copy it.
+  const skip = resolved.outboxDir ? [canonical(resolved.outboxDir)] : [];
   const stageTree = (srcAbs, rel) => {
-    for (const file of filesUnder(srcAbs, rel, warn)) stageFile(file.src, file.rel);
+    for (const file of filesUnder(srcAbs, rel, warn, [], skip)) stageFile(file.src, file.rel);
   };
 
   try {
@@ -1271,7 +1299,7 @@ export async function backup(options = {}) {
       for (const key of [...records.keys()]) {
         if (key.startsWith(`${generatedRel}/`)) records.delete(key);
       }
-      const before = treeDigest(generatedSrc, generatedRel);
+      const before = treeDigest(generatedSrc, generatedRel, skip);
       let copied = true;
       try {
         stageTree(generatedSrc, generatedRel);
@@ -1279,7 +1307,7 @@ export async function backup(options = {}) {
         if (!isEnoent(error)) throw error;
         copied = false; // a file went away mid-copy
       }
-      const after = treeDigest(generatedSrc, generatedRel);
+      const after = treeDigest(generatedSrc, generatedRel, skip);
       const staged = new Map(
         [...records.values()]
           .filter((record) => record.path.startsWith(`${generatedRel}/`))

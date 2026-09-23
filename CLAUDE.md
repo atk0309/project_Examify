@@ -837,7 +837,9 @@ These are non-negotiable. Don't "fix" them out.
   `-wal` / `-shm`), then `integrity_check` + the `__drizzle_migrations` count on the
   snapshot. Family files: `content/{subjects,source-pdfs,generated}`,
   `.examify-ingest/runs` (+ `cache` with `--include-cache`), `migration-conflicts/`, the
-  marker — never `outbox/` or `backups/`. Every repo env file `next start` reads (`.env`,
+  marker — never `backups/` or the mail outbox (`outbox/`, or a `MAIL_OUTBOX_DIR` that
+  sits inside one of those trees: the walk skips its canonical path, a symlink to it
+  included, with a warning). Every repo env file `next start` reads (`.env`,
   `.env.local`, `.env.production`, `.env.production.local`; all gitignored) unless
   `--no-env`.
   `--include-checkout` (pre-upgrade) adds the checkout's `content/**` (tracked, untracked
@@ -846,7 +848,9 @@ These are non-negotiable. Don't "fix" them out.
   cross-process lock). `MANIFEST.json` lists every file with its sha256. Staged `0700`,
   tarred to a temp file, fsynced, published with `link()` + `unlink` (no clobber) as
   `examify-backup-<UTC>-<rand>[-pre-upgrade-<sha7>].tar.gz`, `0600`, in `$DATA/backups/`
-  (`--out` must be outside the checkout or inside the data folder; the default `backups/`
+  (`--out` must be outside the checkout or inside the data folder, and never inside a tree
+  the backup copies — `content/{subjects,source-pdfs,generated}`, `.examify-ingest`,
+  `migration-conflicts` — or the next archive would copy it; the default `backups/`
   is never created in a shared folder — `shared_folder`, exit 5, nothing created). The
   family `content/generated/**` is staged as one revision: hashed before and after
   staging and compared with the staged bytes, restaged up to 3 times, else exit 1

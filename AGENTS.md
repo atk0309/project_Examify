@@ -162,8 +162,9 @@ JSON`). Missing cloud
   4 legacy, 5 refused, 6 verify failed) are an `install.sh` contract. Writing commands
   (and `verify`) refuse on an owner mismatch unless `--allow-owner-mismatch`. Backups:
   `VACUUM INTO` snapshot + family content + every `next start` env file (`.env`,
-  `.env.local`, `.env.production*`; unless `--no-env`), never `outbox/`
-  or `backups/`, never `backups/` created in a shared folder, `content/generated` staged
+  `.env.local`, `.env.production*`; unless `--no-env`), never the mail outbox (also a
+  `MAIL_OUTBOX_DIR` inside a family tree) or `backups/`, never `--out` inside a tree it
+  copies, never `backups/` created in a shared folder, `content/generated` staged
   as one revision (hashed before / after; `content_changing` after 3 tries), archives
   `0600` and read back before they are reported; restore
   refuses while Examify answers `/api/health` (any JSON `{ok:boolean}`), checks the
