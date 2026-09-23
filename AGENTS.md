@@ -129,7 +129,8 @@ JSON`). Missing cloud
   fixture. OpenAI-compatible and Codex generate refuse PDF-only input when no page
   images were rasterized (`pdftoppm` from poppler-utils). `--provider claude-cli` /
   `codex-cli` run Claude Code / Codex with their own sign-in (no key env; binary from
-  `EXAMIFY_CLAUDE_BIN` / `EXAMIFY_CODEX_BIN`, `PATH`, `~/.local/bin`; model from
+  `EXAMIFY_CLAUDE_BIN` / `EXAMIFY_CODEX_BIN`, `PATH`, `~/.local/bin`; on Windows a `.exe`
+  only, never an npm `.cmd` shim; model from
   `--model`, `EXAMIFY_CLAUDE_MODEL` / `EXAMIFY_CODEX_MODEL`, else the CLI's). Local HTTP
   sends `--model`, else `EXAMIFY_LLM_MODEL`, else `local`; the local transport
   (command / endpoint) is in the cacheKey so one never serves the other's cached IR,

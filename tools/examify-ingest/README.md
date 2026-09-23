@@ -196,7 +196,10 @@ served to the other.
 sign-in (no key env). Both are found via `EXAMIFY_CLAUDE_BIN` /
 `EXAMIFY_CODEX_BIN` (absolute path, or a name on `PATH`), else `PATH`, else
 `~/.local/bin` (and `~/.claude/local` for Claude Code); missing →
-`CliNotFoundError` before anything runs. The model is `--model`, else
+`CliNotFoundError` before anything runs. On Windows only a `.exe` counts: an
+npm `claude.cmd` / `codex.cmd` shim is a batch file that `spawn` cannot start
+without a shell, so point `EXAMIFY_CLAUDE_BIN` / `EXAMIFY_CODEX_BIN` at the
+CLI's own `.exe`. The model is `--model`, else
 `EXAMIFY_CLAUDE_MODEL` / `EXAMIFY_CODEX_MODEL`, else the CLI's own (recorded
 as `default`). Each run (`providers/command.ts`, shared with the local
 command) has a 10-minute deadline (`CLI_PROVIDER_TIMEOUT_MS`), an empty

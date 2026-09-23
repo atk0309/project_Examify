@@ -30,7 +30,11 @@ import {
   safeTempRoot,
 } from '../../tools/examify-ingest/src/generate-api';
 import { runProviderCommand } from '../../tools/examify-ingest/src/providers/command';
-import { agentCliEnv, agentCliHome } from '../../tools/examify-ingest/src/providers/agent-cli';
+import {
+  agentCliEnv,
+  agentCliHome,
+  requireAgentCliBinary,
+} from '../../tools/examify-ingest/src/providers/agent-cli';
 import { claudeResultEvent } from '../../tools/examify-ingest/src/providers/claude-cli';
 import {
   CODEX_DISABLED_FEATURES,
@@ -168,6 +172,38 @@ describe('agent CLI binaries', () => {
         EXAMIFY_CLAUDE_BIN: path.join(empty, 'claude'),
       }),
     ).toBeNull();
+  });
+
+  it('on Windows, finds only a real .exe, never an npm .cmd shim spawn cannot start', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'examify-win-path-'));
+    const home = mkdtempSync(path.join(tmpdir(), 'examify-home-'));
+    writeFileSync(path.join(dir, 'codex.cmd'), '@echo off\r\n');
+    writeFileSync(path.join(dir, 'codex'), '');
+    const env = { PATH: dir, HOME: home };
+    expect(resolveAgentCliBinary('codex', env, 'win32')).toBeNull();
+    const shim = { ...env, EXAMIFY_CODEX_BIN: path.join(dir, 'codex.cmd') };
+    expect(resolveAgentCliBinary('codex', shim, 'win32')).toBeNull();
+    for (const probe of [env, shim]) {
+      let error: unknown;
+      try {
+        requireAgentCliBinary('codex', probe, 'win32');
+      } catch (caught) {
+        error = caught;
+      }
+      expect(error).toBeInstanceOf(CliNotFoundError);
+      expect((error as Error).message).toContain('codex.cmd shim cannot be started');
+    }
+
+    writeFileSync(path.join(dir, 'codex.exe'), 'MZ');
+    expect(resolveAgentCliBinary('codex', env, 'win32')).toBe(path.join(dir, 'codex.exe'));
+    const exe = { ...env, EXAMIFY_CODEX_BIN: path.join(dir, 'codex.exe') };
+    expect(resolveAgentCliBinary('codex', exe, 'win32')).toBe(path.join(dir, 'codex.exe'));
+    // ~/.local/bin, where Claude Code's native Windows installer puts claude.exe.
+    mkdirSync(path.join(home, '.local/bin'), { recursive: true });
+    writeFileSync(path.join(home, '.local/bin/claude.exe'), 'MZ');
+    expect(resolveAgentCliBinary('claude', { PATH: '', HOME: home }, 'win32')).toBe(
+      path.join(home, '.local/bin/claude.exe'),
+    );
   });
 
   it('skips a non-executable file with the CLI name', () => {

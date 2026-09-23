@@ -470,7 +470,8 @@ PDFs and no page images were rasterized (`pdftoppm` from poppler-utils).
 provider's content blocks, so PDFs go as documents) and `--provider codex-cli`
 (`codex exec --json`, prompt on stdin, images as `--image` files) use the CLI's
 own sign-in: binary from `EXAMIFY_CLAUDE_BIN` / `EXAMIFY_CODEX_BIN`, `PATH`, then
-`~/.local/bin`; model from `--model`, `EXAMIFY_CLAUDE_MODEL` /
+`~/.local/bin` (on Windows a `.exe` only: `spawn` without a shell cannot start an npm
+`.cmd` shim, and cmd quoting of the prompt argument is not safe); model from `--model`, `EXAMIFY_CLAUDE_MODEL` /
 `EXAMIFY_CODEX_MODEL`, else the CLI's own (`default` in the manifest); a
 10-minute deadline (`CLI_PROVIDER_TIMEOUT_MS`). Both run through
 `providers/command.ts` (shared with the local command: abort / deadline kill the

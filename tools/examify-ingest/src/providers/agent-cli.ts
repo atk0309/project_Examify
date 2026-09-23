@@ -156,26 +156,38 @@ export function agentCliHomeOutsideCheckout(cli: AgentCli, env: ProviderEnv): st
   return home;
 }
 
-function isExecutableFile(file: string): boolean {
+/**
+ * Whether `spawn` (no shell) can start `file`. On Windows that is a real `.exe`
+ * only: an npm `claude.cmd` / `codex.cmd` shim is a batch file, which Node
+ * refuses to start without a shell, and running it through `cmd.exe` would
+ * need cmd quoting of the multi-line prompt argument. So a shim never counts
+ * as found; the CLI's own `.exe` does.
+ */
+function isExecutableFile(file: string, platform: NodeJS.Platform): boolean {
   try {
     if (!statSync(file).isFile()) return false;
-    if (process.platform !== 'win32') accessSync(file, constants.X_OK);
+    if (platform === 'win32') return path.extname(file).toLowerCase() === '.exe';
+    accessSync(file, constants.X_OK);
     return true;
   } catch {
     return false;
   }
 }
 
-function binaryNames(name: string): string[] {
-  return process.platform === 'win32' ? [`${name}.exe`, `${name}.cmd`, name] : [name];
+function binaryNames(name: string, platform: NodeJS.Platform): string[] {
+  return platform === 'win32' ? [`${name}.exe`] : [name];
 }
 
-function searchDirs(name: string, dirs: readonly string[]): string | null {
+function searchDirs(
+  name: string,
+  dirs: readonly string[],
+  platform: NodeJS.Platform,
+): string | null {
   for (const dir of dirs) {
     if (!dir || !path.isAbsolute(dir)) continue;
-    for (const candidate of binaryNames(name)) {
+    for (const candidate of binaryNames(name, platform)) {
       const file = path.join(dir, candidate);
-      if (isExecutableFile(file)) return file;
+      if (isExecutableFile(file, platform)) return file;
     }
   }
   return null;
@@ -189,34 +201,49 @@ function pathDirs(env: ProviderEnv): string[] {
  * Where the CLI is: `EXAMIFY_CLAUDE_BIN` / `EXAMIFY_CODEX_BIN` (an absolute
  * path, or a bare name looked up on PATH), else the name on PATH, else the
  * installers' per-user folders (`~/.local/bin`; `~/.claude/local` for Claude
- * Code) that a service's PATH often misses. Null when not found.
+ * Code) that a service's PATH often misses. On Windows only a `.exe` counts
+ * (`isExecutableFile`). Null when not found.
  */
-export function resolveAgentCliBinary(cli: AgentCli, env: ProviderEnv): string | null {
+export function resolveAgentCliBinary(
+  cli: AgentCli,
+  env: ProviderEnv,
+  platform: NodeJS.Platform = process.platform,
+): string | null {
   const configured = env[AGENT_CLI_BIN_ENV[cli]]?.trim() ?? '';
   if (configured) {
     if (configured.includes('/') || configured.includes(path.sep)) {
-      return path.isAbsolute(configured) && isExecutableFile(configured) ? configured : null;
+      return path.isAbsolute(configured) && isExecutableFile(configured, platform)
+        ? configured
+        : null;
     }
-    return searchDirs(configured, pathDirs(env));
+    return searchDirs(configured, pathDirs(env), platform);
   }
   const home = env.HOME?.trim() || os.homedir();
   const userDirs = [
     path.join(home, '.local', 'bin'),
     ...(cli === 'claude' ? [path.join(home, '.claude', 'local')] : []),
   ];
-  return searchDirs(cli, [...pathDirs(env), ...userDirs]);
+  return searchDirs(cli, [...pathDirs(env), ...userDirs], platform);
 }
 
-export function requireAgentCliBinary(cli: AgentCli, env: ProviderEnv): string {
-  const found = resolveAgentCliBinary(cli, env);
+export function requireAgentCliBinary(
+  cli: AgentCli,
+  env: ProviderEnv,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  const found = resolveAgentCliBinary(cli, env, platform);
   if (found) return found;
   const envName = AGENT_CLI_BIN_ENV[cli];
   const configured = env[envName]?.trim();
+  const windows =
+    platform === 'win32'
+      ? ` On Windows it must be the CLI's .exe: an npm ${cli}.cmd shim cannot be started without a shell.`
+      : '';
   throw new CliNotFoundError(
     cli,
     configured
-      ? `${envName} does not name an executable file (use its full path, or a name on PATH)`
-      : `${AGENT_CLI_LABEL[cli]} was not found on PATH or in ~/.local/bin. Install it and sign in as the user that runs Examify, or set ${envName} to its full path`,
+      ? `${envName} does not name an executable file (use its full path, or a name on PATH).${windows}`
+      : `${AGENT_CLI_LABEL[cli]} was not found on PATH or in ~/.local/bin. Install it and sign in as the user that runs Examify, or set ${envName} to its full path.${windows}`,
   );
 }
 
