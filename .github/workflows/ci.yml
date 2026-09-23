@@ -77,6 +77,17 @@ jobs:
           set -o pipefail
           mkdir -p tests/.tmp
           pnpm test:e2e 2>&1 | tee tests/.tmp/playwright.log
+      - name: Nothing written into the checkout
+        # The running app and the test suites keep family state in the data
+        # folder; any file they left under content/, .examify-ingest/ or src/
+        # (ignored or not) is a leak.
+        run: |
+          leaked="$(git status --porcelain --ignored=traditional -- content .examify-ingest src)"
+          if [ -n "$leaked" ]; then
+            echo "Files written into the checkout:"
+            echo "$leaked"
+            exit 1
+          fi
       - name: Upload e2e diagnostics
         # Consumed by the isolated comment job below. This job runs the PR's
         # own code (install scripts, build, tests), so it must never hold a

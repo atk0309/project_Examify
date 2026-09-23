@@ -10,7 +10,8 @@ const UNIT_DATA_DIR = path.join(TMP_ROOT, `unit-data-${process.pid}`);
 
 Reflect.set(process.env, 'NODE_ENV', 'test');
 Reflect.set(process.env, 'EXAMIFY_DATA_DIR', UNIT_DATA_DIR);
-if (!process.env.DATABASE_URL) Reflect.set(process.env, 'DATABASE_URL', `file:${UNIT_DB}`);
+// Same for the database: never a developer's exported DATABASE_URL.
+Reflect.set(process.env, 'DATABASE_URL', `file:${UNIT_DB}`);
 if (!process.env.AUTH_SECRET)
   Reflect.set(process.env, 'AUTH_SECRET', 'unit-test-secret-must-be-at-least-32-chars-long');
 // Turnstile stays off in unit tests unless a case sets TURNSTILE_ENABLED=1.

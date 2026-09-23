@@ -2,8 +2,9 @@
 node_modules
 .pnpm-store
 
-# next
+# next (install.sh --upgrade parks the old build here until the new one is verified)
 .next
+/.next.pre-upgrade-*
 out
 build
 

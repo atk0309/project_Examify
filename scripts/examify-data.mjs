@@ -603,13 +603,65 @@ function assertOwnership(ctx, options) {
 }
 
 /**
+ * Names an Examify data folder may hold before it has a marker (an older
+ * `./data`, or a volume holding only the database). Mirrors
+ * `src/lib/data-folder.ts`. Anything else means the folder is shared with
+ * other software, which must never be chmodded or written into.
+ */
+const KNOWN_DATA_ENTRIES = new Set([
+  '.gitignore',
+  '.DS_Store',
+  '.examify-ingest',
+  '.migrate-journal.json',
+  '.upgrade-state.json',
+  'app.db',
+  'app.db-journal',
+  'app.db-shm',
+  'app.db-wal',
+  'backups',
+  'content',
+  'lost+found',
+  'migration-conflicts',
+  'outbox',
+]);
+
+/** Restore leftovers: moved-aside content and an interrupted staging copy. */
+const KNOWN_DATA_PREFIXES = ['before-restore-', '.restore-staging-'];
+
+function assertDedicatedFolder(dataDir, dbPath) {
+  if (fs.existsSync(path.join(dataDir, DATA_DIR_MARKER))) return;
+  const dbFiles = new Set();
+  if (dbPath && path.dirname(path.resolve(dbPath)) === path.resolve(dataDir)) {
+    const base = path.basename(dbPath);
+    for (const suffix of ['', '-wal', '-shm', '-journal']) dbFiles.add(`${base}${suffix}`);
+  }
+  for (const name of fs.readdirSync(dataDir)) {
+    if (
+      KNOWN_DATA_ENTRIES.has(name) ||
+      dbFiles.has(name) ||
+      KNOWN_DATA_PREFIXES.some((p) => name.startsWith(p))
+    ) {
+      continue;
+    }
+    throw new CliError(
+      EXIT.REFUSED,
+      'shared_folder',
+      "the family data folder already holds files that are not Examify's; set EXAMIFY_DATA_DIR to a folder of its own",
+    );
+  }
+}
+
+/**
  * Create the data folder (0700; chmod only when this user owns it), its
  * `.gitignore` (`*`) and the marker. Existing files are never rewritten.
- * `created` is true when the folder did not exist before.
+ * `created` is true when the folder did not exist before. An existing,
+ * unmarked folder holding files Examify does not recognise is refused
+ * (exit 5, `shared_folder`) before anything is chmodded or written.
  */
 export function initDataFolder(paths, { geteuid = defaultGeteuid, warn = () => {} } = {}) {
   const { dataDir } = paths;
   const created = !fs.existsSync(dataDir);
+  if (!created) assertDedicatedFolder(dataDir, paths.dbPath);
   fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   const st = fs.statSync(dataDir);
   const uid = geteuid();

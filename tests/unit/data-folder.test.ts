@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DATA_DIR_MARKER } from '@/lib/data-dir';
-import { initDataFolder } from '@/lib/data-folder';
+import { initDataFolder, SharedDataFolderError } from '@/lib/data-folder';
 
 const temps: string[] = [];
 
@@ -80,6 +80,48 @@ describe('initDataFolder', () => {
       expect(warnings[0]).not.toContain(dataDir);
     },
   );
+
+  it('adopts an older unmarked ./data that holds only Examify files', () => {
+    const dataDir = path.join(tempParent(), 'data');
+    mkdirSync(path.join(dataDir, 'outbox'), { recursive: true });
+    for (const name of ['app.db', 'app.db-wal', 'app.db-shm', '.DS_Store']) {
+      writeFileSync(path.join(dataDir, name), '');
+    }
+    expect(initDataFolder({ dataDir })).toEqual({ created: false });
+    expect(mode(dataDir)).toBe(0o700);
+  });
+
+  it('accepts a custom database file name from DATABASE_URL in the folder', () => {
+    const dataDir = path.join(tempParent(), 'volume');
+    mkdirSync(dataDir);
+    writeFileSync(path.join(dataDir, 'examify.sqlite'), '');
+    writeFileSync(path.join(dataDir, 'examify.sqlite-wal'), '');
+    expect(initDataFolder({ dataDir, dbPath: path.join(dataDir, 'examify.sqlite') })).toEqual({
+      created: false,
+    });
+  });
+
+  it('refuses a shared folder without chmodding or writing anything', () => {
+    const dataDir = path.join(tempParent(), 'lib');
+    mkdirSync(dataDir);
+    chmodSync(dataDir, 0o755);
+    writeFileSync(path.join(dataDir, 'app.db'), '');
+    writeFileSync(path.join(dataDir, 'dpkg.status'), 'someone else');
+    expect(() => initDataFolder({ dataDir, dbPath: path.join(dataDir, 'app.db') })).toThrow(
+      SharedDataFolderError,
+    );
+    expect(mode(dataDir)).toBe(0o755);
+    expect(() => statSync(path.join(dataDir, DATA_DIR_MARKER))).toThrow();
+    expect(() => statSync(path.join(dataDir, '.gitignore'))).toThrow();
+  });
+
+  it('trusts a marked folder whatever else it holds', () => {
+    const dataDir = path.join(tempParent(), 'data');
+    mkdirSync(dataDir);
+    writeFileSync(path.join(dataDir, DATA_DIR_MARKER), '{"layout":1}');
+    writeFileSync(path.join(dataDir, 'notes.txt'), 'mine');
+    expect(initDataFolder({ dataDir })).toEqual({ created: false });
+  });
 
   it('fails when the data folder path is a file', () => {
     const file = path.join(tempParent(), 'data');

@@ -213,4 +213,62 @@ describe('pnpm db:migrate', () => {
     expect(existsSync(path.join(root, 'src', 'family'))).toBe(false);
     expect(existsSync(path.join(root, 'data'))).toBe(false);
   });
+
+  function git(root: string, ...args: string[]) {
+    const result = spawnSync(
+      'git',
+      [
+        '-c',
+        'user.email=t@example.com',
+        '-c',
+        'user.name=t',
+        '-c',
+        'commit.gpgsign=false',
+        ...args,
+      ],
+      { cwd: root, encoding: 'utf8' },
+    );
+    expect(result.status, result.stderr).toBe(0);
+  }
+
+  it('refuses while family content is still in the checkout, unless told to ignore it', () => {
+    const root = migrateRepo();
+    mkdirSync(path.join(root, 'content', 'subjects', 'demo'), { recursive: true });
+    writeFileSync(
+      path.join(root, 'content', 'subjects', 'demo', 'subject.json'),
+      '{"id":"demo","label":"Demo"}\n',
+    );
+    git(root, 'init', '-q');
+    git(root, 'add', '-A');
+    git(root, 'commit', '-q', '-m', 'fixture');
+    const clean = runMigrate(root);
+    expect(clean.status, clean.stderr).toBe(0);
+
+    mkdirSync(path.join(root, 'content', 'subjects', 'history'), { recursive: true });
+    writeFileSync(
+      path.join(root, 'content', 'subjects', 'history', 'subject.json'),
+      '{"id":"history","label":"History"}\n',
+    );
+    const refused = runMigrate(root);
+    expect(refused.status).toBe(1);
+    expect(refused.stderr).toContain('family content is still inside the checkout');
+    expect(refused.stderr).toContain('content/subjects/history');
+    expect(refused.stderr).toContain('./install.sh --upgrade');
+
+    const ignored = runMigrate(root, { EXAMIFY_IGNORE_LEGACY_CONTENT: '1' });
+    expect(ignored.status, ignored.stderr).toBe(0);
+  });
+
+  it('refuses a database folder shared with other software', () => {
+    const root = migrateRepo();
+    const shared = mkdtempSync(path.join(tmpdir(), 'examify-shared-'));
+    temps.push(shared);
+    writeFileSync(path.join(shared, 'someone-else.conf'), 'x');
+    const result = runMigrate(root, { DATABASE_URL: `file:${path.join(shared, 'app.db')}` });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('db:migrate: the family data folder already holds files');
+    expect(result.stderr).not.toContain(shared);
+    expect(existsSync(path.join(shared, 'app.db'))).toBe(false);
+    expect(existsSync(path.join(shared, DATA_DIR_MARKER))).toBe(false);
+  });
 });

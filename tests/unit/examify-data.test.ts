@@ -351,6 +351,20 @@ describe('paths / init / usage', () => {
     expect(mode(dataDir)).toBe(0o700);
   });
 
+  it('init refuses a shared, unmarked folder without chmodding or writing into it', async () => {
+    const root = makeCheckout();
+    const shared = tempDir('examify-data-shared-');
+    fs.chmodSync(shared, 0o755);
+    write(path.join(shared, 'app.db'), '');
+    write(path.join(shared, 'dpkg.status'), 'someone else');
+    const refused = await run(['init', '--repo', root, '--data-dir', shared, '--json']);
+    expect(refused.code).toBe(5);
+    expect(JSON.parse(refused.stdout)).toMatchObject({ ok: false, error: 'shared_folder' });
+    expect(mode(shared)).toBe(0o755);
+    expect(fs.existsSync(path.join(shared, '.examify-data.json'))).toBe(false);
+    expect(fs.existsSync(path.join(shared, '.gitignore'))).toBe(false);
+  });
+
   it('exits 2 on usage errors', async () => {
     const root = makeCheckout();
     expect((await run([])).code).toBe(2);
