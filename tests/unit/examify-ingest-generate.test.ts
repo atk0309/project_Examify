@@ -284,7 +284,11 @@ describe('examify-ingest generate P0 gates', () => {
       streams.handle,
     );
     expect(code).toBe(0);
+    // The CI / dev command names a checkout path: committed layer, as before.
+    expect(streams.err()).toContain('layer: committed (checkout)\n');
     expect(streams.out()).toContain('wrote content/subjects/demo/bank.ir.json');
+    expect(existsSync(path.join(root, '.examify-ingest'))).toBe(true);
+    expect(existsSync(path.join(root, 'data'))).toBe(false);
     const ir = JSON.parse(readFileSync(path.join(dest, 'bank.ir.json'), 'utf8')) as BankIR;
     expect(ir.subject.id).toBe('demo');
     expect(ir.difficulties.easy[0]?.id).toBe('demo-easy-1');
@@ -2394,5 +2398,101 @@ describe('examify-ingest generate typed failures', () => {
     }
     expect(error).toBeInstanceOf(UnreadableSourcesError);
     expect((error as Error).message).toMatch(/cannot read PDF/);
+  });
+});
+
+/** Move the fake repo's plants subject into its default family data folder (`./data`). */
+function familyPlants(root: string): string {
+  const data = path.join(root, 'data');
+  mkdirSync(path.join(data, 'content/subjects/plants'), { recursive: true });
+  mkdirSync(path.join(data, 'content/source-pdfs/plants'), { recursive: true });
+  copyFileSync(
+    path.join(root, 'content/subjects/plants/subject.json'),
+    path.join(data, 'content/subjects/plants/subject.json'),
+  );
+  copyFileSync(
+    path.join(root, 'content/source-pdfs/plants/notes.txt'),
+    path.join(data, 'content/source-pdfs/plants/notes.txt'),
+  );
+  return data;
+}
+
+describe('examify-ingest generate layers', () => {
+  it('family generate writes IR and run state under the data folder only', async () => {
+    const root = examifyRepo();
+    const data = familyPlants(root);
+    const streams = io();
+    streams.handle.cwd = root;
+    const code = await runCliAsync(
+      ['generate', '--provider', 'test', '--seed', '0', 'data/content/subjects/plants'],
+      streams.handle,
+    );
+    expect(code).toBe(0);
+    expect(streams.err()).toContain('layer: family (data)\n');
+    expect(streams.out()).toContain('wrote content/subjects/plants/bank.ir.json');
+    expect(existsSync(path.join(data, 'content/subjects/plants/bank.ir.json'))).toBe(true);
+    expect(readdirSync(path.join(data, '.examify-ingest/runs'))).toHaveLength(1);
+    expect(existsSync(path.join(root, 'content/subjects/plants/bank.ir.json'))).toBe(false);
+    expect(existsSync(path.join(root, '.examify-ingest'))).toBe(false);
+    for (const command of [
+      'pnpm examify-ingest validate data/content/subjects',
+      'pnpm examify-ingest emit data/content/subjects --dry-run',
+      'pnpm examify-ingest emit data/content/subjects --apply',
+    ]) {
+      expect(streams.out()).toContain(command);
+    }
+  });
+
+  it('family generate reads API keys from the checkout .env, not the data folder', async () => {
+    const root = examifyRepo();
+    const data = familyPlants(root);
+    writeFileSync(path.join(root, '.env'), 'ANTHROPIC_API_KEY=test\n');
+    writeFileSync(path.join(data, '.env'), 'ANTHROPIC_API_KEY=sk-data-folder-never-read\n');
+    const streams = io();
+    streams.handle.cwd = root;
+    streams.handle.env = {};
+    const code = await runCliAsync(
+      ['generate', '--provider', 'anthropic', 'data/content/subjects/plants'],
+      streams.handle,
+    );
+    expect(code).toBe(1);
+    // The checkout's `test` sentinel was used (a data-folder key would have tried the network).
+    expect(streams.err()).toContain('sentinel');
+    expect(existsSync(path.join(data, 'content/subjects/plants/bank.ir.json'))).toBe(false);
+  });
+
+  it('refuses generate across both layers or outside them and writes nothing', async () => {
+    const root = examifyRepo();
+    const data = familyPlants(root);
+    const mixed = io();
+    mixed.handle.cwd = root;
+    expect(
+      await runCliAsync(
+        [
+          'generate',
+          '--provider',
+          'test',
+          'content/subjects/plants',
+          'data/content/subjects/plants',
+        ],
+        mixed.handle,
+      ),
+    ).toBe(1);
+    expect(mixed.err()).toContain('run them separately');
+
+    const elsewhere = mkdtempSync(path.join(tmpdir(), 'examify-generate-elsewhere-'));
+    mkdirSync(path.join(elsewhere, 'content/subjects/plants'), { recursive: true });
+    const outside = io();
+    outside.handle.cwd = root;
+    expect(
+      await runCliAsync(
+        ['generate', '--provider', 'test', path.join(elsewhere, 'content/subjects/plants')],
+        outside.handle,
+      ),
+    ).toBe(1);
+    expect(outside.err()).toContain('path is outside the checkout and the family data folder');
+    expect(existsSync(path.join(root, '.examify-ingest'))).toBe(false);
+    expect(existsSync(path.join(data, '.examify-ingest'))).toBe(false);
+    expect(existsSync(path.join(elsewhere, '.examify-ingest'))).toBe(false);
   });
 });

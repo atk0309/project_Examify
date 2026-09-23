@@ -3,6 +3,7 @@ import 'server-only';
 import path from 'node:path';
 import * as ingestGenerate from 'examify-ingest/generate';
 import { getOnboardingContentRoot } from '@/lib/content-root';
+import { getEnvStoreRoot } from '@/lib/env-store';
 import {
   BANK_IR_FILE,
   isSampleSubjectId,
@@ -425,7 +426,8 @@ async function generateOnboardingSubjectUnlocked(input: {
       sources: target.sources,
       provider: input.provider,
       seed: input.seed,
-      env: ingestGenerate.mergeRepoEnvFiles(root, process.env),
+      // Keys live in the checkout `.env` (env store), not the family data folder.
+      env: ingestGenerate.mergeRepoEnvFiles(getEnvStoreRoot(), process.env),
       replaceSample,
       // Preview only — wizard owns the IR write after cancel + catalog checks.
       dryRunIr: true,

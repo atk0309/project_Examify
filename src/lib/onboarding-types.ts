@@ -166,6 +166,11 @@ export type OnboardingDryRun = {
   questionCount: number;
   subjectCount: number;
   collisions: string[];
+  /**
+   * Family subjects whose id is also a built-in (committed generated) subject.
+   * After Apply the family version replaces the built-in one. A notice, not a blocker.
+   */
+  shadows: OnboardingSampleSubject[];
   replaceSample: boolean;
   plan: OnboardingPlanEntry[];
   /** CLI-shaped dry-run (`formatEmitPlan`), with keys/ bodies redacted. */
@@ -178,8 +183,16 @@ export type OnboardingSampleSubject = {
 };
 
 export type OnboardingSnapshot = {
+  /** Family subjects only (the data folder); built-in subjects are not edited here. */
   subjects: OnboardingSubject[];
   sampleSubjects: OnboardingSampleSubject[];
+  /** Built-in generated subjects shipped in the checkout (biology). A same id replaces one. */
+  builtinSubjects: OnboardingSampleSubject[];
+  /**
+   * The family data folder as CLI hints name it from the checkout root:
+   * `data` (default), `data/<sub>`, or an absolute path.
+   */
+  dataDirDisplay: string;
   aiMode: OnboardingAiMode | null;
   replaceSample: boolean;
   hasDryRun: boolean;
@@ -285,26 +298,60 @@ export function confirmOnboardingIrOverwrite(
   return ask(message) ? 'force' : 'skip';
 }
 
-export const ONBOARDING_INGEST_CLI = [
-  'pnpm examify-ingest validate content/subjects',
-  'pnpm examify-ingest emit content/subjects --dry-run',
-  'pnpm examify-ingest emit content/subjects --apply',
-] as const;
+/**
+ * `content/subjects` (or one subject in it) under the family data folder, as
+ * a shell argument run from the checkout root. No display (or `.`) is the
+ * checkout-relative form.
+ */
+export function onboardingSubjectsArg(dataDirDisplay?: string, subjectId?: string): string {
+  const base =
+    !dataDirDisplay || dataDirDisplay === '.'
+      ? 'content/subjects'
+      : `${dataDirDisplay}/content/subjects`;
+  const target = subjectId ? `${base}/${subjectId}` : base;
+  return /\s/.test(target) ? `'${target}'` : target;
+}
+
+/** Power-user validate → dry-run → apply for the family subjects tree. */
+export function onboardingIngestCli(dataDirDisplay?: string): string[] {
+  const subjects = onboardingSubjectsArg(dataDirDisplay);
+  return [
+    `pnpm examify-ingest validate ${subjects}`,
+    `pnpm examify-ingest emit ${subjects} --dry-run`,
+    `pnpm examify-ingest emit ${subjects} --apply`,
+  ];
+}
+
+export const ONBOARDING_INGEST_CLI: readonly string[] = onboardingIngestCli();
 
 export function onboardingGenerateCli(
   provider: OnboardingGenerateProvider,
   seed = ONBOARDING_GENERATE_SEED_DEFAULT,
   subjectId?: string,
+  dataDirDisplay?: string,
 ): string {
-  const target = subjectId ? `content/subjects/${subjectId}` : 'content/subjects/<id>';
+  const target = onboardingSubjectsArg(dataDirDisplay, subjectId ?? '<id>');
   return `pnpm examify-ingest generate --provider ${provider} --seed ${seed} ${target}`;
 }
 
 export function onboardingGenerateAndEmitCli(
   provider: OnboardingGenerateProvider,
   seed = ONBOARDING_GENERATE_SEED_DEFAULT,
+  dataDirDisplay?: string,
 ): string[] {
-  return [onboardingGenerateCli(provider, seed), ...ONBOARDING_INGEST_CLI];
+  return [
+    onboardingGenerateCli(provider, seed, undefined, dataDirDisplay),
+    ...onboardingIngestCli(dataDirDisplay),
+  ];
+}
+
+/** Review notice for family subjects that replace built-in ones. */
+export function onboardingShadowNotice(
+  shadows: readonly Pick<OnboardingSampleSubject, 'label'>[],
+): string | null {
+  if (shadows.length === 0) return null;
+  const labels = shadows.map((row) => row.label).join(', ');
+  return `Replaces built-in subject${shadows.length === 1 ? '' : 's'}: ${labels}. Your family sees your version after Apply.`;
 }
 
 /** Generate-all targets: skip hand-authored / source-less catalog rows. */

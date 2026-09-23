@@ -73,6 +73,8 @@ function snapshot(overrides: Partial<OnboardingSnapshot> = {}): OnboardingSnapsh
       },
     ],
     sampleSubjects: [{ id: 'maths', label: 'Maths' }],
+    builtinSubjects: [{ id: 'biology', label: 'Biology' }],
+    dataDirDisplay: 'data',
     aiMode: null,
     replaceSample: false,
     hasDryRun: false,
@@ -350,6 +352,7 @@ describe('OnboardingWizard majors UI', () => {
         questionCount: 1,
         subjectCount: 1,
         collisions: [],
+        shadows: [],
         replaceSample: false,
         plan: [
           { path: 'content/generated/questions/history.json', action: 'add' },
@@ -397,6 +400,7 @@ describe('OnboardingWizard majors UI', () => {
         questionCount: 6,
         subjectCount: 1,
         collisions: [],
+        shadows: [],
         replaceSample: false,
         plan: [{ path: 'content/generated/questions/biology.json', action: 'update' }],
         diff: 'would update content/generated/questions/biology.json',
@@ -683,6 +687,7 @@ describe('OnboardingWizard majors UI', () => {
         questionCount: 6,
         subjectCount: 1,
         collisions: [],
+        shadows: [],
         replaceSample: false,
         plan: [{ path: 'content/generated/questions/biology.json', action: 'update' }],
         diff: 'would update content/generated/questions/biology.json',
@@ -1047,6 +1052,91 @@ describe('OnboardingWizard generate fixes', () => {
     );
     fireEvent.change(screen.getByTestId('wizard-subject-label'), { target: { value: 'History' } });
     expect(screen.queryByTestId('wizard-subject-id-sample-hint')).toBeNull();
+  });
+
+  it('warns while adding a subject whose id is a built-in subject id', () => {
+    render(
+      <OnboardingWizard
+        snapshot={snapshot({ subjects: [] })}
+        pendingInvites={[]}
+        members={[]}
+        canInvite={false}
+        authMode="magic-link"
+      />,
+    );
+    fireEvent.click(screen.getByTestId('wizard-get-started'));
+    fireEvent.change(screen.getByTestId('wizard-subject-label'), { target: { value: 'Biology' } });
+    expect(screen.getByTestId('wizard-subject-id')).toHaveValue('biology');
+    const hint = screen.getByTestId('wizard-subject-id-builtin-hint');
+    expect(hint).toHaveTextContent('is the id of the built-in Biology subject');
+    expect(hint).toHaveTextContent('replaces it for your family after Apply');
+    expect(hint).toHaveTextContent('biology-2');
+    expect(screen.queryByTestId('wizard-subject-id-sample-hint')).toBeNull();
+    fireEvent.change(screen.getByTestId('wizard-subject-label'), { target: { value: 'History' } });
+    expect(screen.queryByTestId('wizard-subject-id-builtin-hint')).toBeNull();
+  });
+
+  it('says uploads stay in the family data folder', () => {
+    render(
+      <OnboardingWizard
+        snapshot={snapshot()}
+        pendingInvites={[]}
+        members={[]}
+        canInvite={false}
+        authMode="magic-link"
+      />,
+    );
+    fireEvent.click(screen.getByTestId('wizard-get-started'));
+    fireEvent.click(screen.getByTestId('wizard-next'));
+    const files = screen.getByTestId('wizard-files');
+    expect(files).toHaveTextContent('Uploaded PDFs stay in this server’s family data folder');
+    expect(files).not.toHaveTextContent('under source-pdfs');
+  });
+
+  it('names built-in replacements on Review and the data folder in CLI hints', async () => {
+    const withFolder = snapshot({ dataDirDisplay: '/srv/examify-data' });
+    validateOnboardingAction.mockResolvedValue({ ok: true, snapshot: withFolder });
+    previewOnboardingEmitAction.mockResolvedValue({
+      ok: true,
+      snapshot: { ...withFolder, hasDryRun: true },
+      dryRun: {
+        hash: 'plan-hash',
+        questionCount: 2,
+        subjectCount: 1,
+        collisions: [],
+        shadows: [{ id: 'biology', label: 'Biology' }],
+        replaceSample: false,
+        plan: [{ path: 'content/generated/questions/biology.json', action: 'update' }],
+        diff: 'would update content/generated/questions/biology.json',
+      },
+    });
+    render(
+      <OnboardingWizard
+        snapshot={withFolder}
+        pendingInvites={[]}
+        members={[]}
+        canInvite={false}
+        authMode="magic-link"
+      />,
+    );
+    fireEvent.click(screen.getByTestId('wizard-get-started'));
+    fireEvent.click(screen.getByTestId('wizard-next'));
+    fireEvent.click(screen.getByTestId('wizard-next'));
+    fireEvent.click(screen.getByTestId('wizard-next'));
+    expect(screen.getByTestId('wizard-cli')).toHaveTextContent(
+      'pnpm examify-ingest validate /srv/examify-data/content/subjects',
+    );
+    fireEvent.click(screen.getByTestId('wizard-validate'));
+    await waitFor(() => expect(screen.getByTestId('wizard-next')).toBeEnabled());
+    fireEvent.click(screen.getByTestId('wizard-next'));
+    expect(screen.getByTestId('wizard-cli-emit')).toHaveTextContent(
+      'pnpm examify-ingest emit /srv/examify-data/content/subjects --dry-run',
+    );
+    expect(screen.queryByTestId('wizard-shadows')).toBeNull();
+    fireEvent.click(await screen.findByTestId('wizard-preview'));
+    expect(await screen.findByTestId('wizard-shadows')).toHaveTextContent(
+      'Replaces built-in subject: Biology.',
+    );
   });
 
   it('names the upload problem instead of “Only PDF files” for a bad name', async () => {

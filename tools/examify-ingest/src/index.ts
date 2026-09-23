@@ -49,7 +49,23 @@ export {
 } from './emit';
 export { formatFileDiff, stableJson } from './diff';
 export { resolveSubjectSources } from './sources';
-export { formatValidateOk, parseArgs, runCli, USAGE, type CliIo, type ParsedCli } from './cli';
+export {
+  formatValidateOk,
+  parseArgs,
+  resolveCliLayer,
+  runCli,
+  USAGE,
+  type CliIo,
+  type ParsedCli,
+} from './cli';
+export {
+  formatDataDirDisplay,
+  formatLayerLine,
+  resolveIngestRoot,
+  subjectsArgFor,
+  type IngestLayer,
+  type IngestRoot,
+} from './roots';
 export {
   assertCanWriteBankIr,
   BankIrCorruptError,
@@ -60,5 +76,6 @@ export {
   writeFileAtomic,
   type BankIrPresence,
   type WriteBankIrOptions,
+  type WriteFileAtomicOptions,
 } from './write-atomic';
 export { SUBJECT_META_FILE, BANK_IR_FILE } from './sources';

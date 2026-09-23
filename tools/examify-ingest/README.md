@@ -38,6 +38,40 @@ Generate when a subject reuses a sample subject id. Generate uses that setting
 too; without it a sample-id subject is refused (`sample_collision`) before the
 provider call.
 
+## Layers: checkout (committed) and family data folder
+
+Every `validate` / `emit` / `generate` run works on exactly one layer, picked
+from the paths you name, and says which on stderr first:
+
+- **committed** (`layer: committed (checkout)`): paths in the checkout, such as
+  `content/subjects`. This is how shipped subjects (biology, the demo fixture)
+  are built and what CI runs. `emit --apply` writes tracked files:
+  `content/generated/` and the `src/lib/exam/generated-*.ts` registrars, and
+  prints a note saying so.
+- **family** (`layer: family (data)`): paths in the family data folder
+  (`EXAMIFY_DATA_DIR`, default `./data`; the same resolver as the app, so an
+  `EXAMIFY_DATA_DIR` in `.env` counts). This is the tree `/onboarding` writes.
+  `emit` writes `<data folder>/content/generated/` only (keys `0600` in a
+  `0700` folder) and never the registrars; generate writes IR and
+  `.examify-ingest/` there. A family subject with a committed subject's id
+  replaces it in the app (`note: family subject biology replaces the committed
+subject biology`).
+
+The data folder is checked first (the default `./data` sits inside the
+checkout). A path in neither is refused, and so is a run that names both.
+API keys come from the checkout `.env` / `.env.local` in both layers.
+
+```bash
+pnpm examify-ingest generate --provider test --seed 0 data/content/subjects/<id>
+pnpm examify-ingest validate data/content/subjects
+pnpm examify-ingest emit data/content/subjects --dry-run
+pnpm examify-ingest emit data/content/subjects --apply
+```
+
+With an absolute `EXAMIFY_DATA_DIR`, name that path instead
+(`/srv/examify-data/content/subjects`). The wizard's power-user hints show
+the right one.
+
 ## Install
 
 From the repo root, after `pnpm install` (this package is a workspace member):
@@ -190,7 +224,11 @@ registrars first, then removes leftover files. The hand-authored sample
 bank in `src/lib/exam/data.ts` and `answer-keys.server.ts` is never touched.
 
 When `src/lib/exam/generated-public.ts` and `generated-keys.server.ts` already
-exist, `--apply` rewrites those registrars from the resulting catalog.
+exist, a committed-layer `--apply` rewrites those registrars from the
+resulting catalog (a family-layer emit never does). Every file is written
+atomically (temp file + rename): questions and keys first, then the
+registrars, then `subjects.json` (the live bank reads the catalog first, so it
+is the commit point), then leftover deletes.
 
 ## BankIR shape (version 1)
 

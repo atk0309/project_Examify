@@ -26,7 +26,6 @@ import {
   ONBOARDING_GENERATE_ALREADY_FINISHED,
   ONBOARDING_GENERATE_SEED_DEFAULT,
   postOnboardingGenerateCancel,
-  ONBOARDING_INGEST_CLI,
   SUBJECT_ICON_OPTIONS,
   confirmOnboardingIrOverwrite,
   generateIrWriteLabel,
@@ -34,11 +33,13 @@ import {
   onboardingGenerateBatchIds,
   onboardingGenerateCancelledNote,
   onboardingGenerateOverwriteSubjects,
+  onboardingIngestCli,
   onboardingIrOverwriteConfirmMessage,
   onboardingPruneConfirmMessage,
   onboardingPruneEntries,
   onboardingSampleCollisionMessage,
   onboardingSampleIdSubjects,
+  onboardingShadowNotice,
   onboardingSourceCountLabel,
   onboardingSourceFileNames,
   onboardingSubjectIrRel,
@@ -151,7 +152,7 @@ function errorCopy(error: OnboardingActionError): string {
     case 'missing_local':
       return 'Local generate needs EXAMIFY_INGEST_LOCAL_CMD and/or EXAMIFY_LLM_BASE_URL.';
     case 'empty_sources':
-      return 'No source files for that subject (source-pdfs/<id>/, <id>.pdf, or files in the subject folder).';
+      return 'No source files for that subject yet. Upload a PDF on the Files step, or add notes.txt to the subject’s folder in this server’s family data folder.';
     case 'sources_unreadable':
       return 'This provider cannot read PDFs directly. Install pdftoppm (poppler-utils) on the host so PDF pages are sent as images, or add a notes.txt for this subject. Nothing was written.';
     case 'sample_collision':
@@ -674,6 +675,7 @@ export function OnboardingWizard({
 
             {step === 'validate' ? (
               <ValidateStep
+                dataDirDisplay={snapshot.dataDirDisplay}
                 pending={holdWizard}
                 validated={validated}
                 onValidate={() =>
@@ -993,6 +995,9 @@ function SubjectsStep({
   const sampleMatch = snapshot.sampleSubjects.find(
     (sample) => sample.id === id.trim().toLowerCase(),
   );
+  const builtinMatch = snapshot.builtinSubjects.find(
+    (builtin) => builtin.id === id.trim().toLowerCase(),
+  );
 
   return (
     <div className="wizard-panel" data-testid="wizard-subjects">
@@ -1167,6 +1172,13 @@ function SubjectsStep({
                   first. Use another id (for example {sampleMatch.id}-2) to keep both.
                 </p>
               ) : null}
+              {builtinMatch ? (
+                <p className="login-fine" data-testid="wizard-subject-id-builtin-hint">
+                  “{builtinMatch.id}” is the id of the built-in {builtinMatch.label} subject. Yours
+                  replaces it for your family after Apply. Use another id (for example{' '}
+                  {builtinMatch.id}-2) to keep both.
+                </p>
+              ) : null}
             </div>
             <div className="field">
               <label className="field-label" htmlFor="wizard-subject-icon">
@@ -1250,8 +1262,8 @@ function FilesStep({
   return (
     <div className="wizard-panel" data-testid="wizard-files">
       <p className="wizard-path-hint">
-        Upload PDFs under source-pdfs. Generate also reads notes.txt and other local sources in the
-        subject folder — never the bank.
+        Uploaded PDFs stay in this server’s family data folder. Generate also reads notes.txt and
+        other local sources in the subject folder — never the bank.
       </p>
       <div className="wizard-files-layout">
         {snapshot.subjects.length > 1 ? (
@@ -1764,7 +1776,7 @@ function GeneratePanel({
     <div className="wizard-generate-panel">
       <PowerUserCommands
         testId="wizard-cli-generate"
-        commands={onboardingGenerateAndEmitCli(provider, generateSeed)}
+        commands={onboardingGenerateAndEmitCli(provider, generateSeed, snapshot.dataDirDisplay)}
       />
       {sampleIdSubjects.length > 0 ? (
         <div className="wizard-callout wizard-sample-ids" data-testid="wizard-generate-sample-ids">
@@ -2007,17 +2019,19 @@ function ReplaceSampleToggle({
 }
 
 function ValidateStep({
+  dataDirDisplay,
   pending,
   validated,
   onValidate,
 }: {
+  dataDirDisplay: string;
   pending: boolean;
   validated: boolean;
   onValidate: () => void;
 }) {
   return (
     <div className="wizard-panel" data-testid="wizard-validate-panel">
-      <PowerUserCommands testId="wizard-cli" commands={ONBOARDING_INGEST_CLI} />
+      <PowerUserCommands testId="wizard-cli" commands={onboardingIngestCli(dataDirDisplay)} />
       <button
         type="button"
         className="btn btn-primary wizard-validate-btn"
@@ -2050,10 +2064,14 @@ function DryRunStep({
   onPreview: () => void;
 }) {
   const deletes = dryRun?.plan.filter((entry) => entry.action === 'delete') ?? [];
+  const shadowNotice = dryRun ? onboardingShadowNotice(dryRun.shadows) : null;
 
   return (
     <div className="wizard-panel" data-testid="wizard-dry-run">
-      <PowerUserCommands testId="wizard-cli-emit" commands={ONBOARDING_INGEST_CLI.slice(1)} />
+      <PowerUserCommands
+        testId="wizard-cli-emit"
+        commands={onboardingIngestCli(snapshot.dataDirDisplay).slice(1)}
+      />
       <ReplaceSampleToggle
         enabled={snapshot.replaceSample}
         pending={pending}
@@ -2090,6 +2108,11 @@ function DryRunStep({
                 <li key={id}>{id}</li>
               ))}
             </ul>
+          ) : null}
+          {shadowNotice ? (
+            <p className="wizard-callout" data-testid="wizard-shadows">
+              {shadowNotice}
+            </p>
           ) : null}
           {deletes.length > 0 ? (
             <p className="wizard-callout" data-testid="wizard-planned-deletes">
