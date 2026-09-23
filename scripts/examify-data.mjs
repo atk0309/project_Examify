@@ -174,8 +174,9 @@ const CASE_INSENSITIVE_FS = process.platform === 'darwin' || process.platform ==
 
 /**
  * Data-folder trees a backup copies (`--include-cache` walks the whole ingest
- * folder): the mail outbox may sit inside one, never be or contain one, and
- * `backup --out` may not be inside one. Mirrors data-dir.ts OUTBOX_EXCLUDED_TREES.
+ * folder): the mail outbox must never be, contain or sit inside one (the
+ * backup walk still skips it, a symlink to it included), and `backup --out`
+ * may not be inside one. Mirrors data-dir.ts OUTBOX_EXCLUDED_TREES.
  */
 const BACKUP_WALKED_TREES = [
   'content/subjects',
@@ -331,16 +332,20 @@ export function resolveDataPaths({ repoRoot, env }) {
       'MAIL_OUTBOX_DIR points inside the checkout; keep the mail outbox in the family data folder (./data/outbox) or outside the checkout',
     );
   }
-  // The outbox holds live sign-in tokens and is never backed up: as the data
-  // folder, a folder containing it, or a family tree, it would take that
-  // family content out of every backup.
+  // The outbox holds live sign-in tokens and is never backed up, so it must
+  // not overlap a tree a backup copies: containing one (the data folder, an
+  // ancestor) or sitting inside one (a subject folder) would take that family
+  // content out of every backup.
   const outboxCanonical = canonical(outboxDir);
   if (
-    BACKUP_WALKED_TREES.some((rel) => contains(outboxCanonical, canonical(path.join(dataDir, rel))))
+    BACKUP_WALKED_TREES.some((rel) => {
+      const tree = canonical(path.join(dataDir, rel));
+      return contains(outboxCanonical, tree) || contains(tree, outboxCanonical);
+    })
   ) {
     throw new UnsafeDataDirError(
       'outbox_overlaps_data',
-      "MAIL_OUTBOX_DIR is the family data folder, contains it, or is one of its content folders; give the mail outbox a folder of its own (the default is the data folder's outbox/)",
+      "MAIL_OUTBOX_DIR is the family data folder, contains it, or is inside one of its content folders; give the mail outbox a folder of its own (the default is the data folder's outbox/)",
     );
   }
 

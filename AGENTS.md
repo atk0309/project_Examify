@@ -143,8 +143,8 @@ JSON`). Missing cloud
   and inside it only `data/…` (+ `tests/.tmp/…`); the DB and the outbox never inside the
   checkout outside those (`db_inside_checkout` / `outbox_inside_checkout`, so boot,
   `db:migrate`, `examify-data paths --check` and the ingest CLI all refuse); the outbox
-  never the data folder, a folder containing it, or (one containing) a tree a backup
-  copies (`outbox_overlaps_data`; backups skip the outbox); a leading
+  never the data folder, a folder containing it, or a tree a backup copies, containing
+  one or inside one (`outbox_overlaps_data`; backups also skip a symlink to it); a leading
   `~`, quotes, backtick, newline, `$` or ` #` in `EXAMIFY_DATA_DIR`, `DATABASE_URL` or
   `MAIL_OUTBOX_DIR` refused (`bad_value`, naming the variable); a data folder that is a
   file or unreadable is `unreadable` (Node's path-bearing errors are mapped; only ENOENT

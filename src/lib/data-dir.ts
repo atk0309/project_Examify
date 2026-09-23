@@ -53,7 +53,7 @@ export type UnsafeDataDirReason =
   | 'db_inside_checkout'
   /** `MAIL_OUTBOX_DIR` is inside the checkout but not under `data/…` / `tests/.tmp/…`. */
   | 'outbox_inside_checkout'
-  /** `MAIL_OUTBOX_DIR` is the data folder, contains it, or is (or contains) a family tree. */
+  /** `MAIL_OUTBOX_DIR` is the data folder, contains it, or is inside (or contains) a family tree. */
   | 'outbox_overlaps_data'
   /** The folder is a file, or one this user cannot read or create (ENOTDIR, EACCES, …). */
   | 'unreadable';
@@ -89,7 +89,7 @@ function nonBlank(value: string | undefined): string | undefined {
 
 const CASE_INSENSITIVE_FS = process.platform === 'darwin' || process.platform === 'win32';
 
-/** Data-folder trees a backup copies: the mail outbox may sit inside one, never be or contain one. */
+/** Data-folder trees a backup copies: the mail outbox must never be, contain or sit inside one. */
 const OUTBOX_EXCLUDED_TREES = [
   'content/subjects',
   'content/source-pdfs',
@@ -287,18 +287,20 @@ export function resolveDataPaths(input: { repoRoot: string; env: EnvLike }): Dat
       'MAIL_OUTBOX_DIR points inside the checkout; keep the mail outbox in the family data folder (./data/outbox) or outside the checkout',
     );
   }
-  // The outbox holds live sign-in tokens and is never backed up: as the data
-  // folder, a folder containing it, or a family tree, it would take that
-  // family content out of every backup.
+  // The outbox holds live sign-in tokens and is never backed up, so it must
+  // not overlap a tree a backup copies: containing one (the data folder, an
+  // ancestor) or sitting inside one (a subject folder) would take that family
+  // content out of every backup.
   const outboxCanonical = canonicalPath(outboxDir);
   if (
-    OUTBOX_EXCLUDED_TREES.some((rel) =>
-      containsPath(outboxCanonical, canonicalPath(path.join(dataDir, rel))),
-    )
+    OUTBOX_EXCLUDED_TREES.some((rel) => {
+      const tree = canonicalPath(path.join(dataDir, rel));
+      return containsPath(outboxCanonical, tree) || containsPath(tree, outboxCanonical);
+    })
   ) {
     throw new UnsafeDataDirError(
       'outbox_overlaps_data',
-      "MAIL_OUTBOX_DIR is the family data folder, contains it, or is one of its content folders; give the mail outbox a folder of its own (the default is the data folder's outbox/)",
+      "MAIL_OUTBOX_DIR is the family data folder, contains it, or is inside one of its content folders; give the mail outbox a folder of its own (the default is the data folder's outbox/)",
     );
   }
 

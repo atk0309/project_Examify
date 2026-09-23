@@ -165,7 +165,7 @@ describe('resolveDataPaths', () => {
     }
   });
 
-  it('refuses a MAIL_OUTBOX_DIR that is, or contains, the data folder or a family tree', () => {
+  it('refuses a MAIL_OUTBOX_DIR that is, contains or sits inside the data folder or a family tree', () => {
     const root = tempRepo();
     const family = path.join(tempDir('examify-outbox-overlap-'), 'secret-family');
     const reason = (dir: string, dataDir = family) =>
@@ -184,16 +184,22 @@ describe('resolveDataPaths', () => {
       path.join(family, 'content/generated'),
       path.join(family, '.examify-ingest'),
       path.join(family, 'migration-conflicts'),
+      // Inside a tree: a subject folder would drop that whole subject.
+      path.join(family, 'content/subjects/history'),
+      path.join(family, 'content/subjects/mail'),
+      path.join(family, 'content/source-pdfs/history'),
+      path.join(family, '.examify-ingest/runs/box'),
+      path.join(family, 'migration-conflicts/box'),
     ]) {
       expect(reason(dir), dir).toBe('outbox_overlaps_data');
     }
     // The default ./data inside a checkout whose parent is the outbox.
     expect(reason('..', 'data')).toBe('outbox_overlaps_data');
-    // Its own folder, inside the data folder or inside a family tree, is fine.
+    // A folder of its own, in the data folder (outside those trees) or next to it, is fine.
     for (const dir of [
       path.join(family, 'outbox'),
       path.join(family, 'mail'),
-      path.join(family, 'content/subjects/mail'),
+      path.join(family, 'content/mail'),
       path.join(path.dirname(family), 'outbox'),
     ]) {
       expect(reason(dir), dir).toBeNull();

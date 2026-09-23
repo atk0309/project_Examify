@@ -2132,14 +2132,15 @@ describe('review regressions', () => {
 });
 
 describe('backup placement and consistency', () => {
-  it('never archives a mail outbox that sits inside a family tree, even through a link', async () => {
+  it('never archives the mail outbox through a link from a family tree', async () => {
     const root = makeCheckout();
-    const dataDir = tempDir('examify-data-outbox-inside-');
+    const dataDir = tempDir('examify-data-outbox-linked-');
     makeDb(path.join(dataDir, 'app.db'));
-    const outbox = path.join(dataDir, 'content/subjects/mail');
+    const outbox = path.join(dataDir, 'mailbox');
     write(path.join(outbox, 'sign-in.eml'), 'token=secret-bearer');
     write(path.join(dataDir, 'content/subjects/history/subject.json'), '{"id":"history"}');
-    // A link to the outbox from another staged tree is skipped too.
+    // Links to the outbox from two staged trees are skipped, not followed.
+    fs.symlinkSync(outbox, path.join(dataDir, 'content/subjects/mail'));
     fs.mkdirSync(path.join(dataDir, 'content/source-pdfs'), { recursive: true });
     fs.symlinkSync(outbox, path.join(dataDir, 'content/source-pdfs/linked'));
     const { archive, warnings } = await data.backup({
@@ -2163,7 +2164,12 @@ describe('backup placement and consistency', () => {
     makeDb(path.join(dataDir, 'app.db'));
     write(path.join(dataDir, 'content/subjects/history/subject.json'), '{"id":"history"}');
     const out = tempDir('examify-data-outbox-overlap-out-');
-    for (const outbox of [dataDir, path.join(dataDir, 'content')]) {
+    // The whole data folder, all content, or one subject: each would leave the backup.
+    for (const outbox of [
+      dataDir,
+      path.join(dataDir, 'content'),
+      path.join(dataDir, 'content/subjects/history'),
+    ]) {
       const env = {
         EXAMIFY_DATA_DIR: dataDir,
         MAIL_OUTBOX_DIR: outbox,

@@ -805,11 +805,12 @@ These are non-negotiable. Don't "fix" them out.
   the resolver itself (`db_inside_checkout` / `outbox_inside_checkout`, messages without
   the path), so production boot, `db:migrate`, `examify-data paths --check` (and with it
   `install.sh`) and the ingest CLI all fail on it. The outbox is never backed up, so it
-  may sit inside a family tree (the backup walk skips it) but must not be the data
-  folder, contain it, or be / contain one of the trees a backup copies
-  (`content/{subjects,source-pdfs,generated}`, `.examify-ingest`, `migration-conflicts`):
-  `outbox_overlaps_data`, refused by the same resolver, since it would take that family
-  content out of every backup.
+  must not overlap a tree a backup copies (`content/{subjects,source-pdfs,generated}`,
+  `.examify-ingest`, `migration-conflicts`): not the data folder, not a folder containing
+  it, not one of those trees and not inside one (a subject folder would drop that whole
+  subject) — `outbox_overlaps_data`, refused by the same resolver. The backup walk still
+  skips the outbox's canonical path, so a symlink to it from a family tree is not
+  followed.
 - **Production never creates the database.** `openSqliteFile(dbPath, { mustExist: isProd })`
   throws `DatabaseMissingError` for a missing file and creates nothing: an unmounted
   volume must fail closed, not come up as a fresh household whose `/setup` could be
