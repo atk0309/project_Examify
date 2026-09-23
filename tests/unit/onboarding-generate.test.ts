@@ -334,10 +334,6 @@ describe('onboarding generate graph', () => {
     expect(wizard).toMatch(/className="btn btn-ghost"/);
     expect(wizard).toMatch(/data-testid=\{\`\$\{testId\}-rotate\`\}/);
     expect(wizard).toMatch(/data-testid=\{\`\$\{testId\}-clear\`\}/);
-    // The badge renders only for a configured mode; CLI modes say "Found".
-    expect(wizard).toMatch(
-      /\{configured \? \(\s*<span className="wizard-mode-badge">\{agentCli \? 'Found' : 'Configured'\}<\/span>\s*\) : null\}/,
-    );
     expect(wizard).not.toMatch(/NEXT_PUBLIC_ANTHROPIC|NEXT_PUBLIC_OPENAI/);
 
     expect(actions).toMatch(/checkRateLimit\(ip, 'env_write'\)/);

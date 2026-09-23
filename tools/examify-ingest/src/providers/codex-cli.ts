@@ -182,6 +182,12 @@ export function codexFailure(outcome: CodexOutcome): ProviderFailureError | null
   if (!lastError) {
     if (outcome.status === 0) return null;
     const detail = cliDetail(outcome.stderrTail);
+    if (CLI_AUTH_HINT.test(outcome.stderrTail)) {
+      return new ProviderFailureError(
+        'auth',
+        `codex is not signed in for this user (${detail}); run codex login as this user`,
+      );
+    }
     return new ProviderFailureError(
       'command',
       `codex exited ${outcome.status ?? 'null'}${detail ? ` (${detail})` : ''}`,

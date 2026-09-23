@@ -95,6 +95,12 @@ async function callClaudeCli(request: ProviderRequest, deps: ProviderDeps): Prom
   const result = claudeResultEvent(stdout);
   if (!result) {
     const detail = cliDetail(stderrTail);
+    if (CLI_AUTH_HINT.test(stderrTail)) {
+      throw new ProviderFailureError(
+        'auth',
+        `claude is not signed in for this user (${detail}); run claude once as this user and sign in`,
+      );
+    }
     throw new ProviderFailureError(
       'command',
       `claude exited ${status ?? 'null'} without a result${detail ? ` (${detail})` : ''}`,

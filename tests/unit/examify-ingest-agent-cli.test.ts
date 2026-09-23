@@ -347,6 +347,19 @@ describe('claude-cli provider', () => {
     expect((error as Error).message).toContain("unknown option '--tools'");
   });
 
+  it('maps a sign-in failure reported only on stderr to auth', async () => {
+    const fake = fakeCli('claude', {
+      mode: 'crash',
+      stderr: 'Not logged in · Please run /login',
+      code: 1,
+    });
+    const error = await generatePlants(
+      'claude-cli',
+      hostEnv({ EXAMIFY_CLAUDE_BIN: fake.bin }),
+    ).catch((e) => e);
+    expect(error).toMatchObject({ kind: 'auth' });
+  });
+
   it('is an output failure when the answer is not BankIR', async () => {
     const fake = fakeCli('claude', { mode: 'success', text: 'Sorry, I cannot help with that.' });
     const error = await generatePlants(
@@ -478,6 +491,18 @@ describe('codex-cli provider', () => {
     );
     expect(error).toMatchObject({ kind: 'command' });
     expect((error as Error).message).toContain('--ignore-user-config');
+  });
+
+  it('maps a sign-in failure reported only on stderr to auth', async () => {
+    const fake = fakeCli('codex', {
+      mode: 'crash',
+      stderr: 'Error: not logged in. Run `codex login` first.',
+      code: 1,
+    });
+    const error = await generatePlants('codex-cli', hostEnv({ EXAMIFY_CODEX_BIN: fake.bin })).catch(
+      (e) => e,
+    );
+    expect(error).toMatchObject({ kind: 'auth' });
   });
 
   it('ignores reconnect noise on a run that succeeded', () => {

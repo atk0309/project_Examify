@@ -1206,6 +1206,28 @@ describe('OnboardingWizard AI modes: Claude Code, Codex and local', () => {
     expect(screen.getByTestId('wizard-ai-local-cli')).toHaveTextContent('Local command');
   });
 
+  it('badges only ready modes: Configured for keys and settings, Found for a CLI', () => {
+    renderAtAiStep(
+      snapshot({
+        aiMode: 'skip-stub',
+        subjects: [sourceSubject('alpha', 'Alpha')],
+        anthropicConfigured: true,
+        codexCliFound: true,
+        localCmdConfigured: true,
+      }),
+    );
+    const badge = (mode: string) =>
+      screen.getByTestId(`wizard-ai-${mode}`).querySelector('.wizard-mode-badge')?.textContent ??
+      null;
+    expect(badge('cloud')).toBe('Configured');
+    expect(badge('cloud-openai')).toBeNull();
+    expect(badge('codex-cli')).toBe('Found');
+    expect(badge('claude-cli')).toBeNull();
+    expect(badge('local-cli')).toBe('Configured');
+    expect(badge('local-agent')).toBeNull();
+    expect(badge('skip-stub')).toBe('Configured');
+  });
+
   it('tells the admin how to install and sign in when the chosen CLI is missing', () => {
     renderAtAiStep(snapshot({ aiMode: 'claude-cli', subjects: [sourceSubject('alpha', 'Alpha')] }));
     expect(screen.getByTestId('wizard-agent-cli-setup')).toHaveTextContent(
