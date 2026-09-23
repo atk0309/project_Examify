@@ -208,7 +208,12 @@ export type MigrateResult = {
   removedFolders?: string[];
 };
 export declare function migrateCheckout(
-  options?: CommandOptions & { dryRun?: boolean; backup?: string },
+  options?: CommandOptions & {
+    dryRun?: boolean;
+    backup?: string;
+    /** Tests only: called right before each checkout file is copied into the data folder. */
+    onBeforeCopy?: (rel: string) => void;
+  },
 ): Promise<MigrateResult>;
 
 export type VerifyResult = {

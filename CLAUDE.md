@@ -877,8 +877,9 @@ These are non-negotiable. Don't "fix" them out.
   everything under `content/source-pdfs/`, `subjects.json` rows added or changed
   (compared per id with `HEAD`; questions + keys copied verbatim, missing rows rebuilt
   from the IR / `subject.json`; each row gets the `rev` of the bytes it copies, hashed
-  from the same read as their sha, and the catalog is not published if a file changed
-  before its copy verified — `changed_during_migration`), `.examify-ingest/`. Registrars are never copied, only
+  from the same read as their sha, and neither the family catalog nor a conflict catalog
+  is published if a file changed before its copy verified — `changed_during_migration`),
+  `.examify-ingest/`. Registrars are never copied, only
   restored. Copy with a journal (`$DATA/.migrate-journal.json`): identical ⇒ skip, a
   destination its own unfinished run wrote ⇒ overwrite, any other difference ⇒ the
   checkout copy goes to `$DATA/migration-conflicts/<ts>/`; keys `0600`; every copy

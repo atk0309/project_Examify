@@ -2566,6 +2566,7 @@ export async function migrateCheckout(options = {}) {
     }
     const destRel = item.state === 'conflict' ? `${conflictRoot}/${item.rel}` : item.rel;
     const dest = fromPosix(dataDir, destRel);
+    options.onBeforeCopy?.(item.rel);
     const written = copyFileHashed(item.src, dest, { mode: modeFor(item.rel) });
     if (sha256File(dest) !== written.sha256) {
       throw new CliError(EXIT.UNEXPECTED, 'copy_failed', `${destRel} did not verify after copying`);
@@ -2578,13 +2579,12 @@ export async function migrateCheckout(options = {}) {
     }
   }
   saveJournal(dataDir, journal);
-  // Each row's `rev` names the bytes read above: a file that changed since
-  // is not published (the journal lets a rerun take the new bytes).
+  // Each row's `rev` names the bytes read above, in the family catalog and in
+  // a conflict catalog alike: a file that changed since is not published (the
+  // journal lets a rerun take the new bytes).
   for (const entry of plan.generatedPlan) {
     for (const item of entry.files) {
-      if (item.state !== 'conflict' && item.writtenSha !== item.srcSha) {
-        throw changedWhileMigrating(item.rel);
-      }
+      if (item.writtenSha !== item.srcSha) throw changedWhileMigrating(item.rel);
     }
   }
   // The family catalog last (the commit point), after its questions + keys.

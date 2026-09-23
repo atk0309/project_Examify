@@ -1485,6 +1485,59 @@ describe('migrate-checkout', () => {
     });
   });
 
+  it.each([
+    ['the family catalog', false],
+    ['a conflict catalog', true],
+  ])(
+    'never publishes a row in %s whose files changed after their rev was read',
+    async (_catalog, conflict) => {
+      const root = makeCheckout();
+      write(
+        path.join(root, 'content/generated/subjects.json'),
+        JSON.stringify([subject('history', 'History')]),
+      );
+      const QUESTIONS = 'content/generated/questions/history.json';
+      write(path.join(root, QUESTIONS), '{"easy":[]}\n');
+      write(path.join(root, 'content/generated/keys/history.json'), '{}\n');
+      const dataDir = familyFolder('examify-data-changed-copy-');
+      if (conflict) {
+        // A different history row already in the data folder: the checkout's goes aside.
+        write(
+          path.join(dataDir, 'content/generated/subjects.json'),
+          JSON.stringify([subject('history', 'Other history')]),
+        );
+      }
+      const catalogBefore = conflict
+        ? fs.readFileSync(path.join(dataDir, 'content/generated/subjects.json'), 'utf8')
+        : null;
+      await expect(
+        data.migrateCheckout({
+          repo: root,
+          env: { EXAMIFY_DATA_DIR: dataDir },
+          sqliteModule: SQLITE_MODULE,
+          // An Apply lands (and settles) between the rev read and this copy.
+          onBeforeCopy: (rel) => {
+            if (rel === QUESTIONS) write(path.join(root, QUESTIONS), '{"easy":[{"id":"x"}]}\n');
+          },
+        }),
+      ).rejects.toMatchObject({ exitCode: 1, code: 'changed_during_migration' });
+      const catalog = path.join(dataDir, 'content/generated/subjects.json');
+      if (catalogBefore === null) expect(fs.existsSync(catalog)).toBe(false);
+      else expect(fs.readFileSync(catalog, 'utf8')).toBe(catalogBefore);
+      const conflictsDir = path.join(dataDir, 'migration-conflicts');
+      const conflictCatalogs = fs.existsSync(conflictsDir)
+        ? fs
+            .readdirSync(conflictsDir)
+            .filter((ts) =>
+              fs.existsSync(path.join(conflictsDir, ts, 'content/generated/subjects.json')),
+            )
+        : [];
+      expect(conflictCatalogs).toEqual([]);
+      // Nothing was removed from the checkout.
+      expect(fs.existsSync(path.join(root, QUESTIONS))).toBe(true);
+    },
+  );
+
   it('refuses (changing nothing) when src/lib/exam has uncommitted hand edits', async () => {
     const root = dirtyCheckout();
     fs.appendFileSync(path.join(root, 'src/lib/exam/data.ts'), 'export const LOCAL = 2;\n');
