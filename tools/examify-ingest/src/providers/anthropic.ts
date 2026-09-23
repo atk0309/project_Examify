@@ -1,7 +1,9 @@
-import { extractJsonObject } from '../json';
-import { bankIrSchema, type BankIR } from '../schema';
+import type { BankIR } from '../schema';
 import { fenceUntrustedText, untrustedCaption, userGenerateMessage } from './content';
 import {
+  ProviderFailureError,
+  parseProviderBankIr,
+  readProviderJson,
   readRequiredKey,
   withProviderSignal,
   type GenerateProvider,
@@ -73,8 +75,8 @@ function buildContent(request: ProviderRequest): ContentBlock[] {
 async function callAnthropic(request: ProviderRequest, deps: ProviderDeps): Promise<BankIR> {
   const key = readRequiredKey(deps.env, KEY);
   const fetchFn = deps.fetch ?? fetch;
-  const res = await withProviderSignal(deps.signal, (signal) =>
-    fetchFn(ANTHROPIC_URL, {
+  const payload = await withProviderSignal(deps.signal, async (signal) => {
+    const res = await fetchFn(ANTHROPIC_URL, {
       method: 'POST',
       signal,
       headers: {
@@ -90,18 +92,15 @@ async function callAnthropic(request: ProviderRequest, deps: ProviderDeps): Prom
         system: request.prompt,
         messages: [{ role: 'user', content: buildContent(request) }],
       }),
-    }),
-  );
-  if (!res.ok) {
-    throw new Error(`Anthropic returned HTTP ${res.status}`);
-  }
-  const payload = (await res.json()) as { content?: { type?: string; text?: string }[] };
+    });
+    return readProviderJson<{ content?: { type?: string; text?: string }[] }>(res, 'Anthropic');
+  });
   const text = (payload.content ?? [])
     .filter((block) => block.type === 'text' && typeof block.text === 'string')
     .map((block) => block.text)
     .join('\n');
-  if (!text.trim()) throw new Error('Anthropic returned no text content');
-  return bankIrSchema.parse(extractJsonObject(text));
+  if (!text.trim()) throw new ProviderFailureError('output', 'Anthropic returned no text content');
+  return parseProviderBankIr(text);
 }
 
 export const anthropicProvider: GenerateProvider = {

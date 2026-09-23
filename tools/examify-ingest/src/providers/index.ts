@@ -9,6 +9,7 @@ export {
   GenerateAbortedError,
   PROVIDER_TIMEOUT_MS,
   ProviderConfigError,
+  ProviderFailureError,
   hasUsableKey,
   isAbortError,
   providerRequestSignal,
@@ -17,7 +18,7 @@ export {
   throwIfAborted,
   withProviderSignal,
 } from './types';
-export type { ProviderDeps, ProviderEnv, ProviderRequest } from './types';
+export type { ProviderDeps, ProviderEnv, ProviderFailureKind, ProviderRequest } from './types';
 export { UNTRUSTED_SOURCE_NOTE, fenceUntrustedText } from './content';
 export { splitCommandLine } from './local';
 

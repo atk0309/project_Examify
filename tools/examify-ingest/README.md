@@ -32,7 +32,11 @@ pnpm examify-ingest emit content/subjects --apply
 The first-run `/onboarding` wizard can run generate on the AI step (same
 `generateSubject` entry, BankIR only), then this same directory emit
 (validate, dry-run, then apply). It does not auto-emit or auto-apply after
-generate. `--replace-sample` is off unless the admin enables the advanced toggle.
+generate. `--replace-sample` is off unless the admin enables it: the Review ›
+Advanced toggle, or the same household setting on the AI step, shown next to
+Generate when a subject reuses a sample subject id. Generate uses that setting
+too; without it a sample-id subject is refused (`sample_collision`) before the
+provider call.
 
 ## Install
 
@@ -289,3 +293,26 @@ the preview. Skipping the IR write after the provider returns is not provider
 abort. Abort after the
 provider returns still writes no `bank.ir.json`, IR cache, page-raster cache,
 or run manifest. `--dry-run-ir` still writes nothing durable.
+
+Failures are typed so callers never parse messages (all exported from
+`examify-ingest/generate`):
+
+- `ProviderFailureError` — `kind` is `http` (non-2xx; `status` set),
+  `timeout` (the 180s deadline), `unreachable` (no answer: network, or a
+  local command that could not start), `output` (an answer that is not usable
+  BankIR, including cached output that fails validate) or `command` (a local
+  command that exited non-zero).
+- `SampleIdCollisionError` — generated ids hit the frozen sample bank without
+  `replaceSample`; `ids` lists them. No BankIR written.
+- `UnreadableSourcesError` — the provider cannot read any source
+  (OpenAI-compatible, PDF-only, no rasterized pages).
+
+The HTTP call and reading its body share one deadline / cancel boundary, so a
+body that stalls or drops part-way is typed like a failed request. CLI messages
+are unchanged except the HTTP fetch deadline, which now reads `provider request
+timed out after 180000ms`, and a 200 whose body is not JSON
+(`<provider> returned a body that is not JSON`). The wizard maps these to safe
+reason codes (`provider_auth` for 401/403, `provider_rate_limited` for 429,
+`provider_unavailable` for 5xx or unreachable, `provider_timeout`,
+`provider_output_invalid`, `provider_error`, `sample_collision`,
+`sources_unreadable`) and never shows the raw message.

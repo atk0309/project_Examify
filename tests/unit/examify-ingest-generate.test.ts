@@ -33,6 +33,9 @@ import {
   GenerateAbortedError,
   generateSubject,
   generateTargets,
+  ProviderFailureError,
+  SampleIdCollisionError,
+  UnreadableSourcesError,
   writeBankIrAtomic,
   BankIrCorruptError,
   BankIrOverwriteError,
@@ -2140,5 +2143,256 @@ setInterval(() => {}, 1000);
     await new Promise((resolve) => setTimeout(resolve, 400));
     expect(isRunning(grandchildPid)).toBe(false);
     expect(existsSync(path.join(root, 'content/subjects/plants/bank.ir.json'))).toBe(false);
+  });
+});
+
+describe('examify-ingest generate typed failures', () => {
+  function plantsRequest(root: string, overrides: Partial<Parameters<typeof generateSubject>[0]>) {
+    return {
+      repoRoot: root,
+      subject: plantsSubject(),
+      subjectDir: path.join(root, 'content/subjects/plants'),
+      sources: resolveSubjectSources(root, 'plants', path.join(root, 'content/subjects/plants')),
+      provider: 'anthropic' as const,
+      seed: 0,
+      env: { ANTHROPIC_API_KEY: 'sk-ant-typed-failure' },
+      ...overrides,
+    };
+  }
+
+  async function failure(promise: Promise<unknown>): Promise<unknown> {
+    try {
+      await promise;
+    } catch (error) {
+      return error;
+    }
+    throw new Error('expected generate to fail');
+  }
+
+  it('types provider HTTP errors with the status and keeps the CLI message', async () => {
+    const root = examifyRepo();
+    for (const [provider, env, label] of [
+      ['anthropic', { ANTHROPIC_API_KEY: 'sk-ant-typed' }, 'Anthropic'],
+      ['openai', { OPENAI_API_KEY: 'sk-openai-typed' }, 'OpenAI'],
+      ['local', { EXAMIFY_LLM_BASE_URL: 'http://127.0.0.1:9' }, 'local endpoint'],
+    ] as const) {
+      const error = await failure(
+        generateSubject(
+          plantsRequest(root, {
+            provider,
+            env,
+            fetch: async () => new Response('{}', { status: 429 }),
+          }),
+        ),
+      );
+      expect(error).toBeInstanceOf(ProviderFailureError);
+      expect((error as InstanceType<typeof ProviderFailureError>).kind).toBe('http');
+      expect((error as InstanceType<typeof ProviderFailureError>).status).toBe(429);
+      expect((error as Error).message).toBe(`${label} returned HTTP 429`);
+    }
+    expect(existsSync(path.join(root, 'content/subjects/plants/bank.ir.json'))).toBe(false);
+  });
+
+  it('types unusable model output, network failures and the deadline', async () => {
+    const root = examifyRepo();
+    const prose = await failure(
+      generateSubject(
+        plantsRequest(root, {
+          fetch: async () =>
+            new Response(JSON.stringify({ content: [{ type: 'text', text: 'Sorry, no.' }] }), {
+              status: 200,
+            }),
+        }),
+      ),
+    );
+    expect(prose).toBeInstanceOf(ProviderFailureError);
+    expect((prose as InstanceType<typeof ProviderFailureError>).kind).toBe('output');
+    expect((prose as Error).message).toBe('provider output is not a JSON object');
+
+    const wrongIds = await failure(
+      generateSubject(
+        plantsRequest(root, {
+          fetch: anthropicOkFetch({
+            ...abortFixtureBank(),
+            difficulties: {
+              easy: [{ ...abortFixtureBank().difficulties.easy[0]!, id: 'rocks-easy-1' }],
+              medium: [],
+              hard: [],
+            },
+          }),
+        }),
+      ),
+    );
+    expect((wrongIds as InstanceType<typeof ProviderFailureError>).kind).toBe('output');
+
+    const network = await failure(
+      generateSubject(
+        plantsRequest(root, {
+          fetch: async () => {
+            throw new TypeError('fetch failed');
+          },
+        }),
+      ),
+    );
+    expect((network as InstanceType<typeof ProviderFailureError>).kind).toBe('unreachable');
+    expect((network as Error).message).toBe('fetch failed');
+
+    const deadline = await failure(
+      generateSubject(
+        plantsRequest(root, {
+          fetch: async () => {
+            throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+          },
+        }),
+      ),
+    );
+    expect((deadline as InstanceType<typeof ProviderFailureError>).kind).toBe('timeout');
+    expect(existsSync(path.join(root, 'content/subjects/plants/bank.ir.json'))).toBe(false);
+  });
+
+  /** A 200 whose body fails part-way (headers arrived, the body never finished). */
+  function bodyFailsWith(reason: unknown): () => Promise<Response> {
+    return async () =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('{"content":['));
+            controller.error(reason);
+          },
+        }),
+        { status: 200 },
+      );
+  }
+
+  it('types failures while the response body is still being read', async () => {
+    const root = examifyRepo();
+    for (const [provider, env] of [
+      ['anthropic', { ANTHROPIC_API_KEY: 'sk-ant-typed' }],
+      ['openai', { OPENAI_API_KEY: 'sk-openai-typed' }],
+      ['local', { EXAMIFY_LLM_BASE_URL: 'http://127.0.0.1:9' }],
+    ] as const) {
+      const deadline = await failure(
+        generateSubject(
+          plantsRequest(root, {
+            provider,
+            env,
+            fetch: bodyFailsWith(
+              new DOMException('The operation was aborted due to timeout', 'TimeoutError'),
+            ),
+          }),
+        ),
+      );
+      expect(deadline).toBeInstanceOf(ProviderFailureError);
+      expect((deadline as InstanceType<typeof ProviderFailureError>).kind).toBe('timeout');
+      expect((deadline as Error).message).toBe('provider request timed out after 180000ms');
+
+      const reset = await failure(
+        generateSubject(
+          plantsRequest(root, { provider, env, fetch: bodyFailsWith(new TypeError('terminated')) }),
+        ),
+      );
+      expect((reset as InstanceType<typeof ProviderFailureError>).kind).toBe('unreachable');
+
+      const notJson = await failure(
+        generateSubject(
+          plantsRequest(root, {
+            provider,
+            env,
+            fetch: async () => new Response('<html>busy</html>', { status: 200 }),
+          }),
+        ),
+      );
+      expect(notJson).toBeInstanceOf(ProviderFailureError);
+      expect((notJson as InstanceType<typeof ProviderFailureError>).kind).toBe('output');
+    }
+    expect(existsSync(path.join(root, 'content/subjects/plants/bank.ir.json'))).toBe(false);
+  });
+
+  it('a cancel while the response body is still arriving is the caller’s cancel', async () => {
+    const root = examifyRepo();
+    const controller = new AbortController();
+    let bodyStarted!: () => void;
+    const started = new Promise<void>((resolve) => (bodyStarted = resolve));
+    const pending = generateSubject(
+      plantsRequest(root, {
+        signal: controller.signal,
+        fetch: async (_url, init) =>
+          new Response(
+            new ReadableStream({
+              start(stream) {
+                stream.enqueue(new TextEncoder().encode('{"content":['));
+                const signal = init?.signal;
+                signal?.addEventListener('abort', () => stream.error(signal.reason), {
+                  once: true,
+                });
+                bodyStarted();
+              },
+            }),
+            { status: 200 },
+          ),
+      }),
+    );
+    await started;
+    controller.abort();
+    await expect(pending).rejects.toBeInstanceOf(GenerateAbortedError);
+    expect(existsSync(path.join(root, 'content/subjects/plants/bank.ir.json'))).toBe(false);
+  });
+
+  it('types a failing local command without changing its message', async () => {
+    const root = examifyRepo();
+    const error = await failure(
+      generateSubject(
+        plantsRequest(root, {
+          provider: 'local',
+          env: {
+            EXAMIFY_INGEST_LOCAL_CMD: `${JSON.stringify(process.execPath)} -e "process.exit(3)"`,
+          },
+        }),
+      ),
+    );
+    expect(error).toBeInstanceOf(ProviderFailureError);
+    expect((error as InstanceType<typeof ProviderFailureError>).kind).toBe('command');
+    expect((error as Error).message).toBe('local command exited 3');
+  });
+
+  it('types the sample-bank freeze and names the colliding ids', async () => {
+    const root = examifyRepo();
+    const mathsDir = path.join(root, 'content/subjects/maths');
+    mkdirSync(mathsDir, { recursive: true });
+    writeFileSync(path.join(mathsDir, 'notes.txt'), 'What is 2 + 2?\n');
+    const error = await failure(
+      generateSubject({
+        repoRoot: root,
+        subject: { ...plantsSubject(), id: 'maths', label: 'Maths' },
+        subjectDir: mathsDir,
+        sources: resolveSubjectSources(root, 'maths', mathsDir),
+        provider: 'test',
+        seed: 0,
+        env: {},
+      }),
+    );
+    expect(error).toBeInstanceOf(SampleIdCollisionError);
+    expect((error as InstanceType<typeof SampleIdCollisionError>).ids).toContain('maths-easy-1');
+    expect((error as Error).message).toContain('no BankIR written');
+    expect(existsSync(path.join(mathsDir, 'bank.ir.json'))).toBe(false);
+  });
+
+  it('types PDF-only input an OpenAI-compatible provider cannot read', () => {
+    const pdf = {
+      absPath: '/tmp/guide.pdf',
+      relPath: 'content/source-pdfs/plants/guide.pdf',
+      sha256: 'pdf-sha',
+      bytes: Buffer.from('%PDF-1.4\n'),
+      kind: 'pdf' as const,
+      mediaType: 'application/pdf',
+    };
+    let error: unknown;
+    try {
+      assertReadableProviderInput('openai', {}, [pdf], []);
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toBeInstanceOf(UnreadableSourcesError);
+    expect((error as Error).message).toMatch(/cannot read PDF/);
   });
 });

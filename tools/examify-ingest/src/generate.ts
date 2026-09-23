@@ -21,6 +21,7 @@ import { loadGeneratePrompt } from './prompt';
 import {
   getProvider,
   hasUsableKey,
+  ProviderFailureError,
   throwIfAborted,
   type ProviderDeps,
   type ProviderEnv,
@@ -84,6 +85,30 @@ export type GenerateRequest = {
   beforeCommit?: () => void | Promise<void>;
 };
 
+/** Generated question ids collide with the frozen sample bank and `replaceSample` is off. */
+export class SampleIdCollisionError extends Error {
+  readonly code = 'SAMPLE_ID_COLLISION';
+  readonly subjectId: string;
+  readonly ids: readonly string[];
+
+  constructor(subjectId: string, ids: readonly string[], message: string) {
+    super(message);
+    this.name = 'SampleIdCollisionError';
+    this.subjectId = subjectId;
+    this.ids = ids;
+  }
+}
+
+/** The chosen provider cannot read any of the subject's sources (PDF-only, no rasterizer). */
+export class UnreadableSourcesError extends Error {
+  readonly code = 'UNREADABLE_SOURCES';
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'UnreadableSourcesError';
+  }
+}
+
 export type GenerateSubjectResult = {
   bank: BankIR;
   cacheKey: string;
@@ -115,14 +140,19 @@ function attachMeta(
   });
 }
 
+/** Provider (or cached provider) output must be valid BankIR — otherwise an `output` failure. */
 function assertValidBank(bank: BankIR, label: string): BankIR {
   const parsed = bankIrSchema.safeParse(bank);
   if (!parsed.success) {
-    throw new Error(`${label} is not valid BankIR: ${parsed.error.message}`);
+    throw new ProviderFailureError(
+      'output',
+      `${label} is not valid BankIR: ${parsed.error.message}`,
+    );
   }
   const result = validateIrCollection([{ path: label, data: parsed.data }]);
   if (!result.ok) {
-    throw new Error(
+    throw new ProviderFailureError(
+      'output',
       `${label} failed BankIR validate: ${result.errors.map((e) => e.message).join('; ')}`,
     );
   }
@@ -134,12 +164,16 @@ function pathFromRoot(repoRoot: string, absPath: string): string {
 }
 
 function assertNotFrozenSampleIds(bank: BankIR, request: GenerateRequest): void {
+  const frozenIds = new Set(request.frozenIds ?? sampleBankFrozenIds());
   const result = validateIrCollection([{ path: request.subject.id, data: bank }], {
     replaceSample: request.replaceSample === true,
-    frozenIds: request.frozenIds ?? sampleBankFrozenIds(),
+    frozenIds,
   });
   if (!result.ok) {
-    throw new Error(
+    const ids = publicQuestionIds(splitIr(bank)).filter((id) => frozenIds.has(id));
+    throw new SampleIdCollisionError(
+      request.subject.id,
+      ids,
       `${request.subject.id} failed sample-bank freeze: ${result.errors.map((error) => error.message).join('; ')}; no BankIR written`,
     );
   }
@@ -401,7 +435,7 @@ export function assertReadableProviderInput(
   if (pageImages.length > 0) return;
   if (sources.some((source) => source.kind === 'text' || source.kind === 'image')) return;
   if (provider === 'local' && (env.EXAMIFY_INGEST_LOCAL_CMD?.trim() ?? '')) return;
-  throw new Error(
+  throw new UnreadableSourcesError(
     'OpenAI-compatible generate cannot read PDF bytes; install pdftoppm so pages rasterize, or add a .txt/.md/.png source',
   );
 }

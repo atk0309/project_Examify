@@ -8,11 +8,16 @@
    (those are server-only), so the client cannot self-score. On finish we submit
    the attempt, the server validates + scores + grades free-text, and the
    results render from the returned `AttemptRecord`. A brief "Marking…" state
-   covers the round-trip; a failed submit shows a retry screen.
+   covers the round-trip. A submit that never reached the server keeps the
+   answers and offers a retry; a paper the server refuses says so instead.
    ========================================================================== */
-import { useRef, useState, useTransition, type CSSProperties } from 'react';
-import { useRouter } from 'next/navigation';
-import { recordAttempt, type RecordAttemptInput } from '@/actions/recordAttempt';
+import { useEffect, useRef, useState, useTransition, type CSSProperties } from 'react';
+import { unstable_rethrow, useRouter } from 'next/navigation';
+import {
+  recordAttempt,
+  type RecordAttemptInput,
+  type RecordAttemptResult,
+} from '@/actions/recordAttempt';
 import { beginExamSession, saveExamProgress } from '@/actions/saveExamProgress';
 import { discardExamSession } from '@/actions/discardExamSession';
 import { setStudentMode } from '@/actions/toggleStudentMode';
@@ -508,32 +513,47 @@ function MarkingScreen({ subject, sat }: { subject: Subject; sat: number }) {
 }
 
 /* ----------------------------------- Error ---------------------------------- */
+/**
+ * Why a finished exam wasn't marked. `unreachable`: the request never came back
+ * (dropped connection, server restart or redeploy), so re-sending the same
+ * answers can work. `refused`: the server answered and turned the paper down
+ * (its questions changed mid-exam, or the session can no longer save exams) —
+ * re-sending it can never succeed, so no retry is offered.
+ */
+type ExamErrorKind = 'unreachable' | 'refused';
+
 function ExamErrorScreen({
   subject,
   sat,
+  kind,
   onRetry,
   onHome,
 }: {
   subject: Subject;
   sat: number;
+  kind: ExamErrorKind;
   onRetry: () => void;
   onHome: () => void;
 }) {
+  const canRetry = kind === 'unreachable';
   return (
-    <div className="screen" style={accentCSS(subject, sat)}>
+    <div className="screen" style={accentCSS(subject, sat)} data-testid={`exam-error-${kind}`}>
       <TopBar onHome={onHome} label="Results" />
       <div className="screen-body">
-        <div className="marking">
+        <div className="marking" role="alert">
           <p className="marking-text">
-            We couldn&rsquo;t save your exam just now. Your connection may have dropped — please try
-            again.
+            {canRetry
+              ? 'We couldn’t save your exam just now. Your connection may have dropped — your answers are still here, so please try again.'
+              : 'We couldn’t mark this exam. Its questions may have changed since you started, or you may need to sign in again — head back to subjects to start a fresh one.'}
           </p>
         </div>
         <div className="action-dock">
-          <button className="btn btn-primary" onClick={onRetry}>
-            {UIcon.retry} Try again
-          </button>
-          <button className="btn btn-quiet" onClick={onHome}>
+          {canRetry && (
+            <button className="btn btn-primary" onClick={onRetry} data-testid="exam-retry">
+              {UIcon.retry} Try again
+            </button>
+          )}
+          <button className={canRetry ? 'btn btn-quiet' : 'btn btn-primary'} onClick={onHome}>
             Back to subjects
           </button>
         </div>
@@ -776,28 +796,78 @@ export function ExamApp({
   // the navigation `subject`, which changes when you browse other subject cards.
   // Anchoring the live "continue" card to THIS (not `subject`) keeps the card and
   // its questions/answers in sync even after you tap a different subject tile.
-  // Cleared on finish/discard.
+  // Cleared on finish/discard, or when the server refuses the finished paper.
   const [examSubject, setExamSubject] = useState<Subject | null>(null);
   // Combos hidden from the resume list this session (discarded or just finished),
   // so a card disappears immediately without waiting for a server refresh.
   const [dismissed, setDismissed] = useState<Set<string>>(() => new Set());
+  // Exams left mid-way this session for another one, newest first. Nothing
+  // refreshes the page-load `resumable` prop while ExamApp is mounted, so for
+  // the same combo these always win over it: resuming the older server copy
+  // would roll back answers given since, and the next autosave would store that.
+  const [parked, setParked] = useState<Resumable[]>([]);
   const [scored, setScored] = useState<AttemptRecord | null>(null);
   // The last submitted payload, kept so the error screen can re-send the exact
   // answers (the exam screen has unmounted by then) without re-grading anything.
   const [pending, setPending] = useState<RecordAttemptInput | null>(null);
-  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [examError, setExamError] = useState<ExamErrorKind>('unreachable');
+  // The debounced autosave waiting to run, if any (its timer + the save itself).
+  const pendingSave = useRef<{ timer: ReturnType<typeof setTimeout>; run: () => void } | null>(
+    null,
+  );
+  // Combos whose draft row may not exist yet because `beginExamSession` hasn't
+  // succeeded. The update-only autosave would be a no-op for them, so their next
+  // checkpoint tries to create the draft again instead.
+  const uncreated = useRef<Set<string>>(new Set());
 
   const cancelPendingSave = () => {
-    if (saveTimer.current) {
-      clearTimeout(saveTimer.current);
-      saveTimer.current = null;
+    if (pendingSave.current) {
+      clearTimeout(pendingSave.current.timer);
+      pendingSave.current = null;
     }
+  };
+  // Leaving the exam (Home, another exam, finishing, exiting student mode) is a
+  // checkpoint too: send the waiting autosave now instead of dropping it.
+  const flushPendingSave = () => pendingSave.current?.run();
+
+  // So is hiding or closing the tab — a phone discarding it in the background is
+  // the case resume exists for. Best-effort: a Server Action can't use
+  // sendBeacon, so a page that is unloading may still lose this last save.
+  useEffect(() => {
+    const flush = () => pendingSave.current?.run();
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') flush();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pagehide', flush);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pagehide', flush);
+    };
+  }, []);
+
+  // Background writes (autosave, discard) are best-effort. A rejection — a
+  // dropped connection, the server restarting, a redeploy that retired the
+  // action — must never take the exam down: the answers stay in memory and the
+  // next checkpoint re-sends the full snapshot. Next's own redirect / not-found
+  // signals still propagate.
+  const inBackground = (task: () => Promise<void>) => {
+    startSave(async () => {
+      try {
+        await task();
+      } catch (caught) {
+        unstable_rethrow(caught);
+      }
+    });
   };
 
   // Persist the in-progress exam so a reload / closed browser can resume it. The
   // full snapshot is sent every time. `beginExamSession` (on start) creates the
   // row; the autosave `saveExamProgress` is update-only, so a debounced save still
   // in flight when the exam is finished/discarded can't resurrect a cleared draft.
+  // Only while creating the row hasn't succeeded does the autosave retry
+  // `beginExamSession`; Next runs Server Actions one at a time, so that retry
+  // always lands before a later finish/discard, which also end the retrying.
   const persist = (
     action: typeof beginExamSession | typeof saveExamProgress,
     subj: Subject,
@@ -806,24 +876,44 @@ export function ExamApp({
     ans: Answer[],
     idx: number,
   ) => {
-    startSave(async () => {
-      await action({
+    const key = comboKey(subj.id, diff);
+    const create = action === beginExamSession || uncreated.current.has(key);
+    if (create) uncreated.current.add(key);
+    inBackground(async () => {
+      const res = await (create ? beginExamSession : saveExamProgress)({
         subject: subj.id,
         difficulty: diff,
         questionIds: qs.map((q) => q.id),
         answers: ans,
         currentIndex: idx,
       });
+      if (create && res.ok) uncreated.current.delete(key);
     });
   };
 
   const dismiss = (subjectId: string, diff: string) =>
     setDismissed((prev) => new Set(prev).add(comboKey(subjectId, diff)));
 
+  // Another exam is about to become the live one: keep the current live exam
+  // (answers + position) as a parked draft, and drop any parked copy of the
+  // incoming combo — the incoming exam supersedes it.
+  const replaceLiveExam = (incoming: string) => {
+    const live: Resumable | null = examSubject
+      ? { subject: examSubject.id, difficulty, questions, answers, currentIndex: current }
+      : null;
+    setParked((prev) => {
+      const rest = prev.filter((p) => {
+        const k = comboKey(p.subject, p.difficulty);
+        return k !== incoming && (!live || k !== comboKey(live.subject, live.difficulty));
+      });
+      return live && comboKey(live.subject, live.difficulty) !== incoming ? [live, ...rest] : rest;
+    });
+  };
+
   const goHome = () => {
     // Leaving to the dashboard does NOT discard — the autosaved draft stays
     // resumable (the live card covers it while ExamApp is still mounted).
-    cancelPendingSave();
+    flushPendingSave();
     setScreen('dashboard');
   };
   const pickSubject = (s: Subject) => {
@@ -832,9 +922,10 @@ export function ExamApp({
   };
   const startExam = (diff: DifficultyId) => {
     if (!subject) return;
-    cancelPendingSave();
     const qs = buildExam(subject.id, diff, questionBank);
     if (qs.length === 0) return;
+    flushPendingSave(); // the exam being left keeps its latest answers
+    replaceLiveExam(comboKey(subject.id, diff));
     const blank: Answer[] = qs.map(() => null);
     setDifficulty(diff);
     setQuestions(qs);
@@ -853,10 +944,13 @@ export function ExamApp({
   };
 
   // Restore a saved draft straight into the exam at the question it left off.
+  // `s` is the newest copy of that combo: the resume list puts in-memory drafts
+  // ahead of the page-load snapshot.
   const resumeSession = (s: Resumable) => {
     const subj = subjects.find((x) => x.id === s.subject);
     if (!subj) return;
-    cancelPendingSave();
+    flushPendingSave();
+    replaceLiveExam(comboKey(s.subject, s.difficulty));
     setSubject(subj);
     setDifficulty(s.difficulty);
     setQuestions(s.questions);
@@ -867,11 +961,15 @@ export function ExamApp({
   };
 
   const discardSession = (s: Resumable) => {
+    const key = comboKey(s.subject, s.difficulty);
     dismiss(s.subject, s.difficulty);
+    uncreated.current.delete(key); // nothing may recreate it now
+    setParked((prev) => prev.filter((p) => comboKey(p.subject, p.difficulty) !== key));
     if (examSubject?.id === s.subject && difficulty === s.difficulty) {
+      cancelPendingSave();
       setExamSubject(null);
     }
-    startSave(async () => {
+    inBackground(async () => {
       await discardExamSession({ subject: s.subject, difficulty: s.difficulty });
     });
   };
@@ -886,10 +984,12 @@ export function ExamApp({
     const subj = subject;
     const diff = difficulty;
     const qs = questions;
-    saveTimer.current = setTimeout(
-      () => persist(saveExamProgress, subj, diff, qs, next, current),
-      AUTOSAVE_DELAY,
-    );
+    const idx = current;
+    const run = () => {
+      cancelPendingSave(); // runs once, whether the timer fires or it is flushed
+      persist(saveExamProgress, subj, diff, qs, next, idx);
+    };
+    pendingSave.current = { timer: setTimeout(run, AUTOSAVE_DELAY), run };
   };
   const goToIndex = (index: number) => {
     if (!subject) return;
@@ -904,15 +1004,29 @@ export function ExamApp({
     setPending(payload);
     setScreen('marking');
     startSave(async () => {
-      const res = await recordAttempt(payload);
+      let res: RecordAttemptResult;
+      try {
+        res = await recordAttempt(payload);
+      } catch (caught) {
+        unstable_rethrow(caught);
+        // No answer came back. Keep `pending` (and the live draft) so "Try
+        // again" re-sends exactly these answers.
+        setExamError('unreachable');
+        setScreen('examError');
+        return;
+      }
+      // Either way this paper is settled, so hide it locally too: finished (the
+      // server cleared its draft), or refused and never markable as it is — a
+      // resume card for it would be a dead end.
+      uncreated.current.delete(comboKey(payload.subject, payload.difficulty));
+      setExamSubject(null);
+      dismiss(payload.subject, payload.difficulty);
       if (res.ok) {
-        // The exam is done — the server cleared its draft; hide it locally too.
-        setExamSubject(null);
-        dismiss(payload.subject, payload.difficulty);
         setScored(res.attempt);
         setProgress(res.progress);
         setScreen('results');
       } else {
+        setExamError('refused');
         setScreen('examError');
       }
     });
@@ -920,7 +1034,10 @@ export function ExamApp({
 
   const finishExam = () => {
     if (!subject) return;
-    cancelPendingSave(); // don't let a debounced save resurrect the finished draft
+    // Send a waiting autosave now rather than drop it: it runs ahead of the
+    // submit (Server Actions go one at a time), so it can't resurrect the draft
+    // the submit clears, and the draft keeps the last answer if the submit fails.
+    flushPendingSave();
     const items: RecordAttemptInput['items'] = questions.map((q, idx) => {
       const a = answers[idx] ?? null;
       if (q.type === 'free') {
@@ -938,18 +1055,19 @@ export function ExamApp({
     startExam(difficulty);
   };
 
-  // The resume cards: the live in-memory exam (if any) plus the server-fetched
-  // drafts, de-duped by combo and minus anything dismissed this session.
+  // The resume cards: the live in-memory exam (if any), then the exams parked
+  // this session, then the server-fetched drafts. An in-memory copy always wins
+  // over the page-load snapshot of the same combo; dismissed combos are hidden.
   const liveCard: Resumable | null = examSubject
     ? { subject: examSubject.id, difficulty, questions, answers, currentIndex: current }
     : null;
+  const local = [...(liveCard ? [liveCard] : []), ...parked];
+  const localKeys = new Set(local.map((r) => comboKey(r.subject, r.difficulty)));
   const resumables: Resumable[] = [
-    ...(liveCard ? [liveCard] : []),
+    ...local,
     ...resumable.filter((r) => {
       const k = comboKey(r.subject, r.difficulty);
-      if (dismissed.has(k)) return false;
-      if (liveCard && k === comboKey(liveCard.subject, liveCard.difficulty)) return false;
-      return true;
+      return !dismissed.has(k) && !localKeys.has(k);
     }),
   ];
 
@@ -1001,7 +1119,15 @@ export function ExamApp({
   } else if (screen === 'marking') {
     view = <MarkingScreen subject={subject} sat={sat} />;
   } else if (screen === 'examError') {
-    view = <ExamErrorScreen subject={subject} sat={sat} onRetry={resend} onHome={goHome} />;
+    view = (
+      <ExamErrorScreen
+        subject={subject}
+        sat={sat}
+        kind={examError}
+        onRetry={resend}
+        onHome={goHome}
+      />
+    );
   } else if (screen === 'results' && scored) {
     view = (
       <ResultsScreen
@@ -1028,6 +1154,7 @@ export function ExamApp({
   }
 
   const exitStudentMode = () => {
+    flushPendingSave(); // queued ahead of the switch, while the save is still allowed
     startSave(async () => {
       await setStudentMode(false);
       router.refresh();

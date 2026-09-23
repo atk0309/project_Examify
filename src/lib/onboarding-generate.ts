@@ -5,9 +5,11 @@ import * as ingestGenerate from 'examify-ingest/generate';
 import { getOnboardingContentRoot } from '@/lib/content-root';
 import {
   BANK_IR_FILE,
+  isSampleSubjectId,
   isValidSubjectId,
   listOnboardingSubjects,
   normalizeSubjectId,
+  SUBJECT_LABEL_MAX,
   SUBJECTS_REL,
 } from '@/lib/onboarding';
 import {
@@ -17,20 +19,37 @@ import {
   type OnboardingIrOverwriteDecision,
 } from '@/lib/onboarding-types';
 
+/**
+ * Safe generate reason codes. The action forwards `reason` (and `irRel` for
+ * needs_confirm) only; `message` / `status` stay on the server.
+ */
+export type GenerateOnboardingReason =
+  | 'invalid_id'
+  | 'missing'
+  | 'missing_key'
+  | 'missing_local'
+  | 'empty_sources'
+  | 'sources_unreadable'
+  | 'sample_collision'
+  | 'provider_auth'
+  | 'provider_rate_limited'
+  | 'provider_timeout'
+  | 'provider_unavailable'
+  | 'provider_error'
+  | 'provider_output_invalid'
+  | 'disk'
+  | 'generate_failed'
+  | 'cancelled'
+  | 'skipped'
+  | 'needs_confirm';
+
 export type GenerateOnboardingError = {
   ok: false;
-  reason:
-    | 'invalid_id'
-    | 'missing'
-    | 'missing_key'
-    | 'missing_local'
-    | 'empty_sources'
-    | 'invalid'
-    | 'cancelled'
-    | 'skipped'
-    | 'needs_confirm';
+  reason: GenerateOnboardingReason;
   message: string;
   irRel?: string;
+  /** Provider HTTP status, for the server log only. */
+  status?: number;
 };
 
 export type GenerateOnboardingSuccess = {
@@ -72,13 +91,23 @@ export function isOnboardingGenerateCancelToken(token: string): boolean {
   return CANCEL_TOKEN_RE.test(token);
 }
 
-/** False when this token already committed IR — cancel must not look successful. */
+/**
+ * Record a cancel. The token is remembered either way, so any later generate
+ * with it (the next subject of a "Generate all" batch) is refused before the
+ * provider call. True when that stops work: the in-flight request is aborted,
+ * or none has run yet. False when nothing is in flight and this token's last
+ * generate already committed IR (`already_committed`) — that subject is kept
+ * and cancel must not look like it undid it.
+ */
 export function requestOnboardingGenerateCancel(token: string): boolean {
   if (!isOnboardingGenerateCancelToken(token)) return false;
-  if (committedTokens.has(token)) return false;
   rememberToken(cancelledTokens, token);
-  abortControllers.get(token)?.abort();
-  return true;
+  const inFlight = abortControllers.get(token);
+  if (inFlight) {
+    inFlight.abort();
+    return true;
+  }
+  return !committedTokens.has(token);
 }
 
 export function markOnboardingGenerateCommitted(token: string | undefined): void {
@@ -121,6 +150,36 @@ function cancelledResult(): GenerateOnboardingError {
   return { ok: false, reason: 'cancelled', message: 'Generate cancelled.' };
 }
 
+function sampleCollisionResult(subjectId: string): GenerateOnboardingError {
+  return {
+    ok: false,
+    reason: 'sample_collision',
+    message: `${subjectId} has a sample-bank subject id; generated ids would replace sample questions`,
+  };
+}
+
+/** Outcomes the admin chose (or has to confirm) — not failures, so not logged. */
+const UNLOGGED_REASONS = new Set<GenerateOnboardingReason>([
+  'cancelled',
+  'skipped',
+  'needs_confirm',
+]);
+
+/**
+ * One server log line per generate failure: the reason code, the subject id
+ * (only when it is a valid kebab id), and a provider HTTP status. Never the
+ * message — it can carry paths, env names, or model text — and never keys.
+ */
+function logGenerateFailure(rawSubjectId: string, result: GenerateOnboardingError): void {
+  if (UNLOGGED_REASONS.has(result.reason)) return;
+  const subjectId = normalizeSubjectId(rawSubjectId);
+  console.warn('[onboarding] generate failed', {
+    reason: result.reason,
+    ...(isValidSubjectId(subjectId) && subjectId.length <= SUBJECT_LABEL_MAX ? { subjectId } : {}),
+    ...(result.status ? { status: result.status } : {}),
+  });
+}
+
 /** Serialize generate commit with delete/rename so they cannot interleave the IR write. */
 export function withOnboardingGenerateLock<T>(task: () => Promise<T>): Promise<T> {
   const run = generateChain.then(task, task);
@@ -152,6 +211,35 @@ function skippedResult(irRel: string): GenerateOnboardingError {
   return { ok: false, reason: 'skipped', message: 'Generate skipped.', irRel };
 }
 
+function providerFailureReason(
+  error: InstanceType<typeof ingestGenerate.ProviderFailureError>,
+): GenerateOnboardingReason {
+  switch (error.kind) {
+    case 'http': {
+      const status = error.status ?? 0;
+      if (status === 401 || status === 403) return 'provider_auth';
+      if (status === 429) return 'provider_rate_limited';
+      // 5xx includes Anthropic 529 (overloaded).
+      if (status >= 500) return 'provider_unavailable';
+      return 'provider_error';
+    }
+    case 'timeout':
+      return 'provider_timeout';
+    case 'unreachable':
+      return 'provider_unavailable';
+    case 'output':
+      return 'provider_output_invalid';
+    case 'command':
+      return 'provider_error';
+  }
+}
+
+function isDiskError(error: unknown): boolean {
+  if (!(error instanceof Error) || !('code' in error)) return false;
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === 'ENOSPC' || code === 'EDQUOT' || code === 'EACCES' || code === 'EROFS';
+}
+
 function mapGenerateError(error: unknown): GenerateOnboardingError {
   if (isUserGenerateAbort(error)) {
     return cancelledResult();
@@ -167,13 +255,35 @@ function mapGenerateError(error: unknown): GenerateOnboardingError {
     }
     return { ok: false, reason: 'missing_key', message };
   }
+  if (error instanceof ingestGenerate.SampleIdCollisionError) {
+    return { ok: false, reason: 'sample_collision', message };
+  }
+  if (error instanceof ingestGenerate.UnreadableSourcesError) {
+    return { ok: false, reason: 'sources_unreadable', message };
+  }
+  if (error instanceof ingestGenerate.ProviderFailureError) {
+    return {
+      ok: false,
+      reason: providerFailureReason(error),
+      message,
+      ...(error.status ? { status: error.status } : {}),
+    };
+  }
+  // A bare timeout / abort that is not the admin's cancel (e.g. the 180s
+  // deadline firing while the response body is read) is a timeout.
+  if (error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')) {
+    return { ok: false, reason: 'provider_timeout', message };
+  }
+  if (isDiskError(error)) {
+    return { ok: false, reason: 'disk', message };
+  }
   if (/no source files/i.test(message)) {
     return { ok: false, reason: 'empty_sources', message };
   }
   if (/path not found|no generate subjects|no subject folder/i.test(message)) {
     return { ok: false, reason: 'missing', message };
   }
-  return { ok: false, reason: 'invalid', message };
+  return { ok: false, reason: 'generate_failed', message };
 }
 
 function publicGenerateResult(
@@ -209,8 +319,12 @@ function publicGenerateResult(
  * ingest generate/providers so Cancel aborts HTTP/CMD, not only the
  * IR write. `GenerateAbortedError` maps to `cancelled` (never raw abort
  * text). A bare `AbortError` (provider 180s timeout) is a real failure,
- * not user cancel. Decline / skip keeps prior bytes (`skipped`, not
- * `invalid`). The returned payload is public progress metadata
+ * not user cancel (it is `provider_timeout`). Decline / skip keeps prior
+ * bytes (`skipped`, not a failure). A sample-bank subject id is refused
+ * before the provider call unless `replaceSample` (the household's
+ * replace-sample choice, same as CLI `--replace-sample`); with it, generate
+ * may write sample ids. Failures map to safe reason codes and log once
+ * (reason + subject id). The returned payload is public progress metadata
  * (no answers / keys / IR).
  */
 export async function generateOnboardingSubject(input: {
@@ -223,8 +337,12 @@ export async function generateOnboardingSubject(input: {
   force?: boolean;
   /** Explicit decline — keep prior IR, do not generate. */
   overwrite?: OnboardingIrOverwriteDecision;
+  /** Same as CLI `--replace-sample`: allow generated ids that are sample-bank ids. */
+  replaceSample?: boolean;
 }): Promise<GenerateOnboardingSuccess | GenerateOnboardingError> {
-  return withOnboardingGenerateLock(() => generateOnboardingSubjectUnlocked(input));
+  const result = await withOnboardingGenerateLock(() => generateOnboardingSubjectUnlocked(input));
+  if (!result.ok) logGenerateFailure(input.subjectId, result);
+  return result;
 }
 
 async function generateOnboardingSubjectUnlocked(input: {
@@ -235,6 +353,7 @@ async function generateOnboardingSubjectUnlocked(input: {
   cancelToken?: string;
   force?: boolean;
   overwrite?: OnboardingIrOverwriteDecision;
+  replaceSample?: boolean;
 }): Promise<GenerateOnboardingSuccess | GenerateOnboardingError> {
   const subjectId = normalizeSubjectId(input.subjectId);
   if (!isValidSubjectId(subjectId)) {
@@ -257,6 +376,12 @@ async function generateOnboardingSubjectUnlocked(input: {
   // Corrupt IR is existing (confirm / force); empty + zero-item are not.
   if (ingestGenerate.hasExistingBankIr(existingIrPath) && input.overwrite === 'skip') {
     return skippedResult(existingIrRel);
+  }
+  // Its questions would be `<id>-easy-1`… — frozen sample ids. Refuse before
+  // a (possibly paid) provider call rather than after it.
+  const replaceSample = input.replaceSample === true;
+  if (!replaceSample && isSampleSubjectId(subjectId)) {
+    return sampleCollisionResult(subjectId);
   }
   // Confirm before generate: existing IR without force never starts a
   // provider dry-run that already looks done. Shared helper, same as CLI.
@@ -301,6 +426,7 @@ async function generateOnboardingSubjectUnlocked(input: {
       provider: input.provider,
       seed: input.seed,
       env: ingestGenerate.mergeRepoEnvFiles(root, process.env),
+      replaceSample,
       // Preview only — wizard owns the IR write after cancel + catalog checks.
       dryRunIr: true,
       ...(controller ? { signal: controller.signal } : {}),

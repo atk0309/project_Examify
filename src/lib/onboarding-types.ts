@@ -20,11 +20,18 @@ export const ONBOARDING_GENERATE_SEED_DEFAULT = 0;
  */
 export const ONBOARDING_CANCEL_GENERATE_PATH = '/api/onboarding/cancel-generate';
 
-/** True only when the cancel route records the token. Failures must not look cancelled. */
+/**
+ * `cancelled`: the route recorded the token and stopped the in-flight / next
+ * generate. `already_committed`: that request had already written its IR
+ * (kept); the token is still recorded, so a batch's next subject is refused.
+ * `failed`: anything else — failures must not look cancelled.
+ */
+export type OnboardingGenerateCancelOutcome = 'cancelled' | 'already_committed' | 'failed';
+
 export async function postOnboardingGenerateCancel(
   token: string,
   fetchImpl: typeof fetch = fetch,
-): Promise<boolean> {
+): Promise<OnboardingGenerateCancelOutcome> {
   try {
     const res = await fetchImpl(ONBOARDING_CANCEL_GENERATE_PATH, {
       method: 'POST',
@@ -32,11 +39,22 @@ export async function postOnboardingGenerateCancel(
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ cancelToken: token }),
     });
-    const body = (await res.json().catch(() => null)) as { ok?: unknown } | null;
-    return res.ok && body?.ok === true;
+    const body = (await res.json().catch(() => null)) as { ok?: unknown; reason?: unknown } | null;
+    if (res.ok && body?.ok === true) return 'cancelled';
+    if (res.status === 409 && body?.reason === 'already_committed') return 'already_committed';
+    return 'failed';
   } catch {
-    return false;
+    return 'failed';
   }
+}
+
+export const ONBOARDING_GENERATE_ALREADY_FINISHED =
+  'Generate already finished — review the new BankIR.';
+
+/** Honest cancel status: subjects that already wrote BankIR are kept, not undone. */
+export function onboardingGenerateCancelledNote(kept: number): string {
+  if (kept <= 0) return 'Generate cancelled';
+  return `Generate cancelled. Kept ${kept} subject${kept === 1 ? '' : 's'} already generated.`;
 }
 
 export function providerForOnboardingAiMode(mode: OnboardingAiMode): OnboardingGenerateProvider {
@@ -51,6 +69,35 @@ export function providerForOnboardingAiMode(mode: OnboardingAiMode): OnboardingG
     case 'skip-stub':
       return 'test';
   }
+}
+
+/**
+ * Wizard subjects that reuse a sample-bank subject id. Their generated
+ * question ids (`maths-easy-1`, …) are frozen sample ids, so generate refuses
+ * them unless the household allows replacing sample-bank questions.
+ */
+export function onboardingSampleIdSubjects<T extends Pick<OnboardingSubject, 'id'>>(
+  subjects: readonly T[],
+  sampleSubjects: readonly Pick<OnboardingSampleSubject, 'id'>[],
+): T[] {
+  const sampleIds = new Set(sampleSubjects.map((subject) => subject.id));
+  return subjects.filter((subject) => sampleIds.has(subject.id));
+}
+
+/** Calm `sample_collision` copy: names the subjects and both ways out. Nothing was written. */
+export function onboardingSampleCollisionMessage(labels: readonly string[]): string {
+  const named = labels.map((label) => `“${label}”`);
+  const subjects =
+    named.length === 0
+      ? 'This subject'
+      : named.length === 1
+        ? named[0]!
+        : `${named.slice(0, -1).join(', ')} and ${named[named.length - 1]}`;
+  const verb =
+    named.length > 1
+      ? 'use the same ids as sample-bank subjects'
+      : 'uses the same id as a sample-bank subject';
+  return `${subjects} ${verb}, so generated questions would replace sample questions. Nothing was generated. Rename the subject id in Subjects, or turn on replacing sample-bank questions here and generate again.`;
 }
 
 export const SUBJECT_ICON_OPTIONS = [
