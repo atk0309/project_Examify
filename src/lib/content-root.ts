@@ -1,4 +1,4 @@
-import { findRepoRoot } from '@/lib/repo-root';
+import { getDataPaths } from '@/lib/data-dir';
 
 let contentRootOverride: string | null = null;
 
@@ -7,6 +7,11 @@ export function setOnboardingContentRootForTests(root: string | null): void {
   contentRootOverride = root;
 }
 
+/**
+ * Family content root for wizard subjects / uploads / BankIR / generated
+ * JSON and the live bank: the family data folder, never the checkout.
+ * (`.env` stays in the checkout — see `getEnvStoreRoot`.)
+ */
 export function getOnboardingContentRoot(): string {
-  return contentRootOverride ?? findRepoRoot(process.cwd());
+  return contentRootOverride ?? getDataPaths().familyRoot;
 }

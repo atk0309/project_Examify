@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
@@ -16,22 +17,47 @@ import {
 const OUTBOX =
   process.env.MAIL_OUTBOX_DIR ?? path.join(process.cwd(), 'tests', '.tmp', 'e2e-fresh-outbox');
 
-// The wizard test below adds a "History" subject, which writes
-// content/subjects/history/ into the checkout (the app's content root). Remove
-// it afterwards unless it existed before the run, so `pnpm test:e2e` leaves the
-// working tree clean.
-const HISTORY_SUBJECT_DIR = path.join(process.cwd(), 'content', 'subjects', 'history');
-let historySubjectExisted = false;
+// The wizard writes family content to the suite's data folder
+// (EXAMIFY_DATA_DIR, set by playwright.fresh.config.ts), never the checkout.
+const DATA_DIR =
+  process.env.EXAMIFY_DATA_DIR ?? path.join(process.cwd(), 'tests', '.tmp', 'e2e-fresh-data');
 
-test.beforeAll(async () => {
-  historySubjectExisted = await fs.stat(HISTORY_SUBJECT_DIR).then(
+const exists = (file: string) =>
+  fs.stat(file).then(
     () => true,
     () => false,
   );
-});
 
-test.afterAll(async () => {
-  if (!historySubjectExisted) await fs.rm(HISTORY_SUBJECT_DIR, { recursive: true, force: true });
+/**
+ * Checkout files under content / .examify-ingest / src, including untracked
+ * and ignored ones. Compared before and after the wizard run (a developer's
+ * own uncommitted edits are not a leak); null when git is unavailable.
+ */
+function checkoutContentStatus(): string | null {
+  try {
+    return execFileSync(
+      'git',
+      [
+        'status',
+        '--porcelain',
+        '--untracked-files=all',
+        '--ignored=traditional',
+        '--',
+        'content',
+        '.examify-ingest',
+        'src',
+      ],
+      { cwd: process.cwd(), encoding: 'utf8' },
+    );
+  } catch {
+    return null;
+  }
+}
+
+let checkoutBefore: string | null = null;
+
+test.beforeAll(() => {
+  checkoutBefore = checkoutContentStatus();
 });
 
 const SECRET_ACTION_IDS = [
@@ -292,6 +318,13 @@ test('first-run bootstrap creates the admin without Turnstile', async ({ page })
   await expect(page).toHaveURL(/\/$/);
   await expect(page.getByTestId('finish-content-setup')).toBeVisible();
   await expect(page.getByTestId('household-invites')).toBeVisible();
+
+  // The new subject landed in the family data folder; the checkout is untouched.
+  expect(await exists(path.join(DATA_DIR, 'content', 'subjects', 'history', 'subject.json'))).toBe(
+    true,
+  );
+  expect(await exists(path.join(process.cwd(), 'content', 'subjects', 'history'))).toBe(false);
+  expect(checkoutContentStatus()).toBe(checkoutBefore);
 });
 
 test('unknown emails still show Check your inbox and send nothing', async ({ page }) => {

@@ -2,6 +2,7 @@ import 'server-only';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { Resend } from 'resend';
+import { getDataPaths } from '@/lib/data-dir';
 import { allowLocalMailOutbox, env, isResendConfigured, resolveMailTransport } from '@/lib/env';
 import { sendSmtp, type SendResult } from './smtp';
 
@@ -9,21 +10,14 @@ export type { SendResult };
 
 const resend = isResendConfigured() ? new Resend(env.RESEND_API_KEY!) : null;
 
+/**
+ * `MAIL_OUTBOX_DIR` (relative → the checkout root), else `<data folder>/outbox`.
+ * Outside production `RESEND_API_KEY=test` / unit tests keep
+ * `tests/.tmp/outbox`; a production host that copied the `test` sentinel
+ * still writes to the data folder, and only with ALLOW_LOCAL_OUTBOX set.
+ */
 function resolveOutboxDir(): string {
-  const configured = env.MAIL_OUTBOX_DIR;
-  if (configured) {
-    return path.isAbsolute(configured)
-      ? configured
-      : path.join(/*turbopackIgnore: true*/ process.cwd(), configured);
-  }
-  // `RESEND_API_KEY=test` in dev/test keeps the existing outbox so e2e can
-  // poll it (Playwright also sets ALLOW_LOCAL_OUTBOX=1 under NODE_ENV=production).
-  // A real production deploy with no key writes to the data volume instead,
-  // and only if ALLOW_LOCAL_OUTBOX is set.
-  if (env.RESEND_API_KEY === 'test' || env.NODE_ENV === 'test') {
-    return path.join(process.cwd(), 'tests', '.tmp', 'outbox');
-  }
-  return path.join(process.cwd(), 'data', 'outbox');
+  return getDataPaths().outboxDir;
 }
 
 async function writeTestOutbox(payload: {
