@@ -25,6 +25,11 @@ allowlist to hand-edit.
   child(ren).
 - **MCQ + free-text questions** — free-text answers are marked server-side by an LLM
   against a rubric you write, with a bounded, encouraging verdict.
+- **Bring your own AI to build question banks** — from your study PDFs and notes, with an
+  Anthropic or OpenAI API key, **Claude Code** or **Codex** already signed in on the
+  server (your Claude or ChatGPT plan, no API key), a local OpenAI-compatible endpoint
+  (Ollama, LM Studio, …), or your own command. The setup wizard shows which of these this
+  server has and what each can read.
 - **Autosave + resume** — reload, close the browser, or lose the tab mid-exam and the
   dashboard offers a "Continue where you left off" card. If the finished exam can't reach
   the server, your answers stay on screen with a "Try again".
@@ -39,7 +44,10 @@ allowlist to hand-edit.
 1. **`/setup`** (first run) or **`/signin`** — on a fresh install, the first visitor
    creates the household and becomes admin (and sets a password when `AUTH_MODE=password`).
    After bootstrap, **`/onboarding`** lets the household admin add subjects, attach
-   local study files (PDFs plus notes.txt and other CLI sources), choose an AI mode (Anthropic / OpenAI keys write the same
+   local study files (PDFs plus notes.txt and other CLI sources), choose an AI mode
+   (Anthropic or OpenAI key, Claude Code or Codex with their own sign-in, a local
+   endpoint, or a local command; each card says how it reads PDFs and whether this
+   server has it; Anthropic / OpenAI keys write the same
    repo-root `.env` as `install.sh` / `examify-ingest generate`; host-injected
    usable keys stay host-managed; a boot `test` sentinel stays “not configured”
    but Clear/Rotate remain available after the first Save), optionally generate BankIR from those
@@ -142,8 +150,12 @@ appears in no dashboard.
 
 `install.sh` asks a few questions (site URL, family data folder, auth mode, mail for
 invite-accept OTP, optional Turnstile, and Anthropic / OpenAI keys), generates the
-secrets, writes `.env`, installs, migrates, and builds. OpenAI generate from PDFs also
-needs `pdftoppm` (from **poppler** / `poppler-utils`) on `PATH`.
+secrets, writes `.env`, installs, migrates, and builds. OpenAI, Codex and local-endpoint
+generate from PDFs also need `pdftoppm` (from **poppler** / `poppler-utils`) on `PATH`.
+To build banks with your Claude or ChatGPT plan instead of an API key, install
+[Claude Code](https://docs.anthropic.com/en/docs/claude-code) or Codex **as the user
+that runs Examify** and sign in once (`claude`, or `codex login`); the setup wizard finds
+it on `PATH` or in `~/.local/bin` (or set `EXAMIFY_CLAUDE_BIN` / `EXAMIFY_CODEX_BIN`).
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/atk0309/project_Examify/main/install.sh | bash
@@ -370,7 +382,14 @@ Sent to a third party only when you turn the feature on:
 - **Cloud generate (Anthropic / OpenAI).** The `/onboarding` cloud modes and
   `examify-ingest generate --provider anthropic|openai` send that subject's source files
   (PDFs or their page images, notes, images) to the provider. Local modes send them to the
-  endpoint or command you configure; `--provider test` sends nothing. A failed wizard
+  endpoint or command you configure; `--provider test` sends nothing.
+- **Claude Code / Codex generate.** The Claude Code and Codex modes
+  (`--provider claude-cli|codex-cli`) run `claude -p` / `codex exec` on your server with
+  their own sign-in, so the same files go to Anthropic or OpenAI under your plan. They
+  run in an empty private folder with no tools (no file reads, commands or web search;
+  Codex in its read-only sandbox, with a private copy of its sign-in only, so your
+  `AGENTS.md` and skills stay out), save no session, and get only a short allowlist of
+  environment variables: none of Examify's secrets or API keys. A failed wizard
   generate shows a specific reason (rejected key, rate limit, timeout, …) and logs only
   the reason code, subject id and provider HTTP status — never the provider's message,
   model text or your files.
@@ -492,6 +511,12 @@ sign in. `SITE_URL` also decides the session cookie: `Secure` +
 `SESSION_COOKIE_NAME` is optional; a `__Host-` / `__Secure-` name with a non-https
 `SITE_URL` fails production boot. `CLIENT_IP_HEADER` names the one header the sign-in
 rate limiter trusts for the client IP (see [Deploying with HTTPS](#deploying-with-https)).
+Bank-generate settings are all optional: `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` for the
+cloud modes; `EXAMIFY_CLAUDE_BIN` / `EXAMIFY_CODEX_BIN` (full path when the CLI is not on
+the server's `PATH` or in `~/.local/bin`) and `EXAMIFY_CLAUDE_MODEL` /
+`EXAMIFY_CODEX_MODEL` (else the CLI's own default) for Claude Code / Codex;
+`EXAMIFY_LLM_BASE_URL` + `EXAMIFY_LLM_MODEL` (e.g. `http://127.0.0.1:11434` and a model
+`ollama list` shows) for a local endpoint; `EXAMIFY_INGEST_LOCAL_CMD` for your own command.
 
 ## Deploy
 

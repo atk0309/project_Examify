@@ -14,6 +14,7 @@ export {
   type GenerateSubjectResult,
 } from './generate';
 export { runCliAsync } from './generate-cli';
+export { safeTempRoot } from './temp-root';
 export { buildCacheKey, ingestStateDir, irCachePath, readCachedIr } from './cache';
 export { extractJsonObject } from './json';
 export {
@@ -54,7 +55,13 @@ export {
 } from './sources';
 export {
   getProvider,
+  AGENT_CLI_BIN_ENV,
+  AGENT_CLI_MODEL_ENV,
+  CLI_PROVIDER_TIMEOUT_MS,
+  CliNotFoundError,
   GenerateAbortedError,
+  LOCAL_MODEL_ENV,
+  localTransportEnv,
   PROVIDER_TIMEOUT_MS,
   ProviderConfigError,
   ProviderFailureError,
@@ -62,6 +69,8 @@ export {
   isAbortError,
   providerRequestSignal,
   throwIfAborted,
+  resolveAgentCliBinary,
   splitCommandLine,
+  type AgentCli,
   type ProviderFailureKind,
 } from './providers';

@@ -4,7 +4,7 @@ import { bankIrSchema, type BankIR, type BankIrSubject, type GenerateProviderId 
 import type { ResolvedSource } from '../sources';
 
 export class ProviderConfigError extends Error {
-  readonly code = 'PROVIDER_CONFIG';
+  readonly code: string = 'PROVIDER_CONFIG';
 
   constructor(message: string) {
     super(message);
@@ -12,13 +12,29 @@ export class ProviderConfigError extends Error {
   }
 }
 
+/** The AI command-line tool a provider runs (`claude`, `codex`) is not installed where we look. */
+export class CliNotFoundError extends ProviderConfigError {
+  override readonly code = 'CLI_NOT_FOUND';
+  readonly cli: 'claude' | 'codex';
+
+  constructor(cli: 'claude' | 'codex', message: string) {
+    super(message);
+    this.name = 'CliNotFoundError';
+    this.cli = cli;
+  }
+}
+
 /**
  * How a configured provider failed. `http`: a non-2xx answer (`status` set).
- * `timeout`: the 180s deadline. `unreachable`: no answer at all (network, or a
+ * `timeout`: the provider deadline. `unreachable`: no answer at all (network, or a
  * local command that could not start). `output`: an answer that is not usable
- * BankIR. `command`: a local command that exited non-zero.
+ * BankIR. `command`: a local command that exited non-zero, or an AI
+ * command-line tool refused before it ran (its own folder is inside the
+ * checkout). `auth`: an AI command-line tool (Claude Code, Codex) is not
+ * signed in, or its sign-in was refused, with no HTTP status to report.
  */
-export type ProviderFailureKind = 'http' | 'timeout' | 'unreachable' | 'output' | 'command';
+export type ProviderFailureKind =
+  'http' | 'timeout' | 'unreachable' | 'output' | 'command' | 'auth';
 
 /** Typed provider failure so callers can react without parsing messages. CLI text is unchanged. */
 export class ProviderFailureError extends Error {
@@ -78,13 +94,22 @@ export type ProviderRequest = {
 
 export const PROVIDER_TIMEOUT_MS = 180_000;
 
-export function providerTimeoutSignal(): AbortSignal {
-  return AbortSignal.timeout(PROVIDER_TIMEOUT_MS);
+/**
+ * Claude Code / Codex deadline. An agent CLI starts up, then answers at its
+ * own pace (Codex reasons before it writes), so it gets longer than an API call.
+ */
+export const CLI_PROVIDER_TIMEOUT_MS = 600_000;
+
+export function providerTimeoutSignal(timeoutMs = PROVIDER_TIMEOUT_MS): AbortSignal {
+  return AbortSignal.timeout(timeoutMs);
 }
 
-/** 180s deadline, optionally combined with a caller AbortSignal. */
-export function providerRequestSignal(userSignal?: AbortSignal): AbortSignal {
-  const timeout = providerTimeoutSignal();
+/** Provider deadline (180s by default), optionally combined with a caller AbortSignal. */
+export function providerRequestSignal(
+  userSignal?: AbortSignal,
+  timeoutMs = PROVIDER_TIMEOUT_MS,
+): AbortSignal {
+  const timeout = providerTimeoutSignal(timeoutMs);
   if (!userSignal) return timeout;
   return AbortSignal.any([userSignal, timeout]);
 }
@@ -161,6 +186,13 @@ export type ProviderDeps = {
 export type GenerateProvider = {
   id: GenerateProviderId;
   defaultModel: string;
+  /** Env var naming the model when `--model` is not given (before `defaultModel`). */
+  modelEnv?: string;
+  /**
+   * Which of the provider's transports this env selects, when it has more than
+   * one. Part of the cacheKey, so one transport never serves another's cached IR.
+   */
+  transport?: (env: ProviderEnv) => string;
   keyEnv: string | null;
   /** True when the provider request includes a seed the API will honor. */
   seedHonored: boolean;

@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { parseArgs, resolveCliLayer, runCli, USAGE, type CliIo, type ParsedCli } from './cli';
 import { NEXT_INGEST_COMMANDS, generateTargets } from './generate';
+import { localTransportEnv } from './providers/local';
 import { mergeRepoEnvFiles } from './repo-env';
 import { subjectsArgFor, type IngestRoot } from './roots';
 import { resolveGenerateTargets } from './sources';
@@ -17,7 +18,9 @@ export function nextIngestCommands(ingest: Pick<IngestRoot, 'layer' | 'dataDirDi
 
 async function runGenerate(parsed: ParsedCli, io: CliIo): Promise<number> {
   if (!parsed.provider) {
-    io.stderr.write('generate requires --provider anthropic|openai|local|test\n');
+    io.stderr.write(
+      'generate requires --provider anthropic|openai|local|claude-cli|codex-cli|test\n',
+    );
     return 2;
   }
 
@@ -36,7 +39,9 @@ async function runGenerate(parsed: ParsedCli, io: CliIo): Promise<number> {
     return 1;
   }
 
-  const env = mergeRepoEnvFiles(repoRoot, io.env ?? process.env);
+  const merged = mergeRepoEnvFiles(repoRoot, io.env ?? process.env);
+  // --local-transport: only that transport's settings, like the wizard's Local modes.
+  const env = parsed.localTransport ? localTransportEnv(merged, parsed.localTransport) : merged;
 
   try {
     const results = await generateTargets(targets, {

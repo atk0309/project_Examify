@@ -14,7 +14,7 @@ import {
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
 const KEY = 'ANTHROPIC_API_KEY';
 
-type ContentBlock =
+export type AnthropicContentBlock =
   | { type: 'text'; text: string }
   | {
       type: 'document';
@@ -25,8 +25,9 @@ type ContentBlock =
       source: { type: 'base64'; media_type: string; data: string };
     };
 
-function buildContent(request: ProviderRequest): ContentBlock[] {
-  const content: ContentBlock[] = [{ type: 'text', text: userGenerateMessage(request) }];
+/** Anthropic Messages content blocks (the API provider and Claude Code's stream-json input). */
+export function buildAnthropicContent(request: ProviderRequest): AnthropicContentBlock[] {
+  const content: AnthropicContentBlock[] = [{ type: 'text', text: userGenerateMessage(request) }];
   for (const source of request.sources) {
     if (source.kind === 'text') {
       content.push({
@@ -90,7 +91,7 @@ async function callAnthropic(request: ProviderRequest, deps: ProviderDeps): Prom
         temperature: 0,
         // Messages API has no seed field; seed is in the user message + cacheKey.
         system: request.prompt,
-        messages: [{ role: 'user', content: buildContent(request) }],
+        messages: [{ role: 'user', content: buildAnthropicContent(request) }],
       }),
     });
     return readProviderJson<{ content?: { type?: string; text?: string }[] }>(res, 'Anthropic');

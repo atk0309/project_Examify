@@ -50,7 +50,15 @@ Surface:
   (shared `findRepoRoot`, never `process.cwd()`), never echoed; a
   host-injected usable key is not rotatable in the wizard; a boot
   `ANTHROPIC_API_KEY=test` sentinel stays “not configured” but Clear/Rotate
-  remain available after the first Save) → validate → Review
+  remain available after the first Save; Claude Code / Codex modes
+  (`claude-cli` / `codex-cli`) run the household's signed-in CLI with no API
+  key, and the card says “Found” when the binary resolves, never its path;
+  Local endpoint passes only `EXAMIFY_LLM_BASE_URL` and needs
+  `EXAMIFY_LLM_MODEL`, Local command passes only `EXAMIFY_INGEST_LOCAL_CMD`
+  (`localTransportForOnboardingAiMode` → ingest `localTransportEnv`), and their
+  power-user generate command carries `--local-transport endpoint|command` so it
+  uses the same transport; every card shows
+  `onboardingAiCapabilityLine`: how it reads PDFs, how it signs in) → validate → Review
   (dry-run HITL) → apply → ready. The wizard is one stage at a time: desktop
   (≥900px) uses a left step rail + stage + sticky footer; mobile uses compact
   “Step N of M · Label” progress and a sticky bottom bar. Everything the
@@ -112,8 +120,10 @@ Surface:
   past it and names it. Generate failures return safe reason codes
   (`provider_auth`, `provider_rate_limited`, `provider_timeout`,
   `provider_unavailable`, `provider_error`, `provider_output_invalid`,
-  `sources_unreadable`, `sample_collision`, `disk`, `generate_failed`, …)
-  with specific copy; raw provider messages never reach the browser. Each
+  `sources_unreadable`, `sample_collision`, `missing_cli`, `missing_local`,
+  `disk`, `generate_failed`, …) with specific copy (`onboardingModeErrorCopy`:
+  CLI modes name the tool and how to sign it in, never API-key copy; local modes
+  name the missing setting); raw provider messages never reach the browser. Each
   failure logs one line,
   `console.warn('[onboarding] generate failed', { reason, subjectId?, status? })`
   (`subjectId` only when it is a valid kebab id, `status` only for a provider
@@ -446,16 +456,36 @@ replace-sample setting is passed as `replaceSample`. `generateSubject` accepts o
 to provider HTTP/CMD; abort throws and writes no IR, IR cache, page-raster
 cache, or run manifest). Generate throws typed errors so callers never parse
 messages: `ProviderFailureError` (`kind` `http` / `timeout` / `unreachable` /
-`output` / `command`, plus HTTP `status`), `SampleIdCollisionError` (`ids`),
-`UnreadableSourcesError`. The provider HTTP call and its body read sit inside
+`output` / `command` / `auth`, plus HTTP `status`), `SampleIdCollisionError` (`ids`),
+`UnreadableSourcesError`, `CliNotFoundError` (`cli`; a `ProviderConfigError`). The provider HTTP call and its body read sit inside
 one `withProviderSignal` boundary, so a deadline / cancel / dropped connection
 while the body is still arriving is typed too. CLI messages are unchanged except
 the fetch deadline (`provider request timed out after 180000ms`) and a 200 whose
 body is not JSON (`<provider> returned a body that is not JSON`). Cloud
 providers fail closed without an env key (generate also fills unset keys from
 repo `.env` / `.env.local`); `--provider test` is the CI
-fixture. OpenAI-compatible generate fails closed when the only sources are
+fixture. OpenAI-compatible and Codex generate fail closed when the only sources are
 PDFs and no page images were rasterized (`pdftoppm` from poppler-utils).
+`--provider claude-cli` (`claude -p`, stream-json in/out, the Anthropic
+provider's content blocks, so PDFs go as documents) and `--provider codex-cli`
+(`codex exec --json`, prompt on stdin, images as `--image` files) use the CLI's
+own sign-in: binary from `EXAMIFY_CLAUDE_BIN` / `EXAMIFY_CODEX_BIN`, `PATH`, then
+`~/.local/bin` (on Windows a `.exe` only: `spawn` without a shell cannot start an npm
+`.cmd` shim, and cmd quoting of the prompt argument is not safe; env names such as
+`Path` / `SystemRoot` are case-insensitive there: `mergeRepoEnvFiles` folds them to
+upper case, the host env still winning over `.env`, and `envValue` matches the rest);
+model from `--model`, `EXAMIFY_CLAUDE_MODEL` /
+`EXAMIFY_CODEX_MODEL`, else the CLI's own (`default` in the manifest); a
+10-minute deadline (`CLI_PROVIDER_TIMEOUT_MS`). Both run through
+`providers/command.ts` (shared with the local command: abort / deadline kill the
+process group). Local HTTP sends `--model`, else `EXAMIFY_LLM_MODEL`, else `local`
+(`GenerateProvider.modelEnv`). The local transport (command / endpoint) is part of
+the cacheKey (`GenerateProvider.transport`; absent for every other provider, so their
+keys are unchanged), so one transport never serves the other's cached IR; wizard
+Local command also drops `EXAMIFY_LLM_MODEL`, which the command never gets. The
+command wins when both settings are set; `--local-transport endpoint|command` keeps
+only that one's settings (`localTransportEnv`, the same filter the wizard's Local
+modes use).
 `emit` is dry-run by default;
 `--apply` writes the layer's `content/generated/` (public
 subjects/questions + server-only keys, `0600` in a `0700` folder). Keys stay
@@ -693,6 +723,41 @@ chosen, answer }`, free-text `{ type:'free', id, q, response, maxScore, score, s
   progress/parent views are authenticated-only, so they have no public-route Playwright smoke.
 
 ## Content + grading invariants
+
+- **Agent CLIs get nothing but the request.** `claude-cli` / `codex-cli` run with
+  no tools (`--tools ""`; Codex: `--sandbox read-only`, shell / apps / plugins /
+  browser / image features off, `web_search="disabled"`, `--ignore-user-config`),
+  in an empty private `0700` temp folder (`safeTempRoot` in `temp-root.ts`, which
+  PDF page rasterizing also uses: the system temp folder, else `/tmp`, whichever
+  realpath is outside every Examify checkout, so a `TMPDIR` pointing into it
+  changes nothing; never the checkout, so no project
+  `CLAUDE.md` or settings load; removed afterwards), with no saved session
+  (`--no-session-persistence` / `--ephemeral`, `--strict-mcp-config`), none of the
+  service user's own customizations (Claude: `--setting-sources project`, the
+  project being that empty folder, plus `CLAUDE_CODE_SAFE_MODE=1`, so no user
+  `CLAUDE.md`, hooks, plugins or skills: a `UserPromptSubmit` hook would otherwise
+  get the untrusted study text on stdin; Codex: a private per-run `CODEX_HOME`
+  in the run folder holding only a `0600` copy of the user's `auth.json`
+  (`stageCodexHome`), because `--ignore-user-config` skips only `config.toml`:
+  no global `AGENTS.md`, skills, rules or hooks, and Codex's SQLite state, logs
+  and installation id go with the run folder; plus
+  `skills.include_instructions=false`, so not even its built-in skill list. A
+  sign-in Codex refreshed during the run is copied back to the user's
+  `auth.json`, atomically, only when it is a JSON object and that file still
+  holds what was staged, never creating one; refresh tokens rotate, so dropping
+  it would sign the user out) and only the
+  `agentCliEnv` allowlist (PATH, HOME, locale, XDG, proxy / CA, Claude's config
+  dir, the headless tokens; `TMPDIR` / `TMP` / `TEMP` are replaced by the
+  private run folder, never the host's; `CODEX_HOME` is the private one). The
+  CLI's own folder (`CLAUDE_CONFIG_DIR` / `CODEX_HOME`, else `~/.claude` /
+  `~/.codex`) inside an Examify checkout, on realpaths (Codex: or its
+  `auth.json` links into one), is refused before anything runs
+  (`agentCliHomeOutsideCheckout`, a `command` failure): Claude Code writes its
+  state there and Codex's refreshed sign-in goes back there.
+  Never add Examify secrets,
+  `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` to that allowlist (the `test` sentinel
+  would also break the CLI's own sign-in), and never grant file, command or web
+  tools: study files are untrusted input.
 
 These are non-negotiable. Don't "fix" them out.
 

@@ -24,9 +24,11 @@ import {
   isAuthoritativeCatalogInput,
   hasExistingBankIr,
   loadIrFiles,
+  mergeRepoEnvFiles,
   planEmit,
   plannedInsideFamilyGenerated,
   publicQuestionIds,
+  resolveAgentCliBinary,
   resolveIrFiles,
   resolveSubjectSources,
   SUBJECT_ID_RE,
@@ -42,13 +44,13 @@ import { SAMPLE_QUESTIONS, SAMPLE_SUBJECTS } from '@/lib/exam/data';
 import { GENERATED_SUBJECTS } from '@/lib/exam/generated-public';
 import { loadLivePublicBank } from '@/lib/exam/live-bank.server';
 import { gradingStubAllowed } from '@/lib/grading';
-import { env } from '@/lib/env';
 import {
   envStoreSecretConfigured,
   envStoreSecretHostManaged,
   envStoreSecretLiveTest,
   envStoreSecretWriteBlocked,
   envStoreSecretPresent,
+  getEnvStoreRoot,
 } from '@/lib/env-store';
 import { getMembershipForUser } from '@/lib/households';
 import { findRepoRoot } from '@/lib/repo-root';
@@ -91,6 +93,7 @@ export {
   onboardingSourceCountLabel,
   onboardingSubjectIrRel,
   onboardingSubjectsArg,
+  localTransportForOnboardingAiMode,
   providerForOnboardingAiMode,
 } from '@/lib/onboarding-types';
 export { getOnboardingContentRoot, setOnboardingContentRootForTests } from '@/lib/content-root';
@@ -466,6 +469,15 @@ function liveSubjectSummaries(root: string): OnboardingLiveSubject[] {
   });
 }
 
+/**
+ * The environment wizard generate runs with: this process's env, with unset
+ * keys filled from the checkout `.env` / `.env.local` (the env store). Local
+ * endpoint / command settings and the Claude Code / Codex binary are read here.
+ */
+export function onboardingHostEnv(): Record<string, string | undefined> {
+  return mergeRepoEnvFiles(getEnvStoreRoot(), process.env);
+}
+
 function aiFlags(): {
   anthropicConfigured: boolean;
   openaiConfigured: boolean;
@@ -477,9 +489,14 @@ function aiFlags(): {
   openaiHostManaged: boolean;
   anthropicWriteBlocked: boolean;
   openaiWriteBlocked: boolean;
-  localAgentConfigured: boolean;
+  localHttpConfigured: boolean;
+  localModelConfigured: boolean;
+  localCmdConfigured: boolean;
+  claudeCliFound: boolean;
+  codexCliFound: boolean;
   gradingStubActive: boolean;
 } {
+  const hostEnv = onboardingHostEnv();
   return {
     // Both keys: wizard + install.sh write the same repo-root `.env`
     // (findRepoRoot) and update process.env. OPENAI_API_KEY is not in
@@ -495,9 +512,12 @@ function aiFlags(): {
     openaiHostManaged: envStoreSecretHostManaged('OPENAI_API_KEY'),
     anthropicWriteBlocked: envStoreSecretWriteBlocked('ANTHROPIC_API_KEY'),
     openaiWriteBlocked: envStoreSecretWriteBlocked('OPENAI_API_KEY'),
-    localAgentConfigured: Boolean(
-      env.EXAMIFY_LLM_BASE_URL || process.env.EXAMIFY_INGEST_LOCAL_CMD?.trim(),
-    ),
+    // Same merged env generate gets, so "Configured" / "Found" match what runs.
+    localHttpConfigured: Boolean(hostEnv.EXAMIFY_LLM_BASE_URL?.trim()),
+    localModelConfigured: Boolean(hostEnv.EXAMIFY_LLM_MODEL?.trim()),
+    localCmdConfigured: Boolean(hostEnv.EXAMIFY_INGEST_LOCAL_CMD?.trim()),
+    claudeCliFound: resolveAgentCliBinary('claude', hostEnv) !== null,
+    codexCliFound: resolveAgentCliBinary('codex', hostEnv) !== null,
     // Same gate as gradeFreeText, so the wizard's marking copy matches what
     // the grader will actually do with the sentinel on this host.
     gradingStubActive: envStoreSecretLiveTest('ANTHROPIC_API_KEY') && gradingStubAllowed(),

@@ -174,6 +174,41 @@ describe('examify-ingest generate parse', () => {
     const parsed = parseArgs(['emit', '--provider', 'test', 'content/subjects']);
     expect('error' in parsed).toBe(true);
   });
+
+  it('takes --local-transport endpoint|command with --provider local only', () => {
+    const parsed = parseArgs([
+      'generate',
+      '--provider',
+      'local',
+      '--local-transport',
+      'endpoint',
+      'content/subjects/plants',
+    ]);
+    expect('error' in parsed).toBe(false);
+    if (!('error' in parsed)) expect(parsed.localTransport).toBe('endpoint');
+    const plain = parseArgs(['generate', '--provider', 'local', 'content/subjects/plants']);
+    if (!('error' in plain)) expect(plain.localTransport).toBeNull();
+
+    const bad = parseArgs([
+      'generate',
+      '--provider',
+      'local',
+      '--local-transport=http',
+      'content/subjects/plants',
+    ]);
+    expect(bad).toEqual({ error: '--local-transport must be endpoint or command (got http)' });
+    const notLocal = parseArgs([
+      'generate',
+      '--provider',
+      'openai',
+      '--local-transport',
+      'command',
+      'content/subjects/plants',
+    ]);
+    expect(notLocal).toEqual({ error: '--local-transport is only valid with --provider local' });
+    const onEmit = parseArgs(['emit', '--local-transport', 'command', 'content/subjects']);
+    expect('error' in onEmit).toBe(true);
+  });
 });
 
 describe('examify-ingest generate P0 gates', () => {
@@ -1093,6 +1128,44 @@ describe('examify-ingest generate', () => {
     expect(written).not.toContain('sk-ant-');
   });
 
+  it('--local-transport uses only that transport when the host sets both', async () => {
+    const root = examifyRepo();
+    const marker = path.join(root, 'command-ran');
+    const script = path.join(root, 'local-bank.cjs');
+    writeFileSync(
+      script,
+      "const fs = require('fs'); fs.writeFileSync(process.argv[2], ''); process.stdin.resume(); process.stdin.on('end', () => process.stdout.write(fs.readFileSync(process.argv[3], 'utf8')));\n",
+    );
+    const bankPath = path.join(root, 'local-bank.json');
+    writeFileSync(bankPath, JSON.stringify(realBankIr('plants')));
+    const env = {
+      EXAMIFY_INGEST_LOCAL_CMD: `"${process.execPath}" "${script}" "${marker}" "${bankPath}"`,
+      // Nothing listens here: reaching it is a fast `unreachable` failure.
+      EXAMIFY_LLM_BASE_URL: 'http://127.0.0.1:9',
+      EXAMIFY_LLM_MODEL: 'llama3.2-vision',
+    };
+    const run = async (extra: string[]) => {
+      const streams = io();
+      streams.handle.cwd = root;
+      streams.handle.env = { ...env };
+      const code = await runCliAsync(
+        ['generate', '--provider', 'local', ...extra, '--dry-run-ir', 'content/subjects/plants'],
+        streams.handle,
+      );
+      return { code, err: streams.err() };
+    };
+
+    // Endpoint: the command never runs, even though it is set.
+    const endpoint = await run(['--local-transport', 'endpoint']);
+    expect(endpoint.code).toBe(1);
+    expect(existsSync(marker)).toBe(false);
+
+    // Command: runs, and the endpoint is not used.
+    const command = await run(['--local-transport', 'command']);
+    expect(command.code).toBe(0);
+    expect(existsSync(marker)).toBe(true);
+  });
+
   it('local provider fails closed without EXAMIFY_INGEST_LOCAL_CMD or EXAMIFY_LLM_BASE_URL', async () => {
     const root = examifyRepo();
     const streams = io();
@@ -1213,6 +1286,90 @@ describe('examify-ingest generate', () => {
     expect(fetchCalls).toBe(1);
     expect(result.wroteIr).toBe(true);
     expect(result.manifest.provider).toBe('local');
+  });
+
+  it('local endpoint sends EXAMIFY_LLM_MODEL as the model; --model wins over it', async () => {
+    const bank = realBankIr('plants');
+    bank.difficulties.easy[0]!.provenance = { pdf: 'notes.txt', locator: 'p1' };
+    const models: string[] = [];
+    const fetchModel = async (_input: unknown, init?: RequestInit) => {
+      models.push((JSON.parse(String(init?.body)) as { model: string }).model);
+      return new Response(
+        JSON.stringify({ choices: [{ message: { content: JSON.stringify(bank) } }] }),
+        { status: 200 },
+      );
+    };
+    const run = (model?: string) => {
+      const root = examifyRepo();
+      return generateSubject({
+        repoRoot: root,
+        subject: bank.subject,
+        subjectDir: path.join(root, 'content/subjects/plants'),
+        sources: resolveSubjectSources(root, 'plants', path.join(root, 'content/subjects/plants')),
+        provider: 'local',
+        seed: 0,
+        dryRunIr: true,
+        ...(model ? { model } : {}),
+        env: { EXAMIFY_LLM_BASE_URL: 'http://127.0.0.1:9', EXAMIFY_LLM_MODEL: 'llama3.2-vision' },
+        fetch: fetchModel as typeof fetch,
+      });
+    };
+    expect((await run()).manifest.model).toBe('llama3.2-vision');
+    expect((await run('qwen2.5vl')).manifest.model).toBe('qwen2.5vl');
+    expect(models).toEqual(['llama3.2-vision', 'qwen2.5vl']);
+  });
+
+  it('local command and local endpoint never share cached IR (transport is in the cacheKey)', async () => {
+    const root = examifyRepo();
+    const subjectDir = path.join(root, 'content/subjects/plants');
+    const fromCommand = realBankIr('plants');
+    fromCommand.difficulties.easy[0]!.q = 'Written by the local command?';
+    // A fixed script that prints the bank file named on its command line.
+    const script = path.join(root, 'local-bank.cjs');
+    writeFileSync(
+      script,
+      "const fs = require('fs'); process.stdin.resume(); process.stdin.on('end', () => process.stdout.write(fs.readFileSync(process.argv[2], 'utf8')));\n",
+    );
+    const bankPath = path.join(root, 'local-bank.json');
+    writeFileSync(bankPath, JSON.stringify(fromCommand));
+    const endpoint = {
+      EXAMIFY_LLM_BASE_URL: 'http://127.0.0.1:9',
+      EXAMIFY_LLM_MODEL: 'llama3.2-vision',
+    };
+    const base = {
+      repoRoot: root,
+      subject: fromCommand.subject,
+      subjectDir,
+      sources: resolveSubjectSources(root, 'plants', subjectDir),
+      provider: 'local' as const,
+      seed: 0,
+    };
+    // Command run persists its IR, which fills the IR cache.
+    const viaCommand = await generateSubject({
+      ...base,
+      env: { ...endpoint, EXAMIFY_INGEST_LOCAL_CMD: `node "${script}" "${bankPath}"` },
+    });
+    expect(viaCommand.bank.difficulties.easy[0]?.q).toBe('Written by the local command?');
+
+    const fromEndpoint = realBankIr('plants');
+    fromEndpoint.difficulties.easy[0]!.q = 'Written by the endpoint?';
+    let fetchCalls = 0;
+    const viaEndpoint = await generateSubject({
+      ...base,
+      env: endpoint,
+      dryRunIr: true,
+      fetch: (async () => {
+        fetchCalls += 1;
+        return new Response(
+          JSON.stringify({ choices: [{ message: { content: JSON.stringify(fromEndpoint) } }] }),
+          { status: 200 },
+        );
+      }) as typeof fetch,
+    });
+    expect(fetchCalls).toBe(1);
+    expect(viaEndpoint.cacheHit).toBe(false);
+    expect(viaEndpoint.cacheKey).not.toBe(viaCommand.cacheKey);
+    expect(viaEndpoint.bank.difficulties.easy[0]?.q).toBe('Written by the endpoint?');
   });
 
   it('local CMD stdin includes full source text/bytes, not hashes-only', async () => {

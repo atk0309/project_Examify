@@ -130,7 +130,7 @@ images in the subject folder, plus PDFs and those same extensions under
 `content/source-pdfs/<id>/` and standalone `content/source-pdfs/<id>.{pdf,png,jpg,jpeg,webp,txt,md}`
 (`bank.ir.json` / `subject.json` are skipped). Uploaded PDF magic-byte checks
 stay `%PDF` — notes are text sources, not PDFs. `--provider` is required
-(`anthropic` / `openai` / `local` / `test`). Default `--seed` is `0` and is
+(`anthropic` / `openai` / `local` / `claude-cli` / `codex-cli` / `test`). Default `--seed` is `0` and is
 recorded in the run manifest. A tree generate of `content/subjects` still needs
 a source file per subject — biology is hand-authored and has none, so a tree
 generate of `content/subjects` fails closed and hints to target
@@ -159,7 +159,8 @@ messaging when a real key is required; `--force` stays fail-closed. The test
 provider still runs without keys.
 
 It still rasterizes missing
-PDF pages into a temp directory when `pdftoppm` is available so the preview
+PDF pages into a temp directory (`safeTempRoot`: outside every Examify
+checkout, even when `TMPDIR` points into one) when `pdftoppm` is available so the preview
 matches a persist run; it does not populate `.examify-ingest/cache/pages/`.
 The locked generate prompt is `prompts/v2/generate-bank.md`. The unused v1
 draft was removed so a stale untrusted-source framing cannot be loaded.
@@ -183,10 +184,88 @@ for CI. `local` needs `EXAMIFY_INGEST_LOCAL_CMD` (quoted executable + args;
 stdin JSON includes full source text / `dataBase64` bytes plus page-image
 bytes — never hashes-only) or `EXAMIFY_LLM_BASE_URL`
 (OpenAI-compatible `/v1/chat/completions` with the same multimodal user
-content as `--provider openai`: fenced text + images / page images).
+content as `--provider openai`: fenced text + images / page images). The
+command wins when both are set; `--local-transport endpoint|command` uses
+only that one (the other's settings are dropped, as in the wizard's Local
+endpoint / Local command modes). The endpoint gets `--model`, else
+`EXAMIFY_LLM_MODEL`, else `local`. The transport in use (`command` /
+`endpoint`) is part of the `cacheKey`, so a bank cached by one is never
+served to the other.
+
+`claude-cli` runs Claude Code and `codex-cli` runs Codex with their own
+sign-in (no key env). Both are found via `EXAMIFY_CLAUDE_BIN` /
+`EXAMIFY_CODEX_BIN` (absolute path, or a name on `PATH`), else `PATH`, else
+`~/.local/bin` (and `~/.claude/local` for Claude Code); missing →
+`CliNotFoundError` before anything runs. On Windows only a `.exe` counts: an
+npm `claude.cmd` / `codex.cmd` shim is a batch file that `spawn` cannot start
+without a shell, so point `EXAMIFY_CLAUDE_BIN` / `EXAMIFY_CODEX_BIN` at the
+CLI's own `.exe` (a full path, or a name such as `codex.exe` on `PATH`).
+Windows env names are case-insensitive (`Path`, `SystemRoot`), as Windows
+itself treats them: merging the repo `.env` files folds every name to upper
+case, and the host env still wins over the files. The model is `--model`, else
+`EXAMIFY_CLAUDE_MODEL` / `EXAMIFY_CODEX_MODEL`, else the CLI's own (recorded
+as `default`). Each run (`providers/command.ts`, shared with the local
+command) has a 10-minute deadline (`CLI_PROVIDER_TIMEOUT_MS`), an empty
+private `0700` temp folder as its working directory (removed afterwards; the
+system temp folder, else `/tmp`, whichever resolves outside every Examify
+checkout, so a `TMPDIR` pointing into the checkout is skipped),
+and an allowlisted environment (`agentCliEnv`: PATH, HOME, locale, XDG,
+proxy / CA, `TMPDIR` / `TMP` / `TEMP` set to the run folder, plus
+`CLAUDE_CONFIG_DIR` / `CLAUDE_CODE_OAUTH_TOKEN` or `CODEX_API_KEY`) — never
+`ANTHROPIC_API_KEY`, `OPENAI_API_KEY` or any other Examify secret. Cancel and
+the deadline kill the whole process group. The CLI's own folder
+(`CLAUDE_CONFIG_DIR` / `CODEX_HOME`, else `~/.claude` / `~/.codex`) inside an
+Examify checkout (on realpaths; for Codex, also an `auth.json` that links
+into one) is refused before anything runs, as a `command` failure.
+
+Claude Code runs as
+
+```bash
+claude -p --input-format stream-json --output-format stream-json --verbose \
+  --tools "" --strict-mcp-config --setting-sources project \
+  --no-session-persistence --system-prompt <prompt> [--model <m>]
+# env: CLAUDE_CODE_SAFE_MODE=1 (plus the agentCliEnv allowlist)
+```
+
+Stdin is one user message with the Anthropic provider's content blocks (PDFs
+as documents, so no rasterizer needed). The last `result` event is the answer;
+`is_error` with `api_error_status` is an `http` failure, a sign-in message is
+`auth`, and no result is `command` (with the CLI's stderr). The service
+user's own settings and `CLAUDE.md` never load (`--setting-sources project`;
+the project is the empty private folder), and safe mode also turns off
+plugins and skills (an older Claude Code ignores the variable). Needs Claude
+Code 2.x (`--tools`, `--setting-sources`).
+
+Codex runs as
+
+```bash
+codex exec --json --sandbox read-only --skip-git-repo-check --ephemeral \
+  --ignore-user-config --cd <tmp>/work --output-last-message <tmp>/last-message.txt \
+  -c features.shell_tool=false -c features.unified_exec=false … \
+  -c 'web_search="disabled"' -c skills.include_instructions=false \
+  [--model <m>] [--image <file> …]   # prompt on stdin
+# env: CODEX_HOME=<tmp>/home (plus the agentCliEnv allowlist)
+```
+
+`--ignore-user-config` skips only `config.toml`, so each run gets a private
+`CODEX_HOME` (`stageCodexHome`) holding only a `0600` copy of the user's
+`auth.json` (`CODEX_HOME`, else `~/.codex`): the global `AGENTS.md`, skills and
+rules never load, and Codex's SQLite state, logs and installation id are
+removed with the run folder. A sign-in Codex refreshed during the run (refresh
+tokens rotate) is copied back to the user's `auth.json` atomically, only when
+it is a JSON object and that file still holds what was staged; no `auth.json`
+is ever created there.
+
+Image sources and PDF page images are attached as files; PDF bytes are not,
+so a PDF-only subject needs `pdftoppm` (`UnreadableSourcesError`).
+`turn.failed` with `status NNN` is `http`, a sign-in message is `auth`.
+Unknown feature names only warn, so the list (`CODEX_DISABLED_FEATURES`:
+shell, apps, plugins, browser, image tools) is safe across Codex versions.
+
 Temperature is `0` when the remote API allows it. Anthropic's Messages API
 has no seed field (`seedHonored: false` on the manifest); the seed still
-goes in the user message and `cacheKey`.
+goes in the user message and `cacheKey`. The agent CLIs honour neither
+(`seedHonored: false`).
 
 Every successful (non-dry-run) generate run writes a `RunManifest` under
 `.examify-ingest/runs/` (gitignored): provider, model, promptVersion (`v2`),
@@ -200,9 +279,10 @@ cannot replay a hashes-only cache entry. The page-image list is the set
 identity — a derived extra field would bust every existing cache key.
 PDF page images, when rasterized with `pdftoppm`, are reused from
 `.examify-ingest/cache/pages/<pdf-sha256>/` and framed as untrusted data, same
-as source files. OpenAI-compatible generate (`openai` and local HTTP) cannot
-inline raw PDF bytes: if the only sources are PDFs and no page images were
-rasterized, the run fails closed. Provider HTTP/CMD calls use a 180s deadline,
+as source files. OpenAI-compatible generate (`openai` and local HTTP) and Codex
+cannot inline raw PDF bytes: if the only sources are PDFs and no page images were
+rasterized, the run fails closed. Provider HTTP/CMD calls use a 180s deadline
+(`claude-cli` / `codex-cli`: 10 minutes, `CLI_PROVIDER_TIMEOUT_MS`),
 optionally combined with `generateSubject({ signal })` via `AbortSignal.any`.
 Abort throws `GenerateAbortedError` and writes no IR, IR cache, page-raster
 cache, or run manifest.
@@ -373,15 +453,19 @@ or run manifest. `--dry-run-ir` still writes nothing durable.
 Failures are typed so callers never parse messages (all exported from
 `examify-ingest/generate`):
 
-- `ProviderFailureError` — `kind` is `http` (non-2xx; `status` set),
-  `timeout` (the 180s deadline), `unreachable` (no answer: network, or a
-  local command that could not start), `output` (an answer that is not usable
-  BankIR, including cached output that fails validate) or `command` (a local
-  command that exited non-zero).
+- `ProviderFailureError` — `kind` is `http` (non-2xx, or an agent CLI's API
+  error with its status; `status` set), `timeout` (the 180s deadline; 10
+  minutes for `claude-cli` / `codex-cli`), `unreachable` (no answer: network,
+  or a local command / agent CLI that could not start), `output` (an answer
+  that is not usable BankIR, including cached output that fails validate),
+  `command` (a local command or agent CLI that exited non-zero or reported an
+  error) or `auth` (Claude Code / Codex not signed in, with no HTTP status).
+- `CliNotFoundError` — a `ProviderConfigError`: the `claude` / `codex` binary
+  was not found (`cli` names which); nothing ran.
 - `SampleIdCollisionError` — generated ids hit the frozen sample bank without
   `replaceSample`; `ids` lists them. No BankIR written.
 - `UnreadableSourcesError` — the provider cannot read any source
-  (OpenAI-compatible, PDF-only, no rasterized pages).
+  (OpenAI-compatible or Codex, PDF-only, no rasterized pages).
 
 The HTTP call and reading its body share one deadline / cancel boundary, so a
 body that stalls or drops part-way is typed like a failed request. CLI messages

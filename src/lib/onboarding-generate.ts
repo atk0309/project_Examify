@@ -3,19 +3,20 @@ import 'server-only';
 import path from 'node:path';
 import * as ingestGenerate from 'examify-ingest/generate';
 import { getOnboardingContentRoot, isFamilyWritePathSafe } from '@/lib/content-root';
-import { getEnvStoreRoot } from '@/lib/env-store';
 import {
   BANK_IR_FILE,
   isSampleSubjectId,
   isValidSubjectId,
   listOnboardingSubjects,
   normalizeSubjectId,
+  onboardingHostEnv,
   SUBJECT_LABEL_MAX,
   SUBJECTS_REL,
 } from '@/lib/onboarding';
 import {
   generateIrWriteLabel,
   type OnboardingGenerateProvider,
+  type OnboardingLocalTransport,
   type OnboardingGenerateResult,
   type OnboardingIrOverwriteDecision,
 } from '@/lib/onboarding-types';
@@ -29,6 +30,7 @@ export type GenerateOnboardingReason =
   | 'missing'
   | 'missing_key'
   | 'missing_local'
+  | 'missing_cli'
   | 'empty_sources'
   | 'sources_unreadable'
   | 'sample_collision'
@@ -241,6 +243,8 @@ function providerFailureReason(
       return 'provider_output_invalid';
     case 'command':
       return 'provider_error';
+    case 'auth':
+      return 'provider_auth';
   }
 }
 
@@ -259,6 +263,9 @@ function mapGenerateError(error: unknown): GenerateOnboardingError {
     return needsConfirmResult(error.irPath);
   }
   const message = error instanceof Error ? error.message : String(error);
+  if (error instanceof ingestGenerate.CliNotFoundError) {
+    return { ok: false, reason: 'missing_cli', message };
+  }
   if (error instanceof ingestGenerate.ProviderConfigError) {
     if (message.includes('EXAMIFY_INGEST_LOCAL_CMD') || message.includes('EXAMIFY_LLM_BASE_URL')) {
       return { ok: false, reason: 'missing_local', message };
@@ -294,6 +301,18 @@ function mapGenerateError(error: unknown): GenerateOnboardingError {
     return { ok: false, reason: 'missing', message };
   }
   return { ok: false, reason: 'generate_failed', message };
+}
+
+/**
+ * Generate's environment. Local modes keep only their own transport
+ * (`localTransportEnv`, the same filter as the CLI's `--local-transport`): the
+ * ingest `local` provider runs `EXAMIFY_INGEST_LOCAL_CMD` whenever it is set.
+ */
+function onboardingGenerateEnv(
+  transport: OnboardingLocalTransport | undefined,
+): Record<string, string | undefined> {
+  const env = onboardingHostEnv();
+  return transport ? ingestGenerate.localTransportEnv(env, transport) : env;
 }
 
 function publicGenerateResult(
@@ -340,6 +359,8 @@ function publicGenerateResult(
 export async function generateOnboardingSubject(input: {
   subjectId: string;
   provider: OnboardingGenerateProvider;
+  /** Local modes: the one transport the admin chose (the other setting is hidden). */
+  localTransport?: OnboardingLocalTransport;
   seed: number;
   root?: string;
   cancelToken?: string;
@@ -358,6 +379,7 @@ export async function generateOnboardingSubject(input: {
 async function generateOnboardingSubjectUnlocked(input: {
   subjectId: string;
   provider: OnboardingGenerateProvider;
+  localTransport?: OnboardingLocalTransport;
   seed: number;
   root?: string;
   cancelToken?: string;
@@ -411,6 +433,16 @@ async function generateOnboardingSubjectUnlocked(input: {
     }
   }
 
+  // Keys live in the checkout `.env` (env store), not the family data folder.
+  const env = onboardingGenerateEnv(input.localTransport);
+  if (input.localTransport === 'endpoint' && !env[ingestGenerate.LOCAL_MODEL_ENV]?.trim()) {
+    return {
+      ok: false,
+      reason: 'missing_local',
+      message: `local endpoint needs ${ingestGenerate.LOCAL_MODEL_ENV}`,
+    };
+  }
+
   const subjectInput = path.join(SUBJECTS_REL, subjectId);
   let target;
   try {
@@ -437,8 +469,7 @@ async function generateOnboardingSubjectUnlocked(input: {
       sources: target.sources,
       provider: input.provider,
       seed: input.seed,
-      // Keys live in the checkout `.env` (env store), not the family data folder.
-      env: ingestGenerate.mergeRepoEnvFiles(getEnvStoreRoot(), process.env),
+      env,
       replaceSample,
       // Preview only — wizard owns the IR write after cancel + catalog checks.
       dryRunIr: true,

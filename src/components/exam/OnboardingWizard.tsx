@@ -29,12 +29,17 @@ import {
   SUBJECT_ICON_OPTIONS,
   confirmOnboardingIrOverwrite,
   generateIrWriteLabel,
+  isOnboardingAgentCliMode,
+  localTransportForOnboardingAiMode,
+  onboardingAgentCliSetupNote,
+  onboardingAiCapabilityLine,
   onboardingGenerateAndEmitCli,
   onboardingGenerateBatchIds,
   onboardingGenerateCancelledNote,
   onboardingGenerateOverwriteSubjects,
   onboardingIngestCli,
   onboardingIrOverwriteConfirmMessage,
+  onboardingModeErrorCopy,
   onboardingPruneConfirmMessage,
   onboardingPruneEntries,
   onboardingSampleCollisionMessage,
@@ -88,13 +93,21 @@ const AI_COPY: Record<OnboardingAiMode, { title: string; body: string }> = {
     title: 'Cloud (OpenAI)',
     body: 'Uses OPENAI_API_KEY from the env store (not Next env.ts). Never NEXT_PUBLIC_*. Generate writes BankIR only.',
   },
+  'claude-cli': {
+    title: 'Claude Code (your Claude plan)',
+    body: 'Runs claude -p on this server with its own sign-in, so no API key. It gets no tools and none of this server’s secrets. Generate writes BankIR only.',
+  },
+  'codex-cli': {
+    title: 'Codex (your ChatGPT plan)',
+    body: 'Runs codex exec on this server with its own sign-in, so no API key. Read-only, with commands and web search off, and none of this server’s secrets. Generate writes BankIR only.',
+  },
   'local-agent': {
-    title: 'Local agent',
-    body: 'Uses EXAMIFY_LLM_BASE_URL (OpenAI-compatible). Generate writes BankIR only.',
+    title: 'Local endpoint',
+    body: 'Uses EXAMIFY_LLM_BASE_URL (OpenAI-compatible, e.g. Ollama or LM Studio) and the model named in EXAMIFY_LLM_MODEL. Generate writes BankIR only.',
   },
   'local-cli': {
-    title: 'Local CLI / lib',
-    body: 'Uses EXAMIFY_INGEST_LOCAL_CMD. Generate writes BankIR only. Same local provider as the agent mode.',
+    title: 'Local command',
+    body: 'Uses EXAMIFY_INGEST_LOCAL_CMD: your command reads a JSON request on stdin and prints BankIR. Generate writes BankIR only.',
   },
   'skip-stub': {
     title: 'Skip / test stub',
@@ -113,7 +126,9 @@ function suggestSubjectId(label: string): string {
     .slice(0, 40);
 }
 
-function errorCopy(error: OnboardingActionError): string {
+function errorCopy(error: OnboardingActionError, aiMode?: OnboardingAiMode | null): string {
+  const modeCopy = onboardingModeErrorCopy(error.reason, aiMode);
+  if (modeCopy) return modeCopy;
   switch (error.reason) {
     case 'forbidden':
       return 'Only the household admin can continue content setup.';
@@ -153,6 +168,8 @@ function errorCopy(error: OnboardingActionError): string {
       return 'This provider needs a real API key in the env store (fail closed — no stub).';
     case 'missing_local':
       return 'Local generate needs EXAMIFY_INGEST_LOCAL_CMD and/or EXAMIFY_LLM_BASE_URL.';
+    case 'missing_cli':
+      return 'The AI tool for this mode was not found on this server. Nothing was written.';
     case 'empty_sources':
       return 'No source files for that subject yet. Upload a PDF on the Files step, or add notes.txt to the subject’s folder in this server’s family data folder.';
     case 'sources_unreadable':
@@ -198,9 +215,14 @@ function modeConfigured(mode: OnboardingAiMode, snapshot: OnboardingSnapshot): b
       return snapshot.anthropicConfigured;
     case 'cloud-openai':
       return snapshot.openaiConfigured;
+    case 'claude-cli':
+      return snapshot.claudeCliFound;
+    case 'codex-cli':
+      return snapshot.codexCliFound;
     case 'local-agent':
+      return snapshot.localHttpConfigured && snapshot.localModelConfigured;
     case 'local-cli':
-      return snapshot.localAgentConfigured;
+      return snapshot.localCmdConfigured;
     case 'skip-stub':
       return true;
   }
@@ -291,7 +313,7 @@ export function OnboardingWizard({
     if (result.reason === 'needs_confirm') {
       return false;
     }
-    setError(errorCopy(result));
+    setError(errorCopy(result, snapshot.aiMode));
     setIssues(result.issues ?? []);
     return false;
   };
@@ -659,7 +681,7 @@ export function OnboardingWizard({
                         messages.push(onboardingSampleCollisionMessage(sampleCollisions));
                       }
                       if (failure && failure.reason !== 'needs_confirm') {
-                        messages.push(errorCopy(failure));
+                        messages.push(errorCopy(failure, snapshot.aiMode));
                       }
                       if (messages.length > 0) setError(messages.join(' '));
                     } finally {
@@ -1627,12 +1649,16 @@ function AiStep({
     <div className="wizard-panel" data-testid="wizard-ai">
       <p className="login-fine" data-testid="wizard-ai-store">
         Anthropic {snapshot.anthropicConfigured ? 'configured' : 'not configured'} · OpenAI{' '}
-        {snapshot.openaiConfigured ? 'configured' : 'not configured'} · Local{' '}
-        {snapshot.localAgentConfigured ? 'configured' : 'not configured'}
+        {snapshot.openaiConfigured ? 'configured' : 'not configured'} · Claude Code{' '}
+        {snapshot.claudeCliFound ? 'found' : 'not found'} · Codex{' '}
+        {snapshot.codexCliFound ? 'found' : 'not found'} · Local endpoint{' '}
+        {snapshot.localHttpConfigured ? 'configured' : 'not configured'} · Local command{' '}
+        {snapshot.localCmdConfigured ? 'configured' : 'not configured'}
       </p>
       <p className="login-fine" data-testid="wizard-ai-sends">
         When you generate, the subject’s source files (PDFs, notes, images) go to the mode you pick:
-        Anthropic or OpenAI for cloud, your own endpoint or command for local. The test stub sends
+        Anthropic or OpenAI with an API key, Claude Code or Codex with their own sign-in (they send
+        them to Anthropic or OpenAI), or your own endpoint or command for local. The test stub sends
         nothing.
       </p>
       <p className="login-fine" data-testid="wizard-ai-grading">
@@ -1646,6 +1672,7 @@ function AiStep({
         {(Object.keys(AI_COPY) as OnboardingAiMode[]).map((mode) => {
           const selected = snapshot.aiMode === mode;
           const configured = modeConfigured(mode, snapshot);
+          const agentCli = isOnboardingAgentCliMode(mode);
           return (
             <button
               key={mode}
@@ -1659,9 +1686,12 @@ function AiStep({
             >
               <span className="wizard-mode-head">
                 <strong>{AI_COPY[mode].title}</strong>
-                {configured ? <span className="wizard-mode-badge">Configured</span> : null}
+                {configured ? (
+                  <span className="wizard-mode-badge">{agentCli ? 'Found' : 'Configured'}</span>
+                ) : null}
               </span>
               <span>{AI_COPY[mode].body}</span>
+              <span data-testid={`wizard-ai-${mode}-caps`}>{onboardingAiCapabilityLine(mode)}</span>
             </button>
           );
         })}
@@ -1688,6 +1718,28 @@ function AiStep({
             onAnthropicKey(data);
           }}
         />
+      ) : null}
+
+      {isOnboardingAgentCliMode(snapshot.aiMode) ? (
+        <p className="wizard-callout" data-testid="wizard-agent-cli-setup">
+          {onboardingAgentCliSetupNote(
+            snapshot.aiMode,
+            snapshot.aiMode === 'claude-cli' ? snapshot.claudeCliFound : snapshot.codexCliFound,
+          )}
+        </p>
+      ) : null}
+
+      {snapshot.aiMode === 'local-agent' &&
+      !(snapshot.localHttpConfigured && snapshot.localModelConfigured) ? (
+        <p className="wizard-callout" data-testid="wizard-local-setup">
+          {onboardingModeErrorCopy('missing_local', 'local-agent')}
+        </p>
+      ) : null}
+
+      {snapshot.aiMode === 'local-cli' && !snapshot.localCmdConfigured ? (
+        <p className="wizard-callout" data-testid="wizard-local-setup">
+          {onboardingModeErrorCopy('missing_local', 'local-cli')}
+        </p>
       ) : null}
 
       {snapshot.aiMode === 'cloud-openai' ? (
@@ -1778,7 +1830,12 @@ function GeneratePanel({
     <div className="wizard-generate-panel">
       <PowerUserCommands
         testId="wizard-cli-generate"
-        commands={onboardingGenerateAndEmitCli(provider, generateSeed, snapshot.dataDirDisplay)}
+        commands={onboardingGenerateAndEmitCli(
+          provider,
+          generateSeed,
+          snapshot.dataDirDisplay,
+          snapshot.aiMode ? localTransportForOnboardingAiMode(snapshot.aiMode) : null,
+        )}
       />
       {sampleIdSubjects.length > 0 ? (
         <div className="wizard-callout wizard-sample-ids" data-testid="wizard-generate-sample-ids">

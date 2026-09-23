@@ -25,7 +25,9 @@ export function pagesCacheDir(repoRoot: string, pdfSha256: string): string {
  * Page-image identity is the ordered `path#page=sha256` list already in
  * this object. Do not add a derived set-hash field: that would change
  * every cacheKey (including no-page runs) and miss existing
- * `.examify-ingest/cache/ir` entries.
+ * `.examify-ingest/cache/ir` entries. `transport` is only present for a
+ * provider with more than one (local: command vs endpoint), so every
+ * other provider's keys are unchanged.
  */
 export function buildCacheKey(input: {
   promptVersion: string;
@@ -37,6 +39,7 @@ export function buildCacheKey(input: {
   subject: BankIrSubject;
   pageImageHashes: readonly string[];
   pageRasterProfile: string;
+  transport?: string;
 }): string {
   return sha256Bytes(
     stableJson({
@@ -49,6 +52,7 @@ export function buildCacheKey(input: {
       subject: input.subject,
       pageImageHashes: [...input.pageImageHashes],
       pageRasterProfile: input.pageRasterProfile,
+      ...(input.transport ? { transport: input.transport } : {}),
     }),
   );
 }

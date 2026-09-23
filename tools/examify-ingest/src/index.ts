@@ -7,6 +7,7 @@ export {
   DIFFICULTIES,
   SUBJECT_ID_RE,
   GENERATE_PROVIDERS,
+  LOCAL_TRANSPORTS,
   DEFAULT_GENERATE_SEED,
   GENERATE_TEMPERATURE,
   PROMPT_VERSION,
@@ -16,6 +17,7 @@ export {
   type BankIrItem,
   type DifficultyId,
   type GenerateProviderId,
+  type LocalTransport,
   type PublicQuestion,
   type PublicQuestionBank,
   type RunManifest,
@@ -83,3 +85,6 @@ export {
   type WriteFileAtomicOptions,
 } from './write-atomic';
 export { SUBJECT_META_FILE, BANK_IR_FILE } from './sources';
+// Readiness checks only (the wizard's AI step): no generate / provider calls.
+export { resolveAgentCliBinary, type AgentCli } from './providers/agent-cli';
+export { mergeRepoEnvFiles } from './repo-env';
