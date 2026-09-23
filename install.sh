@@ -379,6 +379,12 @@ override_env_source() {
   return 1
 }
 
+# An existing install has at least one of the env files `next start` reads (an
+# install configured only through .env.local counts).
+has_env_config() {
+  [ -f .env ] || [ -f .env.local ] || [ -f .env.production ] || [ -f .env.production.local ]
+}
+
 # On-disk dotenv only, in Next's order (.env.local wins over .env), including
 # an empty assignment that shadows a lower file. Host process env is ignored
 # so a transient ALLOW_LOCAL_OUTBOX=1 on the installer cannot greenlight a
@@ -866,6 +872,17 @@ refuse_bad_disk_data_dir() {
     file="$(disk_env_source EXAMIFY_DATA_DIR)" || file=".env"
     die "${file} has EXAMIFY_DATA_DIR=${raw}, which the app refuses: ${problem}." "Fix it in ${file} and re-run."
   fi
+  # The same value rules for the other two paths (data-dir.ts assertPathValue).
+  raw="$(trim "$DISK_DATABASE_URL_RAW")"
+  if [ -n "$raw" ] && problem="$(data_dir_value_problem "${raw#file:}")"; then
+    file="$(disk_env_source DATABASE_URL)" || file=".env"
+    die "${file} has DATABASE_URL=${raw}, which the app refuses: ${problem}." "Fix it in ${file} and re-run."
+  fi
+  raw="$(trim "$(disk_env_get MAIL_OUTBOX_DIR)")"
+  if [ -n "$raw" ] && problem="$(data_dir_value_problem "$raw")"; then
+    file="$(disk_env_source MAIL_OUTBOX_DIR)" || file=".env"
+    die "${file} has MAIL_OUTBOX_DIR=${raw}, which the app refuses: ${problem}." "Fix it in ${file} and re-run."
+  fi
   if problem="$(data_dir_safety_problem "$ROOT" "$DISK_DATA_DIR")"; then
     die "The kept env files point the family data folder at ${DISK_DATA_DIR} ($(disk_data_dir_origin)): ${problem}." "Fix it and re-run."
   fi
@@ -943,6 +960,9 @@ settle_data_dir() {
   input="$(expand_tilde "$input")"
   if problem="$(data_dir_value_problem "$input")"; then
     die "Family data folder ${input}: ${problem}."
+  fi
+  if [ -n "$WRITE_DATABASE_URL" ] && problem="$(data_dir_value_problem "${WRITE_DATABASE_URL#file:}")"; then
+    die "DATABASE_URL=${WRITE_DATABASE_URL}: ${problem}." "Nothing was written."
   fi
   resolve_data_paths "$ROOT" "$input" "$WRITE_DATABASE_URL"
   if problem="$(data_dir_safety_problem "$ROOT" "$RESOLVED_DATA_DIR")"; then
@@ -1460,8 +1480,8 @@ upgrade_preflight() {
     die "HEAD is detached. Check out your branch (for example: git switch main) and re-run."
   UPGRADE_UPSTREAM="$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null)" ||
     die "Branch ${UPGRADE_BRANCH} has no upstream. Set one (for example: git branch --set-upstream-to=origin/main) and re-run."
-  if [ ! -f .env ]; then
-    die "No existing install here (.env is missing); run ./install.sh instead."
+  if ! has_env_config; then
+    die "No existing install here (no .env, .env.local, .env.production or .env.production.local); run ./install.sh instead."
   fi
   command -v node >/dev/null 2>&1 || missing="$missing node"
   command -v pnpm >/dev/null 2>&1 || command -v corepack >/dev/null 2>&1 || missing="$missing pnpm"
@@ -1738,7 +1758,7 @@ rollback_flow() {
   elif [ -z "$UPGRADE_UPSTREAM" ] || ! git show '@{u}:scripts/examify-data.mjs' > "$tmp/examify-data.mjs" 2>/dev/null; then
     die "Neither this checkout nor its upstream has scripts/examify-data.mjs, so the backup cannot be restored. Nothing was changed."
   fi
-  if [ -f .env ]; then
+  if has_env_config; then
     refuse_kept_data_dir_conflict
   fi
   unset EXAMIFY_DATA_DIR DATABASE_URL

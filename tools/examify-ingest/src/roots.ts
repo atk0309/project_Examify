@@ -1,6 +1,9 @@
-import { existsSync, realpathSync } from 'node:fs';
 import path from 'node:path';
-import { resolveCliDataPaths } from '../../../src/lib/data-dir';
+import {
+  canonicalPath as canonical,
+  containsPath as contains,
+  resolveCliDataPaths,
+} from '../../../src/lib/data-dir';
 
 /**
  * Which generated layer a CLI run reads and writes:
@@ -21,34 +24,6 @@ export type IngestRoot = {
   /** How to name the data folder from the checkout root (see {@link formatDataDirDisplay}). */
   dataDirDisplay: string;
 };
-
-const CASE_INSENSITIVE_FS = process.platform === 'darwin' || process.platform === 'win32';
-
-/** realpath of the nearest existing ancestor + the not-yet-created rest. */
-function canonical(absPath: string): string {
-  let existing = path.resolve(absPath);
-  const rest: string[] = [];
-  while (!existsSync(existing)) {
-    const parent = path.dirname(existing);
-    if (parent === existing) break;
-    rest.unshift(path.basename(existing));
-    existing = parent;
-  }
-  let real = existing;
-  try {
-    real = realpathSync.native(existing);
-  } catch {
-    // keep the lexical path
-  }
-  const joined = path.join(real, ...rest);
-  return CASE_INSENSITIVE_FS ? joined.toLowerCase() : joined;
-}
-
-function contains(parent: string, child: string): boolean {
-  if (child === parent) return true;
-  const withSep = parent.endsWith(path.sep) ? parent : `${parent}${path.sep}`;
-  return child.startsWith(withSep);
-}
 
 /**
  * The family data folder as the CLI hints name it from the checkout root:

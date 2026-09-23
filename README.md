@@ -418,7 +418,9 @@ runs Examify must be able to create it, or own it empty
 to boot with a folder that overlaps the checkout: a relative path resolves against the
 checkout (never the working directory); inside the checkout only `./data` or a folder
 under it is allowed; never the checkout itself or a folder that contains it; no leading
-`~` (the installer expands it, `.env` does not), quotes, newlines, `$` or ` #`.
+`~` (the installer expands it, `.env` does not), quotes, newlines, `$` or ` #` — and the
+same goes for `DATABASE_URL` and `MAIL_OUTBOX_DIR` (Next expands `$VAR` in env files, the
+command-line tools do not).
 `pnpm db:migrate` also refuses an existing folder that holds files that are not
 Examify's.
 
@@ -572,7 +574,8 @@ Stop the server, then run this from the checkout as the user that runs Examify:
 ```
 
 The installer never starts, stops or restarts services. It first checks, changing
-nothing, that this is a git checkout on a branch with an upstream, `.env` exists,
+nothing, that this is a git checkout on a branch with an upstream, it is configured
+(`.env`, `.env.local`, `.env.production` or `.env.production.local` exists),
 `node`, `pnpm` and `tar` are installed, the checkout and data belong to you, this Node
 meets the upstream's (its `.nvmrc` major and its installer's minimum version), and no
 Examify server answers `/api/health` — healthy or not — on the host `PORT`, the `.env`

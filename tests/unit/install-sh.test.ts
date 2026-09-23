@@ -1608,7 +1608,7 @@ describe('install.sh --upgrade', () => {
       const result = runInstaller(fx, ['--upgrade']);
       expect(result.status).toBe(1);
       expect(result.stderr).toContain(
-        'No existing install here (.env is missing); run ./install.sh',
+        'No existing install here (no .env, .env.local, .env.production or .env.production.local); run ./install.sh',
       );
       expect(calls(fx)).toEqual([]);
     });
@@ -2953,4 +2953,66 @@ describe('install.sh keeps the database and outbox out of the checkout', () => {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
+});
+
+describe('install.sh refuses path values Next and the CLIs would read differently', () => {
+  it('refuses a host DATABASE_URL with $, ~ or " #" before writing .env', () => {
+    const dir = tmpDir('examify-install-db-value-');
+    try {
+      for (const url of ['file:$HOME/app.db', 'file:~/app.db', 'file:./data/app.db #old']) {
+        const result = writeEnvOnly(dir, dataEnv({ DATABASE_URL: url }));
+        expect(result.status, url).toBe(1);
+        expect(result.stderr).toContain(`DATABASE_URL=${url}:`);
+        expect(result.stderr).toContain('Nothing was written.');
+        expect(fs.existsSync(path.join(dir, '.env'))).toBe(false);
+      }
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses kept DATABASE_URL / MAIL_OUTBOX_DIR values like that, naming the file', () => {
+    const dir = tmpDir('examify-install-kept-value-');
+    try {
+      writeFile(path.join(dir, '.env'), 'AUTH_MODE=magic-link\nEXAMIFY_DATA_DIR=./data\n');
+      for (const line of [
+        'DATABASE_URL=file:$HOME/examify.db',
+        'MAIL_OUTBOX_DIR=$HOME/outbox',
+        'MAIL_OUTBOX_DIR=~/outbox',
+      ]) {
+        writeFile(path.join(dir, '.env.local'), `${line}\n`);
+        const result = writeEnvOnly(dir, dataEnv({ AUTH_MODE: undefined }));
+        expect(result.status, line).toBe(1);
+        expect(result.stderr).toContain(`.env.local has ${line}, which the app refuses`);
+        expect(result.stderr).toContain('Fix it in .env.local');
+      }
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('install.sh --upgrade of an install configured through .env.local (real data CLI)', () => {
+  it('upgrades, moving the family content out, and keeps .env.local as the only env file', async () => {
+    const fx = await makeRealFixture();
+    try {
+      fs.renameSync(path.join(fx.work, '.env'), path.join(fx.work, '.env.local'));
+      const envLocal = fs.readFileSync(path.join(fx.work, '.env.local'), 'utf8');
+      const result = runReal(fx, fx.work, ['--upgrade', '--yes']);
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(git(fx.work, 'rev-parse', 'HEAD')).toBe(fx.upstreamSha);
+      expect(result.stdout).toContain('Upgrade complete. [fixture upstream]');
+      expect(preUpgradeArchives(fx.dataDir)).toHaveLength(1);
+      expect(
+        JSON.parse(
+          fs.readFileSync(path.join(fx.dataDir, 'content/generated/subjects.json'), 'utf8'),
+        ),
+      ).toEqual([HISTORY]);
+      expect(checkoutLeftovers(fx.work)).toBe('');
+      expect(fs.readFileSync(path.join(fx.work, '.env.local'), 'utf8')).toBe(envLocal);
+      expect(fs.existsSync(path.join(fx.work, '.env'))).toBe(false);
+    } finally {
+      fs.rmSync(fx.base, { recursive: true, force: true });
+    }
+  }, 120_000);
 });

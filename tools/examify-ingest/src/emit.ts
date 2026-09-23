@@ -1,5 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync } from 'node:fs';
 import path from 'node:path';
+import { canonicalPath, containsPath } from '../../../src/lib/data-dir';
+import { generatedRevision } from '../../../src/lib/exam/generated-revision';
 import { formatFileDiff, stableJson } from './diff';
 import { renderGeneratedKeys, renderGeneratedPublic } from './registrars';
 import { SUBJECT_ID_RE, subjectSchema, type BankIrSubject } from './schema';
@@ -37,7 +39,20 @@ export type PlanEmitOptions = {
    * Default false.
    */
   registrars?: boolean;
+  /**
+   * When true, each catalog row this run writes gets `rev`, the
+   * {@link generatedRevision} of its planned questions + keys bytes (rows
+   * this run keeps unchanged keep theirs). The live bank serves a row only
+   * when the files it reads hash to that `rev`, so a crash or a request
+   * between the writes never pairs new questions with old keys. Family layer
+   * only (the wizard, the CLI's family layer): committed output stays
+   * byte-identical, and registrars never see `rev`. Default false.
+   */
+  revisions?: boolean;
 };
+
+/** A catalog row as written: the subject, plus `rev` in the family layer. */
+export type GeneratedCatalogRow = BankIrSubject & { rev?: string };
 
 function isEnoent(error: unknown): boolean {
   return (
@@ -108,6 +123,22 @@ export function readGeneratedSubjects(repoRoot: string): BankIrSubject[] {
     throw new Error(`invalid generated subject catalog: ${result.error.message}`);
   }
   return result.data;
+}
+
+/** `rev` of each on-disk catalog row that has one (`readGeneratedSubjects` drops it). */
+function readCatalogRevisions(repoRoot: string): Map<string, string> {
+  const revs = new Map<string, string>();
+  const raw = readExisting(path.join(repoRoot, GENERATED_DIR, 'subjects.json'));
+  if (raw === null) return revs;
+  const rows = JSON.parse(raw) as unknown;
+  if (!Array.isArray(rows)) return revs;
+  for (const row of rows) {
+    if (row && typeof row === 'object') {
+      const { id, rev } = row as { id?: unknown; rev?: unknown };
+      if (typeof id === 'string' && typeof rev === 'string') revs.set(id, rev);
+    }
+  }
+  return revs;
 }
 
 /** Upsert this run's subjects; keep on-disk subjects that are not in this run. */
@@ -196,18 +227,26 @@ export function planEmit(
     pruneMissing,
   );
   const files: PlannedFile[] = [];
+  const bodies = banks.map((entry) => ({
+    id: entry.split.subject.id,
+    questions: stableJson(entry.split.questions),
+    keys: stableJson(entry.split.keys),
+  }));
 
-  pushFile(files, repoRoot, CATALOG_REL, stableJson(subjects));
+  let catalog: GeneratedCatalogRow[] = subjects;
+  if (options.revisions === true) {
+    const revs = readCatalogRevisions(repoRoot);
+    for (const body of bodies) revs.set(body.id, generatedRevision(body.questions, body.keys));
+    catalog = subjects.map((subject) => {
+      const rev = revs.get(subject.id);
+      return rev === undefined ? subject : { ...subject, rev };
+    });
+  }
+  pushFile(files, repoRoot, CATALOG_REL, stableJson(catalog));
 
-  for (const entry of banks) {
-    const id = entry.split.subject.id;
-    pushFile(
-      files,
-      repoRoot,
-      `${GENERATED_DIR}/questions/${id}.json`,
-      stableJson(entry.split.questions),
-    );
-    pushFile(files, repoRoot, `${GENERATED_DIR}/keys/${id}.json`, stableJson(entry.split.keys));
+  for (const body of bodies) {
+    pushFile(files, repoRoot, `${GENERATED_DIR}/questions/${body.id}.json`, body.questions);
+    pushFile(files, repoRoot, `${GENERATED_DIR}/keys/${body.id}.json`, body.keys);
   }
 
   const publicRegistrar = path.join(repoRoot, 'src/lib/exam/generated-public.ts');
@@ -239,6 +278,44 @@ export function formatEmitPlan(files: readonly PlannedFile[]): string {
     .join('\n\n');
 }
 
+/**
+ * True when every planned file lands inside `<familyRoot>/content/generated`
+ * on realpaths: that folder resolves inside the family root (not through a
+ * symlink out of it), and each file's folder resolves inside that folder. A
+ * symlinked `content/generated`, `questions/` or `keys/` pointing into the
+ * checkout fails.
+ */
+export function plannedInsideFamilyGenerated(
+  files: readonly Pick<PlannedFile, 'absPath'>[],
+  familyRoot: string,
+): boolean {
+  const root = canonicalPath(familyRoot);
+  const generated = canonicalPath(path.join(familyRoot, GENERATED_DIR));
+  if (generated === root || !containsPath(root, generated)) return false;
+  return files.every((file) =>
+    containsPath(generated, canonicalPath(path.dirname(path.resolve(file.absPath)))),
+  );
+}
+
+/** A family emit file resolved outside `<familyRoot>/content/generated` at write time. */
+export class FamilyConfinementError extends Error {
+  constructor(relPath: string) {
+    super(
+      `refusing to write ${relPath}: it resolves outside the family data folder's ${GENERATED_DIR}`,
+    );
+    this.name = 'FamilyConfinementError';
+  }
+}
+
+export type ApplyEmitOptions = {
+  /**
+   * The family data folder: re-check {@link plannedInsideFamilyGenerated}
+   * right before each write or delete (and before creating `keys/`), so a
+   * folder swapped for a symlink after planning is refused, never followed.
+   */
+  familyRoot?: string;
+};
+
 function isKeysFile(file: PlannedFile): boolean {
   return file.relPath.startsWith(`${KEYS_DIR_REL}/`);
 }
@@ -252,7 +329,13 @@ function tighten(absPath: string, mode: number): void {
   }
 }
 
-function applyOne(file: PlannedFile): PlannedFile | null {
+function applyOne(file: PlannedFile, options: ApplyEmitOptions): PlannedFile | null {
+  if (
+    options.familyRoot !== undefined &&
+    !plannedInsideFamilyGenerated([file], options.familyRoot)
+  ) {
+    throw new FamilyConfinementError(file.relPath);
+  }
   if (file.delete) {
     if (file.existing === null) return null;
     try {
@@ -290,13 +373,16 @@ function writeRank(file: PlannedFile): number {
  * every write, so registrar imports never point at deleted JSON. Keys files
  * are 0600 in a 0700 folder.
  */
-export function applyEmit(files: readonly PlannedFile[]): PlannedFile[] {
+export function applyEmit(
+  files: readonly PlannedFile[],
+  options: ApplyEmitOptions = {},
+): PlannedFile[] {
   const written: PlannedFile[] = [];
   // Array#sort is stable: plan order holds within a rank.
   const writes = files.filter((file) => !file.delete).sort((a, b) => writeRank(a) - writeRank(b));
   const deletes = files.filter((file) => file.delete === true);
   for (const file of [...writes, ...deletes]) {
-    const applied = applyOne(file);
+    const applied = applyOne(file, options);
     if (applied) written.push(applied);
   }
   return written;

@@ -59,7 +59,11 @@ Surface:
   (`getOnboardingContentRoot()` → `getDataPaths().familyRoot`), never the
   checkout; only API keys go to the checkout `.env`. Its emit never plans the
   registrars, and Apply refuses (`invalid`, “refusing to write outside the
-  family data folder”) any planned path outside `<familyRoot>/content/generated`.
+  family data folder”) any planned path outside `<familyRoot>/content/generated`,
+  judged on realpaths (`plannedInsideFamilyGenerated`: that folder must resolve
+  inside the family root and every file's folder inside it, so a symlinked
+  `content/generated`, `questions/` or `keys/` into the checkout is refused) and
+  re-checked by `applyEmit({ familyRoot })` right before each write.
   The subject list shows family subjects only (committed biology / demo are
   not there); the dry-run's `shadows` (family ids that are committed generated
   ids) render as a Review notice (“Replaces built-in subject: Biology”), the
@@ -363,7 +367,14 @@ in the gitignored `content/source-pdfs/` / subject directory.
   `<data>/content/source-pdfs/<id>/`, `<data>/content/generated/`. `/onboarding` reads
   and writes only this layer, and the CLI uses it for `data/content/subjects` paths.
   `readGeneratedOverlay` reads its catalog on every request, so Apply → dashboard needs
-  no rebuild. It is never committed and never has registrars.
+  no rebuild. It is never committed and never has registrars. Its catalog rows carry
+  `rev` (`planEmit({ revisions: true })`, family emits only): `generatedRevision`, the
+  sha256 of the exact `questions/<id>.json` bytes + "\n" + `keys/<id>.json` bytes. The
+  live bank serves a row with `rev` only when the files it reads hash to it; otherwise
+  the last consistent copy of that subject read in this process (kept per root + id), or
+  the row is dropped (`revision_mismatch`). A crash or a request between an Apply's
+  writes never pairs new questions with old keys. Rows without `rev` read as before;
+  `parseSubject` and the registrars never carry it; committed emits never write it.
 - **Precedence:** the family layer overlays the committed layer, and the result merges
   onto the sample bank under the unchanged sample-freeze rules. A family subject with a
   committed id **replaces it entirely** (its questions and keys; the tile keeps the
@@ -448,7 +459,9 @@ authoritative for generated subjects: leftover `questions/<id>.json` /
 tree are deleted. `--apply` writes every file atomically (temp + rename, `writeFileAtomic`)
 in a fixed order — questions + keys, then registrars (committed layer only), then
 `subjects.json` last (the live bank reads the catalog first, so it is the commit point)
-— and unlinks leftovers only after every write. The sample bank is never touched.
+— and unlinks leftovers only after every write. In the family layer each catalog row's
+`rev` names the questions + keys it was written with, so a reader between those writes
+serves the previous revision instead of a mix. The sample bank is never touched.
 
 ## Styling / theming
 
@@ -761,10 +774,13 @@ These are non-negotiable. Don't "fix" them out.
   via `env-file.ts`, the single `.env` parser.
 - **Safety** (`assertSafeDataDir`, on realpaths so a symlink can't route around it): never
   the checkout or a folder that contains it (`checkout_root`); inside the checkout only
-  `data/…` (plus `tests/.tmp/…` for the suites) (`inside_checkout`); a value starting
-  with `~` or containing a quote, newline, `$` or ` #` is `bad_value` (`.env` can't carry
-  it / Next expands `$VAR` but CLIs reading the files do not; `install.sh` expands a
-  leading `~` before writing). `UnsafeDataDirError` messages never name the path.
+  `data/…` (plus `tests/.tmp/…` for the suites) (`inside_checkout`); an
+  `EXAMIFY_DATA_DIR`, `DATABASE_URL` (after `file:`) or `MAIL_OUTBOX_DIR` value starting
+  with `~` or containing a quote, backtick, newline, `$` or ` #` is `bad_value`
+  (`assertPathValue`; `.env` can't carry it / Next expands `$VAR` but CLIs reading the
+  files do not, so `db:migrate` could open another database; `install.sh` expands a
+  leading `~` in the data folder before writing and refuses such kept values, naming the
+  file). `UnsafeDataDirError` messages name the variable, never the path or value.
   Production boot fails on an unsafe folder, on a folder shared with other software
   (an existing folder without the marker holding files Examify does not recognise —
   e.g. the folder of `DATABASE_URL=file:/root/examify.db` is `$HOME`), and when neither
@@ -864,8 +880,9 @@ These are non-negotiable. Don't "fix" them out.
 - **`install.sh`** runs from `main()` (last line `main "$@"`), so a merge that replaces it
   mid-run can't change what executes. It never starts / stops services, never
   `git stash`es or `git clean`s, and refuses (never chmods / chowns) on an owner
-  mismatch. `--upgrade` phase 1 (the invoked script) = read-only preflight (also refuses
-  upstream-added paths that exist here untracked / ignored outside `content/` and
+  mismatch. `--upgrade` phase 1 (the invoked script) = read-only preflight (an existing
+  install is any of `.env`, `.env.local`, `.env.production`, `.env.production.local`;
+  also refuses upstream-added paths that exist here untracked / ignored outside `content/` and
   `.examify-ingest/`, and a Node below the upstream `.nvmrc` major or its installer's
   `MIN_NODE`) → upstream `examify-data.mjs backup --kind pre-upgrade --include-checkout`
   → `$DATA/.upgrade-state.json` `{fromSha, archive, startedAt, movesCheckoutContent}`

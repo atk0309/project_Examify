@@ -209,20 +209,25 @@ export function sqlitePathFromUrl(databaseUrl, repoRoot) {
   return resolveFromRoot(repoRoot, raw);
 }
 
-export function assertDataDirValue(value) {
+/** A path value `.env` cannot carry or Next and the CLIs would read differently. */
+export function assertPathValue(name, value) {
   if (value.startsWith('~')) {
     throw new UnsafeDataDirError(
       'bad_value',
-      'EXAMIFY_DATA_DIR starts with ~, which is never expanded; use an absolute path',
+      `${name} starts with ~, which is never expanded; use an absolute path`,
     );
   }
   if (/[\r\n"'`$]/.test(value) || /\s#/.test(value)) {
     // `$` too: Next expands `$VAR` in env files, CLIs reading them do not.
     throw new UnsafeDataDirError(
       'bad_value',
-      'EXAMIFY_DATA_DIR contains a quote, a newline, "$" or " #"; pick a plainer path',
+      `${name} contains a quote, a newline, "$" or " #"; pick a plainer path`,
     );
   }
+}
+
+export function assertDataDirValue(value) {
+  assertPathValue('EXAMIFY_DATA_DIR', value);
 }
 
 /** Outside the checkout, or under its `data/…` / `tests/.tmp/…` (never the root itself). */
@@ -255,6 +260,12 @@ export function assertSafeDataDir(repoRoot, dataDir) {
 export function resolveDataPaths({ repoRoot, env }) {
   const rawDir = nonBlank(env.EXAMIFY_DATA_DIR);
   const rawDbUrl = nonBlank(env.DATABASE_URL);
+  if (rawDbUrl) {
+    assertPathValue(
+      'DATABASE_URL',
+      rawDbUrl.startsWith('file:') ? rawDbUrl.slice('file:'.length) : rawDbUrl,
+    );
+  }
 
   let dataDir;
   let dataDirSource;
@@ -291,6 +302,7 @@ export function resolveDataPaths({ repoRoot, env }) {
     );
   }
   const outbox = nonBlank(env.MAIL_OUTBOX_DIR);
+  if (outbox) assertPathValue('MAIL_OUTBOX_DIR', outbox);
   const production = env.NODE_ENV === 'production';
   let outboxDir;
   if (outbox) {

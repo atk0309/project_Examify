@@ -69,7 +69,13 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   request by `live-bank.server.ts` (Apply needs no rebuild), never committed, never
   registrars. A family subject with a committed id replaces it entirely; an incomplete
   family subject (unparseable questions, a question without a key) is dropped with one
-  reason-coded `[live-bank]` warning and the committed one stays. The ingest CLI picks the
+  reason-coded `[live-bank]` warning and the committed one stays. Family catalog rows
+  carry `rev` (sha256 of the questions + "\n" + keys bytes; family emits only, never the
+  committed layer or registrars): a row whose files do not hash to it serves the last
+  consistent copy read in this process, else is dropped (`revision_mismatch`), so an
+  Apply mid-write or crashed never pairs new questions with old keys. The wizard's Apply
+  is confined to `<family>/content/generated` on realpaths (a symlink into the checkout
+  is refused), re-checked right before each write. The ingest CLI picks the
   layer from its paths (data folder checked first; outside both or mixed ⇒ error;
   `layer: …` on stderr) and only a committed emit rewrites registrars (`planEmit`
   `registrars` defaults to false). Family CLI work names `data/content/subjects`. A dev
@@ -132,7 +138,9 @@ JSON`). Missing cloud
   and inside it only `data/…` (+ `tests/.tmp/…`); the DB and the outbox never inside the
   checkout outside those (`db_inside_checkout` / `outbox_inside_checkout`, so boot,
   `db:migrate`, `examify-data paths --check` and the ingest CLI all refuse); a leading
-  `~`, quotes, newline, `$` or ` #` refused; messages never name the path. Production boot needs `EXAMIFY_DATA_DIR` or
+  `~`, quotes, backtick, newline, `$` or ` #` in `EXAMIFY_DATA_DIR`, `DATABASE_URL` or
+  `MAIL_OUTBOX_DIR` refused (`bad_value`, naming the variable); messages never name the
+  path or value. Production boot needs `EXAMIFY_DATA_DIR` or
   `DATABASE_URL` and a safe, dedicated folder (an unmarked folder holding non-Examify
   files is refused), and production never creates a missing DB
   (`DatabaseMissingError`; `/api/health` → reason codes `unsafe_data_dir` /
@@ -156,8 +164,8 @@ JSON`). Missing cloud
   never moves anything without a backup holding what it reverts (its own
   `--include-checkout` one, or a `--backup` that holds this checkout at `HEAD`) and
   prunes emptied folders bottom-up. `install.sh` is `main()`-wrapped; `--upgrade` =
-  read-only preflight (incl. upstream-added paths that exist untracked / ignored, and
-  upstream Node needs) → pre-upgrade backup → `.upgrade-state.json` rollback point →
+  read-only preflight (an install = any `next start` env file, `.env.local` alone
+  included; upstream-added paths that exist untracked / ignored; upstream Node needs) → pre-upgrade backup → `.upgrade-state.json` rollback point →
   `migrate-checkout --backup` → merge → phase 2 (install / `db:migrate` / build /
   `verify`); `--rollback <archive>` (works from the piped upstream installer too) /
   `--restore <archive>`. It never manages services, never stashes or `git clean`s.

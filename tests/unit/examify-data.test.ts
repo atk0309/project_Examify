@@ -257,6 +257,16 @@ describe('resolver parity with src/lib/data-dir.ts', () => {
       })),
       { MAIL_OUTBOX_DIR: path.join(linkIntoSrc, 'box') },
       { DATABASE_URL: 'file:./tests/.tmp/unit.db' },
+      ...[
+        'file:$HOME/app.db',
+        'file:~/app.db',
+        '$DB',
+        'file:./data/a #b.db',
+        'file:./data/`x`.db',
+      ].map((url) => ({ DATABASE_URL: url })),
+      ...['$HOME/box', '~/box', 'data/box #x', "data/it's"].map((dir) => ({
+        MAIL_OUTBOX_DIR: dir,
+      })),
       { DATABASE_URL: 'file:./src/app.db', EXAMIFY_DATA_DIR: outside },
       { DATABASE_URL: `file:${path.join(linkIntoSrc, 'app.db')}` },
       { RESEND_API_KEY: 'test' },
@@ -2022,5 +2032,26 @@ describe('backup placement and consistency', () => {
       expect(rev).toBe(4);
       expect(fs.readdirSync(out)).toEqual([]);
     });
+  });
+});
+
+describe('family catalog rows with rev', () => {
+  it('verify passes and backup copies the catalog verbatim', async () => {
+    const root = makeCheckout();
+    const dataDir = tempDir('examify-data-rev-');
+    makeDb(path.join(dataDir, 'app.db'));
+    seedFamily(dataDir);
+    const catalog = path.join(dataDir, 'content/generated/subjects.json');
+    write(catalog, JSON.stringify([{ ...subject('history', 'History'), rev: 'a'.repeat(64) }]));
+    const verified = await run(['verify', '--repo', root, '--data-dir', dataDir, '--json']);
+    expect(verified.code, verified.stdout).toBe(0);
+    const backedUp = await run(['backup', '--repo', root, '--data-dir', dataDir, '--json']);
+    expect(backedUp.code, backedUp.stderr).toBe(0);
+    const { archive, warnings } = JSON.parse(backedUp.stdout) as data.BackupResult;
+    expect(warnings).toEqual([]);
+    const dir = extract(archive);
+    expect(fs.readFileSync(path.join(dir, 'family/content/generated/subjects.json'), 'utf8')).toBe(
+      fs.readFileSync(catalog, 'utf8'),
+    );
   });
 });

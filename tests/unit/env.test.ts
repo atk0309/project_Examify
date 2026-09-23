@@ -356,6 +356,15 @@ describe('parseEnv family data folder', () => {
       expect(logged).toContain(message);
       expect(logged).not.toContain(checkout);
     }
+    // `$` (Next expands it, the CLIs do not) and friends: the variable is named, never the value.
+    for (const [env, name] of [
+      [{ ...withoutDb, DATABASE_URL: 'file:$HOME/examify.db' }, 'DATABASE_URL'],
+      [{ ...prodBase, MAIL_OUTBOX_DIR: '$HOME/outbox' }, 'MAIL_OUTBOX_DIR'],
+    ] as const) {
+      const logged = loggedIssues(() => parseEnv(env));
+      expect(logged).toContain(`${name} contains a quote, a newline, "$" or " #"`);
+      expect(logged).not.toContain('$HOME');
+    }
     // Outside the checkout (or under tests/.tmp, the suites' folder) is fine.
     expect(() =>
       parseEnv({ ...prodBase, MAIL_OUTBOX_DIR: path.join(prodRoot, 'outbox') }),

@@ -39,7 +39,11 @@ export type DataPaths = {
 };
 
 export type UnsafeDataDirReason =
-  /** A leading `~`, a newline, a quote, or ` #` (breaks `.env` / is never expanded). */
+  /**
+   * `EXAMIFY_DATA_DIR`, `DATABASE_URL` or `MAIL_OUTBOX_DIR` with a leading `~`,
+   * a quote / backtick / newline, `$` or ` #` (breaks `.env`, is never
+   * expanded, or Next and the CLIs would read it differently).
+   */
   | 'bad_value'
   /** The checkout root itself, or a folder that contains it. */
   | 'checkout_root'
@@ -81,8 +85,12 @@ function nonBlank(value: string | undefined): string | undefined {
 
 const CASE_INSENSITIVE_FS = process.platform === 'darwin' || process.platform === 'win32';
 
-/** realpath of the nearest existing ancestor + the not-yet-created rest. */
-function canonical(absPath: string): string {
+/**
+ * realpath of the nearest existing ancestor + the not-yet-created rest
+ * (lowercased on case-insensitive filesystems): compare these, never raw
+ * strings, so a symlink cannot route a path out of a folder.
+ */
+export function canonicalPath(absPath: string): string {
   let existing = path.resolve(absPath);
   const rest: string[] = [];
   while (!existsSync(existing)) {
@@ -101,8 +109,8 @@ function canonical(absPath: string): string {
   return CASE_INSENSITIVE_FS ? joined.toLowerCase() : joined;
 }
 
-/** `child` is `parent` or inside it (both canonical). */
-function contains(parent: string, child: string): boolean {
+/** `child` is `parent` or inside it (both from {@link canonicalPath}). */
+export function containsPath(parent: string, child: string): boolean {
   if (child === parent) return true;
   const withSep = parent.endsWith(path.sep) ? parent : `${parent}${path.sep}`;
   return child.startsWith(withSep);
@@ -119,21 +127,34 @@ export function sqlitePathFromUrl(databaseUrl: string, repoRoot: string): string
   return resolveFromRoot(repoRoot, raw);
 }
 
-/** Refuse values `.env` cannot carry or the shell would have expanded. */
-export function assertDataDirValue(value: string): void {
+/** The path-valued settings the resolver reads (named in `bad_value` messages). */
+export type DataPathVariable = 'EXAMIFY_DATA_DIR' | 'DATABASE_URL' | 'MAIL_OUTBOX_DIR';
+
+/**
+ * Refuse a path value `.env` cannot carry or that Next would read differently
+ * from the CLIs: a leading `~` (never expanded), a quote, backtick or newline,
+ * ` #` (an inline comment) and `$` (Next expands `$VAR` in env files; the
+ * CLIs reading those files do not, so `db:migrate` could open another
+ * database than the app). The message names the variable, never the value.
+ */
+export function assertPathValue(name: DataPathVariable, value: string): void {
   if (value.startsWith('~')) {
     throw new UnsafeDataDirError(
       'bad_value',
-      'EXAMIFY_DATA_DIR starts with ~, which is never expanded; use an absolute path',
+      `${name} starts with ~, which is never expanded; use an absolute path`,
     );
   }
   if (/[\r\n"'`$]/.test(value) || /\s#/.test(value)) {
-    // `$` too: Next expands `$VAR` in env files, CLIs reading them do not.
     throw new UnsafeDataDirError(
       'bad_value',
-      'EXAMIFY_DATA_DIR contains a quote, a newline, "$" or " #"; pick a plainer path',
+      `${name} contains a quote, a newline, "$" or " #"; pick a plainer path`,
     );
   }
+}
+
+/** {@link assertPathValue} for `EXAMIFY_DATA_DIR`. */
+export function assertDataDirValue(value: string): void {
+  assertPathValue('EXAMIFY_DATA_DIR', value);
 }
 
 /**
@@ -142,9 +163,9 @@ export function assertDataDirValue(value: string): void {
  * under one of those; the checkout root itself is not allowed.
  */
 function allowedInCheckout(repoRoot: string, abs: string): boolean {
-  const root = canonical(repoRoot);
-  const target = canonical(abs);
-  if (!contains(root, target)) return true;
+  const root = canonicalPath(repoRoot);
+  const target = canonicalPath(abs);
+  if (!containsPath(root, target)) return true;
   if (target === root) return false;
   const parts = path.relative(root, target).split(path.sep);
   return parts[0] === DEFAULT_DATA_DIR || (parts[0] === 'tests' && parts[1] === '.tmp');
@@ -158,9 +179,9 @@ function allowedInCheckout(repoRoot: string, abs: string): boolean {
  * Compared on realpaths, so a symlink cannot route around it.
  */
 export function assertSafeDataDir(repoRoot: string, dataDir: string): void {
-  const root = canonical(repoRoot);
-  const dir = canonical(dataDir);
-  if (contains(dir, root)) {
+  const root = canonicalPath(repoRoot);
+  const dir = canonicalPath(dataDir);
+  if (containsPath(dir, root)) {
     throw new UnsafeDataDirError(
       'checkout_root',
       'the family data folder cannot be the checkout or a folder that contains it',
@@ -191,6 +212,12 @@ export function resolveDataPaths(input: { repoRoot: string; env: EnvLike }): Dat
   const { repoRoot, env } = input;
   const rawDir = nonBlank(env.EXAMIFY_DATA_DIR);
   const rawDbUrl = nonBlank(env.DATABASE_URL);
+  if (rawDbUrl) {
+    assertPathValue(
+      'DATABASE_URL',
+      rawDbUrl.startsWith('file:') ? rawDbUrl.slice('file:'.length) : rawDbUrl,
+    );
+  }
 
   let dataDir: string;
   let dataDirSource: DataDirSource;
@@ -201,15 +228,15 @@ export function resolveDataPaths(input: { repoRoot: string; env: EnvLike }): Dat
   } else {
     const explicitDb = rawDbUrl ? sqlitePathFromUrl(rawDbUrl, repoRoot) : undefined;
     const dbDir = explicitDb && explicitDb !== ':memory:' ? path.dirname(explicitDb) : undefined;
-    const root = canonical(repoRoot);
-    const dbDirCanonical = dbDir ? canonical(dbDir) : undefined;
+    const root = canonicalPath(repoRoot);
+    const dbDirCanonical = dbDir ? canonicalPath(dbDir) : undefined;
     // Only a folder fully outside the checkout: one inside it (./app.db) or
     // containing it (file:/app.db) falls back to ./data for family content.
     if (
       dbDir &&
       dbDirCanonical &&
-      !contains(root, dbDirCanonical) &&
-      !contains(dbDirCanonical, root)
+      !containsPath(root, dbDirCanonical) &&
+      !containsPath(dbDirCanonical, root)
     ) {
       dataDir = dbDir;
       dataDirSource = 'DATABASE_URL';
@@ -229,6 +256,7 @@ export function resolveDataPaths(input: { repoRoot: string; env: EnvLike }): Dat
     );
   }
   const outbox = nonBlank(env.MAIL_OUTBOX_DIR);
+  if (outbox) assertPathValue('MAIL_OUTBOX_DIR', outbox);
   const production = env.NODE_ENV === 'production';
   let outboxDir: string;
   if (outbox) {

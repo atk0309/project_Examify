@@ -6,6 +6,7 @@ import { setOnboardingContentRootForTests } from '@/lib/content-root';
 import { SAMPLE_SUBJECTS } from '@/lib/exam/data';
 import { GENERATED_KEYS } from '@/lib/exam/generated-keys.server';
 import { GENERATED_QUESTIONS, GENERATED_SUBJECTS } from '@/lib/exam/generated-public';
+import { generatedRevision } from '@/lib/exam/generated-revision';
 import {
   loadLiveAnswerKeys,
   loadLiveBankAndKeys,
@@ -410,5 +411,77 @@ describe('live bank: broken family content', () => {
     expect(warn.mock.calls).toEqual([
       ['[live-bank] family subject dropped', { reason: 'duplicate_id', subjectId: 'history' }],
     ]);
+  });
+});
+
+describe('live bank: family revisions', () => {
+  /** One Apply's bytes for history: questions + keys, and the row naming them. */
+  function historyRevision(answer: number, q: string) {
+    const files = historyFiles();
+    const questions = JSON.stringify({
+      ...(files.questions as object),
+      easy: [{ id: 'history-easy-1', type: 'mcq', q, choices: ['A', 'B', 'C', 'D'] }],
+    });
+    const keys = JSON.stringify({
+      'history-easy-1': { type: 'mcq', answer, provenance: PROVENANCE },
+    });
+    return { questions, keys, row: { ...row('history'), rev: generatedRevision(questions, keys) } };
+  }
+
+  function servedHistory(root: string, read = loadLiveBankAndKeys) {
+    const { bank, keys } = read(root);
+    const question = bank.questions.history?.easy?.[0];
+    const key = keys['history-easy-1'];
+    return question && key?.type === 'mcq' ? { q: question.q, answer: key.answer } : null;
+  }
+
+  const OLD = { answer: 1, q: 'Old question?' };
+  const NEW = { answer: 3, q: 'New question?' };
+
+  it('serves the previous revision while an Apply is between its writes', () => {
+    const root = familyRoot();
+    const old = historyRevision(OLD.answer, OLD.q);
+    seedFamily(root, [old.row], { history: { questions: old.questions, keys: old.keys } });
+    expect(servedHistory(root)).toEqual(OLD);
+
+    // The Apply wrote the new questions; keys and catalog are still the old ones.
+    const next = historyRevision(NEW.answer, NEW.q);
+    const dir = path.join(root, 'content/generated');
+    writeFileSync(path.join(dir, 'questions/history.json'), next.questions);
+    expect(servedHistory(root)).toEqual(OLD);
+    // Keys written too, catalog not yet: still the one the catalog names.
+    writeFileSync(path.join(dir, 'keys/history.json'), next.keys);
+    expect(servedHistory(root)).toEqual(OLD);
+    // The catalog is the commit point.
+    writeFileSync(path.join(dir, 'subjects.json'), JSON.stringify([next.row]));
+    expect(servedHistory(root)).toEqual(NEW);
+  });
+
+  it('after a crash between the writes it never pairs new questions with old keys', async () => {
+    const warn = silenceWarnings();
+    const root = familyRoot();
+    const old = historyRevision(OLD.answer, OLD.q);
+    const next = historyRevision(NEW.answer, NEW.q);
+    // Crashed after writing the new questions only; then the server restarted.
+    seedFamily(root, [old.row], { history: { questions: next.questions, keys: old.keys } });
+    vi.resetModules();
+    const restarted = await import('@/lib/exam/live-bank.server');
+    expect(servedHistory(root, restarted.loadLiveBankAndKeys)).toBeNull();
+    expect(restarted.readGeneratedOverlay(root)?.subjects.map((s) => s.id)).toEqual([]);
+    const logged = warn.mock.calls.map((call) => JSON.stringify(call)).join('\n');
+    expect(logged).toContain('revision_mismatch');
+    expect(logged).not.toContain(root);
+
+    // A full Apply brings it back.
+    const dir = path.join(root, 'content/generated');
+    writeFileSync(path.join(dir, 'keys/history.json'), next.keys);
+    writeFileSync(path.join(dir, 'subjects.json'), JSON.stringify([next.row]));
+    expect(servedHistory(root, restarted.loadLiveBankAndKeys)).toEqual(NEW);
+  });
+
+  it('serves a row without rev as before (older family catalogs)', () => {
+    const root = familyRoot();
+    seedFamily(root, [row('history')], { history: historyFiles() });
+    expect(servedHistory(root)).toEqual({ q: 'A family history question?', answer: 1 });
   });
 });

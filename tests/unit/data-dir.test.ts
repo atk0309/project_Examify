@@ -211,6 +211,44 @@ describe('resolveDataPaths', () => {
     }
   });
 
+  it('applies the same value rules to DATABASE_URL and MAIL_OUTBOX_DIR, naming the variable', () => {
+    const root = tempRepo();
+    const refusal = (env: Record<string, string>) => {
+      try {
+        resolveDataPaths({ repoRoot: root, env });
+      } catch (error) {
+        if (error instanceof UnsafeDataDirError) return error;
+        throw error;
+      }
+      return null;
+    };
+    const cases: Array<[Record<string, string>, string]> = [
+      [{ DATABASE_URL: 'file:$HOME/examify.db' }, 'DATABASE_URL'],
+      [{ DATABASE_URL: '${DATA}/app.db' }, 'DATABASE_URL'],
+      [{ DATABASE_URL: 'file:~/app.db' }, 'DATABASE_URL'],
+      [{ DATABASE_URL: 'file:./data/app.db #old' }, 'DATABASE_URL'],
+      [{ DATABASE_URL: 'file:./data/`name`.db' }, 'DATABASE_URL'],
+      [{ MAIL_OUTBOX_DIR: '$HOME/outbox' }, 'MAIL_OUTBOX_DIR'],
+      [{ MAIL_OUTBOX_DIR: '~/outbox' }, 'MAIL_OUTBOX_DIR'],
+      [{ MAIL_OUTBOX_DIR: 'data/"box"' }, 'MAIL_OUTBOX_DIR'],
+      [{ MAIL_OUTBOX_DIR: 'data/box\nx' }, 'MAIL_OUTBOX_DIR'],
+    ];
+    for (const [env, name] of cases) {
+      const error = refusal(env);
+      expect(error?.reason, JSON.stringify(env)).toBe('bad_value');
+      expect(error?.message).toContain(name);
+      expect(error?.message).not.toContain(Object.values(env)[0]!.replace(/^file:/, ''));
+    }
+    const allowed: Array<Record<string, string>> = [
+      { DATABASE_URL: 'file:./data/app.db' },
+      { DATABASE_URL: ':memory:' },
+      { MAIL_OUTBOX_DIR: 'data/outbox' },
+    ];
+    for (const env of allowed) {
+      expect(refusal(env)).toBeNull();
+    }
+  });
+
   it('never puts the path in the error message', () => {
     const root = tempRepo();
     try {

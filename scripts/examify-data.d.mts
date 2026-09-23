@@ -62,6 +62,10 @@ export declare function envFileValue(
 export declare function readProductionEnvFiles(repoRoot: string): Array<Record<string, string>>;
 export declare function findRepoRoot(startDir: string): string;
 export declare function sqlitePathFromUrl(databaseUrl: string, repoRoot: string): string;
+export declare function assertPathValue(
+  name: 'EXAMIFY_DATA_DIR' | 'DATABASE_URL' | 'MAIL_OUTBOX_DIR',
+  value: string,
+): void;
 export declare function assertDataDirValue(value: string): void;
 export declare function assertSafeDataDir(repoRoot: string, dataDir: string): void;
 export declare function resolveDataPaths(input: { repoRoot: string; env: EnvLike }): DataPaths;

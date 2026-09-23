@@ -38,12 +38,16 @@ export {
 export {
   applyEmit,
   collectGeneratedSubjectIds,
+  FamilyConfinementError,
   formatEmitPlan,
   GENERATED_DIR,
   mergeGeneratedSubjects,
   planEmit,
+  plannedInsideFamilyGenerated,
   readGeneratedSubjects,
   reconcileGeneratedSubjects,
+  type ApplyEmitOptions,
+  type GeneratedCatalogRow,
   type PlanEmitOptions,
   type PlannedFile,
 } from './emit';

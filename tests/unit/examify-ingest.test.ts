@@ -14,10 +14,12 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { SAMPLE_QUESTIONS } from '@/lib/exam/data';
 import { SAMPLE_FIXTURE_IDS } from '@/lib/exam/fixture-ids';
+import { generatedRevision } from '@/lib/exam/generated-revision';
 import {
   applyEmit,
   collectGeneratedSubjectIds,
   collectQuestionIds,
+  FamilyConfinementError,
   FIXTURE_IDS,
   sampleBankFrozenIds,
   formatFileDiff,
@@ -1142,5 +1144,110 @@ describe('examify-ingest emit writes', () => {
     expect(mode(target)).toBe(0o600);
     writeFileAtomic(path.join(dir, 'plain.json'), 'x\n');
     expect(readdirSync(dir).sort()).toEqual(['keys.json', 'plain.json']);
+  });
+});
+
+describe('examify-ingest family revisions and confinement', () => {
+  type Row = { id: string; rev?: string };
+  const catalogOf = (files: readonly PlannedFile[]) =>
+    JSON.parse(files.find((file) => file.relPath.endsWith('subjects.json'))!.contents) as Row[];
+  const bodyOf = (files: readonly PlannedFile[], rel: string) =>
+    files.find((file) => file.relPath === `content/generated/${rel}`)!.contents;
+  const banks = (...irs: BankIR[]) => {
+    const result = validateIrCollection(
+      irs.map((data, index) => ({ path: `ir-${index}.json`, data })),
+      { replaceSample: false },
+    );
+    if (!result.ok) throw new Error('fixture IR should validate');
+    return result.banks;
+  };
+
+  it('committed emits stay byte-identical: no rev in the catalog or the registrars', () => {
+    const root = fakeCheckout();
+    writeFileSync(
+      path.join(root, REGISTRAR_PUBLIC),
+      readFileSync(path.join(repoRoot, REGISTRAR_PUBLIC)),
+    );
+    writeFileSync(
+      path.join(root, REGISTRAR_KEYS),
+      readFileSync(path.join(repoRoot, REGISTRAR_KEYS)),
+    );
+    const planned = planEmit(banks(loadBiologyIr()), root, {
+      pruneMissing: true,
+      registrars: true,
+    });
+    for (const file of planned) {
+      expect(file.contents, file.relPath).toBe(file.existing);
+      expect(file.contents).not.toContain('"rev"');
+    }
+    expect(catalogOf(planned)[0]).not.toHaveProperty('rev');
+  });
+
+  it('family emits add rev: the hash of the planned questions + keys, kept for rows left alone', () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'examify-revisions-'));
+    const first = planEmit(banks(historyIr(), loadBiologyIr()), root, {
+      pruneMissing: true,
+      revisions: true,
+    });
+    const revOf = (files: readonly PlannedFile[], id: string) =>
+      generatedRevision(bodyOf(files, `questions/${id}.json`), bodyOf(files, `keys/${id}.json`));
+    expect(catalogOf(first)).toEqual([
+      expect.objectContaining({ id: 'history', rev: revOf(first, 'history') }),
+      expect.objectContaining({ id: 'biology', rev: revOf(first, 'biology') }),
+    ]);
+    applyEmit(first, { familyRoot: root });
+
+    // A partial emit of history only: biology's row keeps the rev it had.
+    const edited = historyIr();
+    edited.difficulties.easy[0]!.q = 'An edited family question?';
+    const second = planEmit(banks(edited), root, { revisions: true });
+    const catalog = catalogOf(second);
+    expect(catalog.find((row) => row.id === 'history')?.rev).toBe(revOf(second, 'history'));
+    expect(catalog.find((row) => row.id === 'history')?.rev).not.toBe(revOf(first, 'history'));
+    expect(catalog.find((row) => row.id === 'biology')?.rev).toBe(revOf(first, 'biology'));
+    // Registrars are built from subjects, never from catalog rows.
+    expect(renderGeneratedPublic(readGeneratedSubjects(root))).not.toContain('rev');
+  });
+
+  it('the CLI writes rev in the family layer only', () => {
+    const root = fakeCheckout();
+    const data = path.join(root, 'data');
+    writeFamilyIr(data, historyIr());
+    expect(
+      runCli(['emit', 'data/content/subjects', '--apply'], { cwd: root, env: {}, ...capture() }),
+    ).toBe(0);
+    const family = JSON.parse(
+      readFileSync(path.join(data, 'content/generated/subjects.json'), 'utf8'),
+    ) as Row[];
+    expect(family[0]?.rev).toMatch(/^[0-9a-f]{64}$/);
+
+    mkdirSync(path.join(root, 'content/subjects/history'), { recursive: true });
+    writeFileSync(
+      path.join(root, 'content/subjects/history/bank.ir.json'),
+      JSON.stringify(historyIr()),
+    );
+    expect(
+      runCli(['emit', 'content/subjects', '--apply'], { cwd: root, env: {}, ...capture() }),
+    ).toBe(0);
+    expect(readFileSync(path.join(root, 'content/generated/subjects.json'), 'utf8')).not.toContain(
+      '"rev"',
+    );
+  });
+
+  it('applyEmit re-checks each family file on realpaths right before writing it', () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'examify-confine-'));
+    const planned = planEmit(banks(historyIr()), root, { revisions: true });
+    // After planning, keys/ becomes a symlink into a (fake) checkout.
+    const checkout = mkdtempSync(path.join(tmpdir(), 'examify-confine-checkout-'));
+    const trackedKeys = path.join(checkout, 'content/generated/keys');
+    mkdirSync(trackedKeys, { recursive: true });
+    writeFileSync(path.join(trackedKeys, 'biology.json'), '{"committed":true}');
+    chmodSync(trackedKeys, 0o755);
+    mkdirSync(path.join(root, 'content/generated'), { recursive: true });
+    symlinkSync(trackedKeys, path.join(root, 'content/generated/keys'));
+
+    expect(() => applyEmit(planned, { familyRoot: root })).toThrow(FamilyConfinementError);
+    expect(readdirSync(trackedKeys)).toEqual(['biology.json']);
+    expect(mode(trackedKeys)).toBe(0o755);
   });
 });

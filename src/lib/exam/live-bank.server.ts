@@ -14,6 +14,7 @@ import {
 } from './data';
 import { GENERATED_QUESTIONS, GENERATED_SUBJECTS } from './generated-public';
 import { GENERATED_KEYS } from './generated-keys.server';
+import { generatedRevision } from './generated-revision';
 import {
   GENERATED_SUBJECT_ID_RE,
   composeGeneratedKeys,
@@ -52,11 +53,17 @@ export type FamilySubjectDropReason =
   /** `keys/<id>.json` missing, unreadable or not a JSON object. */
   | 'keys_unreadable'
   /** A public question has no usable key of its own type. */
-  | 'keys_incomplete';
+  | 'keys_incomplete'
+  /**
+   * The questions + keys read do not hash to the row's `rev` (an Apply
+   * mid-write, or one that crashed between its writes) and no earlier
+   * consistent copy of the subject is in memory.
+   */
+  | 'revision_mismatch';
 
 const COMMITTED: GeneratedLayer = { subjects: GENERATED_SUBJECTS, questions: GENERATED_QUESTIONS };
 
-type JsonRead = { ok: true; value: unknown } | { ok: false; missing: boolean };
+type JsonRead = { ok: true; raw: string; value: unknown } | { ok: false; missing: boolean };
 
 function isEnoent(error: unknown): boolean {
   return (
@@ -74,7 +81,7 @@ function readJson(abs: string): JsonRead {
     return { ok: false, missing: isEnoent(error) };
   }
   try {
-    return { ok: true, value: JSON.parse(raw) as unknown };
+    return { ok: true, raw, value: JSON.parse(raw) as unknown };
   } catch {
     return { ok: false, missing: false };
   }
@@ -180,6 +187,19 @@ function keysForQuestions(
 
 type FamilyWarning = { reason: FamilySubjectDropReason; subjectId?: string };
 
+type ConsistentSubject = {
+  rev: string;
+  subject: Subject;
+  bank: Partial<Record<DifficultyId, Question[]>>;
+  keys: Record<string, AnswerKey>;
+};
+
+/**
+ * Per root, per subject id: the last copy of a revisioned family subject
+ * whose files matched its `rev`. Served while an Apply is between writes.
+ */
+const lastConsistentByRoot = new Map<string, Map<string, ConsistentSubject>>();
+
 /** Last warning set logged per root, so a broken catalog warns once, not on every request. */
 const warnedByRoot = new Map<string, string>();
 
@@ -202,7 +222,11 @@ function reportFamilyProblems(
  * only when its id is kebab-case, its questions file parses with ids it may
  * own, and every public question has a key of its type; otherwise that row is
  * dropped with one reason-coded warning (a committed subject it would have
- * replaced stays). Warnings carry a code and subject id, never a path.
+ * replaced stays). A row with `rev` (family emits write one) is served only
+ * when the questions + keys bytes read hash to it; otherwise the last
+ * consistent copy read earlier in this process is served, or the row is
+ * dropped (`revision_mismatch`), so questions and keys of two Applies are
+ * never paired. Warnings carry a code and subject id, never a path.
  */
 export function readGeneratedOverlay(
   root = getOnboardingContentRoot(),
@@ -220,6 +244,16 @@ export function readGeneratedOverlay(
   const keys: Record<string, AnswerKey> = {};
   const dropped: FamilyWarning[] = [];
   const seen = new Set<string>();
+  let lastConsistent = lastConsistentByRoot.get(root);
+  if (!lastConsistent) {
+    lastConsistent = new Map();
+    lastConsistentByRoot.set(root, lastConsistent);
+  }
+  const serve = (entry: Omit<ConsistentSubject, 'rev'>) => {
+    subjects.push(entry.subject);
+    questions[entry.subject.id] = entry.bank;
+    Object.assign(keys, entry.keys);
+  };
 
   for (const row of catalog.value) {
     const subject = parseSubject(row);
@@ -239,12 +273,25 @@ export function readGeneratedOverlay(
       dropped.push({ reason: 'questions_unreadable', subjectId });
       continue;
     }
+    const rawKeys = readJson(path.join(dir, 'keys', `${subjectId}.json`));
+    // A revisioned row is served only as the Apply it names: files of another
+    // (newer questions, older keys) fall back to the last consistent copy.
+    const rev = isRecord(row) && typeof row.rev === 'string' ? row.rev : undefined;
+    if (
+      rev !== undefined &&
+      rawKeys.ok &&
+      generatedRevision(rawQuestions.raw, rawKeys.raw) !== rev
+    ) {
+      const previous = lastConsistent.get(subjectId);
+      if (previous) serve(previous);
+      else dropped.push({ reason: 'revision_mismatch', subjectId });
+      continue;
+    }
     const bank = parseSubjectQuestions(subjectId, rawQuestions.value);
     if (!bank) {
       dropped.push({ reason: 'questions_invalid', subjectId });
       continue;
     }
-    const rawKeys = readJson(path.join(dir, 'keys', `${subjectId}.json`));
     if (!rawKeys.ok || !isRecord(rawKeys.value)) {
       dropped.push({ reason: 'keys_unreadable', subjectId });
       continue;
@@ -255,9 +302,8 @@ export function readGeneratedOverlay(
       continue;
     }
 
-    subjects.push(subject);
-    questions[subjectId] = bank;
-    Object.assign(keys, subjectKeys);
+    serve({ subject, bank, keys: subjectKeys });
+    if (rev !== undefined) lastConsistent.set(subjectId, { rev, subject, bank, keys: subjectKeys });
   }
 
   reportFamilyProblems(root, false, dropped);

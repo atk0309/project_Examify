@@ -17,6 +17,7 @@ import { eq } from 'drizzle-orm';
 import {
   applyEmit,
   collectQuestionIds,
+  FamilyConfinementError,
   formatDataDirDisplay,
   formatFileDiff,
   GENERATED_DIR,
@@ -24,6 +25,7 @@ import {
   hasExistingBankIr,
   loadIrFiles,
   planEmit,
+  plannedInsideFamilyGenerated,
   publicQuestionIds,
   resolveIrFiles,
   resolveSubjectSources,
@@ -986,11 +988,9 @@ export function isPlanInsideFamilyGenerated(
   planned: readonly Pick<PlannedFile, 'absPath'>[],
   root: string,
 ): boolean {
-  const generated = path.resolve(root, GENERATED_DIR);
-  return planned.every((file) => {
-    const rel = path.relative(generated, path.resolve(file.absPath));
-    return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
-  });
+  // On realpaths: a symlinked content/generated (or questions/ / keys/) that
+  // points into the checkout must not route tracked files through it.
+  return plannedInsideFamilyGenerated(planned, root);
 }
 
 export type CatalogEmitPreview =
@@ -1013,7 +1013,7 @@ export function previewOnboardingEmit(
     // The family deleted its last subject: empty the family catalog and
     // delete its leftover files (Apply still needs the named prune confirm).
     // Only the family layer is touched — committed subjects stay.
-    const planned = planEmit([], root, { pruneMissing: true, registrars: false });
+    const planned = planEmit([], root, { pruneMissing: true, registrars: false, revisions: true });
     return {
       ok: true,
       planned,
@@ -1063,9 +1063,12 @@ export function previewOnboardingEmit(
   }
 
   // Registrars are build-time checkout code: the wizard never plans them.
+  // Family rows carry `rev` so the live bank never pairs questions and keys
+  // from different Applies.
   const planned = planEmit(result.banks, root, {
     pruneMissing: loaded.pruneMissing,
     registrars: false,
+    revisions: true,
   });
   return {
     ok: true,
@@ -1136,7 +1139,17 @@ export function applyOnboardingEmit(
       deletes,
     };
   }
-  applyEmit(preview.planned);
+  try {
+    applyEmit(preview.planned, { familyRoot: root });
+  } catch (error) {
+    // Re-checked per file: a folder swapped for a symlink after the check above.
+    if (!(error instanceof FamilyConfinementError)) throw error;
+    return {
+      ok: false,
+      reason: 'invalid',
+      message: 'refusing to write outside the family data folder',
+    };
+  }
   return {
     ok: true,
     written: preview.planned.filter((file) => file.delete || file.existing !== file.contents)

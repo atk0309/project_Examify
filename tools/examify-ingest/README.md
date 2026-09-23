@@ -34,7 +34,9 @@ The first-run `/onboarding` wizard can run generate on the AI step (same
 `generateSubject` entry, BankIR only), then this same directory emit
 (validate, dry-run, then apply) on the family layer only — it never plans the
 registrars and refuses any write outside `<data folder>/content/generated/`
-("refusing to write outside the family data folder"). Its Review names each
+("refusing to write outside the family data folder"), judged on realpaths so a
+symlinked `content/generated`, `questions/` or `keys/` into the checkout is
+refused, and re-checked right before each write. Its Review names each
 family subject that replaces a committed one ("Replaces built-in subject: …").
 It does not auto-emit or auto-apply after generate. `--replace-sample` is off
 unless the admin enables it: the Review › Advanced toggle, or the same
@@ -249,6 +251,15 @@ resulting catalog (a family-layer emit never does). Every file is written
 atomically (temp file + rename): questions and keys first, then the
 registrars, then `subjects.json` (the live bank reads the catalog first, so it
 is the commit point), then leftover deletes.
+
+A family-layer emit (the wizard, or the CLI on `data/content/subjects`) also
+gives each catalog row it writes a `rev`: the sha256 of that subject's exact
+`questions/<id>.json` bytes, a newline, then its `keys/<id>.json` bytes (rows
+this run leaves alone keep theirs). The live bank serves a row with `rev` only
+when the files it reads hash to it — otherwise the last consistent copy it read,
+or nothing — so a request or a crash between the writes never pairs new
+questions with old keys. Committed-layer output never has `rev`, and neither do
+the registrars.
 
 ## BankIR shape (version 1)
 

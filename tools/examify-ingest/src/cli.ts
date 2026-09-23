@@ -332,6 +332,7 @@ function runValidateOrEmit(parsed: ParsedCli, io: CliIo): number {
     planned = planEmit(result.banks, ingest.root, {
       pruneMissing,
       registrars: ingest.layer === 'committed',
+      revisions: ingest.layer === 'family',
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -350,7 +351,7 @@ function runValidateOrEmit(parsed: ParsedCli, io: CliIo): number {
       `note: this writes tracked files in the checkout (committed content). Family content belongs in ${subjectsArgFor({ layer: 'family', dataDirDisplay: ingest.dataDirDisplay })}.\n`,
     );
   }
-  const written = applyEmit(planned);
+  const written = applyEmit(planned, ingest.layer === 'family' ? { familyRoot: ingest.root } : {});
   if (written.length === 0) {
     io.stdout.write('already up to date\n');
     return 0;
