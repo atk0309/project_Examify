@@ -105,7 +105,11 @@ the no-emit exit (sample bank). Deleting a subject removes its IR/source dirs;
 leftover generated JSON is pruned only after a named HITL confirm on Apply
 (cancel keeps those files). Ready lists live bank subject ids/names and
 question counts.
-An empty subjects tree is refused and never wipes generated files. Uploaded
+An empty subjects tree is refused and never wipes generated files — with one
+`/onboarding` exception: when the family deletes its **last** subject while the
+family generated layer still serves subjects, Review offers a prune-only plan
+(catalog `[]` plus deletes), applied only with the confirmed dry-run hash and the
+named prune confirm. With nothing to prune it is still refused. Uploaded
 PDFs must start with `%PDF`; their names are sanitised to a safe basename
 (commas, apostrophes, accents are fine), and a different file with the same
 name is stored as ` (2)`. `--replace-sample` is off unless the admin enables
@@ -194,7 +198,11 @@ file first.
    other generated subjects. Emitting only subjects directories (typically
    `content/subjects`) is authoritative: leftover generated JSON for a subject
    no longer present in that tree is deleted. An empty subjects tree is
-   refused (fail closed) and does not wipe generated files.
+   refused (fail closed) and does not wipe generated files. The only exception
+   is the `/onboarding` wizard after the family deletes its last subject: Review
+   offers a prune-only plan (catalog `[]` plus deletes), applied only with the
+   confirmed dry-run hash and the named prune confirm; the CLI always refuses,
+   and so does the wizard when there is nothing to prune.
 
 Ids that collide with **any** id already in the sample bank (`SAMPLE_QUESTIONS`)
 are refused unless you pass `--replace-sample`. Full IR shape, commands, and the
