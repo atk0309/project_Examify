@@ -1,7 +1,19 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import Database from 'better-sqlite3';
 import { afterEach, describe, expect, it } from 'vitest';
+import { DATA_DIR_MARKER, UnsafeDataDirError } from '@/lib/data-dir';
 import { parseEnvFile, resolveMigrateConfig } from '@/lib/db/migrate-env';
 
 const temps: string[] = [];
@@ -101,10 +113,104 @@ describe('resolveMigrateConfig', () => {
     expect(cfg.dbPath).toBe(path.join(root, 'data', 'from-dotenv.db'));
   });
 
-  it('falls back to file:./data/app.db on the repo root', () => {
+  it('falls back to <checkout>/data/app.db in the default data folder', () => {
     const root = tempRepo();
     const cfg = resolveMigrateConfig(root, {});
-    expect(cfg.databaseUrl).toBe('file:./data/app.db');
+    expect(cfg.dataDir).toBe(path.join(root, 'data'));
+    expect(cfg.databaseUrl).toBe(`file:${path.join(root, 'data', 'app.db')}`);
     expect(cfg.dbPath).toBe(path.join(root, 'data', 'app.db'));
+  });
+
+  it('puts the database in EXAMIFY_DATA_DIR from the repo .env, resolved against the checkout', () => {
+    const root = tempRepo();
+    writeFileSync(path.join(root, '.env'), 'EXAMIFY_DATA_DIR=data/family\n');
+    const nested = path.join(root, 'src');
+    mkdirSync(nested, { recursive: true });
+    const cfg = resolveMigrateConfig(nested, {});
+    expect(cfg.dataDir).toBe(path.join(root, 'data', 'family'));
+    expect(cfg.dbPath).toBe(path.join(root, 'data', 'family', 'app.db'));
+  });
+
+  it('keeps an explicit DATABASE_URL next to an EXAMIFY_DATA_DIR (existing installs)', () => {
+    const root = tempRepo();
+    const outside = mkdtempSync(path.join(tmpdir(), 'examify-migrate-family-'));
+    temps.push(outside);
+    writeFileSync(path.join(root, '.env'), 'DATABASE_URL=file:./data/app.db\n');
+    const cfg = resolveMigrateConfig(root, { EXAMIFY_DATA_DIR: outside });
+    expect(cfg.dataDir).toBe(outside);
+    expect(cfg.dbPath).toBe(path.join(root, 'data', 'app.db'));
+  });
+
+  it('refuses a data folder that overlaps the checkout', () => {
+    const root = tempRepo();
+    expect(() => resolveMigrateConfig(root, { EXAMIFY_DATA_DIR: 'src/family' })).toThrow(
+      UnsafeDataDirError,
+    );
+    expect(() => resolveMigrateConfig(root, { EXAMIFY_DATA_DIR: '.' })).toThrow(UnsafeDataDirError);
+  });
+});
+
+describe('pnpm db:migrate', () => {
+  const checkout = process.cwd();
+  const tsx = path.join(checkout, 'node_modules', '.bin', 'tsx');
+  const script = path.join(checkout, 'src', 'lib', 'db', 'migrate.ts');
+
+  function migrateRepo(): string {
+    const root = tempRepo();
+    cpSync(
+      path.join(checkout, 'src', 'lib', 'db', 'migrations'),
+      path.join(root, 'src', 'lib', 'db', 'migrations'),
+      { recursive: true },
+    );
+    return root;
+  }
+
+  function runMigrate(root: string, env: Record<string, string> = {}) {
+    return spawnSync(tsx, [script], {
+      cwd: root,
+      encoding: 'utf8',
+      // Only what the script needs — never the unit suite's data folder / DB.
+      env: {
+        NODE_ENV: 'production',
+        PATH: process.env.PATH ?? '',
+        HOME: process.env.HOME ?? root,
+        ...env,
+      },
+    });
+  }
+
+  it('initialises the data folder (0700, .gitignore, marker) and migrates the database in it', () => {
+    const root = migrateRepo();
+    const first = runMigrate(root);
+    expect(first.status, first.stderr).toBe(0);
+    const dataDir = path.join(root, 'data');
+    expect(statSync(dataDir).mode & 0o777).toBe(0o700);
+    expect(readFileSync(path.join(dataDir, '.gitignore'), 'utf8')).toBe('*\n');
+    const marker = readFileSync(path.join(dataDir, DATA_DIR_MARKER), 'utf8');
+    expect(JSON.parse(marker)).toMatchObject({ layout: 1, migrations: [] });
+    expect(statSync(path.join(dataDir, DATA_DIR_MARKER)).mode & 0o777).toBe(0o600);
+    const sqlite = new Database(path.join(dataDir, 'app.db'), { readonly: true });
+    try {
+      const users = sqlite
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
+        .all();
+      expect(users).toHaveLength(1);
+    } finally {
+      sqlite.close();
+    }
+
+    const again = runMigrate(root);
+    expect(again.status, again.stderr).toBe(0);
+    expect(readFileSync(path.join(dataDir, DATA_DIR_MARKER), 'utf8')).toBe(marker);
+  });
+
+  it('refuses an unsafe data folder without creating it or printing the path', () => {
+    const root = migrateRepo();
+    const result = runMigrate(root, { EXAMIFY_DATA_DIR: 'src/family' });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('db:migrate: inside the checkout the family data folder');
+    expect(result.stderr).not.toContain(root);
+    expect(existsSync(path.join(root, 'src', 'family'))).toBe(false);
+    expect(existsSync(path.join(root, 'data'))).toBe(false);
   });
 });

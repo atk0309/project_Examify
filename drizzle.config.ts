@@ -1,13 +1,13 @@
 import type { Config } from 'drizzle-kit';
+import { resolveCliDataPaths } from './src/lib/data-dir';
 
-const url = process.env.DATABASE_URL ?? 'file:./data/app.db';
-const dbPath = url.startsWith('file:') ? url.slice('file:'.length) : url;
-
+// Same SQLite file as the app and `pnpm db:migrate` (EXAMIFY_DATA_DIR /
+// DATABASE_URL from the process env, then the repo env files).
 export default {
   schema: './src/lib/db/schema.ts',
   out: './src/lib/db/migrations',
   dialect: 'sqlite',
-  dbCredentials: { url: dbPath },
+  dbCredentials: { url: resolveCliDataPaths().dbPath },
   strict: true,
   verbose: true,
 } satisfies Config;
