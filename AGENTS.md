@@ -130,7 +130,8 @@ JSON`). Missing cloud
   images were rasterized (`pdftoppm` from poppler-utils). `--provider claude-cli` /
   `codex-cli` run Claude Code / Codex with their own sign-in (no key env; binary from
   `EXAMIFY_CLAUDE_BIN` / `EXAMIFY_CODEX_BIN`, `PATH`, `~/.local/bin`; on Windows a `.exe`
-  only, never an npm `.cmd` shim, with env names matched case-insensitively; model from
+  only, never an npm `.cmd` shim, with env names folded to upper case when the repo
+  `.env` files are merged (the host env still wins); model from
   `--model`, `EXAMIFY_CLAUDE_MODEL` / `EXAMIFY_CODEX_MODEL`, else the CLI's). Local HTTP
   sends `--model`, else `EXAMIFY_LLM_MODEL`, else `local`; the local transport
   (command / endpoint) is in the cacheKey so one never serves the other's cached IR,

@@ -24,6 +24,7 @@ import {
   assertReadableProviderInput,
   generateSubject,
   loadGeneratePrompt,
+  mergeRepoEnvFiles,
   resolveAgentCliBinary,
   resolvePageImages,
   resolveSubjectSources,
@@ -230,6 +231,48 @@ describe('agent CLI binaries', () => {
     expect(agentCliHome('codex', { Codex_Home: '/srv/cx' }, 'win32')).toBe(path.resolve('/srv/cx'));
     // POSIX names are case-sensitive: `Path` is not PATH there.
     expect(agentCliEnv(env, 'codex', undefined, 'linux')).not.toHaveProperty('PATH');
+  });
+
+  it('on Windows, folds env names when merging .env files, the host still winning', async () => {
+    const root = plantsRoot();
+    writeFileSync(
+      path.join(root, '.env'),
+      'EXAMIFY_CLAUDE_BIN=/stale/claude\nEXAMIFY_CODEX_MODEL=from-file\n',
+    );
+    const merged = mergeRepoEnvFiles(
+      root,
+      { Path: 'C:\\bin', Examify_Claude_Bin: '/host/claude', Examify_Claude_Model: 'opus' },
+      'win32',
+    );
+    expect(merged).toMatchObject({
+      PATH: 'C:\\bin',
+      EXAMIFY_CLAUDE_BIN: '/host/claude',
+      EXAMIFY_CLAUDE_MODEL: 'opus',
+      EXAMIFY_CODEX_MODEL: 'from-file',
+    });
+    expect(merged).not.toHaveProperty('Path');
+    expect(merged).not.toHaveProperty('Examify_Claude_Bin');
+    // An empty host value still wins over the file.
+    expect(mergeRepoEnvFiles(root, { examify_claude_bin: '' }, 'win32').EXAMIFY_CLAUDE_BIN).toBe(
+      '',
+    );
+    // POSIX names are case-sensitive: nothing is folded.
+    expect(mergeRepoEnvFiles(root, { Examify_Claude_Bin: '/host/claude' }, 'linux')).toMatchObject({
+      Examify_Claude_Bin: '/host/claude',
+      EXAMIFY_CLAUDE_BIN: '/stale/claude',
+    });
+
+    // The model a Windows host set in its own casing is the one generate runs.
+    const fake = fakeCli('claude', { mode: 'success', text: JSON.stringify(plantsBank()) });
+    const env = mergeRepoEnvFiles(
+      root,
+      { ...hostEnv(), Examify_Claude_Bin: fake.bin, Examify_Claude_Model: 'opus' },
+      'win32',
+    );
+    const result = await generatePlants('claude-cli', env, root);
+    expect(result.manifest.model).toBe('opus');
+    const args = fake.record().argv;
+    expect(args[args.indexOf('--model') + 1]).toBe('opus');
   });
 
   it('skips a non-executable file with the CLI name', () => {

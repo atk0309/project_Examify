@@ -104,8 +104,10 @@ const TEMP_ENV_KEYS = ['TMPDIR', 'TMP', 'TEMP'] as const;
 
 /**
  * `env[key]`, matched case-insensitively on Windows. `process.env` is
- * case-insensitive there, but a copy of it (`mergeRepoEnvFiles`, the wizard's
- * host env) keeps the system's own casing: `Path`, `SystemRoot`, `ComSpec`.
+ * case-insensitive there, but a plain copy of it keeps the system's own
+ * casing (`Path`, `SystemRoot`, `ComSpec`). `mergeRepoEnvFiles` folds names
+ * already (the CLI and the wizard both merge through it); this covers an env
+ * that did not go through it.
  */
 export function envValue(
   env: ProviderEnv,

@@ -472,7 +472,9 @@ provider's content blocks, so PDFs go as documents) and `--provider codex-cli`
 own sign-in: binary from `EXAMIFY_CLAUDE_BIN` / `EXAMIFY_CODEX_BIN`, `PATH`, then
 `~/.local/bin` (on Windows a `.exe` only: `spawn` without a shell cannot start an npm
 `.cmd` shim, and cmd quoting of the prompt argument is not safe; env names such as
-`Path` / `SystemRoot` are matched case-insensitively there, `envValue`); model from `--model`, `EXAMIFY_CLAUDE_MODEL` /
+`Path` / `SystemRoot` are case-insensitive there: `mergeRepoEnvFiles` folds them to
+upper case, the host env still winning over `.env`, and `envValue` matches the rest);
+model from `--model`, `EXAMIFY_CLAUDE_MODEL` /
 `EXAMIFY_CODEX_MODEL`, else the CLI's own (`default` in the manifest); a
 10-minute deadline (`CLI_PROVIDER_TIMEOUT_MS`). Both run through
 `providers/command.ts` (shared with the local command: abort / deadline kill the

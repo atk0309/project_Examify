@@ -200,8 +200,9 @@ sign-in (no key env). Both are found via `EXAMIFY_CLAUDE_BIN` /
 npm `claude.cmd` / `codex.cmd` shim is a batch file that `spawn` cannot start
 without a shell, so point `EXAMIFY_CLAUDE_BIN` / `EXAMIFY_CODEX_BIN` at the
 CLI's own `.exe` (a full path, or a name such as `codex.exe` on `PATH`).
-Windows env names are matched case-insensitively (`Path`, `SystemRoot`), as
-Windows itself does. The model is `--model`, else
+Windows env names are case-insensitive (`Path`, `SystemRoot`), as Windows
+itself treats them: merging the repo `.env` files folds every name to upper
+case, and the host env still wins over the files. The model is `--model`, else
 `EXAMIFY_CLAUDE_MODEL` / `EXAMIFY_CODEX_MODEL`, else the CLI's own (recorded
 as `default`). Each run (`providers/command.ts`, shared with the local
 command) has a 10-minute deadline (`CLI_PROVIDER_TIMEOUT_MS`), an empty
