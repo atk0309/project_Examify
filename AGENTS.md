@@ -144,12 +144,19 @@ JSON`). Missing cloud
   4 legacy, 5 refused, 6 verify failed) are an `install.sh` contract. Writing commands
   (and `verify`) refuse on an owner mismatch unless `--allow-owner-mismatch`. Backups:
   `VACUUM INTO` snapshot + family content + `.env` (unless `--no-env`), never `outbox/`
-  or `backups/`, archives `0600`; restore refuses while the server answers, checks the
-  MANIFEST sha256s, and moves existing data aside only with `--force`.
-  `install.sh` is `main()`-wrapped; `--upgrade` = read-only preflight → pre-upgrade
-  backup → `migrate-checkout` → merge → phase 2 (install / `db:migrate` / build /
-  `verify`); `--rollback <archive>` / `--restore <archive>`. It never manages services,
-  never stashes or `git clean`s. Details: CLAUDE.md "Family data folder invariants".
+  or `backups/`, archives `0600` and read back before they are reported; restore
+  refuses while Examify answers `/api/health` (any JSON `{ok:boolean}`), checks the
+  MANIFEST sha256s, moves existing data aside only with `--force`, names that folder if
+  it fails afterwards, and never fails once everything is placed. `migrate-checkout`
+  never moves anything without a backup holding what it reverts (its own
+  `--include-checkout` one, or a `--backup` that holds this checkout at `HEAD`) and
+  prunes emptied folders bottom-up. `install.sh` is `main()`-wrapped; `--upgrade` =
+  read-only preflight (incl. upstream-added paths that exist untracked / ignored, and
+  upstream Node needs) → pre-upgrade backup → `.upgrade-state.json` rollback point →
+  `migrate-checkout --backup` → merge → phase 2 (install / `db:migrate` / build /
+  `verify`); `--rollback <archive>` (works from the piped upstream installer too) /
+  `--restore <archive>`. It never manages services, never stashes or `git clean`s.
+  Details: CLAUDE.md "Family data folder invariants".
 - **Free-text is LLM-graded server-side** (`src/lib/grading/index.ts`,
   live `ANTHROPIC_API_KEY` from `process.env` only so a wizard set / rotate /
   clear is visible without restart; `test` → deterministic stub only when

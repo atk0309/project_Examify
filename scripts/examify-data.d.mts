@@ -65,7 +65,12 @@ export declare function resolveCliDataPaths(cwd?: string, processEnv?: EnvLike):
 export declare function isJunkName(name: string): boolean;
 export declare function initDataFolder(
   paths: Pick<DataPaths, 'dataDir'>,
-  options?: { geteuid?: () => number | undefined; warn?: (line: string) => void },
+  options?: {
+    geteuid?: () => number | undefined;
+    warn?: (line: string) => void;
+    /** Skip the shared-folder check (the caller vetted the folder already). */
+    vetted?: boolean;
+  },
 ): { created: boolean };
 export declare function loadSqlite(repoRoot: string, sqliteModule?: string): unknown;
 export declare function checkoutMigrationCount(repoRoot: string): number;
@@ -96,6 +101,8 @@ export declare function init(options?: CommandOptions): { dataDir: string; creat
 
 export type BackupResult = {
   archive: string;
+  /** Read back after publishing (`tar -tzf` + its MANIFEST.json). */
+  verified: true;
   size: number;
   kind: 'manual' | 'pre-upgrade';
   createdAt: string;
@@ -136,6 +143,8 @@ export type RestoreResult = {
   archiveHasEnv: boolean;
   movedAside: string | null;
   envSaved: string[];
+  /** Everything was placed; finishing the data folder's init failed (db:migrate redoes it). */
+  warnings: string[];
 };
 export declare function restore(
   options?: CommandOptions & {
@@ -168,21 +177,27 @@ export type MigrateResult = {
   incompleteGenerated: Array<{ id: string; missing: string[] }>;
   /** Catalog rows with an invalid or duplicate id (left out of the family catalog). */
   invalidCatalogRows: number;
+  /** `content/source-pdfs` / `.examify-ingest` folders present in the checkout. */
+  leftoverDirs: string[];
   noop: boolean;
   dryRun: boolean;
   copies?: Array<{ path: string; action: string }>;
   generatedActions?: Record<string, string>;
   dataDir?: string;
+  /** The backup taken first (`taken`) or given with `--backup`; null for a prune-only run. */
+  backup?: { archive: string; taken: boolean } | null;
   moved?: number;
   copied?: number;
   overwritten?: number;
   same?: number;
   conflicts?: string[];
   removed?: number;
+  /** Leftover folders the run removed from the checkout. */
+  removedFolders?: string[];
 };
 export declare function migrateCheckout(
-  options?: CommandOptions & { dryRun?: boolean },
-): MigrateResult;
+  options?: CommandOptions & { dryRun?: boolean; backup?: string },
+): Promise<MigrateResult>;
 
 export type VerifyResult = {
   ok: boolean;

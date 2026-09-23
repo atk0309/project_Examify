@@ -598,7 +598,8 @@ function assertOwnership(ctx, options) {
     try {
       st = fs.statSync(target);
     } catch (error) {
-      if (isEnoent(error)) continue;
+      // Not there (yet), or cannot be: nothing to own.
+      if (isEnoent(error) || error.code === 'ENOTDIR') continue;
       throw error;
     }
     if (st.uid !== uid) {
@@ -665,12 +666,16 @@ function assertDedicatedFolder(dataDir, dbPath) {
  * `.gitignore` (`*`) and the marker. Existing files are never rewritten.
  * `created` is true when the folder did not exist before. An existing,
  * unmarked folder holding files Examify does not recognise is refused
- * (exit 5, `shared_folder`) before anything is chmodded or written.
+ * (exit 5, `shared_folder`) before anything is chmodded or written, unless
+ * the caller already vetted it (`vetted`, restore after placing its files).
  */
-export function initDataFolder(paths, { geteuid = defaultGeteuid, warn = () => {} } = {}) {
+export function initDataFolder(
+  paths,
+  { geteuid = defaultGeteuid, warn = () => {}, vetted = false } = {},
+) {
   const { dataDir } = paths;
   const created = !fs.existsSync(dataDir);
-  if (!created) assertDedicatedFolder(dataDir, paths.dbPath);
+  if (!created && !vetted) assertDedicatedFolder(dataDir, paths.dbPath);
   fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   const st = fs.statSync(dataDir);
   const uid = geteuid();
@@ -1003,6 +1008,46 @@ function archiveName(kind, sha) {
   return `examify-backup-${compactUtc(new Date())}-${randomHex(2)}${suffix}.tar.gz`;
 }
 
+/** The archive's MANIFEST.json text, or null when tar cannot read it. */
+function readArchiveManifestText(archive) {
+  const result = spawnSync('tar', ['-xOzf', archive, 'MANIFEST.json'], {
+    encoding: 'utf8',
+    env: tarEnv(),
+    maxBuffer: BIG_BUFFER,
+  });
+  return result.error || result.status !== 0 ? null : result.stdout;
+}
+
+/**
+ * Read the published archive back: the whole gzip stream lists, every
+ * MANIFEST file is a member, and its MANIFEST.json is the one written. One
+ * that does not is removed, so it is never reported as a backup.
+ */
+function verifyPublishedArchive(archive, manifest, manifestText) {
+  const list = spawnSync('tar', ['-tzf', archive], {
+    encoding: 'utf8',
+    env: tarEnv(),
+    maxBuffer: BIG_BUFFER,
+  });
+  const names =
+    list.error || list.status !== 0
+      ? null
+      : new Set(list.stdout.split('\n').map((name) => name.replace(/^\.\//, '')));
+  const intact =
+    names !== null &&
+    names.has('MANIFEST.json') &&
+    manifest.files.every((file) => names.has(file.path)) &&
+    readArchiveManifestText(archive) === manifestText;
+  if (!intact) {
+    fs.rmSync(archive, { force: true });
+    throw new CliError(
+      EXIT.UNEXPECTED,
+      'archive_unreadable',
+      'the archive did not read back intact (tar -tzf and its MANIFEST.json); it was removed, so there is no backup',
+    );
+  }
+}
+
 /** Publish without clobbering: link() + unlink(), rename() only where links are unsupported. */
 function publishNoClobber(tmp, dir, makeName) {
   for (let attempt = 0; attempt < 20; attempt += 1) {
@@ -1156,13 +1201,8 @@ export async function backup(options = {}) {
         : { included: false },
       files: [...records.values()].sort((a, b) => (a.path < b.path ? -1 : 1)),
     };
-    fs.writeFileSync(
-      path.join(staging, 'MANIFEST.json'),
-      `${JSON.stringify(manifest, null, 2)}\n`,
-      {
-        mode: 0o600,
-      },
-    );
+    const manifestText = `${JSON.stringify(manifest, null, 2)}\n`;
+    fs.writeFileSync(path.join(staging, 'MANIFEST.json'), manifestText, { mode: 0o600 });
 
     // 6. tar into a 0600 temp file we created, fsync, publish without clobbering.
     // `db/app.db` by name: nothing next to the snapshot (-wal / -shm) is archived.
@@ -1188,8 +1228,10 @@ export async function backup(options = {}) {
     const archive = publishNoClobber(tmp, outDir, () => archiveName(kind, gitSha));
     fs.chmodSync(archive, 0o600);
     fsyncDir(outDir);
+    verifyPublishedArchive(archive, manifest, manifestText);
     return {
       archive,
+      verified: true,
       size: fs.statSync(archive).size,
       kind,
       createdAt: manifest.createdAt,
@@ -1373,9 +1415,8 @@ function movePath(src, dest) {
   }
 }
 
-/** Move the current DB + family content into `$DATA/before-restore-<ts>/` (never backups/). */
-function moveAside(resolved, present, ts) {
-  const dir = uniquePath(path.join(resolved.dataDir, `before-restore-${ts}`));
+/** Move the current DB + family content into `dir` (`$DATA/before-restore-<ts>/`, never backups/). */
+function moveAside(resolved, present, dir) {
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   for (const item of present) {
     if (item.kind === 'db') movePath(item.abs, path.join(dir, 'db', path.basename(item.abs)));
@@ -1384,7 +1425,6 @@ function moveAside(resolved, present, ts) {
     const abs = path.join(resolved.dataDir, name);
     if (lstatOrNull(abs)) movePath(abs, path.join(dir, name));
   }
-  return dir;
 }
 
 function placeVerified(item, dest, modes) {
@@ -1562,40 +1602,67 @@ export async function restore(options = {}) {
       return { item, rel, dest };
     });
 
-    // 5. Point of no return: move aside, then place.
+    // 5. Point of no return: move aside, then place. A failure from here on
+    // names where the replaced data went.
     const ts = compactUtc(new Date());
-    fs.mkdirSync(target.dataDir, { recursive: true, mode: 0o700 });
-    const movedAside = present.length > 0 ? moveAside(target, present, ts) : null;
-
-    for (const suffix of ['-wal', '-shm', '-journal'])
-      fs.rmSync(target.dbPath + suffix, { force: true });
-    placeVerified(selected.db, target.dbPath);
-
-    for (const item of selected.family) {
-      placeVerified(item, fromPosix(target.dataDir, item.rel.slice('family/'.length)));
-    }
-
+    const movedAside =
+      present.length > 0 ? uniquePath(path.join(target.dataDir, `before-restore-${ts}`)) : null;
     const envRestored = [];
     const envSaved = [];
-    for (const item of selected.env) {
-      const name = item.rel.slice('env/'.length);
-      const dest = path.join(repoRoot, name);
-      if (lstatOrNull(dest)) {
-        // `.env.*.local` is gitignored in every Examify checkout, old ones included.
-        const saved = uniquePath(path.join(repoRoot, `${name}.before-restore-${ts}.local`));
-        fs.copyFileSync(dest, saved, fs.constants.COPYFILE_EXCL);
-        fs.chmodSync(saved, 0o600);
-        envSaved.push(saved);
+    try {
+      fs.mkdirSync(target.dataDir, { recursive: true, mode: 0o700 });
+      if (movedAside) moveAside(target, present, movedAside);
+
+      for (const suffix of ['-wal', '-shm', '-journal'])
+        fs.rmSync(target.dbPath + suffix, { force: true });
+      placeVerified(selected.db, target.dbPath);
+
+      for (const item of selected.family) {
+        placeVerified(item, fromPosix(target.dataDir, item.rel.slice('family/'.length)));
       }
-      placeVerified(item, dest, { mode: 0o600, dirMode: 0o755 });
-      envRestored.push(name);
+
+      for (const item of selected.env) {
+        const name = item.rel.slice('env/'.length);
+        const dest = path.join(repoRoot, name);
+        if (lstatOrNull(dest)) {
+          // `.env.*.local` is gitignored in every Examify checkout, old ones included.
+          const saved = uniquePath(path.join(repoRoot, `${name}.before-restore-${ts}.local`));
+          fs.copyFileSync(dest, saved, fs.constants.COPYFILE_EXCL);
+          fs.chmodSync(saved, 0o600);
+          envSaved.push(saved);
+        }
+        placeVerified(item, dest, { mode: 0o600, dirMode: 0o755 });
+        envRestored.push(name);
+      }
+
+      for (const { item, rel, dest } of checkoutItems) {
+        placeVerified(item, dest, { mode: isKeysPath(rel) ? 0o600 : 0o644, dirMode: 0o755 });
+      }
+    } catch (error) {
+      if (!movedAside || !lstatOrNull(movedAside)) throw error;
+      const cli = error instanceof CliError ? error : null;
+      throw new CliError(
+        cli?.exitCode ?? EXIT.UNEXPECTED,
+        cli?.code ?? 'restore_failed',
+        `${error instanceof Error ? error.message : String(error)}; the data this restore replaced is in ${movedAside}`,
+        { ...cli?.extra, movedAside, envSaved },
+      );
     }
 
-    for (const { item, rel, dest } of checkoutItems) {
-      placeVerified(item, dest, { mode: isKeysPath(rel) ? 0o600 : 0o644, dirMode: 0o755 });
+    // Everything is in place: the folder was vetted above (its marker may be
+    // aside now), and a failure to finish initialising it is only a warning.
+    const warnings = [];
+    try {
+      initDataFolder(target, {
+        geteuid: options.geteuid ?? defaultGeteuid,
+        warn: ctx.log,
+        vetted: true,
+      });
+    } catch (error) {
+      const line = `the data folder was restored but not fully initialised (${error instanceof Error ? error.message : String(error)}); pnpm db:migrate finishes it`;
+      warnings.push(line);
+      ctx.log(`warning: ${line}`);
     }
-
-    initDataFolder(target, { geteuid: options.geteuid ?? defaultGeteuid, warn: ctx.log });
     return {
       dataDir: target.dataDir,
       dbPath: target.dbPath,
@@ -1615,6 +1682,7 @@ export async function restore(options = {}) {
       archiveHasEnv: selected.env.length + selected.skipped.env > 0,
       movedAside,
       envSaved,
+      warnings,
     };
   } finally {
     fs.rmSync(staging, { recursive: true, force: true });
@@ -1627,6 +1695,8 @@ export async function restore(options = {}) {
 // ---------------------------------------------------------------------------
 
 const RESTORE_PATHS = ['content/subjects', 'content/generated', ...REGISTRARS];
+/** Folders that must not survive in the checkout, even holding only empty folders or OS junk. */
+const LEFTOVER_DIRS = ['content/source-pdfs', '.examify-ingest'];
 const CONFLICT_STATES = new Set(['DD', 'AU', 'UD', 'UA', 'DU', 'AA', 'UU']);
 
 /** lstat walk: leaves are files, symlinks (never followed) and special files. */
@@ -1792,6 +1862,9 @@ export function planMigrateCheckout(repoRoot) {
     return items;
   };
   const addOrphan = (leaf) => {
+    // A committed file the old runtime never wrote (a README upstream added):
+    // not family content, and `git checkout HEAD` leaves it as it is.
+    if (leaf.inIndex && leaf.state === 'clean') return;
     if (leaf.inIndex) {
       blocking.push({
         path: leaf.rel,
@@ -1805,6 +1878,7 @@ export function planMigrateCheckout(repoRoot) {
 
   // Subjects.
   const subjectLeaves = new Map();
+  const presentDirs = new Set();
   for (const leaf of byArea.subjects) {
     const parts = leaf.rel.split('/');
     const id = parts[2];
@@ -1814,6 +1888,7 @@ export function planMigrateCheckout(repoRoot) {
       addOrphan(leaf);
       continue;
     }
+    presentDirs.add(id);
     if (!SUBJECT_ID_RE.test(id)) {
       addOrphan(leaf);
       continue;
@@ -1827,7 +1902,7 @@ export function planMigrateCheckout(repoRoot) {
     if (parts[0] === 'content' && parts[1] === 'subjects' && parts.length > 3)
       committedIds.add(parts[2]);
   }
-  const hiddenCommitted = [...committedIds].filter((id) => !subjectLeaves.has(id)).sort();
+  const hiddenCommitted = [...committedIds].filter((id) => !presentDirs.has(id)).sort();
   if (hiddenCommitted.length > 0) restoreTracked = true;
   const subjects = new Map();
   for (const [id, idLeaves] of subjectLeaves) {
@@ -1943,7 +2018,7 @@ export function planMigrateCheckout(repoRoot) {
   }
 
   // Folders that must not survive in the checkout even when they only hold OS junk.
-  const leftoverDirs = ['content/source-pdfs', '.examify-ingest'].filter((rel) =>
+  const leftoverDirs = LEFTOVER_DIRS.filter((rel) =>
     lstatOrNull(fromPosix(repoRoot, rel))?.isDirectory(),
   );
 
@@ -2066,22 +2141,66 @@ function modeFor(rel) {
 }
 
 /**
- * Remove folders that emptied out, deepest first (OS junk alone does not keep
- * a folder alive). Never the checkout root, content/, subjects/ or generated/,
- * and never a symlinked folder.
+ * The folder a pruned path belongs to: one subject, one generated area, the
+ * source PDFs or the ingest state (else the folder itself).
+ */
+function pruneRoot(repoRoot, dir) {
+  const parts = toPosix(path.relative(repoRoot, dir)).split('/');
+  if (parts[0] === 'content' && ['subjects', 'generated'].includes(parts[1]) && parts.length > 2) {
+    return fromPosix(repoRoot, parts.slice(0, 3).join('/'));
+  }
+  if (parts[0] === 'content' && parts[1] === 'source-pdfs') {
+    return fromPosix(repoRoot, 'content/source-pdfs');
+  }
+  if (parts[0] === '.examify-ingest') return fromPosix(repoRoot, '.examify-ingest');
+  return dir;
+}
+
+/**
+ * Remove `dir` and every folder under it that holds nothing but OS junk and
+ * folders removed here, bottom-up and never through a symlink (lstat). True
+ * when `dir` is gone.
+ */
+function pruneTree(dir) {
+  const st = lstatOrNull(dir);
+  if (!st || !st.isDirectory()) return false;
+  let keep = false;
+  for (const name of fs.readdirSync(dir)) {
+    const child = lstatOrNull(path.join(dir, name));
+    if (!child) continue;
+    if (child.isDirectory()) {
+      if (!pruneTree(path.join(dir, name))) keep = true;
+    } else if (!isJunkName(name)) {
+      keep = true;
+    }
+  }
+  if (keep) return false;
+  for (const name of fs.readdirSync(dir)) fs.unlinkSync(path.join(dir, name));
+  fs.rmdirSync(dir);
+  return true;
+}
+
+/**
+ * Remove folders that emptied out (OS junk alone does not keep a folder
+ * alive): each touched area as a whole — nested empty folders included, such
+ * as the subject folder a detached upload left behind — then parents, deepest
+ * first. Never the checkout root, content/, subjects/ or generated/, and never
+ * through a symlinked folder. Returns the removed area roots (relative).
  */
 function pruneEmptyDirs(repoRoot, dirs) {
   const stop = new Set(
     ['content', 'content/subjects', 'content/generated'].map((rel) => fromPosix(repoRoot, rel)),
   );
+  const inside = (dir) => dir.startsWith(`${repoRoot}${path.sep}`) && !stop.has(dir);
+  const removed = [];
+  for (const root of new Set([...dirs].map((dir) => pruneRoot(repoRoot, dir)))) {
+    if (!inside(root) || !realParents(repoRoot, root)) continue;
+    if (pruneTree(root)) removed.push(toPosix(path.relative(repoRoot, root)));
+  }
   const all = new Set();
   for (const dir of dirs) {
     let cursor = dir;
-    while (
-      cursor !== repoRoot &&
-      !stop.has(cursor) &&
-      cursor.startsWith(`${repoRoot}${path.sep}`)
-    ) {
+    while (cursor !== repoRoot && inside(cursor)) {
       all.add(cursor);
       cursor = path.dirname(cursor);
     }
@@ -2097,6 +2216,7 @@ function pruneEmptyDirs(repoRoot, dirs) {
     for (const name of names) fs.unlinkSync(path.join(dir, name));
     fs.rmdirSync(dir);
   }
+  return removed;
 }
 
 /** Every folder between the checkout root and `abs` is a real folder (no symlink). */
@@ -2118,11 +2238,12 @@ function statusLines(repoRoot, pathspecs) {
 }
 
 /**
- * M2–M5. Copy (journal first) → verify → record in the marker → restore
- * tracked files + unlink exactly the verified copies → assert a clean
- * checkout. Reruns are no-ops; `dryRun` only plans.
+ * Backup → M2–M5. Back up the checkout + data (or check `--backup`) → copy
+ * (journal first) → verify → record in the marker → restore tracked files +
+ * unlink exactly the verified copies → assert a clean checkout. Reruns are
+ * no-ops; `dryRun` only plans.
  */
-export function migrateCheckout(options = {}) {
+export async function migrateCheckout(options = {}) {
   const ctx = resolveContext(options);
   const { repoRoot, paths: resolved, log } = ctx;
   if (!options.dryRun) assertOwnership(ctx, options);
@@ -2145,6 +2266,7 @@ export function migrateCheckout(options = {}) {
     orphans: plan.orphans,
     incompleteGenerated: plan.incompleteGenerated,
     invalidCatalogRows: plan.invalidCatalogRows,
+    leftoverDirs: plan.leftoverDirs,
   };
   const noop =
     plan.blocking.length === 0 &&
@@ -2220,7 +2342,27 @@ export function migrateCheckout(options = {}) {
     return { ...summary, noop: false, dryRun: true, copies: copyReport, generatedActions };
   }
 
+  // Only empty leftover folders: nothing to copy or revert, so no backup.
+  if (plan.copies.length === 0 && plan.unlinks.length === 0 && !plan.restoreTracked) {
+    const cleaned = cleanCheckout(repoRoot, plan);
+    return {
+      ...summary,
+      noop: false,
+      dryRun: false,
+      dataDir,
+      backup: null,
+      moved: 0,
+      copied: 0,
+      overwritten: 0,
+      same: 0,
+      conflicts: [],
+      ...cleaned,
+    };
+  }
+
   initDataFolder(resolved, { geteuid: options.geteuid ?? defaultGeteuid, warn: log });
+  // Before anything moves: M4 reverts tracked edits the data folder never gets.
+  const migrationBackup = await backupBeforeMigrating(ctx, options, plan);
   const conflictRoot = `migration-conflicts/${compactUtc(new Date())}`;
 
   // M2: journal every destination this run will own, then copy + verify.
@@ -2286,8 +2428,7 @@ export function migrateCheckout(options = {}) {
   });
   fs.rmSync(path.join(dataDir, MIGRATE_JOURNAL), { force: true });
 
-  // M4: only if nothing changed since the copy — restore tracked files, then
-  // unlink exactly the verified untracked / ignored ones (never `git clean`).
+  // M4: only if nothing changed since the copy.
   for (const item of plan.copies) {
     if (sha256File(item.src) !== item.writtenSha) {
       throw new CliError(
@@ -2297,6 +2438,27 @@ export function migrateCheckout(options = {}) {
       );
     }
   }
+  const cleaned = cleanCheckout(repoRoot, plan);
+  return {
+    ...summary,
+    noop: false,
+    dryRun: false,
+    dataDir,
+    backup: migrationBackup,
+    moved,
+    ...counts,
+    conflicts,
+    ...cleaned,
+  };
+}
+
+/**
+ * M4 + M5: restore the tracked content from HEAD, unlink exactly the
+ * verified untracked / ignored copies (never `git clean`, never through a
+ * symlinked folder), prune the folders that emptied out, then require a clean
+ * checkout.
+ */
+function cleanCheckout(repoRoot, plan) {
   if (plan.restoreTracked) {
     const heads = new Set(
       zList(git(repoRoot, ['ls-tree', '-z', '--name-only', 'HEAD', '--', ...RESTORE_PATHS])),
@@ -2313,10 +2475,16 @@ export function migrateCheckout(options = {}) {
       }
     }
   }
+  // A file taken out of the index (`git rm --cached`) is tracked again now
+  // that git checkout restored it: it stays (its copy is in the data folder).
+  const trackedNow = new Set(
+    zList(git(repoRoot, ['ls-files', '-z', '--', 'content', '.examify-ingest', ...REGISTRARS])),
+  );
   const problems = [];
   const touched = new Set(plan.leftoverDirs.map((rel) => fromPosix(repoRoot, rel)));
   let removed = 0;
   for (const unlink of plan.unlinks) {
+    if (trackedNow.has(unlink.rel)) continue;
     const st = lstatOrNull(unlink.abs);
     if (!st) continue;
     if (!realParents(repoRoot, unlink.abs)) {
@@ -2333,10 +2501,13 @@ export function migrateCheckout(options = {}) {
     removed += 1;
     touched.add(path.dirname(unlink.abs));
   }
-  pruneEmptyDirs(repoRoot, touched);
+  const pruned = pruneEmptyDirs(repoRoot, touched);
 
-  // M5: the checkout must now be clean.
+  // M5: the checkout must now be clean, ignored leftovers included.
   const left = statusLines(repoRoot, ['content', 'src/lib/exam']);
+  for (const rel of LEFTOVER_DIRS) {
+    if (lstatOrNull(fromPosix(repoRoot, rel))) problems.push(`${rel}/ (still in the checkout)`);
+  }
   if (left.length > 0 || problems.length > 0) {
     throw new CliError(
       EXIT.UNEXPECTED,
@@ -2345,16 +2516,65 @@ export function migrateCheckout(options = {}) {
       { remaining: [...left, ...problems] },
     );
   }
-  return {
-    ...summary,
-    noop: false,
-    dryRun: false,
-    dataDir,
-    moved,
-    ...counts,
-    conflicts,
-    removed,
-  };
+  return { removed, removedFolders: pruned.filter((rel) => plan.leftoverDirs.includes(rel)) };
+}
+
+/**
+ * A backup that holds everything M4 reverts: `--backup` must be a MANIFEST
+ * with this checkout at HEAD and the current bytes of every tracked file M4
+ * puts back; without it migrate-checkout takes its own pre-upgrade backup.
+ */
+async function backupBeforeMigrating(ctx, options, plan) {
+  if (options.backup) {
+    const archive = path.resolve(ctx.cwd, options.backup);
+    const refuse = (why) =>
+      new CliError(
+        EXIT.REFUSED,
+        'backup_mismatch',
+        `--backup ${why}; nothing was moved (without --backup, migrate-checkout takes its own)`,
+      );
+    if (!isFile(archive)) throw refuse('is not a file');
+    let manifest = null;
+    try {
+      manifest = JSON.parse(readArchiveManifestText(archive) ?? '');
+    } catch {
+      manifest = null;
+    }
+    if (!manifest || manifest.format !== 1 || !Array.isArray(manifest.files)) {
+      throw refuse('is not an examify-data backup');
+    }
+    if (!manifest.checkout?.included || manifest.checkout.gitSha !== plan.fromSha) {
+      throw refuse('does not hold this checkout at HEAD (take it with --include-checkout)');
+    }
+    const archived = new Map(manifest.files.map((file) => [file.path, file.sha256]));
+    const missing = [...plan.restoredTracked, ...plan.registrars].filter((rel) => {
+      const abs = fromPosix(ctx.repoRoot, rel);
+      return isFile(abs) && archived.get(`checkout/${rel}`) !== sha256File(abs);
+    });
+    if (missing.length > 0) {
+      throw refuse(`does not hold the current ${missing.join(', ')}`);
+    }
+    return { archive, taken: false };
+  }
+  try {
+    const result = await backup({
+      ...options,
+      kind: 'pre-upgrade',
+      includeCheckout: true,
+      out: undefined,
+      noEnv: false,
+      includeCache: false,
+    });
+    return { archive: result.archive, taken: true };
+  } catch (error) {
+    if (!(error instanceof CliError)) throw error;
+    throw new CliError(
+      error.exitCode,
+      error.code,
+      `migrate-checkout backs up the checkout and the data before moving anything, and that backup failed: ${error.message}; nothing was moved`,
+      error.extra,
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -2450,8 +2670,10 @@ Commands:
   restore <archive> [--force] [--with-env] [--include-checkout]
                              Restore a backup (stop the server first)
   legacy-check               Exit 4 when family content is still inside the checkout
-  migrate-checkout [--dry-run]
-                             Move family content from the checkout into the data folder
+  migrate-checkout [--dry-run] [--backup ARCHIVE]
+                             Move family content from the checkout into the data folder,
+                             after a pre-upgrade backup (or one given with --backup that
+                             holds this checkout at HEAD)
   verify                     Check the database, the family catalog and a clean checkout
 
 Options for every command:
@@ -2484,7 +2706,7 @@ const COMMAND_FLAGS = {
   },
   restore: { force: 'bool', 'with-env': 'bool', 'include-checkout': 'bool' },
   'legacy-check': {},
-  'migrate-checkout': { 'dry-run': 'bool' },
+  'migrate-checkout': { 'dry-run': 'bool', backup: 'value' },
   verify: {},
 };
 
@@ -2632,8 +2854,9 @@ async function runCommand(command, flags, positionals, options) {
               (item) => `${item.kind}: ${item.path}${item.reason ? ` (${item.reason})` : ''}`,
             ),
           ),
-          'Move it into the family data folder with `./install.sh --upgrade` or',
-          '`node scripts/examify-data.mjs migrate-checkout`.',
+          'With the server stopped, move it into the family data folder with',
+          '`./install.sh --upgrade`, or `node scripts/examify-data.mjs migrate-checkout`',
+          '(which backs up the checkout and the data before moving anything).',
         ].join('\n');
       }
       const data = {
@@ -2645,11 +2868,21 @@ async function runCommand(command, flags, positionals, options) {
       return { exitCode, data, text };
     }
     case 'migrate-checkout': {
-      const data = migrateCheckout({ ...options, dryRun: Boolean(flags['dry-run']) });
+      const data = await migrateCheckout({
+        ...options,
+        dryRun: Boolean(flags['dry-run']),
+        backup: flags.backup,
+      });
       const lines = [];
       if (data.noop) lines.push('The checkout holds no family content; nothing to migrate.');
       else {
         const verb = data.dryRun ? 'Would move' : 'Moved';
+        if (data.backup?.taken) {
+          lines.push(
+            `Backed up the checkout and the data first: ${data.backup.archive}`,
+            'It contains secrets and answer keys: copy it off this machine and keep it private.',
+          );
+        }
         if (data.subjects.length)
           lines.push(`${verb} subjects: ${data.subjects.map((s) => s.id).join(', ')}`);
         if (data.generated.length)
@@ -2663,7 +2896,7 @@ async function runCommand(command, flags, positionals, options) {
           lines.push(`Unrecognised files go to migration-conflicts:\n${listLines(data.orphans)}`);
         if (data.incompleteGenerated.length) {
           lines.push(
-            `Generated subjects missing a row, questions or keys (kept only in the backup): ${data.incompleteGenerated.map((g) => g.id).join(', ')}`,
+            `Generated subjects missing a row, questions or keys (their files go to migration-conflicts${data.backup ? `; the backup ${data.backup.archive} has the checkout as it was` : ''}): ${data.incompleteGenerated.map((g) => g.id).join(', ')}`,
           );
         }
         if (data.hiddenCommitted.length) {
@@ -2671,8 +2904,16 @@ async function runCommand(command, flags, positionals, options) {
             `Built-in subjects deleted in the checkout come back: ${data.hiddenCommitted.join(', ')}`,
           );
         }
+        if (data.removedFolders?.length) {
+          lines.push(
+            `Removed empty folders left in the checkout: ${data.removedFolders.join(', ')}`,
+          );
+        }
         if (data.dryRun) {
           lines.push(listLines(data.copies.map((copy) => `${copy.action}: ${copy.path}`)));
+          if (data.leftoverDirs?.length) {
+            lines.push(`Would remove from the checkout: ${data.leftoverDirs.join(', ')}`);
+          }
         } else if (data.conflicts.length) {
           lines.push(
             `Kept the data folder's copy; the checkout's copy is in the data folder at:\n${listLines(data.conflicts)}`,

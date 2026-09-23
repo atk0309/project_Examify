@@ -1105,6 +1105,13 @@ describe('migrate-checkout', () => {
     return root;
   }
 
+  /** A data folder with a database: migrate-checkout backs it up before moving anything. */
+  function familyFolder(prefix: string): string {
+    const dir = tempDir(prefix);
+    makeDb(path.join(dir, 'app.db'));
+    return dir;
+  }
+
   function nonJunkStatus(root: string): string[] {
     return git(
       root,
@@ -1124,7 +1131,7 @@ describe('migrate-checkout', () => {
 
   it('copies everything, verifies it, cleans the checkout, and is a no-op the second time', async () => {
     const root = dirtyCheckout();
-    const dataDir = tempDir('examify-data-migrate-');
+    const dataDir = familyFolder('examify-data-migrate-');
     const snapshots = new Map(
       [
         'content/subjects/history/bank.ir.json',
@@ -1140,6 +1147,9 @@ describe('migrate-checkout', () => {
     const result = await run(['migrate-checkout', '--repo', root, '--data-dir', dataDir, '--json']);
     expect(result.code, result.stderr).toBe(0);
     const report = JSON.parse(result.stdout) as data.MigrateResult;
+    // It backed up the checkout as it was first (a --rollback / restore point).
+    expect(report.backup).toMatchObject({ taken: true });
+    expect(path.dirname(report.backup!.archive)).toBe(path.join(dataDir, 'backups'));
     expect(report.subjects.map((s) => s.id).sort()).toEqual(['biology', 'demo', 'history']);
     expect(report.registrars).toEqual(['src/lib/exam/generated-public.ts']);
     expect(report.conflicts).toEqual([]);
@@ -1199,7 +1209,6 @@ describe('migrate-checkout', () => {
     expect(markerAgain.migrations).toHaveLength(1);
     expect((await run(['legacy-check', '--repo', root])).code).toBe(0);
 
-    makeDb(inData('app.db'));
     const verified = await run(['verify', '--repo', root, '--data-dir', dataDir, '--json']);
     expect(verified.code, verified.stdout).toBe(0);
   });
@@ -1238,7 +1247,7 @@ describe('migrate-checkout', () => {
 
   it('never overwrites a differing destination: the checkout copy goes to migration-conflicts', async () => {
     const root = dirtyCheckout();
-    const dataDir = tempDir('examify-data-conflict-');
+    const dataDir = familyFolder('examify-data-conflict-');
     write(path.join(dataDir, 'content/subjects/history/notes.md'), '# newer notes');
     // A differing family catalog row makes the whole generated subject a conflict.
     write(
@@ -1289,7 +1298,7 @@ describe('migrate-checkout', () => {
 
   it('overwrites what an unfinished earlier run wrote (journal), not someone else’s file', async () => {
     const root = dirtyCheckout();
-    const dataDir = tempDir('examify-data-journal-');
+    const dataDir = familyFolder('examify-data-journal-');
     const rel = 'content/subjects/history/notes.md';
     write(path.join(dataDir, rel), '# copied by the first run');
     write(
@@ -1310,7 +1319,7 @@ describe('migrate-checkout', () => {
 
   it('leaves the checkout untouched when a copy fails', async () => {
     const root = dirtyCheckout();
-    const dataDir = tempDir('examify-data-copyfail-');
+    const dataDir = familyFolder('examify-data-copyfail-');
     write(path.join(dataDir, 'content/source-pdfs'), 'a file where a folder must go');
     const before = git(
       root,
@@ -1338,7 +1347,7 @@ describe('migrate-checkout', () => {
     fs.mkdirSync(path.join(root, 'content/source-pdfs'), { recursive: true });
     fs.symlinkSync(path.join(nas, 'history'), path.join(root, 'content/source-pdfs/history'));
     fs.symlinkSync(path.join(nas, 'single.pdf'), path.join(root, 'content/source-pdfs/demo.pdf'));
-    const dataDir = tempDir('examify-data-links-');
+    const dataDir = familyFolder('examify-data-links-');
     const result = await run(['migrate-checkout', '--repo', root, '--data-dir', dataDir, '--json']);
     expect(result.code, result.stderr).toBe(0);
     const copied = path.join(dataDir, 'content/source-pdfs/history/a.pdf');
@@ -1360,7 +1369,7 @@ describe('migrate-checkout', () => {
   it('reports a deleted built-in subject and restores it', async () => {
     const root = makeCheckout();
     fs.rmSync(path.join(root, 'content/subjects/demo'), { recursive: true });
-    const dataDir = tempDir('examify-data-hidden-');
+    const dataDir = familyFolder('examify-data-hidden-');
     const result = await run(['migrate-checkout', '--repo', root, '--data-dir', dataDir, '--json']);
     expect(result.code, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toMatchObject({ hiddenCommitted: ['demo'] });
@@ -1378,7 +1387,7 @@ describe('migrate-checkout', () => {
     write(path.join(root, 'content/subjects/history/bank.ir.json'), IR('history', 'History'));
     write(path.join(root, 'content/generated/questions/history.json'), '{}');
     write(path.join(root, 'content/generated/keys/history.json'), '{}');
-    const dataDir = tempDir('examify-data-rebuild-');
+    const dataDir = familyFolder('examify-data-rebuild-');
     const result = await run(['migrate-checkout', '--repo', root, '--data-dir', dataDir, '--json']);
     expect(result.code, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toMatchObject({
@@ -1552,5 +1561,329 @@ describe('the upstream copy', () => {
     );
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toMatchObject({ ok: true, kind: 'pre-upgrade' });
+  });
+});
+
+describe('review regressions', () => {
+  /** A data folder with a database (migrate-checkout backs it up first). */
+  function familyFolder(prefix: string): string {
+    const dir = tempDir(prefix);
+    makeDb(path.join(dir, 'app.db'));
+    return dir;
+  }
+
+  function fullStatus(root: string): string {
+    return git(
+      root,
+      'status',
+      '--porcelain',
+      '--ignored=traditional',
+      '--untracked-files=all',
+      '--',
+      'content',
+      '.examify-ingest',
+      'src',
+    );
+  }
+
+  function manifestOf(archive: string): Manifest {
+    return JSON.parse(
+      execFileSync('tar', ['-xOzf', archive, 'MANIFEST.json'], { encoding: 'utf8' }),
+    ) as Manifest;
+  }
+
+  it('removes nested empty and junk-only folders, so the next legacy-check passes', async () => {
+    const root = makeCheckout();
+    const dataDir = familyFolder('examify-data-nested-');
+    write(path.join(root, 'content/subjects/history/subject.json'), '{"id":"history"}');
+    fs.mkdirSync(path.join(root, 'content/subjects/history/images/2024'), { recursive: true });
+    write(path.join(root, 'content/source-pdfs/history/a.pdf'), '%PDF-1.4 history');
+    // A detached upload leaves its subject folder behind; the cache leaves ir/.
+    fs.mkdirSync(path.join(root, 'content/source-pdfs/geography'), { recursive: true });
+    write(path.join(root, 'content/source-pdfs/maths/.DS_Store'), 'junk');
+    fs.mkdirSync(path.join(root, '.examify-ingest/cache/ir'), { recursive: true });
+    // A linked folder is removed as a link; what it points at is left alone.
+    const elsewhere = tempDir('examify-data-linked-');
+    fs.symlinkSync(elsewhere, path.join(root, 'content/source-pdfs/linked'));
+
+    const result = await run(['migrate-checkout', '--repo', root, '--data-dir', dataDir, '--json']);
+    expect(result.code, result.stderr).toBe(0);
+    for (const rel of ['content/source-pdfs', '.examify-ingest', 'content/subjects/history']) {
+      expect(fs.existsSync(path.join(root, rel)), rel).toBe(false);
+    }
+    expect(fs.existsSync(elsewhere)).toBe(true);
+    expect(fs.existsSync(path.join(dataDir, 'content/source-pdfs/history/a.pdf'))).toBe(true);
+    expect((await run(['legacy-check', '--repo', root])).code).toBe(0);
+    expect(fullStatus(root)).toBe('');
+  });
+
+  it('a checkout holding only empty leftover folders is cleaned without a backup', async () => {
+    const root = makeCheckout();
+    const dataDir = familyFolder('examify-data-empty-only-');
+    fs.mkdirSync(path.join(root, 'content/source-pdfs/geography'), { recursive: true });
+    fs.mkdirSync(path.join(root, '.examify-ingest/cache/ir'), { recursive: true });
+    expect((await run(['legacy-check', '--repo', root])).code).toBe(4);
+
+    const result = await run(['migrate-checkout', '--repo', root, '--data-dir', dataDir]);
+    expect(result.code, result.stderr).toBe(0);
+    expect(result.stdout).toContain(
+      'Removed empty folders left in the checkout: content/source-pdfs, .examify-ingest',
+    );
+    expect(fs.existsSync(path.join(root, 'content/source-pdfs'))).toBe(false);
+    expect(fs.existsSync(path.join(root, '.examify-ingest'))).toBe(false);
+    expect(fs.existsSync(path.join(dataDir, 'backups'))).toBe(false);
+    expect((await run(['legacy-check', '--repo', root])).code).toBe(0);
+  });
+
+  describe('a standalone migrate-checkout backs up what it reverts', () => {
+    /** Tracked edits only a checkout backup holds: a registrar line, a catalog row with a bad id. */
+    function editedCheckout(): string {
+      const root = makeCheckout();
+      write(path.join(root, 'content/subjects/history/subject.json'), '{"id":"history"}');
+      fs.appendFileSync(
+        path.join(root, 'src/lib/exam/generated-public.ts'),
+        '// registered by hand\n',
+      );
+      const catalog = path.join(root, 'content/generated/subjects.json');
+      const rows = JSON.parse(fs.readFileSync(catalog, 'utf8')) as unknown[];
+      write(catalog, JSON.stringify([...rows, subject('Not An Id', 'Broken')], null, 2));
+      return root;
+    }
+
+    it('takes a pre-upgrade backup with the checkout before anything moves', async () => {
+      const root = editedCheckout();
+      const dataDir = familyFolder('examify-data-own-backup-');
+      const edited = ['src/lib/exam/generated-public.ts', 'content/generated/subjects.json'].map(
+        (rel) => [rel, sha256(path.join(root, rel))] as const,
+      );
+      const result = await run([
+        'migrate-checkout',
+        '--repo',
+        root,
+        '--data-dir',
+        dataDir,
+        '--json',
+      ]);
+      expect(result.code, result.stderr).toBe(0);
+      const report = JSON.parse(result.stdout) as data.MigrateResult;
+      expect(report.backup).toMatchObject({ taken: true });
+      const manifest = manifestOf(report.backup!.archive);
+      expect(manifest).toMatchObject({ kind: 'pre-upgrade', checkout: { gitSha: head(root) } });
+      for (const [rel, sum] of edited) {
+        expect(manifest.files.find((file) => file.path === `checkout/${rel}`)?.sha256, rel).toBe(
+          sum,
+        );
+      }
+      // M4 reverted them; the backup brings them back.
+      expect(fullStatus(root)).toBe('');
+      const restored = await run([
+        'restore',
+        report.backup!.archive,
+        '--repo',
+        root,
+        '--data-dir',
+        dataDir,
+        '--force',
+        '--include-checkout',
+      ]);
+      expect(restored.code, restored.stderr).toBe(0);
+      for (const [rel, sum] of edited) expect(sha256(path.join(root, rel)), rel).toBe(sum);
+    });
+
+    it('--backup must hold this checkout at HEAD with the bytes it reverts', async () => {
+      const root = editedCheckout();
+      const dataDir = familyFolder('examify-data-given-backup-');
+      const env = { EXAMIFY_DATA_DIR: dataDir, EXAMIFY_SQLITE_MODULE: SQLITE_MODULE };
+      const manual = await data.backup({ repo: root, env });
+      const before = await data.backup({
+        repo: root,
+        env,
+        kind: 'pre-upgrade',
+        includeCheckout: true,
+      });
+      const statusBefore = fullStatus(root);
+      const argv = (archive: string) => ['migrate-checkout', '--repo', root, '--backup', archive];
+
+      const noCheckout = await run([...argv(manual.archive), '--json'], { env });
+      expect(noCheckout.code).toBe(5);
+      expect(JSON.parse(noCheckout.stdout)).toMatchObject({ error: 'backup_mismatch' });
+
+      // An edit made after that backup is not in it.
+      fs.appendFileSync(path.join(root, 'src/lib/exam/generated-public.ts'), '// later\n');
+      const stale = await run(argv(before.archive), { env });
+      expect(stale.code).toBe(5);
+      expect(stale.stderr).toContain('src/lib/exam/generated-public.ts');
+      expect(fs.existsSync(path.join(dataDir, 'content'))).toBe(false);
+      expect(fullStatus(root)).not.toBe('');
+
+      const current = await data.backup({
+        repo: root,
+        env,
+        kind: 'pre-upgrade',
+        includeCheckout: true,
+      });
+      const archives = fs.readdirSync(path.join(dataDir, 'backups')).length;
+      const ok = await run([...argv(current.archive), '--json'], { env });
+      expect(ok.code, ok.stderr).toBe(0);
+      expect(JSON.parse(ok.stdout)).toMatchObject({
+        backup: { archive: current.archive, taken: false },
+      });
+      expect(fs.readdirSync(path.join(dataDir, 'backups'))).toHaveLength(archives);
+      expect(statusBefore).not.toBe('');
+    });
+  });
+
+  it('restore finishes when the target held a marker and entries init would call foreign', async () => {
+    // A pre-data-folder archive has no marker; `backup --out <data>/archives` is legitimate.
+    const source = makeCheckout();
+    const sourceData = tempDir('examify-data-unmarked-src-');
+    makeDb(path.join(sourceData, 'app.db'), { rows: 2 });
+    const { archive } = await data.backup({
+      repo: source,
+      env: { EXAMIFY_DATA_DIR: sourceData },
+      sqliteModule: SQLITE_MODULE,
+      out: tempDir('examify-data-unmarked-out-'),
+    });
+    expect(manifestOf(archive).files.some((file) => file.path.endsWith('.examify-data.json'))).toBe(
+      false,
+    );
+    const target = makeCheckout();
+    const dataDir = familyFolder('examify-data-marked-');
+    data.initDataFolder({ dataDir });
+    write(path.join(dataDir, 'archives/examify-backup-x.tar.gz'), 'an archive');
+    const result = await run([
+      'restore',
+      archive,
+      '--repo',
+      target,
+      '--data-dir',
+      dataDir,
+      '--force',
+      '--json',
+    ]);
+    expect(result.code, result.stderr).toBe(0);
+    expect(countUsers(path.join(dataDir, 'app.db'))).toBe(2);
+    expect(fs.existsSync(path.join(dataDir, '.examify-data.json'))).toBe(true);
+    expect(fs.readFileSync(path.join(dataDir, 'archives/examify-backup-x.tar.gz'), 'utf8')).toBe(
+      'an archive',
+    );
+  });
+
+  it('a restore that fails after moving data aside says where that data is', async () => {
+    const source = makeCheckout();
+    const sourceData = tempDir('examify-data-aside-src-');
+    makeDb(path.join(sourceData, 'app.db'));
+    const { archive } = await data.backup({
+      repo: source,
+      env: { EXAMIFY_DATA_DIR: sourceData },
+      sqliteModule: SQLITE_MODULE,
+      out: tempDir('examify-data-aside-out-'),
+    });
+    const target = makeCheckout();
+    const dataDir = tempDir('examify-data-aside-');
+    write(path.join(dataDir, 'content/subjects/mine/subject.json'), '{"mine":true}');
+    // The database can't be placed: its folder is a file.
+    const blocker = path.join(tempDir('examify-data-blocker-'), 'blocker');
+    write(blocker, 'not a folder');
+    const env = {
+      EXAMIFY_SQLITE_MODULE: SQLITE_MODULE,
+      DATABASE_URL: `file:${path.join(blocker, 'app.db')}`,
+    };
+    const argv = ['restore', archive, '--repo', target, '--data-dir', dataDir, '--force'];
+    const result = await run([...argv, '--json'], { env });
+    expect(result.code).toBe(1);
+    const report = JSON.parse(result.stdout) as { movedAside: string };
+    expect(path.dirname(report.movedAside)).toBe(dataDir);
+    expect(result.stderr).toContain(report.movedAside);
+    expect(fs.existsSync(path.join(report.movedAside, 'content/subjects/mine/subject.json'))).toBe(
+      true,
+    );
+  });
+
+  it('keeps a family file that `git rm --cached` untracked: git checkout brings it back', async () => {
+    const root = makeCheckout();
+    const dataDir = familyFolder('examify-data-rm-cached-');
+    git(root, 'rm', '-q', '--cached', 'content/subjects/demo/notes.txt');
+    const result = await run(['migrate-checkout', '--repo', root, '--data-dir', dataDir]);
+    expect(result.code, result.stderr).toBe(0);
+    expect(fullStatus(root)).toBe('');
+    expect(fs.readFileSync(path.join(root, 'content/subjects/demo/notes.txt'), 'utf8')).toBe(
+      fs.readFileSync(path.join(REPO, 'content/subjects/demo/notes.txt'), 'utf8'),
+    );
+    expect(fs.existsSync(path.join(dataDir, 'content/subjects/demo/notes.txt'))).toBe(true);
+  });
+
+  it('committed files with no family meaning are not legacy content', async () => {
+    const root = makeCheckout();
+    write(path.join(root, 'content/subjects/README.md'), '# subjects\n');
+    write(path.join(root, 'content/generated/questions/README.md'), '# generated\n');
+    write(path.join(root, 'content/subjects/_template/example.json'), '{}\n');
+    git(root, 'add', '-A');
+    git(root, 'commit', '-q', '-m', 'docs');
+    expect((await run(['legacy-check', '--repo', root])).code).toBe(0);
+    const dataDir = familyFolder('examify-data-committed-docs-');
+    const migrated = await run([
+      'migrate-checkout',
+      '--repo',
+      root,
+      '--data-dir',
+      dataDir,
+      '--json',
+    ]);
+    expect(migrated.code, migrated.stderr).toBe(0);
+    expect(JSON.parse(migrated.stdout)).toMatchObject({ noop: true });
+    // Editing one is still refused: git checkout would throw the edit away.
+    fs.appendFileSync(path.join(root, 'content/subjects/README.md'), 'edited\n');
+    const edited = await run(['legacy-check', '--repo', root, '--json']);
+    expect(edited.code).toBe(4);
+    expect(JSON.stringify(JSON.parse(edited.stdout))).toContain('content/subjects/README.md');
+  });
+
+  describe('backup reads its archive back', () => {
+    const REAL_TAR = execFileSync('bash', ['-c', 'command -v tar'], { encoding: 'utf8' }).trim();
+
+    /** A `tar` on PATH that damages what `tar -czf` writes. */
+    function brokenTar(body: string): string {
+      const dir = tempDir('examify-data-tar-');
+      const shim = path.join(dir, 'tar');
+      write(
+        shim,
+        `#!/usr/bin/env bash\nREAL=${JSON.stringify(REAL_TAR)}\n${body}\nexec "$REAL" "$@"\n`,
+      );
+      fs.chmodSync(shim, 0o755);
+      return dir;
+    }
+
+    it.each([
+      ['a truncated archive', 'if [ "$1" = "-czf" ]; then "$REAL" "$@" | head -c 64; exit 0; fi'],
+      [
+        'an archive without its MANIFEST.json',
+        'if [ "$1" = "-czf" ]; then staging="$4"; shift 4; args=(); for a in "$@"; do [ "$a" = MANIFEST.json ] || args+=("$a"); done; exec "$REAL" -czf - -C "$staging" "${args[@]}"; fi',
+      ],
+    ])('refuses %s and leaves no archive behind', (_what, body) => {
+      const root = makeCheckout();
+      const dataDir = tempDir('examify-data-readback-');
+      makeDb(path.join(dataDir, 'app.db'));
+      const shimDir = brokenTar(body);
+      const result = cli(['backup', '--repo', root, '--json'], {
+        env: cliEnv({ EXAMIFY_DATA_DIR: dataDir, PATH: `${shimDir}:${process.env.PATH}` }),
+      });
+      expect(result.status).toBe(1);
+      expect(JSON.parse(result.stdout)).toMatchObject({ error: 'archive_unreadable' });
+      expect(fs.readdirSync(path.join(dataDir, 'backups'))).toEqual([]);
+    });
+
+    it('reports a backup it read back as verified', async () => {
+      const root = makeCheckout();
+      const dataDir = tempDir('examify-data-verified-');
+      makeDb(path.join(dataDir, 'app.db'));
+      const result = await data.backup({
+        repo: root,
+        env: { EXAMIFY_DATA_DIR: dataDir },
+        sqliteModule: SQLITE_MODULE,
+      });
+      expect(result.verified).toBe(true);
+      expect(tarList(result.archive)).toContain('MANIFEST.json');
+    });
   });
 });

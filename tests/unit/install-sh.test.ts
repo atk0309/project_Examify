@@ -1744,9 +1744,10 @@ describe('install.sh --upgrade', () => {
       const result = runInstaller(fx, ['--upgrade']);
       expect(result.status).toBe(0);
       expect(summary(fx)).toEqual([
+        'data paths',
+        'data legacy-check',
         'data backup',
         'data migrate-checkout',
-        'data paths',
         'data paths',
         'pnpm install --frozen-lockfile',
         'pnpm db:migrate',
@@ -1768,7 +1769,14 @@ describe('install.sh --upgrade', () => {
         '--json',
       ]);
       expect(migrate.version).toBe('upstream');
-      expect(migrate.argv).toEqual(['migrate-checkout', '--repo', fx.work]);
+      // It gets the archive just taken, so it does not back up a second time.
+      const archive = path.join(
+        fx.work,
+        'data',
+        'backups',
+        fs.readdirSync(path.join(fx.work, 'data', 'backups'))[0]!,
+      );
+      expect(migrate.argv).toEqual(['migrate-checkout', '--repo', fx.work, '--backup', archive]);
       // Phase 2 is the merged installer and its own data CLI.
       expect(result.stdout).toContain('Upgrade complete. [fixture upstream]');
       const verify = dataCall(fx, 'verify');
@@ -1790,9 +1798,10 @@ describe('install.sh --upgrade', () => {
       const rerun = runInstaller(fx, ['--upgrade']);
       expect(rerun.status).toBe(0);
       expect(summary(fx)).toEqual([
+        'data paths',
+        'data legacy-check',
         'data backup',
         'data migrate-checkout',
-        'data paths',
         'data paths',
         'pnpm install --frozen-lockfile',
         'pnpm db:migrate',
@@ -1809,7 +1818,7 @@ describe('install.sh --upgrade', () => {
       const result = runInstaller(fx, ['--upgrade'], { STUB_EXIT_BACKUP: '1' });
       expect(result.status).toBe(1);
       expect(result.stderr).toContain('The pre-upgrade backup failed');
-      expect(summary(fx)).toEqual(['data backup']);
+      expect(summary(fx)).toEqual(['data paths', 'data legacy-check', 'data backup']);
       expect(git(fx.work, 'rev-parse', 'HEAD')).toBe(fx.oldSha);
     });
   });
@@ -1881,7 +1890,12 @@ describe('install.sh --rollback / --restore', () => {
       // The data CLI was copied out before the reset (the old sha may lack it).
       expect(restore.version).toBe('upstream');
       expect(restore.script?.startsWith(fx.work)).toBe(false);
-      expect(summary(fx)).toEqual(['data restore', 'pnpm install --frozen-lockfile', 'pnpm build']);
+      expect(summary(fx)).toEqual([
+        'data restore',
+        'data paths',
+        'pnpm install --frozen-lockfile',
+        'pnpm build',
+      ]);
       expect(result.stdout).toContain(`Rolled back to ${fx.oldSha.slice(0, 7)}`);
     });
   });
@@ -1901,7 +1915,7 @@ describe('install.sh --rollback / --restore', () => {
       expect(result.status).toBe(0);
       expect(fs.readFileSync(path.join(fx.work, '.next', 'BUILD_ID'), 'utf8')).toBe('old-build');
       expect(fs.existsSync(pre)).toBe(false);
-      expect(summary(fx)).toEqual(['data restore', 'pnpm install --frozen-lockfile']);
+      expect(summary(fx)).toEqual(['data restore', 'data paths', 'pnpm install --frozen-lockfile']);
     });
   });
 
@@ -2040,6 +2054,7 @@ log({ tool: 'migrate', dbPath });
 type RealFixture = {
   base: string;
   origin: string;
+  seed: string;
   work: string;
   dataDir: string;
   bin: string;
@@ -2125,6 +2140,7 @@ const OLD_INSTALLER = '#!/usr/bin/env bash\necho "old installer: $*"\nexit 3\n';
 async function makeRealFixture({
   dataInCheckout = false,
   predatesDataCli = false,
+  upstreamAdds = {} as Record<string, string>,
 } = {}): Promise<RealFixture> {
   const base = tmpDir('examify-real-');
   const origin = path.join(base, 'origin.git');
@@ -2162,6 +2178,7 @@ async function makeRealFixture({
   expect(upstream).not.toBe(installer);
   writeFile(path.join(seed, 'install.sh'), upstream, 0o755);
   if (predatesDataCli) copyFromRepo('scripts/examify-data.mjs');
+  for (const [rel, body] of Object.entries(upstreamAdds)) writeFile(path.join(seed, rel), body);
   git(seed, 'add', '-A');
   git(seed, 'commit', '-q', '-m', 'upstream release');
   git(seed, 'push', '-q');
@@ -2189,6 +2206,7 @@ async function makeRealFixture({
   return {
     base,
     origin,
+    seed,
     work,
     dataDir,
     bin,
@@ -2263,45 +2281,82 @@ function preUpgradeArchives(dataDir: string): string[] {
     .map((name) => path.join(dir, name));
 }
 
+type LegacySnapshot = { status: string; files: Record<string, string>; env: string };
+
+const LEGACY_FILES = [
+  'content/subjects/history/subject.json',
+  'content/subjects/history/bank.ir.json',
+  'content/source-pdfs/history/chapter-1.pdf',
+  'content/generated/subjects.json',
+  'content/generated/questions/history.json',
+  'content/generated/keys/history.json',
+  'src/lib/exam/generated-public.ts',
+  '.examify-ingest/runs/history.json',
+];
+
+function familyStatus(work: string): string {
+  return git(
+    work,
+    'status',
+    '--porcelain',
+    '--untracked-files=all',
+    '--ignored=traditional',
+    '--',
+    'content',
+    'src',
+    '.examify-ingest',
+  );
+}
+
+/** The checkout's family content (and .env) before an upgrade touches it. */
+function legacySnapshot(fx: RealFixture): LegacySnapshot {
+  return {
+    status: familyStatus(fx.work),
+    files: Object.fromEntries(
+      LEGACY_FILES.map((rel) => [rel, fs.readFileSync(path.join(fx.work, rel), 'utf8')]),
+    ),
+    env: fs.readFileSync(path.join(fx.work, '.env'), 'utf8'),
+  };
+}
+
+function expectLegacyBack(fx: RealFixture, before: LegacySnapshot): void {
+  for (const [rel, body] of Object.entries(before.files)) {
+    expect(fs.readFileSync(path.join(fx.work, rel), 'utf8'), rel).toBe(body);
+  }
+  expect(familyStatus(fx.work)).toBe(before.status);
+}
+
 async function upgradedFixture(options: Parameters<typeof makeRealFixture>[0] = {}): Promise<{
   fx: RealFixture;
   result: ReturnType<typeof runReal>;
   archive: string;
-  before: { status: string; files: Record<string, string>; env: string };
+  before: LegacySnapshot;
 }> {
   const fx = await makeRealFixture(options);
-  const legacyFiles = [
-    'content/subjects/history/subject.json',
-    'content/subjects/history/bank.ir.json',
-    'content/source-pdfs/history/chapter-1.pdf',
-    'content/generated/subjects.json',
-    'content/generated/questions/history.json',
-    'content/generated/keys/history.json',
-    'src/lib/exam/generated-public.ts',
-    '.examify-ingest/runs/history.json',
-  ];
-  const before = {
-    status: git(
-      fx.work,
-      'status',
-      '--porcelain',
-      '--untracked-files=all',
-      '--ignored=traditional',
-      '--',
-      'content',
-      'src',
-      '.examify-ingest',
-    ),
-    files: Object.fromEntries(
-      legacyFiles.map((rel) => [rel, fs.readFileSync(path.join(fx.work, rel), 'utf8')]),
-    ),
-    env: fs.readFileSync(path.join(fx.work, '.env'), 'utf8'),
-  };
+  const before = legacySnapshot(fx);
   const result = runReal(fx, fx.work, ['--upgrade', '--yes']);
   expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
   const archives = preUpgradeArchives(fx.dataDir);
   expect(archives).toHaveLength(1);
   return { fx, result, archive: archives[0]!, before };
+}
+
+/** A `git` on PATH whose `git merge` fails while FAIL_GIT_MERGE is set. */
+function failingMergeGit(fx: RealFixture): void {
+  const real = execFileSync('bash', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+  writeFile(
+    path.join(fx.bin, 'git'),
+    [
+      '#!/usr/bin/env bash',
+      'if [ -n "${FAIL_GIT_MERGE-}" ] && [ "${1-}" = merge ]; then',
+      '  echo "fatal: simulated merge failure" >&2',
+      '  exit 128',
+      'fi',
+      `exec ${JSON.stringify(real)} "$@"`,
+      '',
+    ].join('\n'),
+    0o755,
+  );
 }
 
 describe('install.sh end to end (real data CLI, fixture checkout)', () => {
@@ -2460,22 +2515,7 @@ describe('install.sh end to end (real data CLI, fixture checkout)', () => {
       const result = runReal(fx, fx.work, ['--rollback', archive, '--yes']);
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
       expect(git(fx.work, 'rev-parse', 'HEAD')).toBe(fx.oldSha);
-      for (const [rel, body] of Object.entries(before.files)) {
-        expect(fs.readFileSync(path.join(fx.work, rel), 'utf8'), rel).toBe(body);
-      }
-      expect(
-        git(
-          fx.work,
-          'status',
-          '--porcelain',
-          '--untracked-files=all',
-          '--ignored=traditional',
-          '--',
-          'content',
-          'src',
-          '.examify-ingest',
-        ),
-      ).toBe(before.status);
+      expectLegacyBack(fx, before);
       expect(userCount(path.join(fx.dataDir, 'app.db'))).toBe(3);
       expect(fs.readFileSync(path.join(fx.work, '.env'), 'utf8')).toBe(before.env);
       const savedEnv = fs
@@ -2547,4 +2587,284 @@ describe('install.sh end to end (real data CLI, fixture checkout)', () => {
       fs.rmSync(fx.base, { recursive: true, force: true });
     }
   }, 120_000);
+});
+
+function reportedArchives(output: string): string[] {
+  return [...output.matchAll(/Pre-upgrade backup: (\S+)/g)].map((match) => match[1]!);
+}
+
+describe('install.sh upgrade recovery (real data CLI, fixture checkout)', () => {
+  it('finishes when an older version left empty folders behind, and a rerun succeeds', async () => {
+    const fx = await makeRealFixture();
+    try {
+      // A detached upload leaves its subject folder; the generate cache leaves ir/.
+      fs.mkdirSync(path.join(fx.work, 'content/source-pdfs/geography'), { recursive: true });
+      fs.mkdirSync(path.join(fx.work, '.examify-ingest/cache/ir'), { recursive: true });
+      const result = runReal(fx, fx.work, ['--upgrade', '--yes']);
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(fs.existsSync(path.join(fx.work, 'content/source-pdfs'))).toBe(false);
+      expect(fs.existsSync(path.join(fx.work, '.examify-ingest'))).toBe(false);
+      expect(result.stdout).toContain('Verify passed.');
+      const rerun = runReal(fx, fx.work, ['--upgrade', '--yes']);
+      expect(rerun.status, `${rerun.stdout}\n${rerun.stderr}`).toBe(0);
+    } finally {
+      fs.rmSync(fx.base, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  it('refuses before the backup when upstream adds a file that exists here untracked', async () => {
+    const fx = await makeRealFixture({ predatesDataCli: true, upstreamAdds: { NEWFILE: 'x\n' } });
+    try {
+      writeFile(path.join(fx.work, 'NEWFILE'), 'mine\n');
+      const before = legacySnapshot(fx);
+      const upstream = git(fx.origin, 'show', 'main:install.sh');
+      const result = runReal(fx, fx.work, ['--upgrade', '--yes'], {}, `${upstream}\n`);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('  NEWFILE');
+      expect(result.stderr).toContain('Nothing was changed.');
+      expect(fs.existsSync(path.join(fx.dataDir, 'backups'))).toBe(false);
+      expectLegacyBack(fx, before);
+      expect(fs.existsSync(path.join(fx.work, '.next'))).toBe(true);
+      expect(fs.readFileSync(path.join(fx.work, 'NEWFILE'), 'utf8')).toBe('mine\n');
+      expect(git(fx.work, 'rev-parse', 'HEAD')).toBe(fx.oldSha);
+    } finally {
+      fs.rmSync(fx.base, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  it('a first upgrade whose merge fails points at the piped installer, and that rollback works', async () => {
+    const fx = await makeRealFixture({ predatesDataCli: true });
+    try {
+      failingMergeGit(fx);
+      const before = legacySnapshot(fx);
+      const upstream = `${git(fx.origin, 'show', 'main:install.sh')}\n`;
+      const failed = runReal(
+        fx,
+        fx.work,
+        ['--upgrade', '--yes'],
+        { FAIL_GIT_MERGE: '1' },
+        upstream,
+      );
+      expect(failed.status).toBe(1);
+      const [archive] = reportedArchives(failed.stdout);
+      // The checkout's own install.sh is the old one: only the piped form works.
+      expect(failed.stderr).toContain('git show origin/main:install.sh | bash -s -- --upgrade');
+      expect(failed.stderr).toContain(
+        `git show origin/main:install.sh | bash -s -- --rollback ${archive}`,
+      );
+      expect(git(fx.work, 'rev-parse', 'HEAD')).toBe(fx.oldSha);
+      expect(fs.existsSync(path.join(fx.work, 'content/subjects/history'))).toBe(false);
+      expect(fs.existsSync(path.join(fx.work, '.next'))).toBe(false);
+
+      const rollback = runReal(fx, fx.work, ['--rollback', archive!, '--yes'], {}, upstream);
+      expect(rollback.status, `${rollback.stdout}\n${rollback.stderr}`).toBe(0);
+      expectLegacyBack(fx, before);
+      expect(fs.existsSync(path.join(fx.work, '.next'))).toBe(true);
+      expect(userCount(path.join(fx.dataDir, 'app.db'))).toBe(3);
+      expect(fs.existsSync(path.join(fx.dataDir, '.upgrade-state.json'))).toBe(false);
+    } finally {
+      fs.rmSync(fx.base, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  it('a rerun after a failed merge keeps the first backup as the way back', async () => {
+    const fx = await makeRealFixture();
+    try {
+      failingMergeGit(fx);
+      const before = legacySnapshot(fx);
+      const failed = runReal(fx, fx.work, ['--upgrade', '--yes'], { FAIL_GIT_MERGE: '1' });
+      expect(failed.status).toBe(1);
+      const [first] = reportedArchives(failed.stdout);
+      const state = JSON.parse(
+        fs.readFileSync(path.join(fx.dataDir, '.upgrade-state.json'), 'utf8'),
+      ) as { archive: string; fromSha: string };
+      expect(state).toMatchObject({ archive: first, fromSha: fx.oldSha });
+
+      const rerun = runReal(fx, fx.work, ['--upgrade', '--yes']);
+      expect(rerun.status, `${rerun.stdout}\n${rerun.stderr}`).toBe(0);
+      expect(rerun.stdout).toContain(`its backup stays the rollback point: ${first}`);
+      // The newest snapshot is taken too, but the report names the first one.
+      const reported = reportedArchives(rerun.stdout);
+      expect(reported.at(-1)).toBe(first);
+      expect(preUpgradeArchives(fx.dataDir)).toHaveLength(2);
+
+      const rollback = runReal(fx, fx.work, ['--rollback', first!, '--yes']);
+      expect(rollback.status, `${rollback.stdout}\n${rollback.stderr}`).toBe(0);
+      expect(git(fx.work, 'rev-parse', 'HEAD')).toBe(fx.oldSha);
+      expectLegacyBack(fx, before);
+    } finally {
+      fs.rmSync(fx.base, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  it('--rollback finishes after an unmarked pre-upgrade backup and a later backup --out data/archives', async () => {
+    const { fx, archive, before } = await upgradedFixture({ dataInCheckout: true });
+    try {
+      const extra = spawnSync(
+        process.execPath,
+        ['scripts/examify-data.mjs', 'backup', '--out', 'data/archives', '--json'],
+        {
+          cwd: fx.work,
+          env: {
+            PATH: process.env.PATH,
+            HOME: fx.home,
+            EXAMIFY_SQLITE_MODULE: SQLITE_MODULE,
+          } as Record<string, string | undefined> as NodeJS.ProcessEnv,
+          encoding: 'utf8',
+        },
+      );
+      expect(extra.status, extra.stderr).toBe(0);
+      fs.rmSync(fx.log);
+      const result = runReal(fx, fx.work, ['--rollback', archive, '--yes']);
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expectLegacyBack(fx, before);
+      expect(userCount(path.join(fx.dataDir, 'app.db'))).toBe(3);
+      expect(fs.readdirSync(path.join(fx.dataDir, 'archives'))).toHaveLength(1);
+      expect(pnpmCalls(fx)).toEqual(['pnpm install --frozen-lockfile', 'pnpm build']);
+    } finally {
+      fs.rmSync(fx.base, { recursive: true, force: true });
+    }
+  }, 120_000);
+});
+
+/** An HTTP server answering /api/health with `status` and `body` on a free port. */
+async function healthServer(status: number, body: string) {
+  const server = http.createServer((_req, res) => {
+    res.writeHead(status, { 'content-type': 'application/json' });
+    res.end(body);
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  return {
+    port: String((server.address() as AddressInfo).port),
+    close: () => new Promise((resolve) => server.close(resolve)),
+  };
+}
+
+describe('install.sh upgrade guards (shimmed pnpm and data CLI)', () => {
+  it('counts an unhealthy server (503 {"ok":false}) as running', async () => {
+    const fx = makeFixture({});
+    const server = await healthServer(503, '{"ok":false,"reason":"db_error"}');
+    try {
+      const result = await runInstallerAsync(fx, ['--upgrade'], { PORT: server.port });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(`answering at http://127.0.0.1:${server.port}/api/health`);
+      expect(calls(fx)).toEqual([]);
+    } finally {
+      await server.close();
+      fs.rmSync(fx.base, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it('--rollback --allow-running still refuses a local Examify before resetting the checkout', async () => {
+    const fx = makeFixture({});
+    const server = await healthServer(200, '{"ok":true}');
+    try {
+      git(fx.work, 'pull', '-q');
+      const head = git(fx.work, 'rev-parse', 'HEAD');
+      const archive = makeArchive(fx.base, {
+        format: 1,
+        checkout: { included: true, gitSha: fx.oldSha },
+      });
+      const result = await runInstallerAsync(fx, ['--rollback', archive, '--allow-running'], {
+        PORT: server.port,
+      });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('the restore will not replace its database');
+      expect(git(fx.work, 'rev-parse', 'HEAD')).toBe(head);
+      expect(calls(fx)).toEqual([]);
+    } finally {
+      await server.close();
+      fs.rmSync(fx.base, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it('records the rollback point before moving anything, and only keeps it while it is the way back', () => {
+    withFixture({}, (fx) => {
+      const state = path.join(fx.work, 'data', '.upgrade-state.json');
+      // Stopped before anything moved (no family content): the rerun's backup is as good and newer.
+      const first = runInstaller(fx, ['--upgrade'], { STUB_EXIT_MIGRATE_CHECKOUT: '1' });
+      expect(first.status).toBe(1);
+      const [a] = reportedArchives(first.stdout);
+      expect(JSON.parse(fs.readFileSync(state, 'utf8'))).toMatchObject({
+        archive: a,
+        fromSha: fx.oldSha,
+        movesCheckoutContent: false,
+      });
+      expect(first.stderr).toContain('Fix it and re-run: ./install.sh --upgrade');
+      expect(first.stderr).toContain(`Or go back: ./install.sh --rollback ${a}`);
+      const second = runInstaller(fx, ['--upgrade'], {
+        STUB_EXIT_LEGACY_CHECK: '4',
+        STUB_EXIT_MIGRATE_CHECKOUT: '1',
+      });
+      expect(second.status).toBe(1);
+      const [b] = reportedArchives(second.stdout);
+      expect(b).not.toBe(a);
+      expect(second.stderr).toContain(`--rollback ${b}`);
+      // It had family content to move: the next run keeps that backup.
+      const third = runInstaller(fx, ['--upgrade']);
+      expect(third.status, third.stderr).toBe(0);
+      expect(third.stdout).toContain(`its backup stays the rollback point: ${b}`);
+      expect(reportedArchives(third.stdout).at(-1)).toBe(b);
+      expect(fs.existsSync(state)).toBe(false);
+    });
+  }, 60_000);
+
+  it('a failure to record the upgrade stops it before anything moves, without a stack trace', () => {
+    withFixture({}, (fx) => {
+      fs.mkdirSync(path.join(fx.work, 'data', '.upgrade-state.json.tmp'), { recursive: true });
+      const result = runInstaller(fx, ['--upgrade']);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('Could not record the upgrade');
+      expect(result.stderr).toContain('Nothing was moved or merged.');
+      expect(result.stderr).not.toMatch(/^\s+at /m);
+      expect(summary(fx)).not.toContain('data migrate-checkout');
+      expect(git(fx.work, 'rev-parse', 'HEAD')).toBe(fx.oldSha);
+    });
+  });
+
+  it('refuses before anything when the upstream installer needs a newer Node', () => {
+    withFixture({}, (fx) => {
+      writeFile(
+        path.join(fx.seed, 'install.sh'),
+        upstreamInstaller().replace(/MIN_NODE="[0-9.]+"/, 'MIN_NODE="22.999.0"'),
+        0o755,
+      );
+      git(fx.seed, 'commit', '-q', '-am', 'needs a newer node');
+      git(fx.seed, 'push', '-q');
+      const result = runInstaller(fx, ['--upgrade']);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('origin/main needs Node 22.999.0 or newer');
+      expect(result.stderr).toContain('Nothing was changed.');
+      expect(calls(fx)).toEqual([]);
+    });
+  });
+
+  it('phase 2 names the backup when the Node.js or pnpm setup fails', () => {
+    withFixture({ upstream: false }, (fx) => {
+      writeFile(
+        path.join(fx.work, 'data', '.upgrade-state.json'),
+        JSON.stringify({ fromSha: fx.oldSha, archive: '/backups/pre.tar.gz' }),
+      );
+      writeFile(
+        path.join(fx.bin, 'corepack'),
+        '#!/usr/bin/env bash\n[ "${1-}" = prepare ] && exit 1\nexit 0\n',
+        0o755,
+      );
+      const pnpmFails = runInstaller(fx, ['--upgrade-phase2']);
+      expect(pnpmFails.status).toBe(1);
+      expect(pnpmFails.stderr).toContain('Upgrade stopped: setting up pnpm failed');
+      expect(pnpmFails.stderr).toContain('Or go back: ./install.sh --rollback /backups/pre.tar.gz');
+
+      const realNode = execFileSync('bash', ['-c', 'command -v node'], { encoding: 'utf8' }).trim();
+      writeFile(
+        path.join(fx.bin, 'node'),
+        `#!/usr/bin/env bash\nif [ "\${1-}" = -p ]; then echo 22.0.0; exit 0; fi\nexec ${JSON.stringify(realNode)} "$@"\n`,
+        0o755,
+      );
+      const nodeFails = runInstaller(fx, ['--upgrade-phase2']);
+      expect(nodeFails.status).toBe(1);
+      expect(nodeFails.stderr).toContain('Upgrade stopped: the Node.js check failed');
+      expect(nodeFails.stderr).toContain('--rollback /backups/pre.tar.gz');
+    });
+  });
 });

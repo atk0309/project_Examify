@@ -1127,7 +1127,8 @@ write_env() {
 
 # --- upgrade / rollback / restore helpers ---
 
-# Print a (dotted) string field of the JSON document on stdin; empty if absent.
+# Print a (dotted) string, boolean or number field of the JSON document on
+# stdin; empty if absent.
 json_field() {
   node -e '
     let s = "";
@@ -1141,7 +1142,7 @@ json_field() {
         process.exit(1);
       }
       for (const k of process.argv[1].split(".")) v = v == null ? undefined : v[k];
-      if (typeof v === "string") process.stdout.write(v);
+      if (["string", "boolean", "number"].includes(typeof v)) process.stdout.write(String(v));
     });
   ' "$1"
 }
@@ -1213,10 +1214,12 @@ refuse_owner_mismatch() {
   exit 1
 }
 
-# 0 (and the URL on stdout) when something answers 200 on /api/health at the
-# host PORT, the on-disk PORT, 3000 or SITE_URL.
+# 0 (and the URL on stdout) when Examify answers /api/health at the host PORT,
+# the on-disk PORT or 3000, plus SITE_URL unless $1 is "local". Examify is
+# any JSON body with a boolean "ok", whatever the status: a 503 {ok:false} is
+# a running, unhealthy server. Same rule as `examify-data restore`.
 server_answering() {
-  local port site
+  local scope="${1-all}" port site
   local -a urls=()
   for port in "$HOST_PORT" "$(disk_env_get PORT)" 3000; do
     case "$port" in
@@ -1224,14 +1227,18 @@ server_answering() {
     esac
     urls+=("http://127.0.0.1:${port}/api/health")
   done
-  site="$(trim "$(disk_env_get SITE_URL)")"
-  case "$site" in
-    http://*|https://*) urls+=("${site%/}/api/health") ;;
-  esac
+  if [ "$scope" != "local" ]; then
+    site="$(trim "$(disk_env_get SITE_URL)")"
+    case "$site" in
+      http://*|https://*) urls+=("${site%/}/api/health") ;;
+    esac
+  fi
   node -e '
     const urls = process.argv.slice(1);
     let pending = urls.length;
     if (pending === 0) process.exit(1);
+    // A server that never finishes its answer does not hold the installer up.
+    setTimeout(() => process.exit(1), 5000).unref();
     for (const url of urls) {
       let settled = false;
       const done = () => {
@@ -1242,12 +1249,24 @@ server_answering() {
       try {
         const mod = require(url.startsWith("https:") ? "https" : "http");
         const req = mod.get(url, { timeout: 2000, rejectUnauthorized: false }, (res) => {
-          res.resume();
-          if (res.statusCode === 200) {
-            process.stdout.write(url);
-            process.exit(0);
-          }
-          done();
+          let body = "";
+          res.setEncoding("utf8");
+          res.on("data", (chunk) => {
+            if (body.length < 65536) body += chunk;
+          });
+          res.on("end", () => {
+            let json = null;
+            try {
+              json = JSON.parse(body);
+            } catch {}
+            if (json && typeof json === "object" && typeof json.ok === "boolean") {
+              process.stdout.write(url);
+              process.exit(0);
+            }
+            done();
+          });
+          res.on("error", done);
+          res.on("close", done);
         });
         req.on("timeout", () => req.destroy(new Error("timeout")));
         req.on("error", done);
@@ -1266,6 +1285,17 @@ refuse_if_running() {
   fi
   if [ "$NONINTERACTIVE" != "1" ] && ! confirm "Is the Examify server stopped?" "n"; then
     die "Stop the Examify server first, then re-run. The installer never stops or starts it."
+  fi
+}
+
+# How to run the installer again: ./install.sh once the checkout's copy has
+# --upgrade / --rollback, else the upstream copy piped into bash (the first
+# upgrade of an older install, or one that stopped before its merge).
+installer_cmd() {
+  if grep -q -- '--upgrade-phase2' install.sh 2>/dev/null; then
+    printf './install.sh'
+  else
+    printf 'git show %s:install.sh | bash -s --' "${UPGRADE_UPSTREAM:-origin/main}"
   fi
 }
 
@@ -1306,18 +1336,73 @@ refuse_merge_conflict() {
   fi
 }
 
-refuse_node_major_mismatch() {
-  local want have
+# git merge refuses when an untracked file is in its way and silently
+# overwrites an ignored one. Refuse now, before the backup and the move, when
+# upstream adds a path that already exists here untracked or ignored (or a
+# file sits where upstream needs a folder). content/ and .examify-ingest/ are
+# left out: migrate-checkout moves those out of the way first.
+refuse_merge_overwrites() {
+  local rel dir hit blocking="" nl=$'\n'
+  while IFS= read -r -d '' rel; do
+    case "$rel" in
+      content/*|.examify-ingest/*) continue ;;
+    esac
+    hit=""
+    if [ -e "$rel" ] || [ -L "$rel" ]; then
+      hit="$rel"
+    fi
+    dir="$rel"
+    while [ -z "$hit" ] && [ "${dir%/*}" != "$dir" ]; do
+      dir="${dir%/*}"
+      if [ -L "$dir" ] || { [ -e "$dir" ] && [ ! -d "$dir" ]; }; then
+        hit="$dir"
+      fi
+    done
+    [ -n "$hit" ] || continue
+    if git ls-files --error-unmatch -- "$hit" >/dev/null 2>&1; then
+      continue
+    fi
+    case "${nl}${blocking}" in
+      *"${nl}  ${hit}${nl}"*) ;;
+      *) blocking="${blocking}  ${hit}${nl}" ;;
+    esac
+  done < <(git diff -z --name-only --no-renames --diff-filter=A 'HEAD...@{u}')
+  if [ -z "$blocking" ]; then
+    return 0
+  fi
+  echo "${UPGRADE_UPSTREAM} adds files that already exist here untracked or ignored" >&2
+  echo "(git merge would refuse or overwrite them):" >&2
+  printf '%s' "$blocking" >&2
+  die "Move them out of the checkout (or delete what you do not need), then re-run. Nothing was changed."
+}
+
+# Upstream's Node needs: the .nvmrc major and the upgraded installer's
+# MIN_NODE, which its phase 2 enforces after the merge.
+refuse_node_mismatch() {
+  local want have min="" line upstream_installer
+  have="$(node -p 'process.versions.node')"
   want="$(git show '@{u}:.nvmrc' 2>/dev/null | tr -d '[:space:]')" || want=""
   want="${want#v}"
   want="${want%%.*}"
   case "$want" in
-    ''|*[!0-9]*) return 0 ;;
+    ''|*[!0-9]*) ;;
+    *)
+      if [ "${have%%.*}" != "$want" ]; then
+        die "${UPGRADE_UPSTREAM} needs Node ${want} (.nvmrc); this host runs Node ${have}." \
+          "Install Node ${want} and re-run. Nothing was changed."
+      fi
+      ;;
   esac
-  have="$(node -p 'process.versions.node')"
-  if [ "${have%%.*}" != "$want" ]; then
-    die "${UPGRADE_UPSTREAM} needs Node ${want} (.nvmrc); this host runs Node ${have}." \
-      "Install Node ${want} and re-run. Nothing was changed."
+  upstream_installer="$(git show '@{u}:install.sh' 2>/dev/null)" || upstream_installer=""
+  while IFS= read -r line; do
+    if [[ "$line" =~ ^[[:space:]]*MIN_NODE=\"([0-9]+(\.[0-9]+)*)\" ]]; then
+      min="${BASH_REMATCH[1]}"
+      break
+    fi
+  done <<< "$upstream_installer"
+  if [ -n "$min" ] && ! version_ge "$have" "$min"; then
+    die "${UPGRADE_UPSTREAM} needs Node ${min} or newer; this host runs Node ${have}." \
+      "Update Node (22 LTS) and re-run. Nothing was changed."
   fi
 }
 
@@ -1364,34 +1449,79 @@ upgrade_preflight() {
   if ! git merge-base --is-ancestor HEAD '@{u}'; then
     refuse_merge_conflict
   fi
-  refuse_node_major_mismatch
+  refuse_merge_overwrites
+  refuse_node_mismatch
 }
 
-# {fromSha, archive, startedAt} for phase 2. A rerun that merges nothing new
-# is finishing an interrupted upgrade: keep that one's rollback point.
+# Write $DATA/.upgrade-state.json: a new {fromSha, archive, startedAt,
+# movesCheckoutContent}, or ("keep") the earlier one plus latestArchive.
+# Errors are one line (a full disk is the likely one), never a stack trace.
 write_upgrade_state() {
   node -e '
     const fs = require("fs");
-    const [file, fromSha, archive, resume] = process.argv.slice(1);
-    let prev = null;
+    const [file, fromSha, archive, keep, moves] = process.argv.slice(1);
     try {
-      prev = JSON.parse(fs.readFileSync(file, "utf8"));
-    } catch {}
-    const keep = resume === "1" && prev && typeof prev.archive === "string" && typeof prev.fromSha === "string";
-    const state = keep
-      ? { ...prev, latestArchive: archive }
-      : { fromSha, archive, startedAt: new Date().toISOString() };
-    fs.writeFileSync(file + ".tmp", JSON.stringify(state, null, 2) + "\n", { mode: 0o600 });
-    fs.renameSync(file + ".tmp", file);
-    if (keep) process.stdout.write(prev.archive);
-  ' "$1" "$2" "$3" "$4"
+      let prev = null;
+      try {
+        prev = JSON.parse(fs.readFileSync(file, "utf8"));
+      } catch {}
+      const state =
+        keep === "1"
+          ? { ...prev, latestArchive: archive }
+          : { fromSha, archive, startedAt: new Date().toISOString(), movesCheckoutContent: moves === "1" };
+      fs.writeFileSync(file + ".tmp", JSON.stringify(state, null, 2) + "\n", { mode: 0o600 });
+      fs.renameSync(file + ".tmp", file);
+    } catch (error) {
+      process.stderr.write("could not write the upgrade state: " + (error && error.message ? error.message : String(error)) + "\n");
+      try {
+        fs.rmSync(file + ".tmp", { force: true });
+      } catch {}
+      process.exit(1);
+    }
+  ' "$1" "$2" "$3" "$4" "$5"
+}
+
+# Record the rollback point right after the backup, before anything moves
+# (sets UPGRADE_ARCHIVE). A rerun keeps the first backup of an upgrade that
+# stopped while it is still the way back: after that upgrade merged (HEAD has
+# moved on from its fromSha), or before its merge when it had family content
+# to move out of the checkout (a new backup no longer holds that).
+record_upgrade_start() {
+  local state="$1" from_sha="$2" archive="$3" moves="$4" keep=0
+  local prev_from="" prev_archive="" prev_moves="" prev_at=""
+  if [ -f "$state" ]; then
+    prev_from="$(json_field fromSha < "$state")" || prev_from=""
+    prev_archive="$(json_field archive < "$state")" || prev_archive=""
+    prev_moves="$(json_field movesCheckoutContent < "$state")" || prev_moves=""
+    prev_at="$(json_field startedAt < "$state")" || prev_at=""
+  fi
+  if [ -n "$prev_from" ] && [ -n "$prev_archive" ] && [ -f "$prev_archive" ]; then
+    if [ "$prev_from" = "$from_sha" ]; then
+      if [ "$prev_moves" = "true" ]; then
+        keep=1
+      fi
+    elif git merge-base --is-ancestor "$prev_from" HEAD 2>/dev/null; then
+      keep=1
+    fi
+  fi
+  UPGRADE_ARCHIVE="$archive"
+  if [ "$keep" = "1" ]; then
+    UPGRADE_ARCHIVE="$prev_archive"
+  fi
+  write_upgrade_state "$state" "$from_sha" "$archive" "$keep" "$moves" ||
+    die "Could not record the upgrade in ${state} (see above; is the disk full?)." \
+      "Nothing was moved or merged. The backup is ${archive}; fix that and re-run $(installer_cmd) --upgrade"
+  if [ "$keep" = "1" ]; then
+    echo "Finishing the upgrade started ${prev_at:-earlier}; its backup stays the rollback point: ${prev_archive}"
+  fi
 }
 
 # Phase 1: the installer that was invoked (maybe an old one's successor via
-# curl). Preflight, back up with the upstream data CLI, move family content
-# into the data folder, merge, then exec the merged installer for phase 2.
+# curl). Preflight, back up with the upstream data CLI, record the rollback
+# point, move family content into the data folder, merge, then exec the
+# merged installer for phase 2.
 upgrade_phase1() {
-  local mjs from_sha backup_out ts pre data_dir state kept resume=0
+  local mjs from_sha backup_out new_archive ts pre data_dir moves=0 code=0
   upgrade_preflight
   UPGRADE_TMP="$(mktemp -d "${TMPDIR:-/tmp}/examify-upgrade.XXXXXX")"
   trap 'rm -rf "$UPGRADE_TMP"' EXIT
@@ -1405,20 +1535,30 @@ upgrade_phase1() {
     fi
   fi
   from_sha="$(git rev-parse HEAD)"
+  data_dir="$(node "$mjs" paths --json --repo "$ROOT" | json_field dataDir)" || data_dir=""
+  if [ -z "$data_dir" ]; then
+    die "Could not locate the family data folder (see above). Nothing was changed."
+  fi
+  node "$mjs" legacy-check --repo "$ROOT" >/dev/null 2>&1 || code=$?
+  if [ "$code" -eq 4 ]; then
+    moves=1
+  fi
 
   echo "Backing up before the upgrade…"
   backup_out="$(node "$mjs" backup --kind pre-upgrade --include-checkout --repo "$ROOT" --json ${DATA_CLI_WRITE_FLAGS[@]+"${DATA_CLI_WRITE_FLAGS[@]}"})" ||
     die "The pre-upgrade backup failed (see above). Nothing was changed."
-  UPGRADE_ARCHIVE="$(printf '%s' "$backup_out" | backup_archive_from_output)"
-  if [ -z "$UPGRADE_ARCHIVE" ]; then
+  new_archive="$(printf '%s' "$backup_out" | backup_archive_from_output)"
+  if [ -z "$new_archive" ]; then
     die "The pre-upgrade backup did not report its archive. Nothing was changed."
   fi
-  echo "Pre-upgrade backup: ${UPGRADE_ARCHIVE}"
+  echo "Pre-upgrade backup: ${new_archive}"
+  record_upgrade_start "${data_dir%/}/${UPGRADE_STATE_FILE}" "$from_sha" "$new_archive" "$moves"
 
   echo "Moving family content out of the checkout…"
-  node "$mjs" migrate-checkout --repo "$ROOT" ${DATA_CLI_WRITE_FLAGS[@]+"${DATA_CLI_WRITE_FLAGS[@]}"} ||
+  node "$mjs" migrate-checkout --repo "$ROOT" --backup "$new_archive" ${DATA_CLI_WRITE_FLAGS[@]+"${DATA_CLI_WRITE_FLAGS[@]}"} ||
     die "Moving family content failed (see above); nothing was merged." \
-      "Fix it and re-run ./install.sh --upgrade, or go back with ./install.sh --rollback ${UPGRADE_ARCHIVE}"
+      "Fix it and re-run: $(installer_cmd) --upgrade" \
+      "Or go back: $(installer_cmd) --rollback ${UPGRADE_ARCHIVE}"
 
   # A stale build must not start against the new code mid-upgrade. The sha
   # file lets --rollback put back the build that matches its backup.
@@ -1442,24 +1582,12 @@ upgrade_phase1() {
       upgrade_merge_failed
     fi
   fi
-  if [ "$(git rev-parse HEAD)" = "$from_sha" ]; then
-    resume=1
-  fi
-
-  data_dir="$(node "$mjs" paths --json --repo "$ROOT" | json_field dataDir)" || data_dir=""
-  if [ -z "$data_dir" ]; then
-    die "Could not locate the family data folder after merging." \
-      "Finish with ./install.sh --upgrade, or go back with ./install.sh --rollback ${UPGRADE_ARCHIVE}"
-  fi
-  (umask 077 && mkdir -p "$data_dir")
-  state="${data_dir%/}/${UPGRADE_STATE_FILE}"
-  kept="$(write_upgrade_state "$state" "$from_sha" "$UPGRADE_ARCHIVE" "$resume")"
-  if [ -n "$kept" ]; then
-    echo "Finishing an earlier upgrade; its backup stays the rollback point: ${kept}"
-  fi
 
   rm -rf "$UPGRADE_TMP"
   trap - EXIT
+  if [ ! -f install.sh ]; then
+    upgrade_step_failed "the merge (it left no install.sh)" "$UPGRADE_ARCHIVE"
+  fi
   echo "Running the updated installer…"
   local -a forward=(--upgrade-phase2)
   if [ "$SKIP_BUILD" = "1" ]; then
@@ -1477,16 +1605,18 @@ upgrade_phase1() {
 upgrade_merge_failed() {
   die "git merge failed (see above) and was undone." \
     "Family content is already in the data folder; the pre-upgrade backup is ${UPGRADE_ARCHIVE}." \
-    "Fix the problem and re-run ./install.sh --upgrade, or go back with ./install.sh --rollback ${UPGRADE_ARCHIVE}"
+    "Fix the problem and re-run: $(installer_cmd) --upgrade" \
+    "Or go back: $(installer_cmd) --rollback ${UPGRADE_ARCHIVE}"
 }
 
 upgrade_step_failed() {
   echo "Upgrade stopped: $1 failed (see above)." >&2
   if [ -n "$2" ]; then
     echo "The pre-upgrade backup is $2." >&2
-    echo "Fix the problem and re-run ./install.sh --upgrade, or go back with ./install.sh --rollback $2" >&2
+    echo "Fix the problem and re-run: $(installer_cmd) --upgrade" >&2
+    echo "Or go back: $(installer_cmd) --rollback $2" >&2
   else
-    echo "Fix the problem and re-run ./install.sh --upgrade." >&2
+    echo "Fix the problem and re-run: $(installer_cmd) --upgrade" >&2
   fi
   exit 1
 }
@@ -1495,13 +1625,15 @@ upgrade_step_failed() {
 # argv; the installer never starts, stops or restarts services.
 upgrade_phase2() {
   local data_dir state="" archive=""
-  ensure_node
-  ensure_pnpm
-  data_dir="$(node scripts/examify-data.mjs paths --json --repo "$ROOT" 2>/dev/null | json_field dataDir)" || data_dir=""
-  if [ -n "$data_dir" ] && [ -f "${data_dir%/}/${UPGRADE_STATE_FILE}" ]; then
-    state="${data_dir%/}/${UPGRADE_STATE_FILE}"
-    archive="$(json_field archive < "$state")" || archive=""
+  if command -v node >/dev/null 2>&1; then
+    data_dir="$(node scripts/examify-data.mjs paths --json --repo "$ROOT" 2>/dev/null | json_field dataDir)" || data_dir=""
+    if [ -n "$data_dir" ] && [ -f "${data_dir%/}/${UPGRADE_STATE_FILE}" ]; then
+      state="${data_dir%/}/${UPGRADE_STATE_FILE}"
+      archive="$(json_field archive < "$state")" || archive=""
+    fi
   fi
+  (ensure_node) || upgrade_step_failed "the Node.js check" "$archive"
+  (ensure_pnpm) || upgrade_step_failed "setting up pnpm" "$archive"
 
   echo
   echo "Installing dependencies…"
@@ -1549,17 +1681,25 @@ find_pre_upgrade_build() {
 
 # Back to the version and data in a pre-upgrade backup: reset the checkout
 # (--keep refuses to clobber local changes), then restore data, .env and the
-# checkout snapshot with this checkout's data CLI (the old sha lacks it).
+# checkout snapshot with a copy of the data CLI taken first (the old sha may
+# lack it): this checkout's, else the upstream one (a first upgrade that
+# stopped before its merge left the old code).
 rollback_flow() {
-  local archive="$ROLLBACK_ARCHIVE" manifest sha before tmp pre
+  local archive="$ROLLBACK_ARCHIVE" manifest sha before tmp pre url data_dir
   require_git_checkout "--rollback"
   if [ ! -f "$archive" ]; then
     die "Backup not found: ${archive}"
   fi
   command -v tar >/dev/null 2>&1 || die "tar is required for --rollback."
   command -v node >/dev/null 2>&1 || die "Node.js is required for --rollback."
-  if [ ! -f scripts/examify-data.mjs ]; then
-    die "scripts/examify-data.mjs is missing from this checkout, so the backup cannot be restored."
+  UPGRADE_UPSTREAM="$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null)" || UPGRADE_UPSTREAM=""
+  tmp="$(mktemp -d "${TMPDIR:-/tmp}/examify-rollback.XXXXXX")"
+  UPGRADE_TMP="$tmp"
+  trap 'rm -rf "$UPGRADE_TMP"' EXIT
+  if [ -f scripts/examify-data.mjs ]; then
+    cp scripts/examify-data.mjs "$tmp/examify-data.mjs"
+  elif [ -z "$UPGRADE_UPSTREAM" ] || ! git show '@{u}:scripts/examify-data.mjs' > "$tmp/examify-data.mjs" 2>/dev/null; then
+    die "Neither this checkout nor its upstream has scripts/examify-data.mjs, so the backup cannot be restored. Nothing was changed."
   fi
   if [ -f .env ]; then
     refuse_kept_data_dir_conflict
@@ -1567,6 +1707,12 @@ rollback_flow() {
   unset EXAMIFY_DATA_DIR DATABASE_URL
   refuse_owner_mismatch
   refuse_if_running "rolling back"
+  # The restore refuses a server on these ports even with --allow-running:
+  # find out before git reset moves the checkout.
+  if [ "$ALLOW_RUNNING" = "1" ] && url="$(server_answering local)"; then
+    die "An Examify server is answering at ${url}, and the restore will not replace its database." \
+      "Stop it, then re-run. Nothing was changed."
+  fi
   manifest="$(tar -xOzf "$archive" MANIFEST.json 2>/dev/null)" ||
     manifest="$(tar -xOzf "$archive" ./MANIFEST.json 2>/dev/null)" ||
     die "${archive} is not an Examify backup (no MANIFEST.json)."
@@ -1577,11 +1723,6 @@ rollback_flow() {
   fi
   git cat-file -e "${sha}^{commit}" 2>/dev/null ||
     die "Commit ${sha} is not in this checkout. Run git fetch and re-run."
-
-  tmp="$(mktemp -d "${TMPDIR:-/tmp}/examify-rollback.XXXXXX")"
-  UPGRADE_TMP="$tmp"
-  trap 'rm -rf "$UPGRADE_TMP"' EXIT
-  cp scripts/examify-data.mjs "$tmp/examify-data.mjs"
   before="$(git rev-parse HEAD)"
 
   echo "Resetting the checkout to ${sha:0:7}…"
@@ -1591,7 +1732,12 @@ rollback_flow() {
   node "$tmp/examify-data.mjs" restore "$archive" --force --with-env --include-checkout --repo "$ROOT" \
     ${DATA_CLI_WRITE_FLAGS[@]+"${DATA_CLI_WRITE_FLAGS[@]}"} ||
     die "Restoring the backup failed (see above). The checkout is now at ${sha:0:7} (it was ${before:0:7})." \
-      "Fix the problem and re-run ./install.sh --rollback ${archive}"
+      "Fix the problem and re-run: $(installer_cmd) --rollback ${archive}"
+  # That upgrade is over: a later --upgrade records a fresh rollback point.
+  data_dir="$(node "$tmp/examify-data.mjs" paths --json --repo "$ROOT" 2>/dev/null | json_field dataDir)" || data_dir=""
+  if [ -n "$data_dir" ]; then
+    rm -f "${data_dir%/}/${UPGRADE_STATE_FILE}"
+  fi
 
   ensure_node
   ensure_pnpm

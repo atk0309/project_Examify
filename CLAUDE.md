@@ -807,9 +807,12 @@ These are non-negotiable. Don't "fix" them out.
   cross-process lock). `MANIFEST.json` lists every file with its sha256. Staged `0700`,
   tarred to a temp file, fsynced, published with `link()` + `unlink` (no clobber) as
   `examify-backup-<UTC>-<rand>[-pre-upgrade-<sha7>].tar.gz`, `0600`, in `$DATA/backups/`
-  (`--out` must be outside the checkout or inside the data folder).
-- **Restore** (`restore`): refuses while `/api/health` answers (host `PORT`, `.env` `PORT`,
-  3000); lists members first and rejects links / special files / absolute / `..` paths;
+  (`--out` must be outside the checkout or inside the data folder), then read back
+  (`tar -tzf` over the whole stream, every MANIFEST file a member, `MANIFEST.json` byte
+  for byte); one that does not read back is removed and the backup fails
+  (`archive_unreadable`).
+- **Restore** (`restore`): refuses while Examify answers `/api/health` (any JSON body with a
+  boolean `ok`, whatever the status; host `PORT`, `.env` `PORT`, 3000); lists members first and rejects links / special files / absolute / `..` paths;
   extracts with `--no-same-owner`; copies only MANIFEST-listed regular files under
   allowed prefixes after a sha256 check; refuses a snapshot with more migrations than the
   checkout's journal; refuses a non-empty target unless `--force`, which moves the DB and
@@ -821,9 +824,13 @@ These are non-negotiable. Don't "fix" them out.
   `next start` order — what the app will read), checked for safety, ownership and a
   shared folder like any other; otherwise the folder resolved now (`--data-dir`
   overrides). `install.sh --restore` refuses a host `EXAMIFY_DATA_DIR` / `DATABASE_URL`
-  or `--data-dir` when the archive brings its own `.env`.
+  or `--data-dir` when the archive brings its own `.env`. A failure after the move-aside
+  names the `before-restore-*` folder (JSON `movedAside`). Once everything is placed the
+  restore never fails: its final init skips the shared-folder check the target already
+  passed (the marker may be aside; a pre-data-folder archive has none) and only warns.
 - **`migrate-checkout`** (the upgrade step): classifies with `git status --ignored` plus
-  an lstat walk (OS junk ignored). Family = subjects with a real difference from `HEAD`,
+  an lstat walk (OS junk ignored; a clean committed file with no family meaning, such as
+  a README in `content/subjects/`, is ignored). Family = subjects with a real difference from `HEAD`,
   everything under `content/source-pdfs/`, `subjects.json` rows added or changed
   (compared per id with `HEAD`; questions + keys copied verbatim, missing rows rebuilt
   from the IR / `subject.json`), `.examify-ingest/`. Registrars are never copied, only
@@ -832,23 +839,42 @@ These are non-negotiable. Don't "fix" them out.
   checkout copy goes to `$DATA/migration-conflicts/<ts>/`; keys `0600`; every copy
   sha256-verified; then `checkout-content-v1` is appended to the marker. Only then
   `git checkout HEAD --` the content + registrars and unlink exactly the verified
-  untracked / ignored files (never `git clean`, never through a symlinked folder), and
-  assert `git status -- content src/lib/exam` is clean. Idempotent; `--dry-run` writes
-  nothing. Deleted committed subjects are reported (`hiddenCommitted`) and come back.
+  untracked / ignored files that are still untracked (a file `git rm --cached` had
+  untracked stays: the checkout restored it), never `git clean`, never through a
+  symlinked folder; prune each emptied area bottom-up (nested empty or junk-only
+  folders too, never through a symlink), and assert `git status -- content src/lib/exam`
+  is clean with no `content/source-pdfs/` or `.examify-ingest/` left. **Before moving
+  anything** it needs a backup of what that checkout step reverts: `--backup <archive>`
+  must be a MANIFEST with this checkout at `HEAD` and the current bytes of every tracked
+  file it puts back (else exit 5 `backup_mismatch`); without it, it takes its own
+  `--kind pre-upgrade --include-checkout` backup. A run that only removes empty leftover
+  folders takes none. Idempotent; `--dry-run` writes nothing. Deleted committed subjects
+  are reported (`hiddenCommitted`) and come back.
 - **`install.sh`** runs from `main()` (last line `main "$@"`), so a merge that replaces it
   mid-run can't change what executes. It never starts / stops services, never
   `git stash`es or `git clean`s, and refuses (never chmods / chowns) on an owner
-  mismatch. `--upgrade` phase 1 (the invoked script) = read-only preflight → upstream
-  `examify-data.mjs backup --kind pre-upgrade --include-checkout` → `migrate-checkout` →
-  `.next` parked as `.next.pre-upgrade-<ts>` → `git merge --ff-only @{u}` (else
-  `--no-edit`, aborted on conflict) → `$DATA/.upgrade-state.json` →
-  `exec bash ./install.sh --upgrade-phase2`. Phase 2 (the merged installer; unknown flags
+  mismatch. `--upgrade` phase 1 (the invoked script) = read-only preflight (also refuses
+  upstream-added paths that exist here untracked / ignored outside `content/` and
+  `.examify-ingest/`, and a Node below the upstream `.nvmrc` major or its installer's
+  `MIN_NODE`) → upstream `examify-data.mjs backup --kind pre-upgrade --include-checkout`
+  → `$DATA/.upgrade-state.json` `{fromSha, archive, startedAt, movesCheckoutContent}`
+  **right away** (a rerun keeps the earlier archive as the rollback point when `HEAD` has
+  moved on from its `fromSha`, or equals it and that run had content to move) →
+  `migrate-checkout --backup <that archive>` → `.next` parked as
+  `.next.pre-upgrade-<ts>` → `git merge --ff-only @{u}` (else `--no-edit`, aborted on
+  conflict) → `exec bash ./install.sh --upgrade-phase2`. Failure hints print
+  `./install.sh …`, or `git show <upstream>:install.sh | bash -s -- …` while the
+  checkout's `install.sh` predates `--upgrade`. The running-server check counts any JSON
+  `{ok:boolean}` answer (same rule as `restore`). Phase 2 (the merged installer; unknown flags
   only warn — phase-2 flags are a cross-version contract) = frozen-lockfile
   `pnpm install` → `pnpm db:migrate` → `pnpm build` (unless `--skip-build`) →
-  `examify-data verify` → drop the state file and the parked build. `--rollback <archive>`
-  = `git reset --keep` to the archive's `checkout.gitSha` → `restore` with `--force`,
-  `--with-env` and `--include-checkout` → reinstall → put back the parked build or
-  rebuild. `--restore <archive>` = install → `restore` (with the archived `.env` when
+  `examify-data verify` → drop the state file and the parked build; a failed Node / pnpm
+  setup names the backup like any other step. `--rollback <archive>` = the data CLI
+  copied first (the checkout's, else `git show @{u}:scripts/examify-data.mjs`) →
+  running-server check (the local ports even with `--allow-running`) before
+  `git reset --keep` to the archive's `checkout.gitSha` → `restore` with `--force`,
+  `--with-env` and `--include-checkout` → drop the state file → reinstall → put back
+  the parked build or rebuild. `--restore <archive>` = install → `restore` (with the archived `.env` when
   present) → `db:migrate` → build.
 - **Secrets on disk.** Data folder `0700`; answer-key files `0600` in a `0700` `keys/`
   (emit, migrate and restore all set it; `verify` fails on a group/world-readable key);

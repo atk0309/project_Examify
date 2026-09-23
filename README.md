@@ -568,25 +568,33 @@ Stop the server, then run this from the checkout as the user that runs Examify:
 
 The installer never starts, stops or restarts services. It first checks, changing
 nothing, that this is a git checkout on a branch with an upstream, `.env` exists,
-`node`, `pnpm` and `tar` are installed, the checkout and data belong to you, the
-upstream's Node major matches, and no server answers `/api/health` (on the host `PORT`,
-the `.env` `PORT`, 3000 and `SITE_URL`; pass `--allow-running` if that is another
-service). Uncommitted edits to tracked files outside `content/` and the generated
-registrars are refused — commit them (the upgrade merges your commits and never stashes)
-— and so are local commits that would conflict. Then it:
+`node`, `pnpm` and `tar` are installed, the checkout and data belong to you, this Node
+meets the upstream's (its `.nvmrc` major and its installer's minimum version), and no
+Examify server answers `/api/health` — healthy or not — on the host `PORT`, the `.env`
+`PORT`, 3000 or `SITE_URL` (pass `--allow-running` if that is another service).
+Uncommitted edits to tracked files outside `content/` and the generated registrars are
+refused — commit them (the upgrade merges your commits and never stashes) — and so are
+local commits that would conflict, and files the upstream adds that already exist here
+untracked or ignored (the merge would refuse or overwrite them; move them away). Then it:
 
 1. writes a pre-upgrade backup (database, family data, `.env`, and everything under the
-   checkout's `content/`) to `<data folder>/backups/`;
+   checkout's `content/`) to `<data folder>/backups/`, reads it back, and records it in
+   `<data folder>/.upgrade-state.json` as the rollback point;
 2. moves family content an older version left in the checkout (wizard subjects, uploaded
-   PDFs, generated questions and keys, `.examify-ingest/`) into the data folder and
-   restores the checkout's tracked files;
+   PDFs, generated questions and keys, `.examify-ingest/`) into the data folder,
+   restores the checkout's tracked files and removes the folders that end up empty;
 3. sets the old build aside, merges the upstream branch, and runs the updated installer:
    `pnpm install --frozen-lockfile`, `pnpm db:migrate`, `pnpm build` (skip with
    `--skip-build`) and `node scripts/examify-data.mjs verify`;
 4. prints the backup path. Start or restart the server.
 
-If a step fails, the message names the backup: fix the problem and re-run
-`./install.sh --upgrade`, or go back with `./install.sh --rollback <archive>`. A file the
+If a step fails, the message names the backup and the exact commands: fix the problem
+and re-run `./install.sh --upgrade`, or go back with `./install.sh --rollback <archive>`
+(a first upgrade that stopped before its merge still has the old `install.sh`, so the
+message gives the piped form below instead). A rerun of an upgrade that stopped keeps
+its first backup as the rollback point while that is still the way back — after its
+merge, or when it had already started moving content out of the checkout — and takes a
+fresh one otherwise. A file the
 data folder already holds with different contents is kept, and the checkout's copy goes
 to `<data folder>/migration-conflicts/<time>/`. A built-in subject deleted in an older
 version comes back. Existing installs keep their `DATABASE_URL`; the upgrade does not move
@@ -605,8 +613,9 @@ git fetch origin && git show origin/main:install.sh | bash -s -- --upgrade
 That runs exactly the installer the upgrade moves to (no download; it works for a private
 fork too). `curl -fsSL https://raw.githubusercontent.com/atk0309/project_Examify/main/install.sh | bash -s -- --upgrade`
 does the same from the public repo. Stop the server first; without a terminal, add
-`--yes` to answer the "is the server stopped?" question. Later upgrades use
-`./install.sh --upgrade`.
+`--yes` to answer the "is the server stopped?" question. If it stops before the merge,
+rerun or roll back the same way (`… | bash -s -- --upgrade`, or
+`… | bash -s -- --rollback <archive>`). Later upgrades use `./install.sh --upgrade`.
 
 ## Backups and restore
 
@@ -619,6 +628,8 @@ consistent snapshot of the database (safe while the server runs), the family con
 generate run manifests, and the checkout's `.env` / `.env.local`. It leaves out the mail
 outbox, earlier backups and the generate cache (`--include-cache` adds the cache).
 `--no-env` leaves out `.env`; `--out DIR` writes somewhere else outside the checkout.
+Every archive is read back (the whole `tar` stream and its manifest) before it is
+reported; one that does not read back is removed and the backup fails.
 
 **An archive holds secrets and answer keys.** Copy it off the machine (another computer,
 an encrypted drive) and keep it private: a backup that lives only next to the data does
@@ -639,7 +650,8 @@ If your service manager sets them instead, set them on the cron line too.
 refuses while the server answers, checks every file against the archive's manifest, and
 refuses a backup from a newer Examify. When the data folder already holds a database or
 content, add `--force`: the current data is moved aside to
-`<data folder>/before-restore-<time>/`, never deleted. `--with-env` also puts back `.env`
+`<data folder>/before-restore-<time>/`, never deleted (if the restore fails after that,
+the error names that folder). `--with-env` also puts back `.env`
 (the current one is kept as `.env.before-restore-<time>.local`), and the data then goes
 to the folder that restored `.env` names. Then run `pnpm db:migrate` and start the
 server.
@@ -664,7 +676,9 @@ if the new machine has a different address.
 checkout to that commit (`git reset --keep`, which refuses to overwrite local changes),
 restores the database, family content, `.env` and the checkout's content from the
 archive — the current data and `.env` are moved aside as above, not deleted — then
-reinstalls and puts back the pre-upgrade build, or rebuilds.
+reinstalls and puts back the pre-upgrade build, or rebuilds. It checks for a running
+server before touching the checkout (`--allow-running` does not skip the local ports:
+the restore would refuse them anyway).
 
 ## Testing
 

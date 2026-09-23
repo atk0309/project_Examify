@@ -32,10 +32,10 @@ if (process.env.EXAMIFY_IGNORE_LEGACY_CONTENT !== '1') {
       [
         'db:migrate: family content is still inside the checkout, where this version no longer reads it:',
         ...legacy.items.slice(0, 20).map((item) => `  - ${item.kind}: ${item.path}`),
-        'Move it into the family data folder first (a backup is taken before anything moves):',
+        'Move it into the family data folder first (both back up the checkout and the data before anything moves):',
         '  ./install.sh --upgrade',
         'or, with the server stopped:',
-        '  node scripts/examify-data.mjs backup && node scripts/examify-data.mjs migrate-checkout',
+        '  node scripts/examify-data.mjs migrate-checkout',
         'In a development checkout doing committed-content CLI work, set EXAMIFY_IGNORE_LEGACY_CONTENT=1.',
       ].join('\n'),
     );

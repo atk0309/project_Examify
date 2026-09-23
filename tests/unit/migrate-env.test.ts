@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -257,6 +258,37 @@ describe('pnpm db:migrate', () => {
 
     const ignored = runMigrate(root, { EXAMIFY_IGNORE_LEGACY_CONTENT: '1' });
     expect(ignored.status, ignored.stderr).toBe(0);
+
+    // Following the hint moves the content, after a backup that holds the checkout.
+    cpSync(path.join(checkout, 'scripts'), path.join(root, 'scripts'), { recursive: true });
+    const hinted = refused.stderr
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.startsWith('node scripts/examify-data.mjs'));
+    expect(hinted.length).toBeGreaterThan(0);
+    for (const command of hinted) {
+      const followed = spawnSync('bash', ['-c', command], {
+        cwd: root,
+        encoding: 'utf8',
+        env: {
+          NODE_ENV: 'production',
+          PATH: process.env.PATH ?? '',
+          HOME: process.env.HOME ?? root,
+          EXAMIFY_SQLITE_MODULE: path.join(checkout, 'node_modules', 'better-sqlite3'),
+        },
+      });
+      expect(followed.status, followed.stderr).toBe(0);
+    }
+    const archives = readdirSync(path.join(root, 'data', 'backups'));
+    expect(archives).toHaveLength(1);
+    const manifest = spawnSync(
+      'tar',
+      ['-xOzf', path.join(root, 'data', 'backups', archives[0]!), 'MANIFEST.json'],
+      { encoding: 'utf8' },
+    );
+    expect(manifest.stdout).toContain('checkout/content/subjects/history/subject.json');
+    const migrated = runMigrate(root);
+    expect(migrated.status, migrated.stderr).toBe(0);
   });
 
   it('refuses a database folder shared with other software', () => {
