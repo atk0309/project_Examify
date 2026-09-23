@@ -160,3 +160,89 @@ export function generatedReplacesSampleIds(
   }
   return false;
 }
+
+/** Kebab-case subject id — the same rule as examify-ingest `SUBJECT_ID_RE`. */
+export const GENERATED_SUBJECT_ID_RE = /^[a-z][a-z0-9-]*$/;
+
+const OWNED_QUESTION_SUFFIX_RE = /^(?:easy|medium|hard)-(?:free-)?\d+$/;
+
+/**
+ * A question id that generated subject `subjectId` may own
+ * (`<id>-<difficulty>-N` / `<id>-<difficulty>-free-N`, as validate enforces).
+ * Unambiguous across subjects, so two generated subjects never share an id.
+ */
+export function isSubjectQuestionId(subjectId: string, questionId: string): boolean {
+  const prefix = `${subjectId}-`;
+  return (
+    questionId.startsWith(prefix) && OWNED_QUESTION_SUFFIX_RE.test(questionId.slice(prefix.length))
+  );
+}
+
+/** One generated layer's public half (committed registrars, or the family data folder). */
+export type GeneratedLayer = { subjects: Subject[]; questions: QuestionBank };
+
+/**
+ * Committed generated content (build-time registrars) under the family's
+ * generated content (data folder, request time). A family subject with a
+ * committed subject's id replaces it entirely — its tile keeps the committed
+ * position, its questions replace the committed ones — so an upgrade that
+ * ships a same-id subject never changes what the family sees. Family-only
+ * subjects append. `shadowed` lists the replaced committed ids.
+ */
+export function composeGeneratedLayers(
+  committed: GeneratedLayer,
+  family: GeneratedLayer | null,
+): GeneratedLayer & { shadowed: string[] } {
+  if (!family) {
+    return {
+      subjects: [...committed.subjects],
+      questions: { ...committed.questions },
+      shadowed: [],
+    };
+  }
+  const familyById = new Map(family.subjects.map((subject) => [subject.id, subject]));
+  const committedIds = new Set([
+    ...committed.subjects.map((subject) => subject.id),
+    ...Object.keys(committed.questions),
+  ]);
+  const subjects = [
+    ...committed.subjects.map((subject) => familyById.get(subject.id) ?? subject),
+    ...family.subjects.filter((subject) => !committedIds.has(subject.id)),
+  ];
+  const questions: QuestionBank = {};
+  for (const [subjectId, bank] of Object.entries(committed.questions)) {
+    if (!familyById.has(subjectId)) questions[subjectId] = bank;
+  }
+  for (const subject of family.subjects) {
+    const bank = family.questions[subject.id];
+    if (bank) questions[subject.id] = bank;
+  }
+  const shadowed = [...familyById.keys()].filter((subjectId) => committedIds.has(subjectId));
+  return { subjects, questions, shadowed };
+}
+
+/**
+ * Keys twin of {@link composeGeneratedLayers}: drop every committed key of a
+ * shadowed subject (its committed question ids, plus any id it could own),
+ * then add the family keys.
+ */
+export function composeGeneratedKeys<T>(
+  committedKeys: Record<string, T>,
+  committedQuestions: QuestionBank,
+  familyKeys: Record<string, T>,
+  shadowed: readonly string[],
+): Record<string, T> {
+  const dropped = new Set<string>();
+  for (const subjectId of shadowed) {
+    const bank = committedQuestions[subjectId];
+    if (bank) for (const id of questionIds({ [subjectId]: bank })) dropped.add(id);
+  }
+  const out: Record<string, T> = {};
+  for (const [id, key] of Object.entries(committedKeys)) {
+    if (dropped.has(id) || shadowed.some((subjectId) => isSubjectQuestionId(subjectId, id))) {
+      continue;
+    }
+    out[id] = key;
+  }
+  return { ...out, ...familyKeys };
+}
