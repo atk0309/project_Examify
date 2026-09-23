@@ -94,11 +94,20 @@ export function resolveIngestRoot(
   const paths = resolveCliDataPaths(cwd, env);
   const repo = canonical(paths.repoRoot);
   const data = canonical(paths.dataDir);
+  const defaultData = canonical(path.join(paths.repoRoot, 'data'));
   const layers = new Set<IngestLayer>();
   for (const input of inputs) {
     const abs = canonical(path.resolve(cwd, input));
     if (contains(data, abs)) layers.add('family');
-    else if (contains(repo, abs)) layers.add('committed');
+    else if (contains(defaultData, abs)) {
+      // A leftover ./data after EXAMIFY_DATA_DIR moved elsewhere is family
+      // content: never treat it as committed (an emit would write its keys
+      // into tracked files and rewrite the registrars).
+      const display = formatDataDirDisplay(paths.repoRoot, paths.dataDir);
+      throw new Error(
+        `this path is under ./data, but the family data folder is ${display}; use ${display}/content/…: ${input}`,
+      );
+    } else if (contains(repo, abs)) layers.add('committed');
     else throw new Error(`path is outside the checkout and the family data folder: ${input}`);
   }
   if (layers.size > 1) {

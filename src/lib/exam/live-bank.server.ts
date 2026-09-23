@@ -269,12 +269,9 @@ function liveLayers(root: string) {
   return { family, layers: composeGeneratedLayers(COMMITTED, family) };
 }
 
-/**
- * Sample + committed generated (registrars) + family generated (data folder)
- * public bank. Family subjects replace committed ones with the same id.
- */
-export function loadLivePublicBank(root = getOnboardingContentRoot()): LivePublicBank {
-  const { layers } = liveLayers(root);
+type LiveLayers = ReturnType<typeof liveLayers>;
+
+function publicBankFrom({ layers }: LiveLayers): LivePublicBank {
   return {
     subjects: mergeSubjects(SAMPLE_SUBJECTS, layers.subjects),
     questions: mergeQuestions(
@@ -285,9 +282,7 @@ export function loadLivePublicBank(root = getOnboardingContentRoot()): LivePubli
   };
 }
 
-/** Keys twin of {@link loadLivePublicBank}. Server-only; never pass this to a client component. */
-export function loadLiveAnswerKeys(root = getOnboardingContentRoot()): Record<string, AnswerKey> {
-  const { family, layers } = liveLayers(root);
+function answerKeysFrom({ family, layers }: LiveLayers): Record<string, AnswerKey> {
   const generated = composeGeneratedKeys(
     GENERATED_KEYS,
     GENERATED_QUESTIONS,
@@ -299,4 +294,29 @@ export function loadLiveAnswerKeys(root = getOnboardingContentRoot()): Record<st
     generated,
     generatedReplacesSampleIds(Object.keys(generated), Object.keys(SAMPLE_ANSWER_KEYS)),
   );
+}
+
+/**
+ * Sample + committed generated (registrars) + family generated (data folder)
+ * public bank. Family subjects replace committed ones with the same id.
+ */
+export function loadLivePublicBank(root = getOnboardingContentRoot()): LivePublicBank {
+  return publicBankFrom(liveLayers(root));
+}
+
+/** Keys twin of {@link loadLivePublicBank}. Server-only; never pass this to a client component. */
+export function loadLiveAnswerKeys(root = getOnboardingContentRoot()): Record<string, AnswerKey> {
+  return answerKeysFrom(liveLayers(root));
+}
+
+/**
+ * Public bank and keys from ONE read of the family folder, so scoring never
+ * pairs questions from one Apply with keys from another. Server-only.
+ */
+export function loadLiveBankAndKeys(root = getOnboardingContentRoot()): {
+  bank: LivePublicBank;
+  keys: Record<string, AnswerKey>;
+} {
+  const live = liveLayers(root);
+  return { bank: publicBankFrom(live), keys: answerKeysFrom(live) };
 }

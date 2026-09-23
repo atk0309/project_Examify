@@ -8,6 +8,7 @@ import { GENERATED_KEYS } from '@/lib/exam/generated-keys.server';
 import { GENERATED_QUESTIONS, GENERATED_SUBJECTS } from '@/lib/exam/generated-public';
 import {
   loadLiveAnswerKeys,
+  loadLiveBankAndKeys,
   loadLivePublicBank,
   readGeneratedOverlay,
 } from '@/lib/exam/live-bank.server';
@@ -218,6 +219,26 @@ describe('live bank: family layer', () => {
         items: [{ type: 'mcq', id: 'biology-easy-1', chosen: biology.answer }],
       }),
     ).toMatchObject({ ok: true, correct: 1, total: 1 });
+  });
+
+  it('reads bank and keys for scoring from one snapshot of the family folder', () => {
+    const root = familyRoot();
+    seedFamily(root, [row('history', 'History')], { history: historyFiles() });
+    const both = loadLiveBankAndKeys(root);
+    expect(both.bank).toEqual(loadLivePublicBank(root));
+    expect(both.keys).toEqual(loadLiveAnswerKeys(root));
+
+    // Questions and keys come from the same read: a later Apply changing the
+    // key does not leak into an already-loaded pair.
+    const next = historyFiles();
+    seedFamily(root, [row('history', 'History')], {
+      history: {
+        ...next,
+        keys: { 'history-easy-1': { type: 'mcq', answer: 2, provenance: PROVENANCE } },
+      },
+    });
+    expect(both.keys['history-easy-1']).toMatchObject({ answer: 1 });
+    expect(loadLiveBankAndKeys(root).keys['history-easy-1']).toMatchObject({ answer: 2 });
   });
 
   it('never puts answers, rubrics or provenance in the public bank', () => {

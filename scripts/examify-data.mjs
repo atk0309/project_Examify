@@ -216,10 +216,11 @@ export function assertDataDirValue(value) {
       'EXAMIFY_DATA_DIR starts with ~, which is never expanded; use an absolute path',
     );
   }
-  if (/[\r\n"'`]/.test(value) || /\s#/.test(value)) {
+  if (/[\r\n"'`$]/.test(value) || /\s#/.test(value)) {
+    // `$` too: Next expands `$VAR` in env files, CLIs reading them do not.
     throw new UnsafeDataDirError(
       'bad_value',
-      'EXAMIFY_DATA_DIR contains a quote, a newline or " #"; pick a plainer path',
+      'EXAMIFY_DATA_DIR contains a quote, a newline, "$" or " #"; pick a plainer path',
     );
   }
 }

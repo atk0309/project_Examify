@@ -42,6 +42,14 @@ jobs:
         run: pnpm typecheck
       - name: Unit tests
         run: pnpm test
+      - name: Nothing written into the checkout
+        run: |
+          leaked="$(git status --porcelain --ignored=traditional -- content .examify-ingest src)"
+          if [ -n "$leaked" ]; then
+            echo "Files written into the checkout:"
+            echo "$leaked"
+            exit 1
+          fi
 
   build-and-e2e:
     name: build + e2e

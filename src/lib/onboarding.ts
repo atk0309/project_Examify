@@ -823,6 +823,7 @@ export function validateOnboardingIr(
       issues: [{ file: SUBJECTS_REL, message: loaded.message }],
     };
   }
+  if (loaded.pruneOnly) return { ok: true };
   const result = validateIrCollection(loaded.files, {
     replaceSample,
     frozenIds: FROZEN_SAMPLE_IDS,
@@ -837,11 +838,45 @@ export function validateOnboardingIr(
   };
 }
 
-function loadSubjectsTree(
-  root: string,
-):
-  | { ok: true; files: ReturnType<typeof loadIrFiles>; pruneMissing: boolean }
-  | { ok: false; reason: 'invalid' | 'empty_catalog'; message: string } {
+/**
+ * True when the family generated layer still serves something: catalog rows
+ * or question / key files. Committed content is never in the family root.
+ */
+function hasFamilyGeneratedContent(root: string): boolean {
+  try {
+    const catalog = JSON.parse(
+      readFileSync(path.join(root, GENERATED_DIR, 'subjects.json'), 'utf8'),
+    );
+    if (Array.isArray(catalog) && catalog.length > 0) return true;
+  } catch {
+    // missing or unreadable catalog: look at the files
+  }
+  for (const dir of ['questions', 'keys']) {
+    try {
+      if (readdirSync(path.join(root, GENERATED_DIR, dir)).some((name) => name.endsWith('.json'))) {
+        return true;
+      }
+    } catch {
+      // no such folder
+    }
+  }
+  return false;
+}
+
+type SubjectsTree =
+  | { ok: true; files: ReturnType<typeof loadIrFiles>; pruneMissing: boolean; pruneOnly: false }
+  /** No BankIR left, but the family generated layer still serves subjects: remove them. */
+  | { ok: true; files: []; pruneMissing: true; pruneOnly: true }
+  | { ok: false; reason: 'invalid' | 'empty_catalog'; message: string };
+
+function emptyTree(root: string): SubjectsTree {
+  if (hasFamilyGeneratedContent(root)) {
+    return { ok: true, files: [], pruneMissing: true, pruneOnly: true };
+  }
+  return { ok: false, reason: 'empty_catalog', message: EMPTY_AUTHORITATIVE_EMIT };
+}
+
+function loadSubjectsTree(root: string): SubjectsTree {
   const inputs = [SUBJECTS_REL];
   let pruneMissing = false;
   try {
@@ -852,9 +887,7 @@ function loadSubjectsTree(
   }
   if (!pruneMissing) {
     const abs = path.resolve(root, SUBJECTS_REL);
-    if (!existsSync(abs)) {
-      return { ok: false, reason: 'empty_catalog', message: EMPTY_AUTHORITATIVE_EMIT };
-    }
+    if (!existsSync(abs)) return emptyTree(root);
     return {
       ok: false,
       reason: 'invalid',
@@ -871,10 +904,8 @@ function loadSubjectsTree(
     return { ok: false, reason: 'invalid', message };
   }
 
-  if (files.length === 0) {
-    return { ok: false, reason: 'empty_catalog', message: EMPTY_AUTHORITATIVE_EMIT };
-  }
-  return { ok: true, files, pruneMissing };
+  if (files.length === 0) return emptyTree(root);
+  return { ok: true, files, pruneMissing, pruneOnly: false };
 }
 
 function toPublicPlan(files: readonly PlannedFile[]): OnboardingPlanEntry[] {
@@ -978,6 +1009,26 @@ export function previewOnboardingEmit(
 ): CatalogEmitPreview {
   const loaded = loadSubjectsTree(root);
   if (!loaded.ok) return loaded;
+  if (loaded.pruneOnly) {
+    // The family deleted its last subject: empty the family catalog and
+    // delete its leftover files (Apply still needs the named prune confirm).
+    // Only the family layer is touched — committed subjects stay.
+    const planned = planEmit([], root, { pruneMissing: true, registrars: false });
+    return {
+      ok: true,
+      planned,
+      dryRun: {
+        hash: hashPlan(planned),
+        questionCount: 0,
+        subjectCount: 0,
+        collisions: [],
+        shadows: [],
+        replaceSample,
+        plan: toPublicPlan(planned),
+        diff: formatPublicEmitPlan(planned),
+      },
+    };
+  }
 
   const result = validateIrCollection(loaded.files, {
     replaceSample,

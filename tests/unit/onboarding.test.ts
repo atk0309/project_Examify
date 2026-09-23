@@ -124,7 +124,21 @@ afterEach(async () => {
 });
 
 describe('onboarding catalog emit', () => {
-  it('refuses an empty subjects tree and does not wipe generated files', async () => {
+  it('refuses an empty subjects tree when there is nothing to remove', async () => {
+    const { previewOnboardingEmit, setOnboardingContentRootForTests } =
+      await import('@/lib/onboarding');
+    const root = tempRoot();
+    mkdirSync(path.join(root, 'content/subjects/history'), { recursive: true });
+    setOnboardingContentRootForTests(root);
+
+    const preview = previewOnboardingEmit(false, root);
+    expect(preview.ok).toBe(false);
+    if (preview.ok) throw new Error('expected refuse');
+    expect(preview.reason).toBe('empty_catalog');
+    expect(preview.message).toBe(EMPTY_AUTHORITATIVE_EMIT);
+  });
+
+  it('an empty family tree with leftovers is a prune-only plan that never wipes unconfirmed', async () => {
     const { previewOnboardingEmit, applyOnboardingEmit, setOnboardingContentRootForTests } =
       await import('@/lib/onboarding');
     const root = tempRoot();
@@ -133,14 +147,19 @@ describe('onboarding catalog emit', () => {
     setOnboardingContentRootForTests(root);
 
     const preview = previewOnboardingEmit(false, root);
-    expect(preview.ok).toBe(false);
-    if (preview.ok) throw new Error('expected refuse');
-    expect(preview.reason).toBe('empty_catalog');
-    expect(preview.message).toBe(EMPTY_AUTHORITATIVE_EMIT);
-    expect(preview.message).toMatch(/will not wipe generated content/);
+    if (!preview.ok) throw new Error('expected a prune-only preview');
+    expect(preview.dryRun.subjectCount).toBe(0);
+    expect(preview.dryRun.diff).toContain('would delete content/generated/keys/chemistry.json');
+    expect(preview.dryRun.diff).not.toContain('do-not-leak');
 
-    const applied = applyOnboardingEmit({ replaceSample: false, expectedHash: 'unused' }, root);
-    expect(applied.ok).toBe(false);
+    // Not the confirmed dry-run, then no prune confirm: nothing is touched.
+    const stale = applyOnboardingEmit({ replaceSample: false, expectedHash: 'unused' }, root);
+    expect(stale.ok === false && stale.reason).toBe('stale_preview');
+    const unconfirmed = applyOnboardingEmit(
+      { replaceSample: false, expectedHash: preview.dryRun.hash },
+      root,
+    );
+    expect(unconfirmed.ok === false && unconfirmed.reason).toBe('prune_confirm_required');
     expect(readFileSync(leftover.subjectsPath, 'utf8')).toBe(leftover.subjects);
     expect(readFileSync(leftover.questionsPath, 'utf8')).toBe(leftover.questions);
     expect(readFileSync(leftover.keysPath, 'utf8')).toBe(leftover.keys);
@@ -229,6 +248,59 @@ describe('onboarding catalog emit', () => {
     expect(applied.ok).toBe(true);
     expect(existsSync(leftover.questionsPath)).toBe(false);
     expect(existsSync(leftover.keysPath)).toBe(false);
+  });
+
+  it('deleting the last family subject lets Apply remove it from the live bank', async () => {
+    const {
+      applyOnboardingEmit,
+      deleteOnboardingSubject,
+      previewOnboardingEmit,
+      setOnboardingContentRootForTests,
+      validateOnboardingIr,
+    } = await import('@/lib/onboarding');
+    const { loadLivePublicBank } = await import('@/lib/exam/live-bank.server');
+    const root = tempRoot();
+    setOnboardingContentRootForTests(root);
+    mkdirSync(path.join(root, 'content/subjects/history'), { recursive: true });
+    writeFileSync(
+      path.join(root, 'content/subjects/history/bank.ir.json'),
+      JSON.stringify(fixtureIr('history', 'History')),
+    );
+    const first = previewOnboardingEmit(false, root);
+    if (!first.ok) throw new Error('expected preview');
+    expect(
+      applyOnboardingEmit({ replaceSample: false, expectedHash: first.dryRun.hash }, root).ok,
+    ).toBe(true);
+    expect(loadLivePublicBank().subjects.some((subject) => subject.id === 'history')).toBe(true);
+
+    expect(deleteOnboardingSubject('history', root)).toEqual({ ok: true });
+    expect(validateOnboardingIr(false, root)).toEqual({ ok: true });
+    const preview = previewOnboardingEmit(false, root);
+    if (!preview.ok) throw new Error(`expected a prune-only preview, got ${preview.reason}`);
+    expect(preview.dryRun.subjectCount).toBe(0);
+    expect(preview.dryRun.diff).toContain('would delete content/generated/keys/history.json');
+    expect(preview.planned.every((file) => !file.relPath.startsWith('src/'))).toBe(true);
+
+    const refused = applyOnboardingEmit(
+      { replaceSample: false, expectedHash: preview.dryRun.hash },
+      root,
+    );
+    expect(refused.ok === false && refused.reason).toBe('prune_confirm_required');
+    expect(loadLivePublicBank().subjects.some((subject) => subject.id === 'history')).toBe(true);
+
+    const applied = applyOnboardingEmit(
+      { replaceSample: false, expectedHash: preview.dryRun.hash, confirmPrune: true },
+      root,
+    );
+    expect(applied.ok).toBe(true);
+    expect(existsSync(path.join(root, 'content/generated/keys/history.json'))).toBe(false);
+    expect(loadLivePublicBank().subjects.some((subject) => subject.id === 'history')).toBe(false);
+
+    // Nothing left to remove: an empty tree is refused again, as before.
+    expect(previewOnboardingEmit(false, root)).toMatchObject({
+      ok: false,
+      reason: 'empty_catalog',
+    });
   });
 
   it('refuses apply when the plan no longer matches the confirmed dry-run hash', async () => {
@@ -637,7 +709,7 @@ describe('onboarding subjects and files', () => {
     expect(existsSync(path.join(root, 'content/source-pdfs/world-history/notes.pdf'))).toBe(true);
   });
 
-  it('delete of the last IR subject refuses wipe and leaves generated files', async () => {
+  it('delete of the last IR subject leaves generated files until a confirmed prune', async () => {
     const { deleteOnboardingSubject, setOnboardingContentRootForTests } =
       await import('@/lib/onboarding');
     const root = tempRoot();
@@ -652,10 +724,9 @@ describe('onboarding subjects and files', () => {
     expect(readFileSync(leftover.keysPath, 'utf8')).toBe(leftover.keys);
     const { previewOnboardingEmit } = await import('@/lib/onboarding');
     const preview = previewOnboardingEmit(false, root);
-    expect(preview.ok).toBe(false);
-    if (preview.ok) throw new Error('expected refuse');
-    expect(preview.reason).toBe('empty_catalog');
-    expect(preview.message).toMatch(/will not wipe generated content/);
+    if (!preview.ok) throw new Error('expected a prune-only preview');
+    expect(preview.dryRun.plan.filter((row) => row.action === 'delete').length).toBeGreaterThan(0);
+    expect(readFileSync(leftover.keysPath, 'utf8')).toBe(leftover.keys);
   });
 });
 

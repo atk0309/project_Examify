@@ -1,3 +1,4 @@
+import { statSync } from 'node:fs';
 import { applyEmit, formatEmitPlan, planEmit, readGeneratedSubjects } from './emit';
 import { sampleBankFrozenIds } from './frozen-ids';
 import { isAuthoritativeCatalogInput, loadIrFiles, resolveIrFiles } from './load';
@@ -221,11 +222,33 @@ function printIssues(io: CliIo, errors: readonly { path?: string; message: strin
   }
 }
 
+/**
+ * Files this run writes into the family folder are owned by the running user
+ * (keys 0600). If the app runs as the folder's owner, it cannot read them and
+ * silently drops the subject — say so up front.
+ */
+export function familyFolderOwnerWarning(
+  ingest: Pick<IngestRoot, 'layer' | 'dataDir'>,
+  getuid: (() => number) | undefined = process.getuid?.bind(process),
+): string | null {
+  if (ingest.layer !== 'family' || !getuid) return null;
+  let owner: number;
+  try {
+    owner = statSync(ingest.dataDir).uid;
+  } catch {
+    return null;
+  }
+  if (owner === getuid()) return null;
+  return 'warning: the family data folder belongs to another user; run this as that user (the app cannot read files written now)';
+}
+
 /** The layer line (stderr), or null after printing why no layer applies. */
 export function resolveCliLayer(parsed: ParsedCli, io: CliIo): IngestRoot | null {
   try {
     const ingest = resolveIngestRoot(parsed.paths, io.cwd, io.env ?? process.env);
     io.stderr.write(`${formatLayerLine(ingest)}\n`);
+    const owner = familyFolderOwnerWarning(ingest);
+    if (owner) io.stderr.write(`${owner}\n`);
     return ingest;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

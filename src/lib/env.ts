@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { z } from 'zod';
 import {
   AUTH_MODES,
@@ -6,6 +7,7 @@ import {
   type ResolvedMailTransport,
 } from './auth-mode';
 import { resolveDataPaths, UnsafeDataDirError } from './data-dir';
+import { isDedicatedDataFolder, SharedDataFolderError } from './data-folder';
 import { parseFamilies } from './families';
 import { findRepoRoot } from './repo-root';
 
@@ -90,22 +92,37 @@ export type ClientIpHeader = (typeof CLIENT_IP_HEADERS)[number];
 /**
  * Production boot resolves the family data folder once, so an unsafe value
  * (the checkout itself, a folder inside it other than ./data, a leading `~`)
- * fails boot instead of the first request. The message never names the path.
+ * or a folder shared with other software (e.g. the folder of
+ * `DATABASE_URL=file:/root/examify.db` is `$HOME`) fails boot instead of the
+ * first request writing into it. The message never names the path.
  */
 function unsafeDataDirMessage(values: {
   EXAMIFY_DATA_DIR?: string;
   DATABASE_URL?: string;
 }): string | null {
+  const repoRoot = findRepoRoot(process.cwd());
+  let paths;
   try {
-    resolveDataPaths({
-      repoRoot: findRepoRoot(process.cwd()),
-      env: { ...values, NODE_ENV: 'production' },
-    });
-    return null;
+    paths = resolveDataPaths({ repoRoot, env: { ...values, NODE_ENV: 'production' } });
   } catch (error) {
     if (error instanceof UnsafeDataDirError) return error.message;
     throw error;
   }
+  if (!isDedicatedDataFolder(paths.dataDir, paths.dbPath)) {
+    return new SharedDataFolderError().message;
+  }
+  const relDb = path.relative(repoRoot, paths.dbPath);
+  const dbInCheckout =
+    paths.dbPath !== ':memory:' && !relDb.startsWith('..') && !path.isAbsolute(relDb);
+  const [first, second] = relDb.split(path.sep);
+  if (dbInCheckout && first !== 'data' && !(first === 'tests' && second === '.tmp')) {
+    // Kept working for existing installs, but it breaks "nothing is written
+    // inside the checkout" (and `-wal` / `-shm` sidecars are not ignored).
+    console.warn(
+      '[env] DATABASE_URL points inside the checkout outside ./data; move the file into the family data folder',
+    );
+  }
+  return null;
 }
 
 function isProductionRuntime(raw: NodeJS.ProcessEnv): boolean {

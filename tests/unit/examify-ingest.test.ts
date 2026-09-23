@@ -928,6 +928,21 @@ describe('examify-ingest layers', () => {
     expect(() =>
       resolveIngestRoot(['content/subjects', 'data/content/subjects'], root, {}),
     ).toThrow('inputs span the family data folder and the checkout; run them separately');
+    // A leftover ./data after the data folder moved is never the committed layer.
+    expect(() =>
+      resolveIngestRoot(['data/content/subjects'], root, { EXAMIFY_DATA_DIR: outside }),
+    ).toThrow(`this path is under ./data, but the family data folder is ${outside}`);
+  });
+
+  it('warns when the family folder belongs to another user', async () => {
+    const { familyFolderOwnerWarning } = await import('../../tools/examify-ingest/src/cli');
+    const dataDir = mkdtempSync(path.join(tmpdir(), 'examify-layers-owner-'));
+    const me = statSync(dataDir).uid;
+    expect(familyFolderOwnerWarning({ layer: 'family', dataDir }, () => me)).toBeNull();
+    expect(familyFolderOwnerWarning({ layer: 'family', dataDir }, () => me + 1)).toContain(
+      'belongs to another user',
+    );
+    expect(familyFolderOwnerWarning({ layer: 'committed', dataDir }, () => me + 1)).toBeNull();
   });
 
   it('reads the data folder from the checkout env files like the app', () => {

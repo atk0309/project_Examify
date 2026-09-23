@@ -163,7 +163,7 @@ describe('resolveDataPaths', () => {
 
   it('refuses values .env cannot carry or the shell would expand', () => {
     const root = tempRepo();
-    for (const value of ['~/examify', 'a\nb', '"quoted"', "it's", 'dir #comment']) {
+    for (const value of ['~/examify', 'a\nb', '"quoted"', "it's", 'dir #comment', '$HOME/fam']) {
       expect(
         unsafeReason(() => resolveDataPaths({ repoRoot: root, env: { EXAMIFY_DATA_DIR: value } })),
       ).toBe('bad_value');

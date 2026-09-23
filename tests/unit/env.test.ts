@@ -1,3 +1,5 @@
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -307,6 +309,37 @@ describe('parseEnv family data folder', () => {
       expect(logged).toMatch(/EXAMIFY_DATA_DIR: .*(family data folder|starts with ~)/);
       expect(logged).not.toContain(checkout);
     }
+  });
+
+  it('fails production boot on a folder shared with other software, without naming it', () => {
+    const shared = mkdtempSync(path.join(tmpdir(), 'examify-env-shared-'));
+    try {
+      writeFileSync(path.join(shared, 'someone-else.conf'), 'x');
+      for (const env of [
+        { ...withoutDb, EXAMIFY_DATA_DIR: shared },
+        { ...withoutDb, DATABASE_URL: `file:${path.join(shared, 'examify.db')}` },
+      ] as NodeJS.ProcessEnv[]) {
+        const logged = loggedIssues(() => parseEnv(env));
+        expect(logged).toContain('already holds files that are not Examify');
+        expect(logged).not.toContain(shared);
+      }
+      // A marked folder is Examify's, whatever else it holds.
+      writeFileSync(path.join(shared, '.examify-data.json'), '{"layout":1}');
+      expect(() => parseEnv({ ...withoutDb, EXAMIFY_DATA_DIR: shared })).not.toThrow();
+    } finally {
+      rmSync(shared, { recursive: true, force: true });
+    }
+  });
+
+  it('warns (but boots) when DATABASE_URL points inside the checkout outside ./data', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(() => parseEnv({ ...withoutDb, DATABASE_URL: 'file:./app.db' })).not.toThrow();
+    expect(warn.mock.calls.map((call) => String(call[0])).join('\n')).toContain(
+      'DATABASE_URL points inside the checkout outside ./data',
+    );
+    warn.mockClear();
+    parseEnv({ ...withoutDb, DATABASE_URL: 'file:./data/app.db' });
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it('leaves the data folder to the resolver default outside production and in next build', () => {

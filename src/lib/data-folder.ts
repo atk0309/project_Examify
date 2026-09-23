@@ -73,6 +73,21 @@ function assertDedicatedFolder(dataDir: string, dbPath: string | undefined): voi
   }
 }
 
+/**
+ * False when an existing, unmarked folder holds files Examify does not
+ * recognise (a shared folder). A folder that does not exist yet is fine.
+ */
+export function isDedicatedDataFolder(dataDir: string, dbPath?: string): boolean {
+  if (!existsSync(dataDir)) return true;
+  try {
+    assertDedicatedFolder(dataDir, dbPath);
+    return true;
+  } catch (error) {
+    if (error instanceof SharedDataFolderError) return false;
+    throw error;
+  }
+}
+
 /** Create `file` with `body` unless something already exists there (never clobbers). */
 function writeIfMissing(file: string, body: string, mode: number): void {
   try {

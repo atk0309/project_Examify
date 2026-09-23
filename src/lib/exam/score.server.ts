@@ -20,7 +20,7 @@ import 'server-only';
 import type { AttemptItem, FreeAttemptItem } from '@/lib/db/schema';
 import { gradeFreeText } from '@/lib/grading';
 import { DIFFICULTIES, resolveExamPaper, type DifficultyId } from './data';
-import { loadLiveAnswerKeys, loadLivePublicBank } from './live-bank.server';
+import { loadLiveBankAndKeys } from './live-bank.server';
 import { isFreePass, type AttemptInput, type ValidateResult } from './attempts';
 
 const DIFFICULTY_IDS = new Set<string>(DIFFICULTIES.map((d) => d.id));
@@ -33,8 +33,7 @@ type Slot = { item: AttemptItem; correct: boolean };
  * re-derive its score, grading any free-text items. Never throws.
  */
 export async function scoreAttempt(input: AttemptInput): Promise<ValidateResult> {
-  const bank = loadLivePublicBank();
-  const keys = loadLiveAnswerKeys();
+  const { bank, keys } = loadLiveBankAndKeys();
   const subjectIds = new Set(bank.subjects.map((subject) => subject.id));
   if (!subjectIds.has(input.subject)) return { ok: false, reason: 'invalid_subject' };
   if (!DIFFICULTY_IDS.has(input.difficulty)) return { ok: false, reason: 'invalid_difficulty' };
