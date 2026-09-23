@@ -130,7 +130,7 @@ images in the subject folder, plus PDFs and those same extensions under
 `content/source-pdfs/<id>/` and standalone `content/source-pdfs/<id>.{pdf,png,jpg,jpeg,webp,txt,md}`
 (`bank.ir.json` / `subject.json` are skipped). Uploaded PDF magic-byte checks
 stay `%PDF` — notes are text sources, not PDFs. `--provider` is required
-(`anthropic` / `openai` / `local` / `test`). Default `--seed` is `0` and is
+(`anthropic` / `openai` / `local` / `claude-cli` / `codex-cli` / `test`). Default `--seed` is `0` and is
 recorded in the run manifest. A tree generate of `content/subjects` still needs
 a source file per subject — biology is hand-authored and has none, so a tree
 generate of `content/subjects` fails closed and hints to target
@@ -256,9 +256,10 @@ cannot replay a hashes-only cache entry. The page-image list is the set
 identity — a derived extra field would bust every existing cache key.
 PDF page images, when rasterized with `pdftoppm`, are reused from
 `.examify-ingest/cache/pages/<pdf-sha256>/` and framed as untrusted data, same
-as source files. OpenAI-compatible generate (`openai` and local HTTP) cannot
-inline raw PDF bytes: if the only sources are PDFs and no page images were
-rasterized, the run fails closed. Provider HTTP/CMD calls use a 180s deadline,
+as source files. OpenAI-compatible generate (`openai` and local HTTP) and Codex
+cannot inline raw PDF bytes: if the only sources are PDFs and no page images were
+rasterized, the run fails closed. Provider HTTP/CMD calls use a 180s deadline
+(`claude-cli` / `codex-cli`: 10 minutes, `CLI_PROVIDER_TIMEOUT_MS`),
 optionally combined with `generateSubject({ signal })` via `AbortSignal.any`.
 Abort throws `GenerateAbortedError` and writes no IR, IR cache, page-raster
 cache, or run manifest.
@@ -429,15 +430,19 @@ or run manifest. `--dry-run-ir` still writes nothing durable.
 Failures are typed so callers never parse messages (all exported from
 `examify-ingest/generate`):
 
-- `ProviderFailureError` — `kind` is `http` (non-2xx; `status` set),
-  `timeout` (the 180s deadline), `unreachable` (no answer: network, or a
-  local command that could not start), `output` (an answer that is not usable
-  BankIR, including cached output that fails validate) or `command` (a local
-  command that exited non-zero).
+- `ProviderFailureError` — `kind` is `http` (non-2xx, or an agent CLI's API
+  error with its status; `status` set), `timeout` (the 180s deadline; 10
+  minutes for `claude-cli` / `codex-cli`), `unreachable` (no answer: network,
+  or a local command / agent CLI that could not start), `output` (an answer
+  that is not usable BankIR, including cached output that fails validate),
+  `command` (a local command or agent CLI that exited non-zero or reported an
+  error) or `auth` (Claude Code / Codex not signed in, with no HTTP status).
+- `CliNotFoundError` — a `ProviderConfigError`: the `claude` / `codex` binary
+  was not found (`cli` names which); nothing ran.
 - `SampleIdCollisionError` — generated ids hit the frozen sample bank without
   `replaceSample`; `ids` lists them. No BankIR written.
 - `UnreadableSourcesError` — the provider cannot read any source
-  (OpenAI-compatible, PDF-only, no rasterized pages).
+  (OpenAI-compatible or Codex, PDF-only, no rasterized pages).
 
 The HTTP call and reading its body share one deadline / cancel boundary, so a
 body that stalls or drops part-way is typed like a failed request. CLI messages

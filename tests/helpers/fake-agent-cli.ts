@@ -32,9 +32,9 @@ export function fakeCli(name: 'claude' | 'codex', behavior: FakeCliBehavior) {
   const script = `#!/usr/bin/env node
 const fs = require('fs');
 const path = require('path');
-const dir = ${JSON.stringify(dir)};
+const dir = __dirname;
 const behavior = JSON.parse(fs.readFileSync(path.join(dir, 'behavior.json'), 'utf8'));
-const name = ${JSON.stringify(name)};
+const name = path.basename(__filename);
 const args = process.argv.slice(2);
 let stdin = '';
 process.stdin.setEncoding('utf8');

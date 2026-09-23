@@ -1919,11 +1919,14 @@ describe('onboarding generate: Claude Code, Codex and local transports', () => {
     const { generateOnboardingSubject } = await import('@/lib/onboarding-generate');
     const root = tempRoot();
     seedSubject(root);
+    // A fixed script that prints the bank file named on its command line.
     const script = path.join(root, 'local-bank.cjs');
     writeFileSync(
       script,
-      `process.stdin.resume(); process.stdin.on('end', () => process.stdout.write(${JSON.stringify(historyBankJson())}));\n`,
+      "const fs = require('fs'); process.stdin.resume(); process.stdin.on('end', () => process.stdout.write(fs.readFileSync(process.argv[2], 'utf8')));\n",
     );
+    const bankPath = path.join(root, 'local-bank.json');
+    writeFileSync(bankPath, historyBankJson());
     const fetchStub = vi.fn();
     vi.stubGlobal('fetch', fetchStub);
     try {
@@ -1931,7 +1934,7 @@ describe('onboarding generate: Claude Code, Codex and local transports', () => {
         {
           EXAMIFY_LLM_BASE_URL: 'http://127.0.0.1:9',
           EXAMIFY_LLM_MODEL: 'llama3.2-vision',
-          EXAMIFY_INGEST_LOCAL_CMD: `${JSON.stringify(process.execPath)} ${JSON.stringify(script)}`,
+          EXAMIFY_INGEST_LOCAL_CMD: `"${process.execPath}" "${script}" "${bankPath}"`,
         },
         () =>
           generateOnboardingSubject({

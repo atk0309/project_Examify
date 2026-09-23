@@ -1251,11 +1251,14 @@ describe('examify-ingest generate', () => {
     const subjectDir = path.join(root, 'content/subjects/plants');
     const fromCommand = realBankIr('plants');
     fromCommand.difficulties.easy[0]!.q = 'Written by the local command?';
+    // A fixed script that prints the bank file named on its command line.
     const script = path.join(root, 'local-bank.cjs');
     writeFileSync(
       script,
-      `process.stdin.resume(); process.stdin.on('end', () => process.stdout.write(${JSON.stringify(JSON.stringify(fromCommand))}));\n`,
+      "const fs = require('fs'); process.stdin.resume(); process.stdin.on('end', () => process.stdout.write(fs.readFileSync(process.argv[2], 'utf8')));\n",
     );
+    const bankPath = path.join(root, 'local-bank.json');
+    writeFileSync(bankPath, JSON.stringify(fromCommand));
     const endpoint = {
       EXAMIFY_LLM_BASE_URL: 'http://127.0.0.1:9',
       EXAMIFY_LLM_MODEL: 'llama3.2-vision',
@@ -1271,7 +1274,7 @@ describe('examify-ingest generate', () => {
     // Command run persists its IR, which fills the IR cache.
     const viaCommand = await generateSubject({
       ...base,
-      env: { ...endpoint, EXAMIFY_INGEST_LOCAL_CMD: `node "${script}"` },
+      env: { ...endpoint, EXAMIFY_INGEST_LOCAL_CMD: `node "${script}" "${bankPath}"` },
     });
     expect(viaCommand.bank.difficulties.easy[0]?.q).toBe('Written by the local command?');
 
