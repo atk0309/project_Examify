@@ -23,10 +23,12 @@ import {
   generateSubject,
   loadGeneratePrompt,
   resolveAgentCliBinary,
+  resolvePageImages,
   resolveSubjectSources,
+  safeTempRoot,
 } from '../../tools/examify-ingest/src/generate-api';
 import { runProviderCommand } from '../../tools/examify-ingest/src/providers/command';
-import { agentCliEnv, agentCliTempRoot } from '../../tools/examify-ingest/src/providers/agent-cli';
+import { agentCliEnv } from '../../tools/examify-ingest/src/providers/agent-cli';
 import { claudeResultEvent } from '../../tools/examify-ingest/src/providers/claude-cli';
 import {
   CODEX_DISABLED_FEATURES,
@@ -553,13 +555,39 @@ describe('agent CLI scratch folder', () => {
     const inside = path.join(checkout, 'tmp');
     mkdirSync(inside);
     const outside = mkdtempSync(path.join(tmpdir(), 'examify-tmp-'));
-    expect(agentCliTempRoot([inside, outside])).toBe(realpathSync(outside));
+    expect(safeTempRoot([inside, outside])).toBe(realpathSync(outside));
     const link = path.join(outside, 'into-checkout');
     symlinkSync(inside, link);
-    expect(agentCliTempRoot([link, outside])).toBe(realpathSync(outside));
-    expect(() => agentCliTempRoot([inside, path.join(outside, 'missing')])).toThrow(
+    expect(safeTempRoot([link, outside])).toBe(realpathSync(outside));
+    expect(() => safeTempRoot([inside, path.join(outside, 'missing')])).toThrow(
       /\(TMPDIR\) is inside the Examify checkout/,
     );
+  });
+
+  it('rasterizes PDF pages outside the checkout even when TMPDIR points into it', () => {
+    const checkout = plantsRoot();
+    const inside = path.join(checkout, 'tmp');
+    mkdirSync(inside);
+    const subjectDir = path.join(checkout, 'content/subjects/plants');
+    const sources = resolveSubjectSources(checkout, 'plants', subjectDir);
+    const prefixes: string[] = [];
+    const previous = process.env.TMPDIR;
+    process.env.TMPDIR = inside;
+    try {
+      resolvePageImages(checkout, sources, {
+        persist: false,
+        rasterize: (_pdf, prefix) => {
+          prefixes.push(prefix);
+          return false;
+        },
+      });
+    } finally {
+      if (previous === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = previous;
+    }
+    expect(prefixes).toHaveLength(1);
+    expect(prefixes[0]!.startsWith(`${realpathSync(checkout)}${path.sep}`)).toBe(false);
+    expect(readdirSync(inside)).toEqual([]);
   });
 
   it('runs the CLI outside the checkout even when TMPDIR points into it', async () => {

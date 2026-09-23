@@ -441,8 +441,9 @@ Before merge, ensure these pass in CI:
   archives hold `.env` secrets); the outbox is never backed up.
 - Agent CLIs (`claude-cli` / `codex-cli`) run with no tools (`--tools ""`; Codex
   read-only sandbox, shell / apps / web search off, `--ignore-user-config`), in an
-  empty private temp folder (`agentCliTempRoot`: outside every Examify checkout on
-  its realpath, even when `TMPDIR` points into one), with no saved session, none of
+  empty private temp folder (`safeTempRoot`, shared with PDF page rasterizing:
+  outside every Examify checkout on its realpath, even when `TMPDIR` points into
+  one), with no saved session, none of
   the service user's customizations (Claude: `--setting-sources project` +
   `CLAUDE_CODE_SAFE_MODE=1`, so no user `CLAUDE.md` / hooks / plugins / skills) and only the
   `agentCliEnv` allowlist: never add Examify secrets, `ANTHROPIC_API_KEY` or

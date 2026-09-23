@@ -159,7 +159,8 @@ messaging when a real key is required; `--force` stays fail-closed. The test
 provider still runs without keys.
 
 It still rasterizes missing
-PDF pages into a temp directory when `pdftoppm` is available so the preview
+PDF pages into a temp directory (`safeTempRoot`: outside every Examify
+checkout, even when `TMPDIR` points into one) when `pdftoppm` is available so the preview
 matches a persist run; it does not populate `.examify-ingest/cache/pages/`.
 The locked generate prompt is `prompts/v2/generate-bank.md`. The unused v1
 draft was removed so a stale untrusted-source framing cannot be loaded.

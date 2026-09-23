@@ -1,7 +1,7 @@
-import { accessSync, constants, mkdtempSync, realpathSync, rmSync, statSync } from 'node:fs';
+import { accessSync, constants, mkdtempSync, rmSync, statSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { findRepoRoot } from '../../../../src/lib/repo-root';
+import { safeTempRoot } from '../temp-root';
 import { CliNotFoundError, type ProviderEnv } from './types';
 
 /**
@@ -175,49 +175,12 @@ export function agentCliModelArgs(model: string, flag: string): string[] {
   return model && model !== AGENT_CLI_DEFAULT_MODEL ? [flag, model] : [];
 }
 
-function insideExamifyCheckout(dir: string): boolean {
-  try {
-    findRepoRoot(dir);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** The system temp folder, then `/tmp` on POSIX. */
-export function agentCliTempCandidates(): string[] {
-  return process.platform === 'win32' ? [os.tmpdir()] : [os.tmpdir(), '/tmp'];
-}
-
-/**
- * Where agent scratch folders go: the first candidate that is a real folder
- * outside every Examify checkout (judged on its realpath). A `TMPDIR` pointing
- * into the checkout would otherwise put study images and model output there,
- * and Claude Code would load the checkout's CLAUDE.md and settings from the
- * parent folders. None usable → refuse (nothing runs).
- */
-export function agentCliTempRoot(candidates = agentCliTempCandidates()): string {
-  for (const candidate of candidates) {
-    let real: string;
-    try {
-      real = realpathSync(candidate);
-      if (!statSync(real).isDirectory()) continue;
-    } catch {
-      continue;
-    }
-    if (!insideExamifyCheckout(real)) return real;
-  }
-  throw new Error(
-    'the temporary folder (TMPDIR) is inside the Examify checkout; point TMPDIR outside it',
-  );
-}
-
 /** A private (0700) scratch folder for one run, outside the checkout, removed afterwards. */
 export async function withAgentCliWorkDir<T>(
   cli: AgentCli,
   work: (dir: string) => Promise<T>,
 ): Promise<T> {
-  const dir = mkdtempSync(path.join(agentCliTempRoot(), `examify-${cli}-`));
+  const dir = mkdtempSync(path.join(safeTempRoot(), `examify-${cli}-`));
   try {
     return await work(dir);
   } finally {

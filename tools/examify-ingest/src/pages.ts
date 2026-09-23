@@ -1,10 +1,10 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { listCachedPageImages, listPagePngs, pagesCacheDir } from './cache';
 import { sha256Bytes } from './hash';
 import type { ResolvedSource } from './sources';
+import { safeTempRoot } from './temp-root';
 
 export const PAGE_RASTER_PROFILE = 'pdftoppm-png-r150';
 export const PAGE_RASTER_DPI = 150;
@@ -91,7 +91,8 @@ export function resolvePageImages(
       }
       continue;
     }
-    const tmp = mkdtempSync(path.join(tmpdir(), 'examify-pages-'));
+    // Outside every checkout, even when TMPDIR points into one.
+    const tmp = mkdtempSync(path.join(safeTempRoot(), 'examify-pages-'));
     try {
       const prefix = path.join(tmp, 'page');
       if (!rasterize(source.absPath, prefix)) continue;

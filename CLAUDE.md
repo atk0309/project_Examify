@@ -718,9 +718,10 @@ chosen, answer }`, free-text `{ type:'free', id, q, response, maxScore, score, s
 - **Agent CLIs get nothing but the request.** `claude-cli` / `codex-cli` run with
   no tools (`--tools ""`; Codex: `--sandbox read-only`, shell / apps / plugins /
   browser / image features off, `web_search="disabled"`, `--ignore-user-config`),
-  in an empty private `0700` temp folder (`agentCliTempRoot`: the system temp
-  folder, else `/tmp`, whichever realpath is outside every Examify checkout, so a
-  `TMPDIR` pointing into it changes nothing; never the checkout, so no project
+  in an empty private `0700` temp folder (`safeTempRoot` in `temp-root.ts`, which
+  PDF page rasterizing also uses: the system temp folder, else `/tmp`, whichever
+  realpath is outside every Examify checkout, so a `TMPDIR` pointing into it
+  changes nothing; never the checkout, so no project
   `CLAUDE.md` or settings load; removed afterwards), with no saved session
   (`--no-session-persistence` / `--ephemeral`, `--strict-mcp-config`), none of the
   service user's own customizations (Claude: `--setting-sources project`, the

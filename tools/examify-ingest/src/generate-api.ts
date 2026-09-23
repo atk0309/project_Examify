@@ -14,6 +14,7 @@ export {
   type GenerateSubjectResult,
 } from './generate';
 export { runCliAsync } from './generate-cli';
+export { safeTempRoot } from './temp-root';
 export { buildCacheKey, ingestStateDir, irCachePath, readCachedIr } from './cache';
 export { extractJsonObject } from './json';
 export {
