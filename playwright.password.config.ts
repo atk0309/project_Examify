@@ -11,6 +11,11 @@ requireProductionBuild();
 const PORT = Number(process.env.E2E_PASSWORD_PORT ?? 3102);
 const baseURL = `http://127.0.0.1:${PORT}`;
 const E2E_DB = path.join(process.cwd(), 'tests', '.tmp', 'e2e-password.db');
+// Family data folder (uploads, wizard subjects, generated JSON). Always the
+// suite's own folder under tests/.tmp, never a developer's EXAMIFY_DATA_DIR;
+// `pnpm test:e2e:prepare:password` wipes it (E2E_DATA_DIR).
+const E2E_DATA_DIR = path.join(process.cwd(), 'tests', '.tmp', 'e2e-password-data');
+process.env.EXAMIFY_DATA_DIR = E2E_DATA_DIR;
 const E2E_OUTBOX =
   process.env.MAIL_OUTBOX_DIR ?? path.join(process.cwd(), 'tests', '.tmp', 'e2e-password-outbox');
 process.env.MAIL_OUTBOX_DIR = E2E_OUTBOX;
@@ -45,6 +50,7 @@ export default defineConfig({
       PORT: String(PORT),
       SITE_URL: baseURL,
       DATABASE_URL: `file:${E2E_DB}`,
+      EXAMIFY_DATA_DIR: E2E_DATA_DIR,
       AUTH_SECRET: 'e2e-secret-must-be-at-least-32-chars-long-yes',
       AUTH_MODE: 'password',
       // The seed already has the household. A leftover host FAMILIES must not
