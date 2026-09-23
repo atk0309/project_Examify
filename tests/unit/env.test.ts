@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
@@ -331,6 +331,22 @@ describe('parseEnv family data folder', () => {
       expect(logged).toContain('the family data folder is not a folder this user can read');
       expect(logged).not.toContain('secret-family-file');
       expect(logged).not.toMatch(/ENOTDIR|EACCES/);
+    }
+  });
+
+  it('fails production boot on a data folder it cannot reach instead of passing it as missing', () => {
+    const loop = path.join(prodRoot, 'secret-loop');
+    symlinkSync(loop, loop);
+    const file = path.join(prodRoot, 'secret-parent-file');
+    writeFileSync(file, 'not a folder');
+    for (const env of [
+      { ...withoutDb, EXAMIFY_DATA_DIR: loop },
+      { ...withoutDb, EXAMIFY_DATA_DIR: path.join(file, 'data') },
+      { ...withoutDb, DATABASE_URL: `file:${path.join(loop, 'app.db')}` },
+    ] as NodeJS.ProcessEnv[]) {
+      const logged = loggedIssues(() => parseEnv(env));
+      expect(logged).toContain('the family data folder is not a folder this user can read');
+      expect(logged).not.toMatch(/secret-loop|secret-parent-file|ELOOP|ENOTDIR/);
     }
   });
 

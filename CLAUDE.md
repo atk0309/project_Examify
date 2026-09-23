@@ -63,7 +63,13 @@ Surface:
   judged on realpaths (`plannedInsideFamilyGenerated`: that folder must resolve
   inside the family root and every file's folder inside it, so a symlinked
   `content/generated`, `questions/` or `keys/` into the checkout is refused) and
-  re-checked by `applyEmit({ familyRoot })` right before each write.
+  re-checked by `applyEmit({ familyRoot })` right before each write. The wizard's other
+  writes (add / rename / delete a subject, attach / detach a PDF, the generate IR
+  commit) return `unsafe_path` (“Nothing was written: a folder or file inside the family
+  data folder is a link…”) when any existing path component below the family root is a
+  symlink, a dangling one included (`isFamilyWritePathSafe` in `content-root.ts`: lstat
+  of each component, right before the write; generate checks before the provider call
+  too). The family root itself was vetted on realpaths by the resolver.
   The subject list shows family subjects only (committed biology / demo are
   not there); the dry-run's `shadows` (family ids that are committed generated
   ids) render as a Review notice (“Replaces built-in subject: Biology”), the
@@ -786,6 +792,8 @@ These are non-negotiable. Don't "fix" them out.
   data folder that is a file, or one this user cannot read or create (ENOTDIR, EACCES,
   EPERM, ELOOP, …), is `unreadable`: `data-folder.ts` maps those errors (Node's messages
   name the path) so boot reports an env issue, `db:migrate` one line, and the CLI exit 3.
+  Only ENOENT means "not created yet": existence is a `stat` (never `existsSync`, which
+  is false for EACCES / ELOOP / ENOTDIR too and would pass an unusable folder at boot).
   Production boot fails on an unsafe folder, on a folder shared with other software
   (an existing folder without the marker holding files Examify does not recognise —
   e.g. the folder of `DATABASE_URL=file:/root/examify.db` is `$HOME`), and when neither
@@ -879,8 +887,11 @@ These are non-negotiable. Don't "fix" them out.
   folders too, never through a symlink), and assert `git status -- content src/lib/exam`
   is clean with no `content/source-pdfs/` or `.examify-ingest/` left. **Before moving
   anything** it needs a backup of what that checkout step reverts: `--backup <archive>`
-  must be a MANIFEST with this checkout at `HEAD` and the current bytes of every tracked
-  file it puts back (else exit 5 `backup_mismatch`); without it, it takes its own
+  must be a complete archive (extracted into private staging in the data folder and
+  checked like a restore: members, every MANIFEST file present with its size and
+  sha256, a DB snapshot; so a truncated or repacked one is refused) with this checkout
+  at `HEAD` and the current bytes of every tracked file it puts back (else exit 5
+  `backup_mismatch`); without it, it takes its own
   `--kind pre-upgrade --include-checkout` backup. A run that only removes empty leftover
   folders takes none. Idempotent; `--dry-run` writes nothing. Deleted committed subjects
   are reported (`hiddenCommitted`) and come back.

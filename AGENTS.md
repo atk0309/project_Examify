@@ -76,7 +76,11 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   Apply mid-write or crashed never pairs new questions with old keys (`examify-data
 verify` fails, `revision`, on such a row). The wizard's Apply
   is confined to `<family>/content/generated` on realpaths (a symlink into the checkout
-  is refused), re-checked right before each write. The ingest CLI picks the
+  is refused), re-checked right before each write. The wizard's other writes (add /
+  rename / delete a subject, attach / detach a PDF, the generate IR commit) return
+  `unsafe_path` when any existing path component below the family root is a symlink
+  (`isFamilyWritePathSafe`, `content-root.ts`, lstat right before the write; generate
+  also before the provider call). The ingest CLI picks the
   layer from its paths (data folder checked first; outside both or mixed ⇒ error;
   `layer: …` on stderr) and only a committed emit rewrites registrars (`planEmit`
   `registrars` defaults to false). Family CLI work names `data/content/subjects`. A dev
@@ -141,7 +145,8 @@ JSON`). Missing cloud
   `db:migrate`, `examify-data paths --check` and the ingest CLI all refuse); a leading
   `~`, quotes, backtick, newline, `$` or ` #` in `EXAMIFY_DATA_DIR`, `DATABASE_URL` or
   `MAIL_OUTBOX_DIR` refused (`bad_value`, naming the variable); a data folder that is a
-  file or unreadable is `unreadable` (Node's path-bearing errors are mapped); messages
+  file or unreadable is `unreadable` (Node's path-bearing errors are mapped; only ENOENT
+  counts as "not created yet", never `existsSync`, which is false for EACCES / ELOOP too); messages
   never name the path or value. Production boot needs `EXAMIFY_DATA_DIR` or
   `DATABASE_URL` and a safe, dedicated folder (an unmarked folder holding non-Examify
   files is refused), and production never creates a missing DB
@@ -165,7 +170,8 @@ JSON`). Missing cloud
   MANIFEST sha256s, moves existing data aside only with `--force`, names that folder if
   it fails afterwards, and never fails once everything is placed. `migrate-checkout`
   never moves anything without a backup holding what it reverts (its own
-  `--include-checkout` one, or a `--backup` that holds this checkout at `HEAD`) and
+  `--include-checkout` one, or a `--backup` that holds this checkout at `HEAD`, extracted
+  and checked against its MANIFEST like a restore, so a truncated archive is refused) and
   prunes emptied folders bottom-up. `install.sh` is `main()`-wrapped; `--upgrade` =
   read-only preflight (an install = any `next start` env file, `.env.local` alone
   included; upstream-added paths that exist untracked / ignored; upstream Node needs) → pre-upgrade backup → `.upgrade-state.json` rollback point →

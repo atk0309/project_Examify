@@ -1744,6 +1744,43 @@ describe('review regressions', () => {
       for (const [rel, sum] of edited) expect(sha256(path.join(root, rel)), rel).toBe(sum);
     });
 
+    it('--backup refuses an archive that does not hold the files its MANIFEST lists', async () => {
+      const root = editedCheckout();
+      const dataDir = familyFolder('examify-data-repacked-backup-');
+      const env = { EXAMIFY_DATA_DIR: dataDir, EXAMIFY_SQLITE_MODULE: SQLITE_MODULE };
+      const current = await data.backup({
+        repo: root,
+        env,
+        kind: 'pre-upgrade',
+        includeCheckout: true,
+      });
+      const unpacked = tempDir('examify-data-repack-');
+      execFileSync('tar', ['-xzf', current.archive, '-C', unpacked]);
+      const out = tempDir('examify-data-repacked-');
+      // A truncated copy: its MANIFEST alone.
+      const manifestOnly = path.join(out, 'manifest-only.tar.gz');
+      execFileSync('tar', ['-czf', manifestOnly, '-C', unpacked, 'MANIFEST.json']);
+      // Repacked without the checkout copies this migration would revert.
+      fs.rmSync(path.join(unpacked, 'checkout'), { recursive: true, force: true });
+      const noCheckout = path.join(out, 'no-checkout.tar.gz');
+      execFileSync('tar', ['-czf', noCheckout, '-C', unpacked, '.']);
+      const statusBefore = fullStatus(root);
+      expect(statusBefore).not.toBe('');
+
+      for (const archive of [manifestOnly, noCheckout]) {
+        const result = await run(
+          ['migrate-checkout', '--repo', root, '--backup', archive, '--json'],
+          { env },
+        );
+        expect(result.code, result.stderr).toBe(5);
+        expect(JSON.parse(result.stdout)).toMatchObject({ error: 'backup_mismatch' });
+        expect(result.stderr).toContain('is not a complete examify-data backup');
+        expect(fs.existsSync(path.join(dataDir, 'content'))).toBe(false);
+        expect(fullStatus(root)).toBe(statusBefore);
+      }
+      expect(fs.readdirSync(dataDir).filter((name) => name.startsWith('.restore-'))).toEqual([]);
+    });
+
     it('--backup must hold this checkout at HEAD with the bytes it reverts', async () => {
       const root = editedCheckout();
       const dataDir = familyFolder('examify-data-given-backup-');

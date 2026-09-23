@@ -133,6 +133,8 @@ function errorCopy(error: OnboardingActionError): string {
       return 'That file is too large (8 MB max).';
     case 'disk':
       return 'Could not write the file (disk full or not writable).';
+    case 'unsafe_path':
+      return 'Nothing was written: a folder or file inside the family data folder is a link to somewhere else. Remove the link on the host, then try again.';
     case 'empty_catalog':
       return error.message ?? EMPTY_AUTHORITATIVE_EMIT;
     case 'dry_run_required':

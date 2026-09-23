@@ -2,7 +2,7 @@ import 'server-only';
 
 import path from 'node:path';
 import * as ingestGenerate from 'examify-ingest/generate';
-import { getOnboardingContentRoot } from '@/lib/content-root';
+import { getOnboardingContentRoot, isFamilyWritePathSafe } from '@/lib/content-root';
 import { getEnvStoreRoot } from '@/lib/env-store';
 import {
   BANK_IR_FILE,
@@ -39,6 +39,7 @@ export type GenerateOnboardingReason =
   | 'provider_error'
   | 'provider_output_invalid'
   | 'disk'
+  | 'unsafe_path'
   | 'generate_failed'
   | 'cancelled'
   | 'skipped'
@@ -156,6 +157,14 @@ function sampleCollisionResult(subjectId: string): GenerateOnboardingError {
     ok: false,
     reason: 'sample_collision',
     message: `${subjectId} has a sample-bank subject id; generated ids would replace sample questions`,
+  };
+}
+
+function unsafePathResult(): GenerateOnboardingError {
+  return {
+    ok: false,
+    reason: 'unsafe_path',
+    message: 'refusing to write through a link inside the family data folder',
   };
 }
 
@@ -362,6 +371,9 @@ async function generateOnboardingSubjectUnlocked(input: {
   }
 
   const root = input.root ?? getOnboardingContentRoot();
+  const existingIrPath = path.join(root, SUBJECTS_REL, subjectId, BANK_IR_FILE);
+  // Before a (possibly paid) provider call, and again right before the write.
+  if (!isFamilyWritePathSafe(root, existingIrPath)) return unsafePathResult();
   if (!listOnboardingSubjects(root).some((row) => row.id === subjectId)) {
     return { ok: false, reason: 'missing', message: 'Subject is not in the wizard catalog.' };
   }
@@ -370,7 +382,6 @@ async function generateOnboardingSubjectUnlocked(input: {
     return cancelledResult();
   }
 
-  const existingIrPath = path.join(root, SUBJECTS_REL, subjectId, BANK_IR_FILE);
   const existingIrRel = posixRel(root, existingIrPath);
   const force = input.force === true || input.overwrite === 'force';
   // Shared empty≠existing predicate — never existsSync on the IR path.
@@ -436,6 +447,7 @@ async function generateOnboardingSubjectUnlocked(input: {
     if (isGenerateCancelled(token)) {
       return cancelledResult();
     }
+    if (!isFamilyWritePathSafe(root, generated.irPath)) return unsafePathResult();
     // #65: re-check after the provider returns so a delete/rename during
     // generateSubject is not resurrected by writeBankIrAtomic's mkdirSync.
     if (!listOnboardingSubjects(root).some((row) => row.id === subjectId)) {

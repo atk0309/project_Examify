@@ -35,7 +35,7 @@ import {
   type PlannedFile,
   type ValidatedBank,
 } from 'examify-ingest';
-import { getOnboardingContentRoot } from '@/lib/content-root';
+import { getOnboardingContentRoot, isFamilyWritePathSafe } from '@/lib/content-root';
 import { db, schema } from '@/lib/db';
 import type { HouseholdRole } from '@/lib/db/schema';
 import { SAMPLE_QUESTIONS, SAMPLE_SUBJECTS } from '@/lib/exam/data';
@@ -554,7 +554,8 @@ function writeSubjectMetaFile(
 }
 
 export type AddSubjectResult =
-  { ok: true; subject: OnboardingSubject } | { ok: false; reason: 'invalid_id' | 'duplicate' };
+  | { ok: true; subject: OnboardingSubject }
+  | { ok: false; reason: 'invalid_id' | 'duplicate' | 'unsafe_path' };
 
 export function addOnboardingSubject(
   input: { id: string; label: string; icon?: string },
@@ -570,6 +571,7 @@ export function addOnboardingSubject(
 
   const dir = path.join(subjectsDir(root), id);
   if (existsSync(dir)) return { ok: false, reason: 'duplicate' };
+  if (!isFamilyWritePathSafe(root, dir)) return { ok: false, reason: 'unsafe_path' };
 
   mkdirSync(dir, { recursive: true });
   // Metadata only — never write an empty/placeholder bank.ir.json.
@@ -581,7 +583,7 @@ export function addOnboardingSubject(
 
 export type RenameSubjectResult =
   | { ok: true; subject: OnboardingSubject }
-  | { ok: false; reason: 'invalid_id' | 'duplicate' | 'missing' | 'disk' };
+  | { ok: false; reason: 'invalid_id' | 'duplicate' | 'missing' | 'disk' | 'unsafe_path' };
 
 /** Wizard actions wait on `withOnboardingGenerateLock` so rename cannot race an IR commit. */
 export function renameOnboardingSubject(
@@ -592,6 +594,16 @@ export function renameOnboardingSubject(
   if (!isValidSubjectId(id)) return { ok: false, reason: 'invalid_id' };
   const fromDir = path.join(subjectsDir(root), id);
   if (!existsSync(fromDir)) return { ok: false, reason: 'missing' };
+  if (
+    !isFamilyWritePathSafe(
+      root,
+      path.join(fromDir, BANK_IR_FILE),
+      path.join(fromDir, SUBJECT_META_FILE),
+      path.join(sourcePdfsDir(root), id),
+    )
+  ) {
+    return { ok: false, reason: 'unsafe_path' };
+  }
 
   const irPath = path.join(fromDir, BANK_IR_FILE);
   const raw = readJsonUnknown(irPath);
@@ -644,6 +656,7 @@ export function renameOnboardingSubject(
     if (existsSync(destIr)) return { ok: false, reason: 'duplicate' };
     const movePdfs = existsSync(fromPdf);
     if (movePdfs && existsSync(destPdf)) return { ok: false, reason: 'duplicate' };
+    if (!isFamilyWritePathSafe(root, destIr, destPdf)) return { ok: false, reason: 'unsafe_path' };
 
     mkdirSync(subjectsDir(root), { recursive: true });
     try {
@@ -699,7 +712,8 @@ export function renameOnboardingSubject(
   };
 }
 
-export type DeleteSubjectResult = { ok: true } | { ok: false; reason: 'invalid_id' | 'missing' };
+export type DeleteSubjectResult =
+  { ok: true } | { ok: false; reason: 'invalid_id' | 'missing' | 'unsafe_path' };
 
 /**
  * Remove the subject's IR + source-pdf dirs. Prune of leftover generated JSON
@@ -715,8 +729,10 @@ export function deleteOnboardingSubject(
   if (!isValidSubjectId(id)) return { ok: false, reason: 'invalid_id' };
   const dir = path.join(subjectsDir(root), id);
   if (!existsSync(dir)) return { ok: false, reason: 'missing' };
+  const pdfDir = path.join(sourcePdfsDir(root), id);
+  if (!isFamilyWritePathSafe(root, dir, pdfDir)) return { ok: false, reason: 'unsafe_path' };
   rmSync(dir, { recursive: true, force: true });
-  rmSync(path.join(sourcePdfsDir(root), id), { recursive: true, force: true });
+  rmSync(pdfDir, { recursive: true, force: true });
   return { ok: true };
 }
 
@@ -724,7 +740,14 @@ export type AttachPdfResult =
   | { ok: true; filename: string }
   | {
       ok: false;
-      reason: 'invalid_id' | 'invalid_type' | 'invalid_name' | 'too_large' | 'disk' | 'missing';
+      reason:
+        | 'invalid_id'
+        | 'invalid_type'
+        | 'invalid_name'
+        | 'too_large'
+        | 'disk'
+        | 'missing'
+        | 'unsafe_path';
     };
 
 /**
@@ -746,6 +769,8 @@ export function attachSourcePdf(
   if (!hasPdfMagic(input.bytes)) return { ok: false, reason: 'invalid_type' };
 
   const dir = path.join(sourcePdfsDir(root), subjectId);
+  // The stored file itself is created with `wx`, which never follows a link.
+  if (!isFamilyWritePathSafe(root, dir)) return { ok: false, reason: 'unsafe_path' };
   try {
     mkdirSync(dir, { recursive: true });
     for (let attempt = 1; attempt <= UPLOAD_NAME_ATTEMPTS; attempt += 1) {
@@ -766,7 +791,8 @@ export function attachSourcePdf(
   return { ok: false, reason: 'invalid_name' };
 }
 
-export type DetachPdfResult = { ok: true } | { ok: false; reason: 'invalid_id' | 'missing' };
+export type DetachPdfResult =
+  { ok: true } | { ok: false; reason: 'invalid_id' | 'missing' | 'unsafe_path' };
 
 export function detachSourcePdf(
   input: { subjectId: string; filename: string },
@@ -778,6 +804,7 @@ export function detachSourcePdf(
   }
   if (!input.filename.toLowerCase().endsWith('.pdf')) return { ok: false, reason: 'invalid_id' };
   const target = path.join(sourcePdfsDir(root), subjectId, input.filename);
+  if (!isFamilyWritePathSafe(root, target)) return { ok: false, reason: 'unsafe_path' };
   if (!existsSync(target) || !statSync(target).isFile()) return { ok: false, reason: 'missing' };
   rmSync(target);
   return { ok: true };

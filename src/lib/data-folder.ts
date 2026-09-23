@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { DATA_DIR_MARKER, UnsafeDataDirError, type DataPaths } from './data-dir';
 
@@ -81,8 +81,23 @@ function asUnreadable(error: unknown): never {
   throw error;
 }
 
+/**
+ * Whether `target` exists. Only ENOENT means absent: `existsSync` also says
+ * false for EACCES (an untraversable parent) or ELOOP, which would let an
+ * unusable folder pass as "not created yet"; those become `unreadable`.
+ */
+function pathExists(target: string): boolean {
+  try {
+    statSync(target);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException | null)?.code === 'ENOENT') return false;
+    asUnreadable(error);
+  }
+}
+
 function assertDedicatedFolder(dataDir: string, dbPath: string | undefined): void {
-  if (existsSync(path.join(dataDir, DATA_DIR_MARKER))) return;
+  if (pathExists(path.join(dataDir, DATA_DIR_MARKER))) return;
   // A custom DATABASE_URL file name inside the folder (and its sidecars).
   const dbFiles = new Set<string>();
   if (dbPath && path.dirname(path.resolve(dbPath)) === path.resolve(dataDir)) {
@@ -114,7 +129,7 @@ function assertDedicatedFolder(dataDir: string, dbPath: string | undefined): voi
  * cannot read.
  */
 export function isDedicatedDataFolder(dataDir: string, dbPath?: string): boolean {
-  if (!existsSync(dataDir)) return true;
+  if (!pathExists(dataDir)) return true;
   try {
     assertDedicatedFolder(dataDir, dbPath);
     return true;
@@ -148,7 +163,7 @@ export function initDataFolder(
 ): { created: boolean } {
   const { dataDir } = paths;
   const warn = options.warn ?? ((line: string) => console.warn(line));
-  const created = !existsSync(dataDir);
+  const created = !pathExists(dataDir);
   // An existing folder without the marker must look like Examify's own
   // before anything is chmodded or written (a DATABASE_URL-derived folder
   // could be shared, e.g. /var/lib).

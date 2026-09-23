@@ -5,6 +5,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  rmSync,
   statSync,
   symlinkSync,
   writeFileSync,
@@ -1267,6 +1268,68 @@ describe('onboarding writes only the family data folder', () => {
     expect(
       isPlanInsideFamilyGenerated([{ absPath: '/srv/checkout/content/generated/a.json' }], root),
     ).toBe(false);
+  });
+
+  it('wizard writes refuse a subjects, source-pdfs or subject path linked into the checkout', async () => {
+    const onboarding = await import('@/lib/onboarding');
+    const checkout = fakeCheckout();
+    const tracked = path.join(checkout, 'content');
+    const pdf = Buffer.from('%PDF-1.4 fixture');
+    mkdirSync(path.join(tracked, 'source-pdfs/biology'), { recursive: true });
+    writeFileSync(path.join(tracked, 'source-pdfs/biology/unit.pdf'), pdf);
+    const before = treeBytes(tracked);
+    const unsafe = { ok: false, reason: 'unsafe_path' };
+    const history = { id: 'history', label: 'History', icon: 'geography' };
+
+    // content/subjects is a link to the checkout's subjects.
+    const linkedSubjects = tempRoot();
+    rmSync(path.join(linkedSubjects, 'content/subjects'), { recursive: true });
+    symlinkSync(path.join(tracked, 'subjects'), path.join(linkedSubjects, 'content/subjects'));
+    expect(onboarding.addOnboardingSubject(history, linkedSubjects)).toEqual(unsafe);
+    expect(
+      onboarding.renameOnboardingSubject(
+        { id: 'biology', nextId: 'bio', label: 'Bio' },
+        linkedSubjects,
+      ),
+    ).toEqual(unsafe);
+    expect(
+      onboarding.renameOnboardingSubject({ id: 'biology', label: 'Renamed' }, linkedSubjects),
+    ).toEqual(unsafe);
+    expect(onboarding.deleteOnboardingSubject('biology', linkedSubjects)).toEqual(unsafe);
+
+    // content/source-pdfs is a link; content/subjects is real.
+    const linkedPdfs = tempRoot();
+    expect(onboarding.addOnboardingSubject(history, linkedPdfs).ok).toBe(true);
+    symlinkSync(path.join(tracked, 'source-pdfs'), path.join(linkedPdfs, 'content/source-pdfs'));
+    expect(
+      onboarding.attachSourcePdf(
+        { subjectId: 'history', filename: 'unit.pdf', bytes: pdf },
+        linkedPdfs,
+      ),
+    ).toEqual(unsafe);
+    expect(
+      onboarding.detachSourcePdf({ subjectId: 'biology', filename: 'unit.pdf' }, linkedPdfs),
+    ).toEqual(unsafe);
+    expect(
+      onboarding.renameOnboardingSubject(
+        { id: 'history', nextId: 'hist', label: 'Hist' },
+        linkedPdfs,
+      ),
+    ).toEqual(unsafe);
+    expect(onboarding.deleteOnboardingSubject('history', linkedPdfs)).toEqual(unsafe);
+    expect(existsSync(path.join(linkedPdfs, 'content/subjects/history'))).toBe(true);
+
+    // One file of a real subject is a link: its rewrite would go through it.
+    const linkedMeta = tempRoot();
+    expect(onboarding.addOnboardingSubject(history, linkedMeta).ok).toBe(true);
+    const meta = path.join(linkedMeta, 'content/subjects/history/subject.json');
+    rmSync(meta);
+    symlinkSync(path.join(tracked, 'subjects/biology/bank.ir.json'), meta);
+    expect(
+      onboarding.renameOnboardingSubject({ id: 'history', label: 'Renamed' }, linkedMeta),
+    ).toEqual(unsafe);
+
+    expect(treeBytes(tracked)).toEqual(before);
   });
 
   it('apply refuses a family content/generated (or keys/) symlinked into the checkout', async () => {

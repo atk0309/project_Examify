@@ -517,6 +517,56 @@ describe('generateOnboardingSubject', () => {
     );
   });
 
+  it('refuses to generate or commit BankIR through a link into the checkout', async () => {
+    const { generateOnboardingSubject } = await import('@/lib/onboarding-generate');
+    const ingest = await import('examify-ingest/generate');
+    // A fake checkout that holds a history subject (the link target) …
+    const checkout = tempRoot();
+    seedSubject(checkout);
+    const trackedIr = path.join(checkout, 'content/subjects/history/bank.ir.json');
+    const prior = readFileSync(trackedIr, 'utf8');
+    const linkSubjects = (family: string) => {
+      rmSync(path.join(family, 'content/subjects'), { recursive: true, force: true });
+      symlinkSync(path.join(checkout, 'content/subjects'), path.join(family, 'content/subjects'));
+    };
+
+    // … linked before Generate: refused before the provider call.
+    const linked = tempRoot();
+    linkSubjects(linked);
+    const original = ingest.generateSubject;
+    const generateSpy = vi.spyOn(ingest, 'generateSubject');
+    expect(
+      await generateOnboardingSubject({
+        subjectId: 'history',
+        provider: 'test',
+        seed: 0,
+        root: linked,
+        force: true,
+      }),
+    ).toMatchObject({ ok: false, reason: 'unsafe_path' });
+    expect(generateSpy).not.toHaveBeenCalled();
+
+    // … or swapped in while the provider runs: refused right before the write.
+    const swapped = tempRoot();
+    seedSubject(swapped);
+    generateSpy.mockImplementationOnce(async (request) => {
+      const generated = await original(request);
+      linkSubjects(swapped);
+      return generated;
+    });
+    expect(
+      await generateOnboardingSubject({
+        subjectId: 'history',
+        provider: 'test',
+        seed: 0,
+        root: swapped,
+        force: true,
+      }),
+    ).toMatchObject({ ok: false, reason: 'unsafe_path' });
+    expect(generateSpy).toHaveBeenCalledTimes(1);
+    expect(readFileSync(trackedIr, 'utf8')).toBe(prior);
+  });
+
   it('does not write over existing IR without confirm', async () => {
     const { generateOnboardingSubject } = await import('@/lib/onboarding-generate');
     const ingest = await import('examify-ingest/generate');

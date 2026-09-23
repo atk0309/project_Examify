@@ -707,8 +707,24 @@ function asUnreadable(error) {
   throw error;
 }
 
+/**
+ * Whether `target` exists. Only ENOENT means absent: `existsSync` also says
+ * false for EACCES (an untraversable parent) or ELOOP, which would let an
+ * unusable folder pass as "not created yet"; those become `unreadable`.
+ * Mirrors src/lib/data-folder.ts.
+ */
+function dataPathExists(target) {
+  try {
+    fs.statSync(target);
+    return true;
+  } catch (error) {
+    if (isEnoent(error)) return false;
+    return asUnreadable(error);
+  }
+}
+
 function assertDedicatedFolder(dataDir, dbPath) {
-  if (fs.existsSync(path.join(dataDir, DATA_DIR_MARKER))) return;
+  if (dataPathExists(path.join(dataDir, DATA_DIR_MARKER))) return;
   const dbFiles = new Set();
   if (dbPath && path.dirname(path.resolve(dbPath)) === path.resolve(dataDir)) {
     const base = path.basename(dbPath);
@@ -749,7 +765,7 @@ export function initDataFolder(
   { geteuid = defaultGeteuid, warn = () => {}, vetted = false } = {},
 ) {
   const { dataDir } = paths;
-  const created = !fs.existsSync(dataDir);
+  const created = !dataPathExists(dataDir);
   if (!created && !vetted) assertDedicatedFolder(dataDir, paths.dbPath);
   try {
     fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
@@ -1082,7 +1098,7 @@ function resolveOutDir(ctx, out) {
   if (!out) {
     // `backups/` goes into the data folder: never into one shared with other
     // software (the folder of DATABASE_URL=file:/root/examify.db is $HOME).
-    if (fs.existsSync(resolved.dataDir)) assertDedicatedFolder(resolved.dataDir, resolved.dbPath);
+    if (dataPathExists(resolved.dataDir)) assertDedicatedFolder(resolved.dataDir, resolved.dbPath);
     fs.mkdirSync(resolved.dataDir, { recursive: true, mode: 0o700 });
     const dir = path.join(resolved.dataDir, 'backups');
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -1507,6 +1523,37 @@ function selectArchiveFiles(manifest, root, { withEnv, includeCheckout }) {
   return selected;
 }
 
+/**
+ * Copy `archive` into `staging` (0600), check its members, extract it and
+ * verify MANIFEST.json: every file it lists (in the selected areas) is present
+ * with its size and sha256, and there is a database snapshot. Shared by
+ * restore and `migrate-checkout --backup`, so an archive is trusted only for
+ * what it actually holds.
+ */
+function extractVerifiedArchive(archive, staging, selection) {
+  const copy = path.join(staging, 'archive.tar.gz');
+  fs.copyFileSync(archive, copy);
+  fs.chmodSync(copy, 0o600);
+  checkArchiveMembers(copy);
+  const root = path.join(staging, 'x');
+  fs.mkdirSync(root, { mode: 0o700 });
+  const extract = spawnSync(
+    'tar',
+    ['-xzf', copy, '-C', root, '--no-same-owner', '--no-same-permissions'],
+    { encoding: 'utf8', env: tarEnv(), maxBuffer: BIG_BUFFER },
+  );
+  if (extract.error || extract.status !== 0)
+    throw invalidArchive('tar could not extract the archive');
+  assertPlainTree(root);
+  let manifest;
+  try {
+    manifest = JSON.parse(fs.readFileSync(path.join(root, 'MANIFEST.json'), 'utf8'));
+  } catch {
+    throw invalidArchive('MANIFEST.json is missing or not valid JSON');
+  }
+  return { root, manifest, selected: selectArchiveFiles(manifest, root, selection) };
+}
+
 /** What a restore would replace: DB files and family content (not backups/ or outbox/). */
 function restoreTargetContents(resolved) {
   const present = [];
@@ -1660,32 +1707,12 @@ export async function restore(options = {}) {
 
   // Staging lives in the current folder; one created just for it goes again if it ends up empty.
   // Never stage (a copy of an archive holding secrets) inside a folder shared with other software.
-  if (fs.existsSync(current.dataDir)) assertDedicatedFolder(current.dataDir, current.dbPath);
+  if (dataPathExists(current.dataDir)) assertDedicatedFolder(current.dataDir, current.dbPath);
   const createdForStaging = fs.mkdirSync(current.dataDir, { recursive: true, mode: 0o700 });
   const staging = fs.mkdtempSync(path.join(current.dataDir, '.restore-staging-'));
   try {
     // 1. Private copy, member check, extraction, MANIFEST + hash verification.
-    const copy = path.join(staging, 'archive.tar.gz');
-    fs.copyFileSync(archive, copy);
-    fs.chmodSync(copy, 0o600);
-    checkArchiveMembers(copy);
-    const root = path.join(staging, 'x');
-    fs.mkdirSync(root, { mode: 0o700 });
-    const extract = spawnSync(
-      'tar',
-      ['-xzf', copy, '-C', root, '--no-same-owner', '--no-same-permissions'],
-      { encoding: 'utf8', env: tarEnv(), maxBuffer: BIG_BUFFER },
-    );
-    if (extract.error || extract.status !== 0)
-      throw invalidArchive('tar could not extract the archive');
-    assertPlainTree(root);
-    let manifest;
-    try {
-      manifest = JSON.parse(fs.readFileSync(path.join(root, 'MANIFEST.json'), 'utf8'));
-    } catch {
-      throw invalidArchive('MANIFEST.json is missing or not valid JSON');
-    }
-    const selected = selectArchiveFiles(manifest, root, {
+    const { root, manifest, selected } = extractVerifiedArchive(archive, staging, {
       withEnv: Boolean(options.withEnv),
       includeCheckout: Boolean(options.includeCheckout),
     });
@@ -1712,7 +1739,7 @@ export async function restore(options = {}) {
     }
     if (target.dbPath === ':memory:') throw memoryTarget();
     if (target !== current) assertOwnership({ repoRoot, paths: target }, options);
-    if (fs.existsSync(target.dataDir)) assertDedicatedFolder(target.dataDir, target.dbPath);
+    if (dataPathExists(target.dataDir)) assertDedicatedFolder(target.dataDir, target.dbPath);
 
     // 4. Refuse a non-empty target unless --force.
     const present = restoreTargetContents(target);
@@ -2654,9 +2681,11 @@ function cleanCheckout(repoRoot, plan) {
 }
 
 /**
- * A backup that holds everything M4 reverts: `--backup` must be a MANIFEST
- * with this checkout at HEAD and the current bytes of every tracked file M4
- * puts back; without it migrate-checkout takes its own pre-upgrade backup.
+ * A backup that holds everything M4 reverts: `--backup` must be a complete
+ * archive (extracted and checked against its MANIFEST like a restore, so a
+ * truncated or repacked one is refused) with this checkout at HEAD and the
+ * current bytes of every tracked file M4 puts back; without it
+ * migrate-checkout takes its own pre-upgrade backup.
  */
 async function backupBeforeMigrating(ctx, options, plan) {
   if (options.backup) {
@@ -2668,25 +2697,33 @@ async function backupBeforeMigrating(ctx, options, plan) {
         `--backup ${why}; nothing was moved (without --backup, migrate-checkout takes its own)`,
       );
     if (!isFile(archive)) throw refuse('is not a file');
-    let manifest = null;
+    // Private staging in the (initialised, dedicated) data folder, like restore.
+    const staging = fs.mkdtempSync(path.join(ctx.paths.dataDir, '.restore-staging-'));
     try {
-      manifest = JSON.parse(readArchiveManifestText(archive) ?? '');
-    } catch {
-      manifest = null;
-    }
-    if (!manifest || manifest.format !== 1 || !Array.isArray(manifest.files)) {
-      throw refuse('is not an examify-data backup');
-    }
-    if (!manifest.checkout?.included || manifest.checkout.gitSha !== plan.fromSha) {
-      throw refuse('does not hold this checkout at HEAD (take it with --include-checkout)');
-    }
-    const archived = new Map(manifest.files.map((file) => [file.path, file.sha256]));
-    const missing = [...plan.restoredTracked, ...plan.registrars].filter((rel) => {
-      const abs = fromPosix(ctx.repoRoot, rel);
-      return isFile(abs) && archived.get(`checkout/${rel}`) !== sha256File(abs);
-    });
-    if (missing.length > 0) {
-      throw refuse(`does not hold the current ${missing.join(', ')}`);
+      let manifest;
+      try {
+        ({ manifest } = extractVerifiedArchive(archive, staging, {
+          withEnv: true,
+          includeCheckout: true,
+        }));
+      } catch (error) {
+        if (!(error instanceof CliError)) throw error;
+        throw refuse(`is not a complete examify-data backup (${error.message})`);
+      }
+      if (!manifest.checkout?.included || manifest.checkout.gitSha !== plan.fromSha) {
+        throw refuse('does not hold this checkout at HEAD (take it with --include-checkout)');
+      }
+      // Every entry was just checked against the extracted bytes.
+      const archived = new Map(manifest.files.map((file) => [file.path, file.sha256]));
+      const missing = [...plan.restoredTracked, ...plan.registrars].filter((rel) => {
+        const abs = fromPosix(ctx.repoRoot, rel);
+        return isFile(abs) && archived.get(`checkout/${rel}`) !== sha256File(abs);
+      });
+      if (missing.length > 0) {
+        throw refuse(`does not hold the current ${missing.join(', ')}`);
+      }
+    } finally {
+      fs.rmSync(staging, { recursive: true, force: true });
     }
     return { archive, taken: false };
   }

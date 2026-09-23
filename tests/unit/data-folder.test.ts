@@ -5,6 +5,7 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -155,7 +156,38 @@ describe('initDataFolder', () => {
     expect(readFileSync(file, 'utf8')).toBe('not a folder');
   });
 
+  it('refuses a folder it cannot reach instead of treating it as not created yet', () => {
+    // existsSync() says false for ELOOP / ENOTDIR (and EACCES), exactly as for ENOENT.
+    const parent = tempParent();
+    const loop = path.join(parent, 'loop');
+    symlinkSync(loop, loop);
+    const file = path.join(parent, 'secret-family-file');
+    writeFileSync(file, 'not a folder');
+    for (const dataDir of [loop, path.join(loop, 'data'), path.join(file, 'data')]) {
+      for (const run of [() => isDedicatedDataFolder(dataDir), () => initDataFolder({ dataDir })]) {
+        const error = unusable(run);
+        expect(error.reason).toBe('unreadable');
+        expect(error.message).not.toContain(parent);
+      }
+    }
+    // A folder that simply does not exist yet is still fine.
+    expect(isDedicatedDataFolder(path.join(parent, 'not-yet', 'data'))).toBe(true);
+  });
+
   // Permissions don't bite root (the sandbox and CI containers often run as root).
+  it.skipIf(process.getuid?.() === 0)('refuses a folder below a parent it cannot enter', () => {
+    const parent = path.join(tempParent(), 'locked');
+    mkdirSync(parent);
+    chmodSync(parent, 0o000);
+    try {
+      const error = unusable(() => isDedicatedDataFolder(path.join(parent, 'data')));
+      expect(error.reason).toBe('unreadable');
+      expect(error.message).not.toContain(parent);
+    } finally {
+      chmodSync(parent, 0o700);
+    }
+  });
+
   it.skipIf(process.getuid?.() === 0)('refuses a folder this user cannot read', () => {
     const dataDir = path.join(tempParent(), 'locked');
     mkdirSync(dataDir);
