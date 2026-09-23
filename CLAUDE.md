@@ -374,7 +374,8 @@ in the gitignored `content/source-pdfs/` / subject directory.
   and writes only this layer, and the CLI uses it for `data/content/subjects` paths.
   `readGeneratedOverlay` reads its catalog on every request, so Apply → dashboard needs
   no rebuild. It is never committed and never has registrars. Its catalog rows carry
-  `rev` (`planEmit({ revisions: true })`, family emits only): `generatedRevision`, the
+  `rev` (`planEmit({ revisions: true })` in family emits, and `migrate-checkout` for the
+  rows it moves): `generatedRevision`, the
   sha256 of the exact `questions/<id>.json` bytes + "\n" + `keys/<id>.json` bytes. The
   live bank serves a row with `rev` only when the files it reads hash to it; otherwise
   the last consistent copy of that subject read in this process (kept per root + id), or
@@ -875,7 +876,9 @@ These are non-negotiable. Don't "fix" them out.
   a README in `content/subjects/`, is ignored). Family = subjects with a real difference from `HEAD`,
   everything under `content/source-pdfs/`, `subjects.json` rows added or changed
   (compared per id with `HEAD`; questions + keys copied verbatim, missing rows rebuilt
-  from the IR / `subject.json`), `.examify-ingest/`. Registrars are never copied, only
+  from the IR / `subject.json`; each row gets the `rev` of the bytes it copies, hashed
+  from the same read as their sha, and the catalog is not published if a file changed
+  before its copy verified — `changed_during_migration`), `.examify-ingest/`. Registrars are never copied, only
   restored. Copy with a journal (`$DATA/.migrate-journal.json`): identical ⇒ skip, a
   destination its own unfinished run wrote ⇒ overwrite, any other difference ⇒ the
   checkout copy goes to `$DATA/migration-conflicts/<ts>/`; keys `0600`; every copy

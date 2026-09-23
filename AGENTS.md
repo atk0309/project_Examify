@@ -70,8 +70,8 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   registrars. A family subject with a committed id replaces it entirely; an incomplete
   family subject (unparseable questions, a question without a key) is dropped with one
   reason-coded `[live-bank]` warning and the committed one stays. Family catalog rows
-  carry `rev` (sha256 of the questions + "\n" + keys bytes; family emits only, never the
-  committed layer or registrars): a row whose files do not hash to it serves the last
+  carry `rev` (sha256 of the questions + "\n" + keys bytes; family emits and
+  `migrate-checkout`'s moved rows only, never the committed layer or registrars): a row whose files do not hash to it serves the last
   consistent copy read in this process, else is dropped (`revision_mismatch`), so an
   Apply mid-write or crashed never pairs new questions with old keys (`examify-data
 verify` fails, `revision`, on such a row). The wizard's Apply

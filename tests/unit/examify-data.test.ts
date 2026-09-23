@@ -1450,7 +1450,39 @@ describe('migrate-checkout', () => {
     const catalog = JSON.parse(
       fs.readFileSync(path.join(dataDir, 'content/generated/subjects.json'), 'utf8'),
     ) as unknown[];
-    expect(catalog).toEqual([subject('history', 'History')]);
+    expect(catalog).toEqual([
+      { ...subject('history', 'History'), rev: data.generatedRevision('{}', '{}') },
+    ]);
+  });
+
+  it('gives each migrated family row the rev of the files it copied, so a half Apply is caught', async () => {
+    const root = makeCheckout();
+    const questions = '{"easy":[{"id":"history-easy-1"}]}\n';
+    const keys = '{"history-easy-1":{"type":"mcq","answer":0}}\n';
+    write(
+      path.join(root, 'content/generated/subjects.json'),
+      JSON.stringify([subject('history', 'History')]),
+    );
+    write(path.join(root, 'content/generated/questions/history.json'), questions);
+    write(path.join(root, 'content/generated/keys/history.json'), keys);
+    const dataDir = familyFolder('examify-data-migrated-rev-');
+    const result = await run(['migrate-checkout', '--repo', root, '--data-dir', dataDir, '--json']);
+    expect(result.code, result.stderr).toBe(0);
+    const generated = path.join(dataDir, 'content/generated');
+    const catalog = JSON.parse(fs.readFileSync(path.join(generated, 'subjects.json'), 'utf8'));
+    expect(catalog).toEqual([
+      { ...subject('history', 'History'), rev: data.generatedRevision(questions, keys) },
+    ]);
+    const env = { EXAMIFY_DATA_DIR: dataDir, EXAMIFY_SQLITE_MODULE: SQLITE_MODULE };
+    expect((await run(['verify', '--repo', root], { env })).code).toBe(0);
+    // The next Apply's questions are written before its keys and catalog: that
+    // half-written state is visible (the live bank serves the old revision).
+    write(path.join(generated, 'questions/history.json'), '{"easy":[]}\n');
+    const half = await run(['verify', '--repo', root, '--json'], { env });
+    expect(half.code).toBe(6);
+    expect(JSON.parse(half.stdout)).toMatchObject({
+      failures: expect.arrayContaining([{ check: 'revision', detail: 'history' }]),
+    });
   });
 
   it('refuses (changing nothing) when src/lib/exam has uncommitted hand edits', async () => {

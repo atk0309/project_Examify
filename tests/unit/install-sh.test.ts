@@ -11,6 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { describe, expect, it } from 'vitest';
+import { generatedRevision } from '@/lib/exam/generated-revision';
 
 const SCRIPT = path.join(process.cwd(), 'install.sh');
 
@@ -2075,6 +2076,14 @@ type RealFixture = {
 
 const HISTORY = { id: 'history', label: 'History', icon: 'history', l: 0.6, c: 0.1, h: 40 };
 
+/** The family row migrate-checkout writes: the checkout's row plus the `rev` of the files it copied. */
+function migratedRow(dataDir: string, row: typeof HISTORY) {
+  const read = (rel: string) =>
+    fs.readFileSync(path.join(dataDir, 'content/generated', rel), 'utf8');
+  const rev = generatedRevision(read(`questions/${row.id}.json`), read(`keys/${row.id}.json`));
+  return { ...row, rev };
+}
+
 async function unusedPort(): Promise<string> {
   const server = http.createServer();
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -2440,7 +2449,9 @@ describe('install.sh end to end (real data CLI, fixture checkout)', () => {
         const family = (rel: string) => fs.readFileSync(path.join(fx.dataDir, rel), 'utf8');
         expect(JSON.parse(family('content/subjects/history/subject.json'))).toEqual(HISTORY);
         expect(family('content/source-pdfs/history/chapter-1.pdf')).toBe('%PDF-1.4 history');
-        expect(JSON.parse(family('content/generated/subjects.json'))).toEqual([HISTORY]);
+        expect(JSON.parse(family('content/generated/subjects.json'))).toEqual([
+          migratedRow(fx.dataDir, HISTORY),
+        ]);
         expect(family('content/generated/questions/history.json')).toBe('{"easy":[]}\n');
         const keys = path.join(fx.dataDir, 'content/generated/keys/history.json');
         expect(fs.statSync(keys).mode & 0o777).toBe(0o600);
@@ -2499,7 +2510,7 @@ describe('install.sh end to end (real data CLI, fixture checkout)', () => {
         JSON.parse(
           fs.readFileSync(path.join(fx.dataDir, 'content/generated/subjects.json'), 'utf8'),
         ),
-      ).toEqual([HISTORY]);
+      ).toEqual([migratedRow(fx.dataDir, HISTORY)]);
       expect(
         fs.existsSync(path.join(fx.dataDir, 'content/source-pdfs/history/chapter-1.pdf')),
       ).toBe(true);
@@ -3011,7 +3022,7 @@ describe('install.sh --upgrade of an install configured through .env.local (real
         JSON.parse(
           fs.readFileSync(path.join(fx.dataDir, 'content/generated/subjects.json'), 'utf8'),
         ),
-      ).toEqual([HISTORY]);
+      ).toEqual([migratedRow(fx.dataDir, HISTORY)]);
       expect(checkoutLeftovers(fx.work)).toBe('');
       expect(fs.readFileSync(path.join(fx.work, '.env.local'), 'utf8')).toBe(envLocal);
       expect(fs.existsSync(path.join(fx.work, '.env'))).toBe(false);

@@ -2475,6 +2475,17 @@ export async function migrateCheckout(options = {}) {
         ? 'conflict'
         : destinationState(fromPosix(dataDir, item.rel), item.rel, item.srcSha, journal);
   }
+  // A migrated family row carries `rev` like an Apply's, from the exact bytes
+  // this run copies (hashed from the same read as srcSha): without one, the
+  // live bank would pair the next Apply's new questions with the old keys.
+  for (const entry of plan.generatedPlan) {
+    const [questions, keys] = entry.files.map((item) => {
+      const bytes = fs.readFileSync(item.src);
+      if (sha256Text(bytes) !== item.srcSha) throw changedWhileMigrating(item.rel);
+      return bytes.toString('utf8');
+    });
+    entry.row = { ...entry.row, rev: generatedRevision(questions, keys) };
+  }
   // A generated subject moves as one unit (row + questions + keys): mixing
   // one side's questions with the other side's keys would mis-grade.
   const conflictRows = [];
@@ -2567,6 +2578,15 @@ export async function migrateCheckout(options = {}) {
     }
   }
   saveJournal(dataDir, journal);
+  // Each row's `rev` names the bytes read above: a file that changed since
+  // is not published (the journal lets a rerun take the new bytes).
+  for (const entry of plan.generatedPlan) {
+    for (const item of entry.files) {
+      if (item.state !== 'conflict' && item.writtenSha !== item.srcSha) {
+        throw changedWhileMigrating(item.rel);
+      }
+    }
+  }
   // The family catalog last (the commit point), after its questions + keys.
   if (nextCatalog !== null) writeFileAtomic(catalogDest, nextCatalog, { mode: 0o644 });
   if (conflictRows.length > 0) {
@@ -2591,13 +2611,7 @@ export async function migrateCheckout(options = {}) {
 
   // M4: only if nothing changed since the copy.
   for (const item of plan.copies) {
-    if (sha256File(item.src) !== item.writtenSha) {
-      throw new CliError(
-        EXIT.UNEXPECTED,
-        'changed_during_migration',
-        `${item.rel} changed while it was being copied; nothing was removed, run migrate-checkout again`,
-      );
-    }
+    if (sha256File(item.src) !== item.writtenSha) throw changedWhileMigrating(item.rel);
   }
   const cleaned = cleanCheckout(repoRoot, plan);
   return {
@@ -2678,6 +2692,14 @@ function cleanCheckout(repoRoot, plan) {
     );
   }
   return { removed, removedFolders: pruned.filter((rel) => plan.leftoverDirs.includes(rel)) };
+}
+
+function changedWhileMigrating(rel) {
+  return new CliError(
+    EXIT.UNEXPECTED,
+    'changed_during_migration',
+    `${rel} changed while it was being copied; nothing was removed, run migrate-checkout again`,
+  );
 }
 
 /**
