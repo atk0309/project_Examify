@@ -382,11 +382,16 @@ Sent to a third party only when you turn the feature on:
 
 ## Where your family's data lives
 
-Everything that belongs to your family lives in one **family data folder**,
-`EXAMIFY_DATA_DIR` (default `./data` inside the checkout, already gitignored). The
-running app never writes inside the checkout except `.env` (the API keys the
-`/onboarding` wizard saves), so `git pull` never conflicts with your content, and a
-folder outside the checkout survives deleting and re-cloning it.
+Everything that belongs to your family lives in one **family data folder**, picked in
+this order: `EXAMIFY_DATA_DIR`; else the folder of an explicit SQLite `DATABASE_URL`
+that is outside the checkout (a mounted volume keeps family content next to its
+database); else `./data` inside the checkout (already gitignored). The running app never
+writes into tracked checkout content: inside the checkout it writes only `./data` (the
+test suites use `tests/.tmp/…`) and `.env` (the API keys the `/onboarding` wizard saves),
+so `git pull` never conflicts with your content, and a folder outside the checkout
+survives deleting and re-cloning it. The database (`DATABASE_URL`) and the mail outbox
+(`MAIL_OUTBOX_DIR`) may live elsewhere, but never inside the checkout outside `./data`:
+the app, `pnpm db:migrate` and the installer refuse that.
 `pnpm examify:data paths` prints the folder, database and outbox this checkout uses.
 
 | In the data folder                          | Holds                                                                 |
@@ -413,7 +418,7 @@ runs Examify must be able to create it, or own it empty
 to boot with a folder that overlaps the checkout: a relative path resolves against the
 checkout (never the working directory); inside the checkout only `./data` or a folder
 under it is allowed; never the checkout itself or a folder that contains it; no leading
-`~` (the installer expands it, `.env` does not), quotes, newlines or ` #`.
+`~` (the installer expands it, `.env` does not), quotes, newlines, `$` or ` #`.
 `pnpm db:migrate` also refuses an existing folder that holds files that are not
 Examify's.
 
@@ -629,7 +634,11 @@ generate run manifests, and the checkout's `.env` / `.env.local`. It leaves out 
 outbox, earlier backups and the generate cache (`--include-cache` adds the cache).
 `--no-env` leaves out `.env`; `--out DIR` writes somewhere else outside the checkout.
 Every archive is read back (the whole `tar` stream and its manifest) before it is
-reported; one that does not read back is removed and the backup fails.
+reported; one that does not read back is removed and the backup fails. If the wizard
+applies new questions while a backup runs, it copies the generated questions and keys
+again so they always come from one Apply; if they keep changing it stops
+(`content_changing`) and you run it again. It never creates `backups/` in a folder that
+holds other software's files.
 
 **An archive holds secrets and answer keys.** Copy it off the machine (another computer,
 an encrypted drive) and keep it private: a backup that lives only next to the data does
@@ -664,8 +673,8 @@ curl -fsSL https://raw.githubusercontent.com/atk0309/project_Examify/main/instal
 ```
 
 The installer clones if needed, installs, restores the database, the family content and
-the archived `.env` (or asks for a new `.env` when the backup has none), then migrates and
-builds. The data goes to the family data folder that archived `.env` names (`./data`
+the archived `.env` / `.env.local` (or asks for a new `.env` when the backup has neither),
+then migrates and builds. The data goes to the family data folder that archived `.env` names (`./data`
 unless the old install used another one); if the user that runs Examify cannot create
 that folder, create it for them first. Don't set `EXAMIFY_DATA_DIR` / `DATABASE_URL` or
 `--data-dir` for such a restore: the restored `.env` decides. Change `SITE_URL` in `.env`

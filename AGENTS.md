@@ -118,18 +118,21 @@ JSON`). Missing cloud
   fixture. OpenAI-compatible generate refuses PDF-only input when no page
   images were rasterized (`pdftoppm` from poppler-utils). Run cache/manifests live under
   the layer's `.examify-ingest/` (gitignored in the checkout).
-- **The running app never writes inside the checkout.** All runtime state (SQLite DB,
-  outbox, wizard subjects / uploads / BankIR / generated questions + keys, ingest caches,
-  backups) lives in the family data folder from `src/lib/data-dir.ts` (`getDataPaths()`;
-  CLIs use `resolveCliDataPaths()`, repo env files in `next start` order via
-  `env-file.ts`). The only runtime checkout write is `.env` via env-store (wizard API
-  keys). Folder = `EXAMIFY_DATA_DIR` (relative → checkout root, never cwd) → else the
-  folder of an explicit SQLite `DATABASE_URL` outside the checkout → else `./data`. DB =
-  explicit `DATABASE_URL`, else `<data>/app.db`. Outbox = `<data>/outbox`
-  (`RESEND_API_KEY=test` → `tests/.tmp/outbox` outside production only).
-  `assertSafeDataDir` (realpaths): never the checkout or a folder containing it; inside
-  it only `data/…` (+ `tests/.tmp/…`); a leading `~`, quotes, newline, `$` or ` #`
-  refused; messages never name the path. Production boot needs `EXAMIFY_DATA_DIR` or
+- **The running app never writes into tracked checkout content.** All runtime state
+  (SQLite DB, outbox, wizard subjects / uploads / BankIR / generated questions + keys,
+  ingest caches, backups) lives in the family data folder from `src/lib/data-dir.ts`
+  (`getDataPaths()`; CLIs use `resolveCliDataPaths()`, repo env files in `next start`
+  order via `env-file.ts`). Inside the checkout it writes only `./data` (gitignored),
+  `tests/.tmp/…` (the suites) and `.env` via env-store (wizard API keys). Folder =
+  `EXAMIFY_DATA_DIR` (relative → checkout root, never cwd) → else the folder of an
+  explicit SQLite `DATABASE_URL` outside the checkout → else `./data`. DB = explicit
+  `DATABASE_URL`, else `<data>/app.db`. Outbox = `MAIL_OUTBOX_DIR`, else
+  `<data>/outbox` (`RESEND_API_KEY=test` → `tests/.tmp/outbox` outside production only).
+  `resolveDataPaths` (realpaths): the folder never the checkout or a folder containing it
+  and inside it only `data/…` (+ `tests/.tmp/…`); the DB and the outbox never inside the
+  checkout outside those (`db_inside_checkout` / `outbox_inside_checkout`, so boot,
+  `db:migrate`, `examify-data paths --check` and the ingest CLI all refuse); a leading
+  `~`, quotes, newline, `$` or ` #` refused; messages never name the path. Production boot needs `EXAMIFY_DATA_DIR` or
   `DATABASE_URL` and a safe, dedicated folder (an unmarked folder holding non-Examify
   files is refused), and production never creates a missing DB
   (`DatabaseMissingError`; `/api/health` → reason codes `unsafe_data_dir` /
@@ -144,7 +147,9 @@ JSON`). Missing cloud
   4 legacy, 5 refused, 6 verify failed) are an `install.sh` contract. Writing commands
   (and `verify`) refuse on an owner mismatch unless `--allow-owner-mismatch`. Backups:
   `VACUUM INTO` snapshot + family content + `.env` (unless `--no-env`), never `outbox/`
-  or `backups/`, archives `0600` and read back before they are reported; restore
+  or `backups/`, never `backups/` created in a shared folder, `content/generated` staged
+  as one revision (hashed before / after; `content_changing` after 3 tries), archives
+  `0600` and read back before they are reported; restore
   refuses while Examify answers `/api/health` (any JSON `{ok:boolean}`), checks the
   MANIFEST sha256s, moves existing data aside only with `--force`, names that folder if
   it fails afterwards, and never fails once everything is placed. `migrate-checkout`
@@ -391,8 +396,9 @@ Before merge, ensure these pass in CI:
   `Secure` only on https; never key it off `NODE_ENV` or hard-code `__Host-`.
 - Credential forms that submit through a JS `onSubmit` keep `method="post"` so a
   pre-hydration submit never puts a password in the URL.
-- The running app never writes inside the checkout (only `.env` via env-store). Keep
-  `assertSafeDataDir` on realpaths, production's "never create the DB" rule, the `0700`
+- The running app never writes into tracked checkout content (inside the checkout only
+  `./data`, `tests/.tmp/…` and `.env` via env-store; the DB and the outbox never
+  elsewhere in it). Keep `assertSafeDataDir` / `resolveDataPaths` on realpaths, production's "never create the DB" rule, the `0700`
   data folder with `0600` keys / outbox messages / backup archives, the shared-folder
   and owner-mismatch refusals, and filesystem paths out of `/api/health` and app errors /
   log lines.

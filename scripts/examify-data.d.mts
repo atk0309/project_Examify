@@ -21,7 +21,12 @@ export declare class CliError extends Error {
 }
 
 export type DataDirSource = 'EXAMIFY_DATA_DIR' | 'DATABASE_URL' | 'default';
-export type UnsafeDataDirReason = 'bad_value' | 'checkout_root' | 'inside_checkout';
+export type UnsafeDataDirReason =
+  | 'bad_value'
+  | 'checkout_root'
+  | 'inside_checkout'
+  | 'db_inside_checkout'
+  | 'outbox_inside_checkout';
 
 export type DataPaths = {
   repoRoot: string;
@@ -119,6 +124,8 @@ export declare function backup(
     includeCache?: boolean;
     includeCheckout?: boolean;
     kind?: 'manual' | 'pre-upgrade';
+    /** Tests only: called after each file is copied into the staging folder. */
+    onFileStaged?: (rel: string) => void;
   },
 ): Promise<BackupResult>;
 

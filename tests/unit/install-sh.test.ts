@@ -2868,3 +2868,81 @@ describe('install.sh upgrade guards (shimmed pnpm and data CLI)', () => {
     });
   });
 });
+
+describe('install.sh --restore of an install configured through .env.local (real data CLI)', () => {
+  it('restores the archived .env.local, puts the data where it points, and writes no .env', async () => {
+    const fx = await makeRealFixture();
+    try {
+      fs.renameSync(path.join(fx.work, '.env'), path.join(fx.work, '.env.local'));
+      const envLocal = fs.readFileSync(path.join(fx.work, '.env.local'), 'utf8');
+      const backupEnv: Record<string, string | undefined> = {
+        PATH: process.env.PATH,
+        HOME: fx.home,
+        EXAMIFY_SQLITE_MODULE: SQLITE_MODULE,
+      };
+      const backup = spawnSync(
+        process.execPath,
+        ['scripts/examify-data.mjs', 'backup', '--out', path.join(fx.base, 'transfer'), '--json'],
+        { cwd: fx.work, env: backupEnv as NodeJS.ProcessEnv, encoding: 'utf8' },
+      );
+      expect(backup.status, backup.stderr).toBe(0);
+      const { archive } = JSON.parse(backup.stdout) as { archive: string };
+      expect(execFileSync('tar', ['-tzf', archive], { encoding: 'utf8' })).toContain(
+        'env/.env.local\n',
+      );
+      // A new machine: this machine's data folder is not there.
+      fs.renameSync(fx.dataDir, path.join(fx.base, 'old-machine-data'));
+      const clone = path.join(fx.base, 'second');
+      git(fx.base, 'clone', '-q', fx.origin, clone);
+
+      const result = runReal(fx, clone, ['--restore', archive, '--yes']);
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(fs.readFileSync(path.join(clone, '.env.local'), 'utf8')).toBe(envLocal);
+      expect(fs.existsSync(path.join(clone, '.env'))).toBe(false);
+      expect(userCount(path.join(fx.dataDir, 'app.db'))).toBe(3);
+      expect(pnpmCalls(fx)).toContain(`migrate ${path.join(fx.dataDir, 'app.db')}`);
+      expect(fs.existsSync(path.join(clone, 'data'))).toBe(false);
+    } finally {
+      fs.rmSync(fx.base, { recursive: true, force: true });
+    }
+  }, 120_000);
+});
+
+describe('install.sh keeps the database and outbox out of the checkout', () => {
+  it('refuses a host DATABASE_URL inside the checkout before writing .env', () => {
+    const dir = tmpDir('examify-install-db-');
+    try {
+      for (const url of ['file:./app.db', 'file:./src/examify.db']) {
+        const result = writeEnvOnly(dir, dataEnv({ DATABASE_URL: url }));
+        expect(result.status, url).toBe(1);
+        expect(result.stderr).toContain('DATABASE_URL points inside the checkout');
+        expect(fs.existsSync(path.join(dir, '.env'))).toBe(false);
+      }
+      expect(writeEnvOnly(dir, dataEnv({ DATABASE_URL: 'file:./data/app.db' })).status).toBe(0);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a kept env file whose DATABASE_URL or MAIL_OUTBOX_DIR is inside the checkout, naming the file', () => {
+    const dir = tmpDir('examify-install-kept-db-');
+    try {
+      writeFile(path.join(dir, '.env'), 'AUTH_MODE=magic-link\nEXAMIFY_DATA_DIR=./data\n');
+      writeFile(path.join(dir, '.env.local'), 'DATABASE_URL=file:./app.db\n');
+      const db = writeEnvOnly(dir, dataEnv({ AUTH_MODE: undefined }));
+      expect(db.status).toBe(1);
+      expect(db.stderr).toContain('.env.local has DATABASE_URL=file:./app.db');
+      expect(db.stderr).toContain('DATABASE_URL points inside the checkout');
+
+      writeFile(path.join(dir, '.env.local'), 'MAIL_OUTBOX_DIR=outbox\n');
+      const outbox = writeEnvOnly(dir, dataEnv({ AUTH_MODE: undefined }));
+      expect(outbox.status).toBe(1);
+      expect(outbox.stderr).toContain('.env.local has MAIL_OUTBOX_DIR=outbox');
+
+      writeFile(path.join(dir, '.env.local'), 'MAIL_OUTBOX_DIR=data/outbox\n');
+      expect(writeEnvOnly(dir, dataEnv({ AUTH_MODE: undefined })).status).toBe(0);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

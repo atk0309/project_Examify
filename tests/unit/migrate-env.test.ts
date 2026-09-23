@@ -205,6 +205,21 @@ describe('pnpm db:migrate', () => {
     expect(readFileSync(path.join(dataDir, DATA_DIR_MARKER), 'utf8')).toBe(marker);
   });
 
+  it('refuses a database or mail outbox inside the checkout without creating anything', () => {
+    const root = migrateRepo();
+    for (const [env, message] of [
+      [{ DATABASE_URL: 'file:./app.db' }, 'db:migrate: DATABASE_URL points inside the checkout'],
+      [{ MAIL_OUTBOX_DIR: 'outbox' }, 'db:migrate: MAIL_OUTBOX_DIR points inside the checkout'],
+    ] as const) {
+      const result = runMigrate(root, env);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(message);
+      expect(result.stderr).not.toContain(root);
+      expect(existsSync(path.join(root, 'app.db'))).toBe(false);
+      expect(existsSync(path.join(root, 'data'))).toBe(false);
+    }
+  });
+
   it('refuses an unsafe data folder without creating it or printing the path', () => {
     const root = migrateRepo();
     const result = runMigrate(root, { EXAMIFY_DATA_DIR: 'src/family' });

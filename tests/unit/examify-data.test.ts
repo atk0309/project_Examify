@@ -248,6 +248,13 @@ describe('resolver parity with src/lib/data-dir.ts', () => {
       { DATABASE_URL: 'file:./data/app.db', EXAMIFY_DATA_DIR: 'data/family' },
       { DATABASE_URL: '', EXAMIFY_DATA_DIR: '', MAIL_OUTBOX_DIR: ' ' },
       { MAIL_OUTBOX_DIR: 'tests/.tmp/box' },
+      ...['outbox', '.', 'src/box', 'data/outbox', '..', path.join(outside, 'box')].map((dir) => ({
+        MAIL_OUTBOX_DIR: dir,
+      })),
+      { MAIL_OUTBOX_DIR: path.join(linkIntoSrc, 'box') },
+      { DATABASE_URL: 'file:./tests/.tmp/unit.db' },
+      { DATABASE_URL: 'file:./src/app.db', EXAMIFY_DATA_DIR: outside },
+      { DATABASE_URL: `file:${path.join(linkIntoSrc, 'app.db')}` },
       { RESEND_API_KEY: 'test' },
       { RESEND_API_KEY: 'test', NODE_ENV: 'production' },
       { NODE_ENV: 'test' },
@@ -327,6 +334,23 @@ describe('paths / init / usage', () => {
     const ok = await run(['paths', '--check', '--repo', root]);
     expect(ok.code).toBe(0);
     expect(ok.stdout).toBe('');
+  });
+
+  it('paths --check refuses a database or mail outbox inside the checkout (from the env files)', async () => {
+    const root = makeCheckout();
+    for (const [line, reason] of [
+      ['DATABASE_URL=file:./app.db', 'db_inside_checkout'],
+      ['MAIL_OUTBOX_DIR=outbox', 'outbox_inside_checkout'],
+    ]) {
+      write(path.join(root, '.env'), `${line}\n`);
+      const result = await run(['paths', '--check', '--repo', root], { env: {} });
+      expect(result.code, line).toBe(3);
+      expect(result.stderr).toContain(reason);
+      expect(result.stderr).not.toContain(root);
+      // Nothing that writes runs either.
+      expect((await run(['init', '--repo', root], { env: {} })).code).toBe(3);
+      expect(fs.existsSync(path.join(root, 'data'))).toBe(false);
+    }
   });
 
   it('init creates a 0700 folder with a .gitignore and a 0600 marker, and reruns cleanly', async () => {
@@ -1884,6 +1908,97 @@ describe('review regressions', () => {
       });
       expect(result.verified).toBe(true);
       expect(tarList(result.archive)).toContain('MANIFEST.json');
+    });
+  });
+});
+
+describe('backup placement and consistency', () => {
+  it('refuses to create backups/ in a folder shared with other software', async () => {
+    const root = makeCheckout();
+    const shared = tempDir('examify-data-shared-db-');
+    makeDb(path.join(shared, 'examify.db'));
+    write(path.join(shared, 'someone-else.conf'), 'x');
+    const before = fs.readdirSync(shared).sort();
+    const env = {
+      EXAMIFY_SQLITE_MODULE: SQLITE_MODULE,
+      DATABASE_URL: `file:${path.join(shared, 'examify.db')}`,
+    };
+    const result = await run(['backup', '--repo', root, '--json'], { env });
+    expect(result.code).toBe(5);
+    expect(JSON.parse(result.stdout)).toMatchObject({ error: 'shared_folder' });
+    expect(fs.readdirSync(shared).sort()).toEqual(before);
+    // An explicit --out elsewhere puts no backups/ there (SQLite's own -wal / -shm aside).
+    const out = tempDir('examify-data-shared-out-');
+    expect((await run(['backup', '--repo', root, '--out', out], { env })).code).toBe(0);
+    expect(
+      fs
+        .readdirSync(shared)
+        .filter((name) => !/-(wal|shm)$/.test(name))
+        .sort(),
+    ).toEqual(before);
+  });
+
+  describe('an Apply during the backup', () => {
+    function setup() {
+      const root = makeCheckout();
+      const dataDir = tempDir('examify-data-apply-');
+      makeDb(path.join(dataDir, 'app.db'));
+      seedFamily(dataDir);
+      const generated = path.join(dataDir, 'content/generated');
+      /** What a wizard Apply writes: questions and keys of one revision. */
+      const apply = (rev: number) => {
+        write(path.join(generated, 'questions/history.json'), `{"rev":${rev}}`);
+        write(path.join(generated, 'keys/history.json'), `{"rev":${rev}}`);
+      };
+      apply(1);
+      return { root, dataDir, apply, out: tempDir('examify-data-apply-out-') };
+    }
+
+    // Staging walks keys/ before questions/: an Apply right after the key is
+    // copied would pair revision 1 keys with revision 2 questions.
+    const KEY = 'family/content/generated/keys/history.json';
+
+    it('stages content/generated again, so questions and keys come from one Apply', async () => {
+      const { root, dataDir, apply, out } = setup();
+      let applies = 0;
+      const result = await data.backup({
+        repo: root,
+        env: { EXAMIFY_DATA_DIR: dataDir },
+        sqliteModule: SQLITE_MODULE,
+        out,
+        onFileStaged: (rel) => {
+          if (rel === KEY && applies === 0) {
+            applies += 1;
+            apply(2);
+          }
+        },
+      });
+      expect(applies).toBe(1);
+      const dir = extract(result.archive);
+      const read = (rel: string) =>
+        fs.readFileSync(path.join(dir, 'family/content/generated', rel), 'utf8');
+      expect(read('questions/history.json')).toBe('{"rev":2}');
+      expect(read('keys/history.json')).toBe('{"rev":2}');
+      const listed = readManifest(dir).files.find((file) => file.path === KEY);
+      expect(listed?.sha256).toBe(sha256(path.join(dir, KEY)));
+    });
+
+    it('fails with content_changing, and writes no archive, when Applies keep landing', async () => {
+      const { root, dataDir, apply, out } = setup();
+      let rev = 1;
+      await expect(
+        data.backup({
+          repo: root,
+          env: { EXAMIFY_DATA_DIR: dataDir },
+          sqliteModule: SQLITE_MODULE,
+          out,
+          onFileStaged: (rel) => {
+            if (rel === KEY) apply((rev += 1));
+          },
+        }),
+      ).rejects.toMatchObject({ exitCode: 1, code: 'content_changing' });
+      expect(rev).toBe(4);
+      expect(fs.readdirSync(out)).toEqual([]);
     });
   });
 });

@@ -90,12 +90,32 @@ describe('resolveDataPaths', () => {
     expect(paths.dataDirSource).toBe('DATABASE_URL');
   });
 
-  it('uses ./data when the explicit DATABASE_URL lives inside the checkout', () => {
+  it('refuses a DATABASE_URL inside the checkout outside ./data and tests/.tmp', () => {
     const root = tempRepo();
-    const paths = resolveDataPaths({ repoRoot: root, env: { DATABASE_URL: 'file:./app.db' } });
-    expect(paths.dataDir).toBe(path.join(root, 'data'));
-    expect(paths.dataDirSource).toBe('default');
-    expect(paths.dbPath).toBe(path.join(root, 'app.db'));
+    mkdirSync(path.join(root, 'src'));
+    const link = path.join(tempDir('examify-db-link-'), 'db');
+    symlinkSync(path.join(root, 'src'), link);
+    const reason = (url: string, extra: Record<string, string> = {}) =>
+      unsafeReason(() =>
+        resolveDataPaths({ repoRoot: root, env: { DATABASE_URL: url, ...extra } }),
+      );
+    for (const url of ['file:./app.db', 'file:./src/app.db', `file:${path.join(link, 'x.db')}`]) {
+      expect(reason(url), url).toBe('db_inside_checkout');
+    }
+    // Even with the family content elsewhere: the database is what is written inside.
+    const outside = tempDir('examify-db-family-');
+    expect(reason('file:./app.db', { EXAMIFY_DATA_DIR: outside })).toBe('db_inside_checkout');
+    for (const url of ['file:./data/app.db', 'file:./tests/.tmp/unit.db', ':memory:']) {
+      expect(reason(url), url).toBeNull();
+    }
+    try {
+      resolveDataPaths({ repoRoot: root, env: { DATABASE_URL: 'file:./secret-name.db' } });
+      throw new Error('expected a refusal');
+    } catch (error) {
+      expect((error as Error).message).toContain('DATABASE_URL points inside the checkout');
+      expect((error as Error).message).not.toContain('secret-name');
+      expect((error as Error).message).not.toContain(root);
+    }
   });
 
   it('uses ./data when the explicit DATABASE_URL folder contains the checkout', () => {
@@ -122,6 +142,27 @@ describe('resolveDataPaths', () => {
     const root = tempRepo();
     const paths = resolveDataPaths({ repoRoot: root, env: { MAIL_OUTBOX_DIR: 'tests/.tmp/box' } });
     expect(paths.outboxDir).toBe(path.join(root, 'tests', '.tmp', 'box'));
+  });
+
+  it('refuses a MAIL_OUTBOX_DIR inside the checkout outside ./data and tests/.tmp', () => {
+    const root = tempRepo();
+    const reason = (dir: string) =>
+      unsafeReason(() => resolveDataPaths({ repoRoot: root, env: { MAIL_OUTBOX_DIR: dir } }));
+    for (const dir of ['outbox', '.', 'src/outbox', 'public/box']) {
+      expect(reason(dir), dir).toBe('outbox_inside_checkout');
+    }
+    const outside = tempDir('examify-outbox-');
+    for (const dir of ['data/outbox', 'tests/.tmp/box', outside, '..']) {
+      expect(reason(dir), dir).toBeNull();
+    }
+    try {
+      resolveDataPaths({ repoRoot: root, env: { MAIL_OUTBOX_DIR: 'secret-box' } });
+      throw new Error('expected a refusal');
+    } catch (error) {
+      expect((error as Error).message).toContain('MAIL_OUTBOX_DIR points inside the checkout');
+      expect((error as Error).message).not.toContain('secret-box');
+      expect((error as Error).message).not.toContain(root);
+    }
   });
 
   it('uses the tests/.tmp outbox sentinel outside production only', () => {

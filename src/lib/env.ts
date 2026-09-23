@@ -1,4 +1,3 @@
-import path from 'node:path';
 import { z } from 'zod';
 import {
   AUTH_MODES,
@@ -91,14 +90,16 @@ export type ClientIpHeader = (typeof CLIENT_IP_HEADERS)[number];
 
 /**
  * Production boot resolves the family data folder once, so an unsafe value
- * (the checkout itself, a folder inside it other than ./data, a leading `~`)
- * or a folder shared with other software (e.g. the folder of
+ * (the checkout itself, a folder inside it other than ./data, a leading `~`,
+ * a database or mail outbox inside the checkout outside ./data) or a folder
+ * shared with other software (e.g. the folder of
  * `DATABASE_URL=file:/root/examify.db` is `$HOME`) fails boot instead of the
  * first request writing into it. The message never names the path.
  */
 function unsafeDataDirMessage(values: {
   EXAMIFY_DATA_DIR?: string;
   DATABASE_URL?: string;
+  MAIL_OUTBOX_DIR?: string;
 }): string | null {
   const repoRoot = findRepoRoot(process.cwd());
   let paths;
@@ -110,17 +111,6 @@ function unsafeDataDirMessage(values: {
   }
   if (!isDedicatedDataFolder(paths.dataDir, paths.dbPath)) {
     return new SharedDataFolderError().message;
-  }
-  const relDb = path.relative(repoRoot, paths.dbPath);
-  const dbInCheckout =
-    paths.dbPath !== ':memory:' && !relDb.startsWith('..') && !path.isAbsolute(relDb);
-  const [first, second] = relDb.split(path.sep);
-  if (dbInCheckout && first !== 'data' && !(first === 'tests' && second === '.tmp')) {
-    // Kept working for existing installs, but it breaks "nothing is written
-    // inside the checkout" (and `-wal` / `-shm` sidecars are not ignored).
-    console.warn(
-      '[env] DATABASE_URL points inside the checkout outside ./data; move the file into the family data folder',
-    );
   }
   return null;
 }
@@ -393,6 +383,7 @@ function buildEnvSchema(isProd: boolean) {
         const unsafe = unsafeDataDirMessage({
           EXAMIFY_DATA_DIR: data.EXAMIFY_DATA_DIR,
           DATABASE_URL: data.DATABASE_URL,
+          MAIL_OUTBOX_DIR: data.MAIL_OUTBOX_DIR,
         });
         if (unsafe) ctx.addIssue({ code: 'custom', message: unsafe, path: ['EXAMIFY_DATA_DIR'] });
       }

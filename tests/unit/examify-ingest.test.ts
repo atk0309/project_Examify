@@ -934,6 +934,17 @@ describe('examify-ingest layers', () => {
     ).toThrow(`this path is under ./data, but the family data folder is ${outside}`);
   });
 
+  it('refuses a database or mail outbox inside the checkout, like the app', () => {
+    const root = fakeCheckout();
+    expect(() =>
+      resolveIngestRoot(['content/subjects'], root, { DATABASE_URL: 'file:./app.db' }),
+    ).toThrow('DATABASE_URL points inside the checkout');
+    writeFileSync(path.join(root, '.env'), 'MAIL_OUTBOX_DIR=outbox\n');
+    expect(() => resolveIngestRoot(['content/subjects'], root, {})).toThrow(
+      'MAIL_OUTBOX_DIR points inside the checkout',
+    );
+  });
+
   it('warns when the family folder belongs to another user', async () => {
     const { familyFolderOwnerWarning } = await import('../../tools/examify-ingest/src/cli');
     const dataDir = mkdtempSync(path.join(tmpdir(), 'examify-layers-owner-'));

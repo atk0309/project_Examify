@@ -34,7 +34,8 @@
 #
 # Family data folder (EXAMIFY_DATA_DIR, default ./data): database, mail
 # outbox, uploaded study PDFs, subjects, generated questions and answer keys.
-# The running app never writes inside the checkout.
+# The running app never writes into tracked checkout content (inside it, only
+# ./data and .env).
 #
 # Upgrading (never manages services; stop the server first):
 #   ./install.sh --upgrade
@@ -749,6 +750,28 @@ data_dir_safety_problem() {
   return 0
 }
 
+# $2 (a file or folder) is outside the checkout $1, or under its data/… or
+# tests/.tmp/… (data-dir.ts allowedInCheckout: where the database and the mail
+# outbox may live). Returns 1 inside the checkout anywhere else, the root included.
+allowed_in_checkout() {
+  local root target rel first rest=""
+  root="$(canonical_path "$1")"
+  target="$(canonical_path "$2")"
+  path_within "$root" "$target" || return 0
+  if [ "$target" = "$root" ]; then
+    return 1
+  fi
+  rel="${target#"${root%/}"/}"
+  first="${rel%%/*}"
+  if [ "$rel" != "$first" ]; then
+    rest="${rel#*/}"
+  fi
+  if [ "$first" = "data" ] || { [ "$first" = "tests" ] && [ "${rest%%/*}" = ".tmp" ]; }; then
+    return 0
+  fi
+  return 1
+}
+
 # data-dir.ts resolveDataPaths over raw EXAMIFY_DATA_DIR / DATABASE_URL:
 # EXAMIFY_DATA_DIR, else the folder of an explicit SQLite DATABASE_URL that is
 # fully outside the checkout, else ./data. The database is an explicit
@@ -846,6 +869,17 @@ refuse_bad_disk_data_dir() {
   if problem="$(data_dir_safety_problem "$ROOT" "$DISK_DATA_DIR")"; then
     die "The kept env files point the family data folder at ${DISK_DATA_DIR} ($(disk_data_dir_origin)): ${problem}." "Fix it and re-run."
   fi
+  if [ "$DISK_DB_PATH" != ":memory:" ] && ! allowed_in_checkout "$ROOT" "$DISK_DB_PATH"; then
+    file="$(disk_env_source DATABASE_URL)" || file=".env"
+    die "${file} has DATABASE_URL=$(trim "$DISK_DATABASE_URL_RAW"), which the app refuses: ${DB_INSIDE_CHECKOUT}." \
+      "Move the database file there, fix DATABASE_URL in ${file}, and re-run."
+  fi
+  raw="$(trim "$(disk_env_get MAIL_OUTBOX_DIR)")"
+  if [ -n "$raw" ] && ! allowed_in_checkout "$ROOT" "$(abs_path "$ROOT" "$raw")"; then
+    file="$(disk_env_source MAIL_OUTBOX_DIR)" || file=".env"
+    die "${file} has MAIL_OUTBOX_DIR=${raw}, which the app refuses: it points inside the checkout; keep the mail outbox in the family data folder (./data/outbox) or outside the checkout." \
+      "Fix MAIL_OUTBOX_DIR in ${file} and re-run."
+  fi
 }
 
 # Existing family data is reused; a non-empty folder holding none of it is
@@ -913,6 +947,9 @@ settle_data_dir() {
   resolve_data_paths "$ROOT" "$input" "$WRITE_DATABASE_URL"
   if problem="$(data_dir_safety_problem "$ROOT" "$RESOLVED_DATA_DIR")"; then
     die "Family data folder ${input}: ${problem}."
+  fi
+  if [ "$RESOLVED_DB_PATH" != ":memory:" ] && ! allowed_in_checkout "$ROOT" "$RESOLVED_DB_PATH"; then
+    die "DATABASE_URL=${WRITE_DATABASE_URL}: ${DB_INSIDE_CHECKOUT}." "Nothing was written."
   fi
   DATA_DIR_VALUE="$input"
   DATA_DIR_DISPLAY="$input"
@@ -1012,7 +1049,7 @@ prepare_data_folder() {
     # stderr is "examify-data paths: <reason>: <message>"
     err="${err#examify-data paths: }"
     die "The family data folder is not safe to use (${err:-unsafe_data_dir})." \
-      "Fix EXAMIFY_DATA_DIR in .env and re-run."
+      "Fix EXAMIFY_DATA_DIR / DATABASE_URL / MAIL_OUTBOX_DIR in the env files and re-run."
   elif [ "$code" -ne 0 ]; then
     if [ -n "$err" ]; then
       printf '%s\n' "$err" >&2
@@ -1762,11 +1799,14 @@ rollback_flow() {
   echo "Start or restart the server (for example: pnpm start, or restart your service)."
 }
 
+# The archive carries env config: env/.env or env/.env.local (an install
+# configured only through .env.local counts), with or without a leading ./.
 archive_has_env() {
   local list nl=$'\n'
   list="$(tar -tzf "$1" 2>/dev/null)" || return 1
   case "${nl}${list}${nl}" in
     *"${nl}env/.env${nl}"*|*"${nl}./env/.env${nl}"*) return 0 ;;
+    *"${nl}env/.env.local${nl}"*|*"${nl}./env/.env.local${nl}"*) return 0 ;;
   esac
   return 1
 }
@@ -1778,6 +1818,7 @@ main() {
   MAX_NODE_MAJOR=23
   DATA_DIR_DEFAULT="./data"
   DATA_MARKER=".examify-data.json"
+  DB_INSIDE_CHECKOUT="DATABASE_URL points inside the checkout; keep the database in the family data folder (./data/app.db) or outside the checkout"
   UPGRADE_STATE_FILE=".upgrade-state.json"
   CASE_INSENSITIVE_FS=0
   if [ "$(uname -s 2>/dev/null)" = "Darwin" ]; then
@@ -1895,7 +1936,7 @@ main() {
         "Unset them and re-run: the restored .env decides where the data goes."
     fi
     unset EXAMIFY_DATA_DIR DATABASE_URL
-    echo "Restoring ${RESTORE_ARCHIVE} with its .env (a current .env is kept aside as .env.before-restore-…)."
+    echo "Restoring ${RESTORE_ARCHIVE} with its env files (current ones are kept aside as .env*.before-restore-…)."
   fi
 
   if [ "$WRITE_ENV_ONLY" = "1" ]; then
@@ -1936,7 +1977,7 @@ main() {
   echo
   if [ -n "$RESTORE_ARCHIVE" ]; then
     echo "Restored from ${RESTORE_ARCHIVE}. Start with: pnpm start   (or: pnpm dev)"
-    echo "Open the SITE_URL from .env and sign in as before."
+    echo "Open the SITE_URL from the restored env files and sign in as before."
   elif [ "$KEPT_EXISTING_ENV" = "1" ]; then
     echo "Using the existing .env. Start with: pnpm start   (or: pnpm dev)"
     echo "Open the SITE_URL from that file. This run's generated setup code was not written."

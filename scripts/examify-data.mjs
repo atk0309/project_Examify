@@ -225,6 +225,16 @@ export function assertDataDirValue(value) {
   }
 }
 
+/** Outside the checkout, or under its `data/…` / `tests/.tmp/…` (never the root itself). */
+function allowedInCheckout(repoRoot, abs) {
+  const root = canonical(repoRoot);
+  const target = canonical(abs);
+  if (!contains(root, target)) return true;
+  if (target === root) return false;
+  const parts = path.relative(root, target).split(path.sep);
+  return parts[0] === DEFAULT_DATA_DIR || (parts[0] === 'tests' && parts[1] === '.tmp');
+}
+
 export function assertSafeDataDir(repoRoot, dataDir) {
   const root = canonical(repoRoot);
   const dir = canonical(dataDir);
@@ -234,11 +244,7 @@ export function assertSafeDataDir(repoRoot, dataDir) {
       'the family data folder cannot be the checkout or a folder that contains it',
     );
   }
-  if (!contains(root, dir)) return;
-  const rel = path.relative(root, dir);
-  const parts = rel.split(path.sep);
-  const allowed = parts[0] === DEFAULT_DATA_DIR || (parts[0] === 'tests' && parts[1] === '.tmp');
-  if (!allowed) {
+  if (!allowedInCheckout(repoRoot, dataDir)) {
     throw new UnsafeDataDirError(
       'inside_checkout',
       'inside the checkout the family data folder must be ./data (or a folder under it)',
@@ -277,6 +283,13 @@ export function resolveDataPaths({ repoRoot, env }) {
   assertSafeDataDir(repoRoot, dataDir);
 
   const databaseUrl = rawDbUrl ?? `file:${path.join(dataDir, DB_FILE)}`;
+  const dbPath = sqlitePathFromUrl(databaseUrl, repoRoot);
+  if (dbPath !== ':memory:' && !allowedInCheckout(repoRoot, dbPath)) {
+    throw new UnsafeDataDirError(
+      'db_inside_checkout',
+      'DATABASE_URL points inside the checkout; keep the database in the family data folder (./data/app.db) or outside the checkout',
+    );
+  }
   const outbox = nonBlank(env.MAIL_OUTBOX_DIR);
   const production = env.NODE_ENV === 'production';
   let outboxDir;
@@ -287,6 +300,12 @@ export function resolveDataPaths({ repoRoot, env }) {
   } else {
     outboxDir = path.join(dataDir, 'outbox');
   }
+  if (!allowedInCheckout(repoRoot, outboxDir)) {
+    throw new UnsafeDataDirError(
+      'outbox_inside_checkout',
+      'MAIL_OUTBOX_DIR points inside the checkout; keep the mail outbox in the family data folder (./data/outbox) or outside the checkout',
+    );
+  }
 
   return {
     repoRoot,
@@ -295,7 +314,7 @@ export function resolveDataPaths({ repoRoot, env }) {
     familyRoot: dataDir,
     databaseUrl,
     databaseUrlExplicit: rawDbUrl !== undefined,
-    dbPath: sqlitePathFromUrl(databaseUrl, repoRoot),
+    dbPath,
     outboxDir,
   };
 }
@@ -945,6 +964,27 @@ export function init(options = {}) {
 // backup
 // ---------------------------------------------------------------------------
 
+const GENERATED_TREE = 'content/generated';
+
+/**
+ * sha256 of every file `filesUnder` would stage from `abs` (keyed by `rel`
+ * paths), or null when a file vanished while hashing.
+ */
+function treeDigest(abs, rel) {
+  try {
+    return new Map(filesUnder(abs, rel).map((file) => [file.rel, sha256File(file.src)]));
+  } catch (error) {
+    if (isEnoent(error)) return null;
+    throw error;
+  }
+}
+
+function sameDigest(a, b) {
+  if (!a || !b || a.size !== b.size) return false;
+  for (const [key, value] of a) if (b.get(key) !== value) return false;
+  return true;
+}
+
 const BACKUP_FAMILY_TREES = [
   'content/subjects',
   'content/source-pdfs',
@@ -980,6 +1020,9 @@ function catalogGaps(generatedDir) {
 function resolveOutDir(ctx, out) {
   const { repoRoot, paths: resolved } = ctx;
   if (!out) {
+    // `backups/` goes into the data folder: never into one shared with other
+    // software (the folder of DATABASE_URL=file:/root/examify.db is $HOME).
+    if (fs.existsSync(resolved.dataDir)) assertDedicatedFolder(resolved.dataDir, resolved.dbPath);
     fs.mkdirSync(resolved.dataDir, { recursive: true, mode: 0o700 });
     const dir = path.join(resolved.dataDir, 'backups');
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -1104,6 +1147,7 @@ export async function backup(options = {}) {
   const stageFile = (src, rel) => {
     const { sha256, size } = copyFileHashed(src, fromPosix(staging, rel));
     records.set(rel, { path: rel, sha256, size });
+    options.onFileStaged?.(rel);
   };
   const stageTree = (srcAbs, rel) => {
     for (const file of filesUnder(srcAbs, rel, warn)) stageFile(file.src, file.rel);
@@ -1131,28 +1175,55 @@ export async function backup(options = {}) {
     });
 
     // 2. Family files (never outbox/ or backups/).
-    const trees = [...BACKUP_FAMILY_TREES, 'migration-conflicts'];
+    const trees = [...BACKUP_FAMILY_TREES, 'migration-conflicts'].filter(
+      (rel) => rel !== GENERATED_TREE,
+    );
     if (options.includeCache) trees.push('.examify-ingest/cache');
     for (const rel of trees) stageTree(fromPosix(resolved.dataDir, rel), `family/${rel}`);
     const marker = path.join(resolved.dataDir, DATA_DIR_MARKER);
     if (isFile(marker)) stageFile(marker, `family/${DATA_DIR_MARKER}`);
 
-    // A wizard Apply may land between copies: re-copy generated/ until every
-    // catalog row has its questions + keys (no cross-process lock in v1).
-    const stagedGenerated = fromPosix(staging, 'family/content/generated');
+    // content/generated as one revision: a wizard Apply may land mid-copy (no
+    // cross-process lock), and questions/<id>.json from one Apply with
+    // keys/<id>.json from another would mis-grade. Hash the source before and
+    // after staging; the staged bytes must equal both, or it is staged again.
+    const generatedSrc = fromPosix(resolved.dataDir, GENERATED_TREE);
+    const generatedRel = `family/${GENERATED_TREE}`;
+    const stagedGenerated = fromPosix(staging, generatedRel);
     for (let attempt = 1; ; attempt += 1) {
-      const gaps = catalogGaps(stagedGenerated);
-      if (gaps.length === 0) break;
-      if (attempt > 3) {
+      fs.rmSync(stagedGenerated, { recursive: true, force: true });
+      for (const key of [...records.keys()]) {
+        if (key.startsWith(`${generatedRel}/`)) records.delete(key);
+      }
+      const before = treeDigest(generatedSrc, generatedRel);
+      let copied = true;
+      try {
+        stageTree(generatedSrc, generatedRel);
+      } catch (error) {
+        if (!isEnoent(error)) throw error;
+        copied = false; // a file went away mid-copy
+      }
+      const after = treeDigest(generatedSrc, generatedRel);
+      const staged = new Map(
+        [...records.values()]
+          .filter((record) => record.path.startsWith(`${generatedRel}/`))
+          .map((record) => [record.path, record.sha256]),
+      );
+      const stable = copied && sameDigest(before, after) && sameDigest(after, staged);
+      const gaps = stable ? catalogGaps(stagedGenerated) : [];
+      if (stable && gaps.length === 0) break;
+      if (attempt >= 3) {
+        if (!stable) {
+          throw new CliError(
+            EXIT.UNEXPECTED,
+            'content_changing',
+            'the family content changed while it was being backed up (an Apply in the wizard?); nothing was written, run the backup again',
+          );
+        }
         warn(`the family catalog is incomplete: ${gaps.join(', ')}`);
         break;
       }
       await sleep(200 * attempt);
-      fs.rmSync(stagedGenerated, { recursive: true, force: true });
-      for (const key of [...records.keys()]) {
-        if (key.startsWith('family/content/generated/')) records.delete(key);
-      }
-      stageTree(fromPosix(resolved.dataDir, 'content/generated'), 'family/content/generated');
     }
 
     // 3. Repo env files.

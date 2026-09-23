@@ -44,7 +44,11 @@ export type UnsafeDataDirReason =
   /** The checkout root itself, or a folder that contains it. */
   | 'checkout_root'
   /** Inside the checkout but not `data/…` (or `tests/.tmp/…` for the test suites). */
-  | 'inside_checkout';
+  | 'inside_checkout'
+  /** `DATABASE_URL` names a file inside the checkout but not under `data/…` / `tests/.tmp/…`. */
+  | 'db_inside_checkout'
+  /** `MAIL_OUTBOX_DIR` is inside the checkout but not under `data/…` / `tests/.tmp/…`. */
+  | 'outbox_inside_checkout';
 
 /** The data folder would overlap the checkout. `message` never includes the path. */
 export class UnsafeDataDirError extends Error {
@@ -133,6 +137,20 @@ export function assertDataDirValue(value: string): void {
 }
 
 /**
+ * Inside the checkout, only `data/…` and `tests/.tmp/…` (the suites' own
+ * folders) may hold runtime files. True when `abs` is outside the checkout or
+ * under one of those; the checkout root itself is not allowed.
+ */
+function allowedInCheckout(repoRoot: string, abs: string): boolean {
+  const root = canonical(repoRoot);
+  const target = canonical(abs);
+  if (!contains(root, target)) return true;
+  if (target === root) return false;
+  const parts = path.relative(root, target).split(path.sep);
+  return parts[0] === DEFAULT_DATA_DIR || (parts[0] === 'tests' && parts[1] === '.tmp');
+}
+
+/**
  * The data folder must not overlap tracked or tool-managed checkout files.
  * Inside the checkout only `data/…` is allowed (plus `tests/.tmp/…`, which
  * the test suites use and wipe — never a real install). Anywhere outside
@@ -148,11 +166,7 @@ export function assertSafeDataDir(repoRoot: string, dataDir: string): void {
       'the family data folder cannot be the checkout or a folder that contains it',
     );
   }
-  if (!contains(root, dir)) return;
-  const rel = path.relative(root, dir);
-  const parts = rel.split(path.sep);
-  const allowed = parts[0] === DEFAULT_DATA_DIR || (parts[0] === 'tests' && parts[1] === '.tmp');
-  if (!allowed) {
+  if (!allowedInCheckout(repoRoot, dataDir)) {
     throw new UnsafeDataDirError(
       'inside_checkout',
       'inside the checkout the family data folder must be ./data (or a folder under it)',
@@ -169,7 +183,9 @@ export function assertSafeDataDir(repoRoot: string, dataDir: string): void {
  *    content next to its database);
  * 3. `./data`.
  * The database is an explicit `DATABASE_URL` (existing installs keep theirs),
- * else `<dataDir>/app.db`. Throws {@link UnsafeDataDirError}.
+ * else `<dataDir>/app.db`. Neither the database nor the mail outbox (bearer
+ * tokens) may sit inside the checkout outside `data/…` / `tests/.tmp/…`.
+ * Throws {@link UnsafeDataDirError}; its message never names a path.
  */
 export function resolveDataPaths(input: { repoRoot: string; env: EnvLike }): DataPaths {
   const { repoRoot, env } = input;
@@ -205,6 +221,13 @@ export function resolveDataPaths(input: { repoRoot: string; env: EnvLike }): Dat
   assertSafeDataDir(repoRoot, dataDir);
 
   const databaseUrl = rawDbUrl ?? `file:${path.join(dataDir, DB_FILE)}`;
+  const dbPath = sqlitePathFromUrl(databaseUrl, repoRoot);
+  if (dbPath !== ':memory:' && !allowedInCheckout(repoRoot, dbPath)) {
+    throw new UnsafeDataDirError(
+      'db_inside_checkout',
+      'DATABASE_URL points inside the checkout; keep the database in the family data folder (./data/app.db) or outside the checkout',
+    );
+  }
   const outbox = nonBlank(env.MAIL_OUTBOX_DIR);
   const production = env.NODE_ENV === 'production';
   let outboxDir: string;
@@ -217,6 +240,12 @@ export function resolveDataPaths(input: { repoRoot: string; env: EnvLike }): Dat
   } else {
     outboxDir = path.join(/*turbopackIgnore: true*/ dataDir, 'outbox');
   }
+  if (!allowedInCheckout(repoRoot, outboxDir)) {
+    throw new UnsafeDataDirError(
+      'outbox_inside_checkout',
+      'MAIL_OUTBOX_DIR points inside the checkout; keep the mail outbox in the family data folder (./data/outbox) or outside the checkout',
+    );
+  }
 
   return {
     repoRoot,
@@ -225,7 +254,7 @@ export function resolveDataPaths(input: { repoRoot: string; env: EnvLike }): Dat
     familyRoot: dataDir,
     databaseUrl,
     databaseUrlExplicit: rawDbUrl !== undefined,
-    dbPath: sqlitePathFromUrl(databaseUrl, repoRoot),
+    dbPath,
     outboxDir,
   };
 }

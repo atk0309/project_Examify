@@ -73,11 +73,15 @@ get an initial response within a week.
 
 ## Family data folder and backups
 
-All family state lives in the family data folder (`EXAMIFY_DATA_DIR`, default
-`./data`): the database, the mail outbox, uploaded PDFs, generated questions and
-answer keys, ingest caches and backups. The running app never writes inside the
-checkout except `.env` (wizard API keys). See README → "Where your family's data
-lives".
+All family state lives in the family data folder: the database, the mail
+outbox, uploaded PDFs, generated questions and answer keys, ingest caches and
+backups. The folder is `EXAMIFY_DATA_DIR`, else the folder of an explicit SQLite
+`DATABASE_URL` outside the checkout, else `./data` (gitignored). The running app
+never writes into tracked checkout content: inside the checkout it writes only
+`./data` (the test suites use `tests/.tmp/…`) and `.env` (wizard API keys). A
+`DATABASE_URL` or `MAIL_OUTBOX_DIR` (sign-in bearer tokens) inside the checkout
+outside `./data` is refused, never written. See README → "Where your family's
+data lives".
 
 - **Permissions.** `pnpm db:migrate` / `examify-data init` create the folder `0700`
   (and tighten an existing one to `0700` when this user owns it; a folder owned
@@ -88,8 +92,10 @@ lives".
   committed wherever it lives. An existing, unmarked folder that holds files
   Examify does not recognise is refused before anything is chmodded or written.
 - **Fail closed.** Production refuses to boot without `EXAMIFY_DATA_DIR` or
-  `DATABASE_URL`, or with a data folder that overlaps the checkout (checked on
-  realpaths). It never creates a missing database: an unmounted volume fails
+  `DATABASE_URL`, with a data folder that overlaps the checkout, or with a
+  database or mail outbox inside the checkout outside `./data` (all checked on
+  realpaths; `pnpm db:migrate`, the installer and `examify-ingest` refuse the
+  same). It never creates a missing database: an unmounted volume fails
   closed instead of coming up as a fresh instance whose `/setup` could be
   claimed. `/api/health` returns reason codes only (`unsafe_data_dir`,
   `db_missing`, `db_error`), never an error message or path.

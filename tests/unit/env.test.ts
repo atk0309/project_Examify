@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import {
   allowLocalMailOutbox,
   canDeliverMailboxProof,
@@ -13,10 +13,18 @@ import {
   sessionCookieConfig,
 } from '@/lib/env';
 
+// Production parses check the data folder on disk (safety, a dedicated
+// folder), so every path here lives under a fresh temp folder — never a real
+// host path such as /data or this checkout's ./data.
+const prodRoot = mkdtempSync(path.join(tmpdir(), 'examify-env-prod-'));
+afterAll(() => rmSync(prodRoot, { recursive: true, force: true }));
+/** A family data folder that does not exist yet (a fresh volume). */
+const prodDataDir = path.join(prodRoot, 'family-data');
+
 const prodBase: NodeJS.ProcessEnv = {
   NODE_ENV: 'production',
   SITE_URL: 'https://examify.example.com',
-  DATABASE_URL: 'file:/data/app.db',
+  DATABASE_URL: `file:${path.join(prodDataDir, 'app.db')}`,
   AUTH_SECRET: 'production-auth-secret-must-be-32-chars',
   ANTHROPIC_API_KEY: 'sk-ant-real',
   SETUP_BOOTSTRAP_SECRET: 'production-setup-secret',
@@ -294,11 +302,12 @@ describe('parseEnv family data folder', () => {
   });
 
   it('accepts either EXAMIFY_DATA_DIR or an explicit DATABASE_URL in production', () => {
-    expect(parseEnv({ ...withoutDb, EXAMIFY_DATA_DIR: '/var/lib/examify' }).EXAMIFY_DATA_DIR).toBe(
-      '/var/lib/examify',
-    );
-    expect(parseEnv({ ...withoutDb, EXAMIFY_DATA_DIR: './data' }).DATABASE_URL).toBeUndefined();
-    expect(parseEnv(prodBase).DATABASE_URL).toBe('file:/data/app.db');
+    const absolute = path.join(prodRoot, 'var-lib-examify');
+    expect(parseEnv({ ...withoutDb, EXAMIFY_DATA_DIR: absolute }).EXAMIFY_DATA_DIR).toBe(absolute);
+    // Relative (to the checkout), like ./data, but a folder no one else uses.
+    const relative = path.relative(process.cwd(), path.join(prodRoot, 'data'));
+    expect(parseEnv({ ...withoutDb, EXAMIFY_DATA_DIR: relative }).DATABASE_URL).toBeUndefined();
+    expect(parseEnv(prodBase).DATABASE_URL).toBe(prodBase.DATABASE_URL);
     expect(parseEnv(prodBase).EXAMIFY_DATA_DIR).toBeUndefined();
   });
 
@@ -331,15 +340,30 @@ describe('parseEnv family data folder', () => {
     }
   });
 
-  it('warns (but boots) when DATABASE_URL points inside the checkout outside ./data', () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    expect(() => parseEnv({ ...withoutDb, DATABASE_URL: 'file:./app.db' })).not.toThrow();
-    expect(warn.mock.calls.map((call) => String(call[0])).join('\n')).toContain(
-      'DATABASE_URL points inside the checkout outside ./data',
-    );
-    warn.mockClear();
-    parseEnv({ ...withoutDb, DATABASE_URL: 'file:./data/app.db' });
-    expect(warn).not.toHaveBeenCalled();
+  it('fails production boot on a database or mail outbox inside the checkout, without naming it', () => {
+    const checkout = process.cwd();
+    const cases: Array<[NodeJS.ProcessEnv, string]> = [
+      [{ ...withoutDb, DATABASE_URL: 'file:./app.db' }, 'DATABASE_URL points inside the checkout'],
+      [
+        { ...withoutDb, DATABASE_URL: 'file:./src/examify.db', EXAMIFY_DATA_DIR: prodDataDir },
+        'DATABASE_URL points inside the checkout',
+      ],
+      [{ ...prodBase, MAIL_OUTBOX_DIR: 'outbox' }, 'MAIL_OUTBOX_DIR points inside the checkout'],
+      [{ ...prodBase, MAIL_OUTBOX_DIR: '.' }, 'MAIL_OUTBOX_DIR points inside the checkout'],
+    ];
+    for (const [env, message] of cases) {
+      const logged = loggedIssues(() => parseEnv(env));
+      expect(logged).toContain(message);
+      expect(logged).not.toContain(checkout);
+    }
+    // Outside the checkout (or under tests/.tmp, the suites' folder) is fine.
+    expect(() =>
+      parseEnv({ ...prodBase, MAIL_OUTBOX_DIR: path.join(prodRoot, 'outbox') }),
+    ).not.toThrow();
+    const suiteDb = `file:./tests/.tmp/env-prod-${path.basename(prodRoot)}/app.db`;
+    expect(() =>
+      parseEnv({ ...withoutDb, EXAMIFY_DATA_DIR: prodDataDir, DATABASE_URL: suiteDb }),
+    ).not.toThrow();
   });
 
   it('leaves the data folder to the resolver default outside production and in next build', () => {

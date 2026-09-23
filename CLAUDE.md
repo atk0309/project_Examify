@@ -17,8 +17,8 @@ added by hand to a static data file) into short practice exams. It is intentiona
 small: a static question bank, a four-screen client flow, host-picked sign-in
 (`password`, `magic-link`, or `local-otp`) gated by invite-only households in SQLite,
 and one **family data folder** (`EXAMIFY_DATA_DIR`: the SQLite file, the mail outbox and
-everything the wizard writes) on persistent storage. The running app never writes inside
-the checkout (see "Family data folder invariants").
+everything the wizard writes) on persistent storage. The running app never writes into
+tracked checkout content (see "Family data folder invariants").
 
 Surface:
 
@@ -733,14 +733,16 @@ These are non-negotiable. Don't "fix" them out.
 
 These are non-negotiable. Don't "fix" them out.
 
-- **The running app never writes inside the checkout.** Every piece of family state —
-  SQLite DB, mail outbox, wizard subjects / uploaded PDFs / BankIR / generated questions +
-  keys, ingest caches and run manifests, backups — lives under one family data folder
-  resolved by `src/lib/data-dir.ts` (`getDataPaths()` at runtime; content I/O goes through
-  `getOnboardingContentRoot()`). The one runtime checkout write is the repo-root `.env`
-  through `env-store.ts` (wizard API keys, `findRepoRoot`), besides Next's own `.next/`.
-  Dev/test only: outside production `RESEND_API_KEY=test` (or `NODE_ENV=test`) keeps the
-  outbox in `tests/.tmp/outbox`. Never resolve a runtime content path from
+- **The running app never writes into tracked checkout content.** Every piece of family
+  state — SQLite DB, mail outbox, wizard subjects / uploaded PDFs / BankIR / generated
+  questions + keys, ingest caches and run manifests, backups — lives under one family
+  data folder resolved by `src/lib/data-dir.ts` (`getDataPaths()` at runtime; content I/O
+  goes through `getOnboardingContentRoot()`); data folder = `EXAMIFY_DATA_DIR` → else the
+  folder of an explicit SQLite `DATABASE_URL` outside the checkout → else `./data`.
+  Inside the checkout the only runtime writes are `./data` (gitignored), `tests/.tmp/…`
+  (the suites) and the repo-root `.env` through `env-store.ts` (wizard API keys,
+  `findRepoRoot`), besides Next's own `.next/`. Dev/test only: outside production
+  `RESEND_API_KEY=test` (or `NODE_ENV=test`) keeps the outbox in `tests/.tmp/outbox`. Never resolve a runtime content path from
   `process.cwd()` / `findRepoRoot`, never rewrite registrars at runtime, and never write
   `content/`, `.examify-ingest/` or `src/` from the app or a test (CI fails on it). So
   `git pull` never conflicts with family content, and a re-clone loses nothing when the
@@ -766,8 +768,12 @@ These are non-negotiable. Don't "fix" them out.
   Production boot fails on an unsafe folder, on a folder shared with other software
   (an existing folder without the marker holding files Examify does not recognise —
   e.g. the folder of `DATABASE_URL=file:/root/examify.db` is `$HOME`), and when neither
-  `EXAMIFY_DATA_DIR` nor `DATABASE_URL` is set. A `DATABASE_URL` inside the checkout
-  outside `./data` still boots, with a `[env]` warning.
+  `EXAMIFY_DATA_DIR` nor `DATABASE_URL` is set. The database and the mail outbox (bearer
+  tokens) follow the same inside-checkout allowlist: a `DATABASE_URL` or
+  `MAIL_OUTBOX_DIR` inside the checkout outside `data/…` / `tests/.tmp/…` is refused by
+  the resolver itself (`db_inside_checkout` / `outbox_inside_checkout`, messages without
+  the path), so production boot, `db:migrate`, `examify-data paths --check` (and with it
+  `install.sh`) and the ingest CLI all fail on it.
 - **Production never creates the database.** `openSqliteFile(dbPath, { mustExist: isProd })`
   throws `DatabaseMissingError` for a missing file and creates nothing: an unmounted
   volume must fail closed, not come up as a fresh household whose `/setup` could be
@@ -807,7 +813,12 @@ These are non-negotiable. Don't "fix" them out.
   cross-process lock). `MANIFEST.json` lists every file with its sha256. Staged `0700`,
   tarred to a temp file, fsynced, published with `link()` + `unlink` (no clobber) as
   `examify-backup-<UTC>-<rand>[-pre-upgrade-<sha7>].tar.gz`, `0600`, in `$DATA/backups/`
-  (`--out` must be outside the checkout or inside the data folder), then read back
+  (`--out` must be outside the checkout or inside the data folder; the default `backups/`
+  is never created in a shared folder — `shared_folder`, exit 5, nothing created). The
+  family `content/generated/**` is staged as one revision: hashed before and after
+  staging and compared with the staged bytes, restaged up to 3 times, else exit 1
+  `content_changing` (an Apply between copies could pair one Apply's questions with
+  another's keys). Then the archive is read back
   (`tar -tzf` over the whole stream, every MANIFEST file a member, `MANIFEST.json` byte
   for byte); one that does not read back is removed and the backup fails
   (`archive_unreadable`).
@@ -874,8 +885,8 @@ These are non-negotiable. Don't "fix" them out.
   running-server check (the local ports even with `--allow-running`) before
   `git reset --keep` to the archive's `checkout.gitSha` → `restore` with `--force`,
   `--with-env` and `--include-checkout` → drop the state file → reinstall → put back
-  the parked build or rebuild. `--restore <archive>` = install → `restore` (with the archived `.env` when
-  present) → `db:migrate` → build.
+  the parked build or rebuild. `--restore <archive>` = install → `restore` (with `--with-env` when
+  the archive carries `env/.env` or `env/.env.local`) → `db:migrate` → build.
 - **Secrets on disk.** Data folder `0700`; answer-key files `0600` in a `0700` `keys/`
   (emit, migrate and restore all set it; `verify` fails on a group/world-readable key);
   outbox `0700` / messages `0600`; `backups/` `0700` / archives `0600`. Archives hold the
