@@ -115,9 +115,22 @@ export declare function backup(
   },
 ): Promise<BackupResult>;
 
+export type RestorePlace = { dataDir: string; dbPath: string };
 export type RestoreResult = {
+  /** Where the database and family files were placed (`target.after`). */
   dataDir: string;
   dbPath: string;
+  /**
+   * `before`: what the checkout resolved to when the restore started. With
+   * `--with-env` (no `--data-dir`) and env files in the archive, `after` is
+   * what `next start` resolves once those files are in place.
+   */
+  target: {
+    source: 'env' | 'data-dir' | 'restored-env';
+    before: RestorePlace;
+    after: RestorePlace;
+    changed: boolean;
+  };
   migrations: { snapshot: number; checkout: number };
   restored: { db: boolean; familyFiles: number; env: string[]; checkoutFiles: number };
   archiveHasEnv: boolean;

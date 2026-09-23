@@ -299,14 +299,18 @@ export function resolveDataPaths({ repoRoot, env }) {
   };
 }
 
-/** `resolveCliDataPaths` for a known checkout root: env files, non-blank process env wins. */
-export function resolveRepoDataPaths(repoRoot, processEnv = process.env) {
-  const files = readProductionEnvFiles(repoRoot);
+/** `resolveDataPaths` over parsed env files (highest precedence first); non-blank process env wins. */
+function dataPathsFromFiles(repoRoot, files, processEnv) {
   const env = {};
   for (const key of DATA_ENV_KEYS) {
     env[key] = nonBlank(processEnv[key]) ?? envFileValue(files, key);
   }
   return resolveDataPaths({ repoRoot, env });
+}
+
+/** `resolveCliDataPaths` for a known checkout root: env files, non-blank process env wins. */
+export function resolveRepoDataPaths(repoRoot, processEnv = process.env) {
+  return dataPathsFromFiles(repoRoot, readProductionEnvFiles(repoRoot), processEnv);
 }
 
 export function resolveCliDataPaths(cwd = process.cwd(), processEnv = process.env) {
@@ -556,18 +560,22 @@ function resolveContext(options = {}) {
   }
   const resolveEnv = { ...env };
   if (options.dataDir !== undefined) resolveEnv.EXAMIFY_DATA_DIR = options.dataDir;
-  let paths;
+  const paths = unsafeAsCliError(() => resolveRepoDataPaths(repoRoot, resolveEnv));
+  return { cwd, env, repoRoot, paths, log: options.log ?? (() => {}) };
+}
+
+/** Run a resolver; an `UnsafeDataDirError` becomes exit 3 with its reason code. */
+function unsafeAsCliError(resolve, prefix = '') {
   try {
-    paths = resolveRepoDataPaths(repoRoot, resolveEnv);
+    return resolve();
   } catch (error) {
     if (error instanceof UnsafeDataDirError) {
-      throw new CliError(EXIT.UNSAFE_DATA_DIR, 'unsafe_data_dir', error.message, {
+      throw new CliError(EXIT.UNSAFE_DATA_DIR, 'unsafe_data_dir', `${prefix}${error.message}`, {
         reason: error.reason,
       });
     }
     throw error;
   }
-  return { cwd, env, repoRoot, paths, log: options.log ?? (() => {}) };
 }
 
 /**
@@ -1407,10 +1415,50 @@ function isKeysPath(rel) {
   return rel.startsWith('content/generated/keys/') || rel.includes('/content/generated/keys/');
 }
 
+/**
+ * The paths `next start` will resolve once the archived env files replace the
+ * current ones: non-blank process env, then `.env.production.local` >
+ * `.env.local` > `.env.production` > `.env`, each the archived copy when the
+ * archive carries it, else the file already in the checkout.
+ */
+function restoredEnvDataPaths(repoRoot, processEnv, envItems) {
+  const archived = new Map(
+    envItems.map((item) => [item.rel.slice('env/'.length), readEnvFile(item.abs)]),
+  );
+  const files = PRODUCTION_ENV_FILES.map(
+    (name) => archived.get(name) ?? readEnvFile(path.join(repoRoot, name)),
+  );
+  return unsafeAsCliError(
+    () => dataPathsFromFiles(repoRoot, files, processEnv),
+    'the archived env files name an unsafe family data folder: ',
+  );
+}
+
+/** Remove `dir` and its parents up to `firstCreated` (what mkdir made) while they are empty. */
+function removeCreatedIfEmpty(dir, firstCreated) {
+  if (!firstCreated) return;
+  let cursor = dir;
+  for (;;) {
+    try {
+      fs.rmdirSync(cursor);
+    } catch {
+      return; // not empty (or already gone)
+    }
+    if (cursor === firstCreated) return;
+    const parent = path.dirname(cursor);
+    if (parent === cursor) return;
+    cursor = parent;
+  }
+}
+
+function samePlace(a, b) {
+  return a.dbPath === b.dbPath && canonical(a.dataDir) === canonical(b.dataDir);
+}
+
 export async function restore(options = {}) {
   if (!options.archive) throw new CliError(EXIT.USAGE, 'usage', 'restore needs an archive path');
   const ctx = resolveContext(options);
-  const { repoRoot, paths: resolved } = ctx;
+  const { repoRoot, paths: current } = ctx;
   const archive = path.resolve(ctx.cwd, options.archive);
   if (!isFile(archive)) {
     throw new CliError(
@@ -1430,16 +1478,16 @@ export async function restore(options = {}) {
     );
   }
   const Database = loadSqlite(repoRoot, sqliteModuleOption(ctx, options));
-  if (resolved.dbPath === ':memory:') {
-    throw new CliError(
-      EXIT.UNEXPECTED,
-      'db_missing',
-      'DATABASE_URL is :memory:; nowhere to restore to',
-    );
-  }
+  // With --with-env (and no --data-dir) the archived env files decide where
+  // the app will look, so the target is settled after reading the archive.
+  const targetFollowsEnv = Boolean(options.withEnv) && options.dataDir === undefined;
+  const memoryTarget = () =>
+    new CliError(EXIT.UNEXPECTED, 'db_missing', 'DATABASE_URL is :memory:; nowhere to restore to');
+  if (current.dbPath === ':memory:' && !targetFollowsEnv) throw memoryTarget();
 
-  fs.mkdirSync(resolved.dataDir, { recursive: true, mode: 0o700 });
-  const staging = fs.mkdtempSync(path.join(resolved.dataDir, '.restore-staging-'));
+  // Staging lives in the current folder; one created just for it goes again if it ends up empty.
+  const createdForStaging = fs.mkdirSync(current.dataDir, { recursive: true, mode: 0o700 });
+  const staging = fs.mkdtempSync(path.join(current.dataDir, '.restore-staging-'));
   try {
     // 1. Private copy, member check, extraction, MANIFEST + hash verification.
     const copy = path.join(staging, 'archive.tar.gz');
@@ -1480,8 +1528,19 @@ export async function restore(options = {}) {
       );
     }
 
-    // 3. Refuse a non-empty target unless --force.
-    const present = restoreTargetContents(resolved);
+    // 3. The target: where the app will look after this restore, checked like any other.
+    let target = current;
+    let targetSource = options.dataDir === undefined ? 'env' : 'data-dir';
+    if (targetFollowsEnv && selected.env.length > 0) {
+      target = restoredEnvDataPaths(repoRoot, ctx.env, selected.env);
+      targetSource = 'restored-env';
+    }
+    if (target.dbPath === ':memory:') throw memoryTarget();
+    if (target !== current) assertOwnership({ repoRoot, paths: target }, options);
+    if (fs.existsSync(target.dataDir)) assertDedicatedFolder(target.dataDir, target.dbPath);
+
+    // 4. Refuse a non-empty target unless --force.
+    const present = restoreTargetContents(target);
     if (present.length > 0 && !options.force) {
       const what = present.map((item) =>
         item.kind === 'db' ? path.basename(item.abs) : `${item.name}/`,
@@ -1502,16 +1561,17 @@ export async function restore(options = {}) {
       return { item, rel, dest };
     });
 
-    // 4. Point of no return: move aside, then place.
+    // 5. Point of no return: move aside, then place.
     const ts = compactUtc(new Date());
-    const movedAside = present.length > 0 ? moveAside(resolved, present, ts) : null;
+    fs.mkdirSync(target.dataDir, { recursive: true, mode: 0o700 });
+    const movedAside = present.length > 0 ? moveAside(target, present, ts) : null;
 
     for (const suffix of ['-wal', '-shm', '-journal'])
-      fs.rmSync(resolved.dbPath + suffix, { force: true });
-    placeVerified(selected.db, resolved.dbPath);
+      fs.rmSync(target.dbPath + suffix, { force: true });
+    placeVerified(selected.db, target.dbPath);
 
     for (const item of selected.family) {
-      placeVerified(item, fromPosix(resolved.dataDir, item.rel.slice('family/'.length)));
+      placeVerified(item, fromPosix(target.dataDir, item.rel.slice('family/'.length)));
     }
 
     const envRestored = [];
@@ -1534,10 +1594,16 @@ export async function restore(options = {}) {
       placeVerified(item, dest, { mode: isKeysPath(rel) ? 0o600 : 0o644, dirMode: 0o755 });
     }
 
-    initDataFolder(resolved, { geteuid: options.geteuid ?? defaultGeteuid, warn: ctx.log });
+    initDataFolder(target, { geteuid: options.geteuid ?? defaultGeteuid, warn: ctx.log });
     return {
-      dataDir: resolved.dataDir,
-      dbPath: resolved.dbPath,
+      dataDir: target.dataDir,
+      dbPath: target.dbPath,
+      target: {
+        source: targetSource,
+        before: { dataDir: current.dataDir, dbPath: current.dbPath },
+        after: { dataDir: target.dataDir, dbPath: target.dbPath },
+        changed: !samePlace(current, target),
+      },
       migrations: { snapshot: snapshot.migrations, checkout: known },
       restored: {
         db: true,
@@ -1551,6 +1617,7 @@ export async function restore(options = {}) {
     };
   } finally {
     fs.rmSync(staging, { recursive: true, force: true });
+    removeCreatedIfEmpty(current.dataDir, createdForStaging);
   }
 }
 
@@ -2536,6 +2603,11 @@ async function runCommand(command, flags, positionals, options) {
       const lines = [
         `Restored the database to ${data.dbPath} and ${data.restored.familyFiles} family files to ${data.dataDir}.`,
       ];
+      if (data.target.changed) {
+        lines.push(
+          `That is the family data folder the restored env files name; before the restore this checkout used ${data.target.before.dataDir}.`,
+        );
+      }
       if (data.movedAside) lines.push(`The previous data was moved aside to ${data.movedAside}.`);
       for (const saved of data.envSaved) lines.push(`Saved the previous env file as ${saved}.`);
       if (data.restored.env.length > 0) lines.push(`Restored ${data.restored.env.join(', ')}.`);

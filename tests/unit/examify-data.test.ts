@@ -712,6 +712,157 @@ describe('restore', () => {
     expect(result.stdout).not.toContain('from-backup');
   });
 
+  describe('--with-env places the data where the restored env files point', () => {
+    /** A backup whose archived env files name `archivedDir` (the source itself used another folder). */
+    async function backupNaming(archivedDir: string, envLocal?: string) {
+      const source = makeCheckout();
+      const sourceData = tempDir('examify-data-src-');
+      makeDb(path.join(sourceData, 'app.db'), { rows: 5 });
+      seedFamily(sourceData);
+      write(
+        path.join(source, '.env'),
+        `AUTH_SECRET=from-backup\nEXAMIFY_DATA_DIR=${archivedDir}\n`,
+      );
+      if (envLocal !== undefined) write(path.join(source, '.env.local'), envLocal);
+      const result = await data.backup({
+        repo: source,
+        env: { EXAMIFY_DATA_DIR: sourceData },
+        sqliteModule: SQLITE_MODULE,
+        out: tempDir('examify-data-archives-'),
+      });
+      return result.archive;
+    }
+
+    /** A folder that does not exist yet (a new machine has not made it). */
+    function freshFolder(): string {
+      return path.join(tempDir('examify-data-machine-'), 'family-data');
+    }
+
+    type Report = data.RestoreResult & { ok: boolean };
+
+    it('on a fresh clone, restores into the folder the archived .env names', async () => {
+      const archivedDir = freshFolder();
+      const archive = await backupNaming(archivedDir);
+      const target = makeCheckout();
+      const result = await run(['restore', archive, '--repo', target, '--with-env', '--json']);
+      expect(result.code, result.stderr).toBe(0);
+      const report = JSON.parse(result.stdout) as Report;
+      expect(report.target).toEqual({
+        source: 'restored-env',
+        before: { dataDir: path.join(target, 'data'), dbPath: path.join(target, 'data', 'app.db') },
+        after: { dataDir: archivedDir, dbPath: path.join(archivedDir, 'app.db') },
+        changed: true,
+      });
+      expect(report.dataDir).toBe(archivedDir);
+      expect(countUsers(path.join(archivedDir, 'app.db'))).toBe(5);
+      expect(
+        fs.readFileSync(path.join(archivedDir, 'content/source-pdfs/history/a.pdf'), 'utf8'),
+      ).toBe('%PDF-1.4 history');
+      expect(mode(path.join(archivedDir, 'content/generated/keys/history.json'))).toBe(0o600);
+      expect(fs.existsSync(path.join(archivedDir, '.examify-data.json'))).toBe(true);
+      expect(mode(archivedDir)).toBe(0o700);
+      // The app now resolves exactly the folder the data went to.
+      expect(data.resolveRepoDataPaths(target, {}).dbPath).toBe(path.join(archivedDir, 'app.db'));
+      // ./data was only staging: gone again, and the checkout is clean.
+      expect(fs.existsSync(path.join(target, 'data'))).toBe(false);
+      expect(git(target, 'status', '--porcelain', '--ignored')).toBe('!! .env\n');
+      expect(result.stderr).toBe('');
+    });
+
+    it('an explicit --data-dir still wins over the archived .env', async () => {
+      const archivedDir = freshFolder();
+      const archive = await backupNaming(archivedDir);
+      const target = makeCheckout();
+      const dataDir = tempDir('examify-data-flag-');
+      const argv = ['restore', archive, '--repo', target, '--data-dir', dataDir, '--with-env'];
+      const result = await run([...argv, '--json']);
+      expect(result.code, result.stderr).toBe(0);
+      const report = JSON.parse(result.stdout) as Report;
+      expect(report.target).toMatchObject({ source: 'data-dir', changed: false });
+      expect(countUsers(path.join(dataDir, 'app.db'))).toBe(5);
+      expect(fs.existsSync(archivedDir)).toBe(false);
+      expect(fs.readFileSync(path.join(target, '.env'), 'utf8')).toContain(archivedDir);
+    });
+
+    it('without --with-env the checkout’s own env files decide', async () => {
+      const archivedDir = freshFolder();
+      const archive = await backupNaming(archivedDir);
+      const target = makeCheckout();
+      const mine = tempDir('examify-data-mine-');
+      write(path.join(target, '.env'), `EXAMIFY_DATA_DIR=${mine}\n`);
+      const result = await run(['restore', archive, '--repo', target, '--json']);
+      expect(result.code, result.stderr).toBe(0);
+      const report = JSON.parse(result.stdout) as Report;
+      expect(report.target).toMatchObject({ source: 'env', changed: false });
+      expect(report.dataDir).toBe(mine);
+      expect(countUsers(path.join(mine, 'app.db'))).toBe(5);
+      expect(fs.existsSync(archivedDir)).toBe(false);
+      expect(fs.readFileSync(path.join(target, '.env'), 'utf8')).toBe(`EXAMIFY_DATA_DIR=${mine}\n`);
+    });
+
+    it('resolves in next start order across the archived and current env files', async () => {
+      const inEnv = freshFolder();
+      const inEnvLocal = freshFolder();
+      const archive = await backupNaming(inEnv, `EXAMIFY_DATA_DIR=${inEnvLocal}\n`);
+      const productionLocal = freshFolder();
+      const host = tempDir('examify-data-host-');
+      const cases: Array<{ files: Record<string, string>; env: Env; want: string }> = [
+        // The archived .env.local beats the archived .env and a current .env.production.
+        {
+          files: { '.env.production': `EXAMIFY_DATA_DIR=${freshFolder()}\n` },
+          env: {},
+          want: inEnvLocal,
+        },
+        // A current .env.production.local beats every archived file.
+        {
+          files: { '.env.production.local': `EXAMIFY_DATA_DIR=${productionLocal}\n` },
+          env: {},
+          want: productionLocal,
+        },
+        // Non-blank process env beats every file.
+        { files: {}, env: { EXAMIFY_DATA_DIR: host }, want: host },
+      ];
+      for (const { files, env: extra, want } of cases) {
+        const target = makeCheckout();
+        for (const [name, body] of Object.entries(files)) write(path.join(target, name), body);
+        const env = { EXAMIFY_SQLITE_MODULE: SQLITE_MODULE, ...extra };
+        const argv = ['restore', archive, '--repo', target, '--with-env', '--json'];
+        const result = await run(argv, { env });
+        expect(result.code, result.stderr).toBe(0);
+        expect((JSON.parse(result.stdout) as Report).dataDir).toBe(want);
+        expect(countUsers(path.join(want, 'app.db'))).toBe(5);
+        expect(data.resolveRepoDataPaths(target, env).dataDir).toBe(want);
+      }
+      expect(fs.existsSync(inEnv)).toBe(false);
+    });
+
+    it('refuses an archived .env that names an unsafe folder, changing nothing', async () => {
+      const archive = await backupNaming('content/family');
+      const target = makeCheckout();
+      const result = await run(['restore', archive, '--repo', target, '--with-env', '--json']);
+      expect(result.code).toBe(3);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        error: 'unsafe_data_dir',
+        reason: 'inside_checkout',
+      });
+      expect(fs.existsSync(path.join(target, 'data'))).toBe(false);
+      expect(fs.existsSync(path.join(target, '.env'))).toBe(false);
+      expect(git(target, 'status', '--porcelain', '--ignored')).toBe('');
+    });
+
+    it('refuses to move the data into a folder shared with other files', async () => {
+      const archivedDir = tempDir('examify-data-shared-');
+      write(path.join(archivedDir, 'someone-else.txt'), 'not examify');
+      const archive = await backupNaming(archivedDir);
+      const target = makeCheckout();
+      const result = await run(['restore', archive, '--repo', target, '--with-env', '--json']);
+      expect(result.code).toBe(5);
+      expect(JSON.parse(result.stdout)).toMatchObject({ error: 'shared_folder' });
+      expect(fs.readdirSync(archivedDir)).toEqual(['someone-else.txt']);
+      expect(fs.existsSync(path.join(target, 'data'))).toBe(false);
+    });
+  });
+
   it('refuses a snapshot with more migrations than the checkout ships', async () => {
     const archive = await makeBackup({ migrations: JOURNAL_ENTRIES + 1 });
     const target = makeCheckout();
