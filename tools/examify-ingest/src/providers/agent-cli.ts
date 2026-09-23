@@ -1,8 +1,8 @@
 import { accessSync, constants, mkdtempSync, rmSync, statSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { safeTempRoot } from '../temp-root';
-import { CliNotFoundError, type ProviderEnv } from './types';
+import { insideExamifyCheckout, safeTempRoot } from '../temp-root';
+import { CliNotFoundError, ProviderFailureError, type ProviderEnv } from './types';
 
 /**
  * Shared plumbing for the AI command-line tools a household may already pay
@@ -78,10 +78,13 @@ const BASE_ENV_KEYS = [
   'COMSPEC',
 ] as const;
 
-/** Each CLI's own config folder and headless sign-in token. */
+/**
+ * Each CLI's own config folder and headless sign-in token. Codex's folder is
+ * not passed on: codex-cli.ts gives each run a private CODEX_HOME instead.
+ */
 const CLI_ENV_KEYS: Record<AgentCli, readonly string[]> = {
   claude: ['CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_OAUTH_TOKEN'],
-  codex: ['CODEX_HOME', 'CODEX_API_KEY'],
+  codex: ['CODEX_API_KEY'],
 };
 
 const CLI_ENV_SET: Record<AgentCli, Record<string, string>> = {
@@ -118,6 +121,39 @@ export function agentCliEnv(
     for (const key of TEMP_ENV_KEYS) out[key] = runDir;
   }
   return { ...out, ...CLI_ENV_SET[cli] };
+}
+
+const CLI_HOME: Record<AgentCli, { env: string; dir: string; label: string }> = {
+  claude: { env: 'CLAUDE_CONFIG_DIR', dir: '.claude', label: 'Claude Code' },
+  codex: { env: 'CODEX_HOME', dir: '.codex', label: 'Codex' },
+};
+
+/** The CLI's own folder for this user (sign-in, state): CLAUDE_CONFIG_DIR / CODEX_HOME, else ~/.claude / ~/.codex. */
+export function agentCliHome(cli: AgentCli, env: ProviderEnv): string {
+  const configured = env[CLI_HOME[cli].env]?.trim();
+  if (configured) return path.resolve(configured);
+  return path.join(env.HOME?.trim() || os.homedir(), CLI_HOME[cli].dir);
+}
+
+/**
+ * The CLI's own folder, refused before anything runs when it is inside an
+ * Examify checkout (on realpaths): Claude Code writes its state there on
+ * every run, and Codex's refreshed sign-in is copied back to its `auth.json`
+ * (judged on its own realpath too, in case it is a link), but the running
+ * app never writes into the checkout.
+ */
+export function agentCliHomeOutsideCheckout(cli: AgentCli, env: ProviderEnv): string {
+  const home = agentCliHome(cli, env);
+  const written = cli === 'codex' ? [home, path.join(home, 'auth.json')] : [home];
+  if (written.some((target) => insideExamifyCheckout(target))) {
+    const { env: envName, dir, label } = CLI_HOME[cli];
+    const what = cli === 'codex' ? 'own folder or its auth.json' : 'own folder';
+    throw new ProviderFailureError(
+      'command',
+      `${label}'s ${what} (${envName}, else ~/${dir}) is inside the Examify checkout, and the app never writes there; set ${envName} to a folder outside the checkout and sign in again`,
+    );
+  }
+  return home;
 }
 
 function isExecutableFile(file: string): boolean {

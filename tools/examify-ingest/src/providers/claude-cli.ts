@@ -5,6 +5,7 @@ import {
   AGENT_CLI_MODEL_ENV,
   CLI_AUTH_HINT,
   agentCliEnv,
+  agentCliHomeOutsideCheckout,
   agentCliModelArgs,
   cliDetail,
   parseJsonLines,
@@ -78,6 +79,7 @@ export function claudeResultEvent(stdout: string): ClaudeResult | null {
 
 async function callClaudeCli(request: ProviderRequest, deps: ProviderDeps): Promise<BankIR> {
   const bin = requireAgentCliBinary('claude', deps.env);
+  agentCliHomeOutsideCheckout('claude', deps.env);
   const { status, stdout, stderrTail } = await withAgentCliWorkDir('claude', (dir) =>
     runProviderCommand({
       cmd: bin,

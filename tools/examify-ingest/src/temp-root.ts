@@ -1,8 +1,25 @@
 import { realpathSync, statSync } from 'node:fs';
 import os from 'node:os';
+import path from 'node:path';
 import { findRepoRoot } from '../../../src/lib/repo-root';
 
-function insideExamifyCheckout(dir: string): boolean {
+/**
+ * Whether `target` is inside an Examify checkout, judged on the realpath of
+ * `target` (or, when it does not exist yet, of its nearest existing parent),
+ * so a symlink cannot route around it.
+ */
+export function insideExamifyCheckout(target: string): boolean {
+  let dir = path.resolve(target);
+  for (;;) {
+    try {
+      dir = realpathSync(dir);
+      break;
+    } catch {
+      const parent = path.dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+  }
   try {
     findRepoRoot(dir);
     return true;

@@ -203,10 +203,12 @@ system temp folder, else `/tmp`, whichever resolves outside every Examify
 checkout, so a `TMPDIR` pointing into the checkout is skipped),
 and an allowlisted environment (`agentCliEnv`: PATH, HOME, locale, XDG,
 proxy / CA, `TMPDIR` / `TMP` / `TEMP` set to the run folder, plus
-`CLAUDE_CONFIG_DIR` / `CLAUDE_CODE_OAUTH_TOKEN` or
-`CODEX_HOME` / `CODEX_API_KEY`) — never `ANTHROPIC_API_KEY`,
-`OPENAI_API_KEY` or any other Examify secret. Cancel and the deadline kill
-the whole process group.
+`CLAUDE_CONFIG_DIR` / `CLAUDE_CODE_OAUTH_TOKEN` or `CODEX_API_KEY`) — never
+`ANTHROPIC_API_KEY`, `OPENAI_API_KEY` or any other Examify secret. Cancel and
+the deadline kill the whole process group. The CLI's own folder
+(`CLAUDE_CONFIG_DIR` / `CODEX_HOME`, else `~/.claude` / `~/.codex`) inside an
+Examify checkout (on realpaths; for Codex, also an `auth.json` that links
+into one) is refused before anything runs, as a `command` failure.
 
 Claude Code runs as
 
@@ -230,10 +232,21 @@ Codex runs as
 
 ```bash
 codex exec --json --sandbox read-only --skip-git-repo-check --ephemeral \
-  --ignore-user-config --cd <tmp> --output-last-message <tmp>/last-message.txt \
+  --ignore-user-config --cd <tmp>/work --output-last-message <tmp>/last-message.txt \
   -c features.shell_tool=false -c features.unified_exec=false … \
-  -c 'web_search="disabled"' [--model <m>] [--image <file> …]   # prompt on stdin
+  -c 'web_search="disabled"' -c skills.include_instructions=false \
+  [--model <m>] [--image <file> …]   # prompt on stdin
+# env: CODEX_HOME=<tmp>/home (plus the agentCliEnv allowlist)
 ```
+
+`--ignore-user-config` skips only `config.toml`, so each run gets a private
+`CODEX_HOME` (`stageCodexHome`) holding only a `0600` copy of the user's
+`auth.json` (`CODEX_HOME`, else `~/.codex`): the global `AGENTS.md`, skills and
+rules never load, and Codex's SQLite state, logs and installation id are
+removed with the run folder. A sign-in Codex refreshed during the run (refresh
+tokens rotate) is copied back to the user's `auth.json` atomically, only when
+it is a JSON object and that file still holds what was staged; no `auth.json`
+is ever created there.
 
 Image sources and PDF page images are attached as files; PDF bytes are not,
 so a PDF-only subject needs `pdftoppm` (`UnreadableSourcesError`).

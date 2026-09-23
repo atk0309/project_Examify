@@ -1,4 +1,12 @@
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import path from 'node:path';
 import type { BankIR } from '../schema';
 import {
@@ -7,6 +15,7 @@ import {
   AGENT_CLI_MODEL_ENV,
   CLI_AUTH_HINT,
   agentCliEnv,
+  agentCliHomeOutsideCheckout,
   agentCliModelArgs,
   cliDetail,
   parseJsonLines,
@@ -45,9 +54,10 @@ export const CODEX_DISABLED_FEATURES = [
 /**
  * `codex exec` (Codex, signed in with the household's own ChatGPT plan).
  * Read-only sandbox, no session saved, the user's `config.toml` ignored (its
- * MCP servers and hooks too), web search off, and the features above
- * disabled. The run happens in an empty private folder holding only the
- * attached images; the final answer is written to `lastMessagePath`.
+ * MCP servers and hooks too), web search off, the features above disabled,
+ * and no skill list in the prompt. The run happens in an empty private folder
+ * holding only the attached images, with a private CODEX_HOME
+ * (`stageCodexHome`); the final answer is written to `lastMessagePath`.
  */
 export function codexCliArgs(
   request: ProviderRequest,
@@ -70,10 +80,58 @@ export function codexCliArgs(
     ...CODEX_DISABLED_FEATURES.flatMap((feature) => ['-c', `features.${feature}=false`]),
     '-c',
     'web_search="disabled"',
+    '-c',
+    'skills.include_instructions=false',
     ...agentCliModelArgs(request.model, '--model'),
     // The prompt comes from stdin (no positional prompt argument).
     ...imagePaths.flatMap((file) => ['--image', file]),
   ];
+}
+
+/**
+ * A private CODEX_HOME for one run, holding only the sign-in (`auth.json`,
+ * `0600`) copied from the user's own folder. `--ignore-user-config` skips only
+ * `config.toml`: Codex still loads the global `AGENTS.md`, skills and rules
+ * from CODEX_HOME and writes its SQLite state, logs and installation id there.
+ * With this folder none of that loads, and the state is removed with the run.
+ * Returns a function that copies a sign-in Codex refreshed during the run back
+ * to the user's `auth.json` (refresh tokens rotate, so dropping it would sign
+ * the user out). Best effort: only a JSON object, only over a file that still
+ * holds what was staged, never creating one, atomically; anything else leaves
+ * the user's file as it is.
+ */
+export function stageCodexHome(sourceHome: string, runHome: string): () => void {
+  mkdirSync(runHome, { mode: 0o700 });
+  const sourceAuth = path.join(sourceHome, 'auth.json');
+  const runAuth = path.join(runHome, 'auth.json');
+  let staged: Buffer | null = null;
+  try {
+    staged = readFileSync(sourceAuth);
+    writeFileSync(runAuth, staged, { mode: 0o600, flag: 'wx' });
+  } catch {
+    // Not signed in with a file (CODEX_API_KEY, or not at all): codex says so.
+    staged = null;
+  }
+  return () => {
+    if (!staged) return;
+    let temp: string | null = null;
+    try {
+      const refreshed = readFileSync(runAuth);
+      if (refreshed.equals(staged)) return;
+      const parsed = JSON.parse(refreshed.toString('utf8')) as unknown;
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return;
+      const target = realpathSync(sourceAuth);
+      if (!readFileSync(target).equals(staged)) return;
+      temp = `${target}.examify-${process.pid}-${Date.now()}.tmp`;
+      writeFileSync(temp, refreshed, { mode: 0o600, flag: 'wx' });
+      renameSync(temp, target);
+      temp = null;
+    } catch {
+      // Leave the user's sign-in as it is; codex reports it if it no longer works.
+    } finally {
+      if (temp) rmSync(temp, { force: true });
+    }
+  };
 }
 
 type CodexImage = { bytes: Buffer; mediaType: string; caption: string };
@@ -215,24 +273,33 @@ export function codexFailure(outcome: CodexOutcome): ProviderFailureError | null
 
 async function callCodexCli(request: ProviderRequest, deps: ProviderDeps): Promise<BankIR> {
   const bin = requireAgentCliBinary('codex', deps.env);
+  const sourceHome = agentCliHomeOutsideCheckout('codex', deps.env);
   const images = codexImages(request);
   const outcome = await withAgentCliWorkDir('codex', async (dir): Promise<CodexOutcome> => {
+    const work = path.join(dir, 'work');
+    mkdirSync(work, { mode: 0o700 });
+    const home = path.join(dir, 'home');
+    const copyRefreshedSignInBack = stageCodexHome(sourceHome, home);
     const lastMessagePath = path.join(dir, 'last-message.txt');
-    const imagePaths = writeImages(dir, images);
-    const result = await runProviderCommand({
-      cmd: bin,
-      args: codexCliArgs(request, dir, lastMessagePath, imagePaths),
-      stdin: codexPrompt(request, images),
-      label: 'codex',
-      userSignal: deps.signal,
-      timeoutMs: CLI_PROVIDER_TIMEOUT_MS,
-      cwd: dir,
-      env: agentCliEnv(deps.env, 'codex', dir),
-      maxBuffer: AGENT_CLI_MAX_BUFFER,
-      captureStderr: true,
-    });
-    const last = existsSync(lastMessagePath) ? readFileSync(lastMessagePath, 'utf8') : '';
-    return { ...result, last };
+    const imagePaths = writeImages(work, images);
+    try {
+      const result = await runProviderCommand({
+        cmd: bin,
+        args: codexCliArgs(request, work, lastMessagePath, imagePaths),
+        stdin: codexPrompt(request, images),
+        label: 'codex',
+        userSignal: deps.signal,
+        timeoutMs: CLI_PROVIDER_TIMEOUT_MS,
+        cwd: work,
+        env: { ...agentCliEnv(deps.env, 'codex', dir), CODEX_HOME: home },
+        maxBuffer: AGENT_CLI_MAX_BUFFER,
+        captureStderr: true,
+      });
+      const last = existsSync(lastMessagePath) ? readFileSync(lastMessagePath, 'utf8') : '';
+      return { ...result, last };
+    } finally {
+      copyRefreshedSignInBack();
+    }
   });
   const failure = codexFailure(outcome);
   if (failure) throw failure;

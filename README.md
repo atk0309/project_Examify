@@ -387,7 +387,8 @@ Sent to a third party only when you turn the feature on:
   (`--provider claude-cli|codex-cli`) run `claude -p` / `codex exec` on your server with
   their own sign-in, so the same files go to Anthropic or OpenAI under your plan. They
   run in an empty private folder with no tools (no file reads, commands or web search;
-  Codex in its read-only sandbox), save no session, and get only a short allowlist of
+  Codex in its read-only sandbox, with a private copy of its sign-in only, so your
+  `AGENTS.md` and skills stay out), save no session, and get only a short allowlist of
   environment variables: none of Examify's secrets or API keys. A failed wizard
   generate shows a specific reason (rejected key, rate limit, timeout, …) and logs only
   the reason code, subject id and provider HTTP status — never the provider's message,

@@ -445,9 +445,14 @@ Before merge, ensure these pass in CI:
   outside every Examify checkout on its realpath, even when `TMPDIR` points into
   one), with no saved session, none of
   the service user's customizations (Claude: `--setting-sources project` +
-  `CLAUDE_CODE_SAFE_MODE=1`, so no user `CLAUDE.md` / hooks / plugins / skills) and only the
+  `CLAUDE_CODE_SAFE_MODE=1`, so no user `CLAUDE.md` / hooks / plugins / skills;
+  Codex: a private per-run `CODEX_HOME` holding only a copy of `auth.json`, so no
+  global `AGENTS.md` / skills / rules, with a refreshed sign-in copied back only
+  over an unchanged file) and only the
   `agentCliEnv` allowlist (its `TMPDIR` / `TMP` / `TEMP` point at the private run
-  folder): never add Examify secrets, `ANTHROPIC_API_KEY` or
+  folder). A CLI folder (`CLAUDE_CONFIG_DIR` / `CODEX_HOME`, else `~/.claude` /
+  `~/.codex`) inside an Examify checkout is refused before the run. Never add
+  Examify secrets, `ANTHROPIC_API_KEY` or
   `OPENAI_API_KEY` to it, and never grant file, command or web tools.
 - Preserve rate-limit boundaries and per-kind separation.
 - Keep sign-in role-gated by household membership (student = student member,

@@ -2,13 +2,17 @@ import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-export type FakeCliBehavior =
+export type FakeCliBehavior = (
   | { mode: 'success'; text: string }
   | { mode: 'agent-message-only'; text: string }
   | { mode: 'api-error'; status: number }
   | { mode: 'not-signed-in' }
   | { mode: 'crash'; stderr: string; code: number }
-  | { mode: 'hang' };
+  | { mode: 'hang' }
+) & {
+  /** Codex only: what it writes to $CODEX_HOME/auth.json (a refreshed sign-in) before answering. */
+  refreshAuth?: string;
+};
 
 export type FakeCliRecord = {
   argv: string[];
@@ -18,6 +22,8 @@ export type FakeCliRecord = {
   stdin: string;
   pid: number;
   images?: { path: string; exists: boolean; size: number; inCwd: boolean }[];
+  /** Codex only: its CODEX_HOME as the run saw it. */
+  codexHome?: { entries: string[]; auth: string | null; authMode: number | null };
 };
 
 /**
@@ -55,7 +61,20 @@ process.stdin.on('end', () => {
       size: fs.existsSync(file) ? fs.statSync(file).size : -1,
       inCwd: path.dirname(file) === process.cwd(),
     })),
+    codexHome: name === 'codex' && process.env.CODEX_HOME ? (() => {
+      const home = process.env.CODEX_HOME;
+      const auth = path.join(home, 'auth.json');
+      const has = fs.existsSync(auth);
+      return {
+        entries: fs.existsSync(home) ? fs.readdirSync(home) : [],
+        auth: has ? fs.readFileSync(auth, 'utf8') : null,
+        authMode: has ? fs.statSync(auth).mode & 0o777 : null,
+      };
+    })() : undefined,
   }));
+  if (name === 'codex' && behavior.refreshAuth !== undefined) {
+    fs.writeFileSync(path.join(process.env.CODEX_HOME, 'auth.json'), behavior.refreshAuth);
+  }
   const emit = (event) => process.stdout.write(JSON.stringify(event) + '\\n');
   if (behavior.mode === 'hang') { setInterval(() => {}, 1000); return; }
   if (behavior.mode === 'crash') { process.stderr.write(behavior.stderr + '\\n'); process.exit(behavior.code); }

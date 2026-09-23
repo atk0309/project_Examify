@@ -3,8 +3,10 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   readdirSync,
   realpathSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -28,11 +30,12 @@ import {
   safeTempRoot,
 } from '../../tools/examify-ingest/src/generate-api';
 import { runProviderCommand } from '../../tools/examify-ingest/src/providers/command';
-import { agentCliEnv } from '../../tools/examify-ingest/src/providers/agent-cli';
+import { agentCliEnv, agentCliHome } from '../../tools/examify-ingest/src/providers/agent-cli';
 import { claudeResultEvent } from '../../tools/examify-ingest/src/providers/claude-cli';
 import {
   CODEX_DISABLED_FEATURES,
   codexFailure,
+  stageCodexHome,
 } from '../../tools/examify-ingest/src/providers/codex-cli';
 import { fakeCli } from '../helpers/fake-agent-cli';
 
@@ -210,7 +213,9 @@ describe('agent CLI binaries', () => {
       CLAUDE_CODE_SAFE_MODE: '1',
     });
     expect(claude).not.toHaveProperty('CODEX_HOME');
-    expect(codex).toMatchObject({ CODEX_HOME: '/srv/codex', HTTPS_PROXY: 'http://proxy:3128' });
+    expect(codex).toMatchObject({ HTTPS_PROXY: 'http://proxy:3128' });
+    // Codex gets a private CODEX_HOME per run instead (stageCodexHome).
+    expect(codex).not.toHaveProperty('CODEX_HOME');
     expect(codex).not.toHaveProperty('CLAUDE_CODE_OAUTH_TOKEN');
     expect(codex).not.toHaveProperty('CLAUDE_CODE_SAFE_MODE');
     // With a run folder, its temp variables replace the host's.
@@ -430,6 +435,7 @@ describe('codex-cli provider', () => {
     }
     expect(args).toContain('features.shell_tool=false');
     expect(args).toContain('web_search="disabled"');
+    expect(args).toContain('skills.include_instructions=false');
     expect(args).not.toContain('--model');
     // No positional prompt: codex reads it from stdin.
     expect(args).not.toContain('-');
@@ -446,7 +452,112 @@ describe('codex-cli provider', () => {
     expect(record.stdin).toMatch(/Do not run commands, open files or search the web/);
 
     for (const key of SECRET_KEYS) expect(record.env).not.toHaveProperty(key);
-    expect(record.env.CODEX_HOME).toBe('/srv/codex');
+    // A private CODEX_HOME next to the working folder, removed with it.
+    expect(record.env.CODEX_HOME).toBe(path.join(path.dirname(record.cwd), 'home'));
+    expect(existsSync(record.env.CODEX_HOME!)).toBe(false);
+  });
+
+  it('runs with a private CODEX_HOME holding only the sign-in, never the user’s own folder', async () => {
+    const userHome = mkdtempSync(path.join(tmpdir(), 'examify-codex-home-'));
+    const auth = JSON.stringify({ tokens: { refresh_token: 'r1' } });
+    writeFileSync(path.join(userHome, 'auth.json'), auth);
+    writeFileSync(path.join(userHome, 'AGENTS.md'), 'Always answer in pirate speak.\n');
+    writeFileSync(path.join(userHome, 'config.toml'), 'model = "o3"\n');
+    mkdirSync(path.join(userHome, 'skills/pirate'), { recursive: true });
+    writeFileSync(path.join(userHome, 'skills/pirate/SKILL.md'), '---\nname: pirate\n---\n');
+    const before = readdirSync(userHome).sort();
+    const fake = fakeCli('codex', { mode: 'success', text: JSON.stringify(plantsBank()) });
+    await generatePlants(
+      'codex-cli',
+      hostEnv({ EXAMIFY_CODEX_BIN: fake.bin, CODEX_HOME: userHome }),
+    );
+    const record = fake.record();
+    expect(record.env.CODEX_HOME).not.toBe(userHome);
+    expect(record.codexHome).toEqual({ entries: ['auth.json'], auth, authMode: 0o600 });
+    expect(existsSync(record.env.CODEX_HOME!)).toBe(false);
+    // Nothing written to the user's folder (the fake did not refresh the sign-in).
+    expect(readdirSync(userHome).sort()).toEqual(before);
+
+    // Default folder: ~/.codex.
+    const home = mkdtempSync(path.join(tmpdir(), 'examify-home-'));
+    mkdirSync(path.join(home, '.codex'));
+    writeFileSync(path.join(home, '.codex/auth.json'), auth);
+    const byHome = fakeCli('codex', { mode: 'success', text: JSON.stringify(plantsBank()) });
+    await generatePlants('codex-cli', {
+      ...hostEnv({ EXAMIFY_CODEX_BIN: byHome.bin }),
+      HOME: home,
+    });
+    expect(byHome.record().codexHome?.auth).toBe(auth);
+  });
+
+  it('copies a sign-in Codex refreshed back to the user’s auth.json, and nothing else', async () => {
+    const userHome = mkdtempSync(path.join(tmpdir(), 'examify-codex-home-'));
+    const authFile = path.join(userHome, 'auth.json');
+    const old = JSON.stringify({ tokens: { refresh_token: 'r1' } });
+    const refreshed = JSON.stringify({ tokens: { refresh_token: 'r2' } });
+    const run = async (refreshAuth: string, mode: 'success' | 'hang' = 'success') => {
+      const fake =
+        mode === 'hang'
+          ? fakeCli('codex', { mode: 'hang', refreshAuth })
+          : fakeCli('codex', { mode: 'success', text: JSON.stringify(plantsBank()), refreshAuth });
+      const controller = new AbortController();
+      const running = generatePlants(
+        'codex-cli',
+        hostEnv({ EXAMIFY_CODEX_BIN: fake.bin, CODEX_HOME: userHome }),
+        plantsRoot(),
+        controller.signal,
+      ).catch((e) => e);
+      if (mode === 'hang') {
+        const recordPath = path.join(fake.dir, 'record.json');
+        for (let i = 0; i < 100 && !existsSync(recordPath); i += 1) {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        controller.abort();
+      }
+      return running;
+    };
+
+    writeFileSync(authFile, old);
+    expect(await run(refreshed)).not.toBeInstanceOf(Error);
+    expect(readFileSync(authFile, 'utf8')).toBe(refreshed);
+    expect(statSync(authFile).mode & 0o777).toBe(0o600);
+    expect(readdirSync(userHome)).toEqual(['auth.json']);
+
+    // Not a JSON object (e.g. cut off mid-write): the user's file stays.
+    for (const bad of ['{"tokens":', 'null']) {
+      writeFileSync(authFile, old);
+      await run(bad);
+      expect(readFileSync(authFile, 'utf8')).toBe(old);
+    }
+
+    // Cancelled after the refresh: still copied back.
+    writeFileSync(authFile, old);
+    expect(await run(refreshed, 'hang')).toBeInstanceOf(GenerateAbortedError);
+    expect(readFileSync(authFile, 'utf8')).toBe(refreshed);
+
+    // No auth.json to begin with (CODEX_API_KEY): none is created.
+    const empty = mkdtempSync(path.join(tmpdir(), 'examify-codex-home-'));
+    const fake = fakeCli('codex', {
+      mode: 'success',
+      text: JSON.stringify(plantsBank()),
+      refreshAuth: refreshed,
+    });
+    await generatePlants('codex-cli', hostEnv({ EXAMIFY_CODEX_BIN: fake.bin, CODEX_HOME: empty }));
+    expect(fake.record().codexHome?.auth).toBeNull();
+    expect(readdirSync(empty)).toEqual([]);
+  });
+
+  it('keeps a sign-in another codex changed during the run', () => {
+    const userHome = mkdtempSync(path.join(tmpdir(), 'examify-codex-home-'));
+    const runRoot = mkdtempSync(path.join(tmpdir(), 'examify-codex-run-'));
+    const authFile = path.join(userHome, 'auth.json');
+    writeFileSync(authFile, '{"tokens":{"refresh_token":"r1"}}');
+    const copyBack = stageCodexHome(userHome, path.join(runRoot, 'home'));
+    writeFileSync(path.join(runRoot, 'home/auth.json'), '{"tokens":{"refresh_token":"ours"}}');
+    writeFileSync(authFile, '{"tokens":{"refresh_token":"theirs"}}');
+    copyBack();
+    expect(readFileSync(authFile, 'utf8')).toBe('{"tokens":{"refresh_token":"theirs"}}');
   });
 
   it('passes EXAMIFY_CODEX_MODEL as --model', async () => {
@@ -549,6 +660,52 @@ describe('provider command runner', () => {
 
   it('gives agent CLIs a longer deadline than API calls', () => {
     expect(CLI_PROVIDER_TIMEOUT_MS).toBe(600_000);
+  });
+});
+
+describe('agent CLI own folder', () => {
+  it('refuses, before running, a CLI folder inside an Examify checkout (on realpaths)', async () => {
+    const checkout = plantsRoot();
+    const outside = mkdtempSync(path.join(tmpdir(), 'examify-outside-'));
+    mkdirSync(path.join(checkout, 'codex-home'));
+    const link = path.join(outside, 'codex-home');
+    symlinkSync(path.join(checkout, 'codex-home'), link);
+    // A Codex folder outside whose auth.json (the one file written back) links into it.
+    const linkedAuthHome = mkdtempSync(path.join(tmpdir(), 'examify-codex-home-'));
+    writeFileSync(path.join(checkout, 'auth.json'), '{}');
+    symlinkSync(path.join(checkout, 'auth.json'), path.join(linkedAuthHome, 'auth.json'));
+    const cases: ['claude-cli' | 'codex-cli', { [key: string]: string }, string][] = [
+      ['codex-cli', { CODEX_HOME: path.join(checkout, '.codex') }, 'CODEX_HOME'],
+      ['codex-cli', { CODEX_HOME: link }, 'CODEX_HOME'],
+      ['codex-cli', { CODEX_HOME: linkedAuthHome }, 'CODEX_HOME'],
+      ['codex-cli', { HOME: checkout }, 'CODEX_HOME'],
+      [
+        'claude-cli',
+        { CLAUDE_CONFIG_DIR: path.join(checkout, 'claude-config') },
+        'CLAUDE_CONFIG_DIR',
+      ],
+      ['claude-cli', { HOME: checkout }, 'CLAUDE_CONFIG_DIR'],
+    ];
+    for (const [provider, extra, envName] of cases) {
+      const cli = provider === 'claude-cli' ? 'claude' : 'codex';
+      const fake = fakeCli(cli, { mode: 'success', text: JSON.stringify(plantsBank()) });
+      const binEnv = cli === 'claude' ? 'EXAMIFY_CLAUDE_BIN' : 'EXAMIFY_CODEX_BIN';
+      const error = await generatePlants(
+        provider,
+        { ...hostEnv({ [binEnv]: fake.bin }), ...extra },
+        plantsRoot(),
+      ).catch((e) => e);
+      expect(error).toBeInstanceOf(ProviderFailureError);
+      expect(error).toMatchObject({ kind: 'command' });
+      expect((error as Error).message).toContain(envName);
+      expect((error as Error).message).toContain('inside the Examify checkout');
+      expect(existsSync(path.join(fake.dir, 'record.json'))).toBe(false);
+    }
+    expect(readdirSync(path.join(checkout, 'codex-home'))).toEqual([]);
+    expect(agentCliHome('codex', { HOME: '/home/kid' })).toBe('/home/kid/.codex');
+    expect(agentCliHome('claude', { HOME: '/home/kid', CLAUDE_CONFIG_DIR: '/srv/c' })).toBe(
+      '/srv/c',
+    );
   });
 });
 

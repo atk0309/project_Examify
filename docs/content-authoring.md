@@ -194,9 +194,12 @@ file first.
    Anthropic provider); Codex reads their page images, so it needs `pdftoppm`
    for PDF-only subjects. Each run gets an empty private folder, no tools (no
    file reads, commands or web search; Codex also in its read-only sandbox, with
-   your `config.toml` ignored), no saved session, and only an allowlist of
+   a private Codex folder holding only its sign-in, so your `config.toml`,
+   `AGENTS.md` and skills stay out), no saved session, and only an allowlist of
    environment variables, never Examify's secrets or API keys. They get 10
-   minutes (API providers 3).
+   minutes (API providers 3). Keep `CLAUDE_CONFIG_DIR` / `CODEX_HOME` (by
+   default `~/.claude` / `~/.codex`) outside the Examify checkout: a CLI whose
+   folder is inside it is refused.
 
    ```bash
    pnpm examify-ingest generate --provider claude-cli data/content/subjects/<id>

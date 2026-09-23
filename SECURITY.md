@@ -73,10 +73,14 @@ get an initial response within a week.
   API keys. Claude Code also skips that user's own settings, `CLAUDE.md`,
   hooks, plugins and skills (`--setting-sources project`,
   `CLAUDE_CODE_SAFE_MODE=1`), so a hook there never sees the study text.
-  Codex still reads that user's global `$CODEX_HOME/AGENTS.md` (by default
-  `~/.codex/AGENTS.md`); keep it empty on the Examify host, since it steers
-  every generated bank. Anyone who can sign in as that OS user can use the same
-  Claude / ChatGPT plan; keep it a dedicated service user.
+  Codex runs with a private `CODEX_HOME` for each run holding only a copy of
+  that user's `auth.json`, so its global `AGENTS.md`, skills and rules never
+  load and its state is removed with the run; a sign-in Codex refreshed is
+  copied back to `auth.json`. The copy sits in the private `0700` run folder
+  (`0600`) until the run ends. Either CLI's own folder (`CLAUDE_CONFIG_DIR` /
+  `CODEX_HOME`, else `~/.claude` / `~/.codex`) inside the checkout is refused.
+  Anyone who can sign in as that OS user can use the same Claude / ChatGPT
+  plan; keep it a dedicated service user.
 - Prefer `AUTH_MODE=password` on a tiny self-host if you do not want to run
   email for **sign-in**. Password-mode invite accept still needs SMTP, Resend,
   or an allowed outbox (and fails closed if none can deliver). `install.sh`

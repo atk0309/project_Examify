@@ -28,9 +28,10 @@ export class CliNotFoundError extends ProviderConfigError {
  * How a configured provider failed. `http`: a non-2xx answer (`status` set).
  * `timeout`: the provider deadline. `unreachable`: no answer at all (network, or a
  * local command that could not start). `output`: an answer that is not usable
- * BankIR. `command`: a local command that exited non-zero. `auth`: an AI
- * command-line tool (Claude Code, Codex) is not signed in, or its sign-in was
- * refused, with no HTTP status to report.
+ * BankIR. `command`: a local command that exited non-zero, or an AI
+ * command-line tool refused before it ran (its own folder is inside the
+ * checkout). `auth`: an AI command-line tool (Claude Code, Codex) is not
+ * signed in, or its sign-in was refused, with no HTTP status to report.
  */
 export type ProviderFailureKind =
   'http' | 'timeout' | 'unreachable' | 'output' | 'command' | 'auth';

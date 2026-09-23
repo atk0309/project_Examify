@@ -727,11 +727,25 @@ chosen, answer }`, free-text `{ type:'free', id, q, response, maxScore, score, s
   service user's own customizations (Claude: `--setting-sources project`, the
   project being that empty folder, plus `CLAUDE_CODE_SAFE_MODE=1`, so no user
   `CLAUDE.md`, hooks, plugins or skills: a `UserPromptSubmit` hook would otherwise
-  get the untrusted study text on stdin; Codex: `--ignore-user-config`, though its
-  global `$CODEX_HOME/AGENTS.md` still loads) and only the
-  `agentCliEnv` allowlist (PATH, HOME, locale, XDG, proxy / CA, the CLI's own
-  config dir and headless token; `TMPDIR` / `TMP` / `TEMP` are replaced by the
-  private run folder, never the host's). Never add Examify secrets,
+  get the untrusted study text on stdin; Codex: a private per-run `CODEX_HOME`
+  in the run folder holding only a `0600` copy of the user's `auth.json`
+  (`stageCodexHome`), because `--ignore-user-config` skips only `config.toml`:
+  no global `AGENTS.md`, skills, rules or hooks, and Codex's SQLite state, logs
+  and installation id go with the run folder; plus
+  `skills.include_instructions=false`, so not even its built-in skill list. A
+  sign-in Codex refreshed during the run is copied back to the user's
+  `auth.json`, atomically, only when it is a JSON object and that file still
+  holds what was staged, never creating one; refresh tokens rotate, so dropping
+  it would sign the user out) and only the
+  `agentCliEnv` allowlist (PATH, HOME, locale, XDG, proxy / CA, Claude's config
+  dir, the headless tokens; `TMPDIR` / `TMP` / `TEMP` are replaced by the
+  private run folder, never the host's; `CODEX_HOME` is the private one). The
+  CLI's own folder (`CLAUDE_CONFIG_DIR` / `CODEX_HOME`, else `~/.claude` /
+  `~/.codex`) inside an Examify checkout, on realpaths (Codex: or its
+  `auth.json` links into one), is refused before anything runs
+  (`agentCliHomeOutsideCheckout`, a `command` failure): Claude Code writes its
+  state there and Codex's refreshed sign-in goes back there.
+  Never add Examify secrets,
   `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` to that allowlist (the `test` sentinel
   would also break the CLI's own sign-in), and never grant file, command or web
   tools: study files are untrusted input.
