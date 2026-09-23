@@ -1598,6 +1598,8 @@ export async function restore(options = {}) {
   if (current.dbPath === ':memory:' && !targetFollowsEnv) throw memoryTarget();
 
   // Staging lives in the current folder; one created just for it goes again if it ends up empty.
+  // Never stage (a copy of an archive holding secrets) inside a folder shared with other software.
+  if (fs.existsSync(current.dataDir)) assertDedicatedFolder(current.dataDir, current.dbPath);
   const createdForStaging = fs.mkdirSync(current.dataDir, { recursive: true, mode: 0o700 });
   const staging = fs.mkdtempSync(path.join(current.dataDir, '.restore-staging-'));
   try {

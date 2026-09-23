@@ -1913,6 +1913,24 @@ describe('review regressions', () => {
 });
 
 describe('backup placement and consistency', () => {
+  it('restore never stages inside a folder shared with other software', async () => {
+    const root = makeCheckout();
+    // A corrupt archive: refusing the folder first means it is never even copied
+    // or read there (otherwise this fails later as archive_invalid, exit 1).
+    const archive = path.join(tempDir('examify-data-restore-src-'), 'examify-backup.tar.gz');
+    write(archive, 'not a tar archive');
+    const shared = tempDir('examify-data-restore-shared-');
+    write(path.join(shared, 'someone-else.conf'), 'x');
+    const before = fs.readdirSync(shared).sort();
+    const result = await run(
+      ['restore', archive, '--repo', root, '--data-dir', shared, '--force', '--json'],
+      { env: { EXAMIFY_SQLITE_MODULE: SQLITE_MODULE } },
+    );
+    expect(result.code).toBe(5);
+    expect(JSON.parse(result.stdout)).toMatchObject({ error: 'shared_folder' });
+    expect(fs.readdirSync(shared).sort()).toEqual(before);
+  });
+
   it('refuses to create backups/ in a folder shared with other software', async () => {
     const root = makeCheckout();
     const shared = tempDir('examify-data-shared-db-');
