@@ -23,12 +23,13 @@ export type FakeCliBehavior = (
    * that keeps its output open (its pid is in `orphan.pid`), `old` is a CLI
    * without the subcommand: its help is the general help, and the status
    * command would be read as a prompt (an agent run, recorded as
-   * `prompt-runs`). Default `in`.
+   * `prompt-runs`), `help-fails` exits 1 on its help (a CLI that cannot
+   * start). Default `in`.
    */
-  signIn?: 'in' | 'out' | 'hang' | 'old' | 'orphan';
+  signIn?: 'in' | 'out' | 'hang' | 'old' | 'orphan' | 'help-fails';
 };
 
-/** What one sign-in check got. */
+/** What one sign-in check (its help probe, or its status command) got. */
 export type FakeCliStatusRecord = {
   argv: string[];
   cwd: string;
@@ -70,6 +71,23 @@ const args = process.argv.slice(2);
 const statusArgs = name === 'claude' ? ['auth', 'status'] : ['login', 'status'];
 if (args.length === 2 && args[0] === statusArgs[0] && args[1] === '--help') {
   fs.appendFileSync(path.join(dir, 'help-calls'), 'x');
+  const helpHome = process.env.CODEX_HOME;
+  const helpAuth = helpHome ? path.join(helpHome, 'auth.json') : '';
+  fs.writeFileSync(path.join(dir, 'help-record.json'), JSON.stringify({
+    argv: args,
+    cwd: process.cwd(),
+    cwdEntries: fs.readdirSync(process.cwd()),
+    env: process.env,
+    pid: process.pid,
+    codexHome: name === 'codex' && helpHome ? {
+      entries: fs.existsSync(helpHome) ? fs.readdirSync(helpHome) : [],
+      auth: fs.existsSync(helpAuth) ? fs.readFileSync(helpAuth, 'utf8') : null,
+    } : undefined,
+  }));
+  if (behavior.signIn === 'help-fails') {
+    process.stderr.write('error: could not start\\n');
+    process.exit(1);
+  }
   if (behavior.signIn === 'old') {
     // An old CLI's general help: "status" in prose, an option and a wrapped
     // description, but no status command in its Commands list.
@@ -225,6 +243,13 @@ process.stdin.on('end', () => {
     record: () => JSON.parse(readFileSync(path.join(dir, 'record.json'), 'utf8')) as FakeCliRecord,
     statusRecord: () =>
       JSON.parse(readFileSync(path.join(dir, 'status-record.json'), 'utf8')) as FakeCliStatusRecord,
+    /** What its last help probe got. */
+    helpRecord: () =>
+      JSON.parse(readFileSync(path.join(dir, 'help-record.json'), 'utf8')) as FakeCliStatusRecord,
+    /** Answer the next checks differently (the binary file stays the same). */
+    setSignIn: (signIn: NonNullable<FakeCliBehavior['signIn']>) => {
+      writeFileSync(path.join(dir, 'behavior.json'), JSON.stringify({ ...behavior, signIn }));
+    },
     /** How many sign-in status commands ran. */
     statusCalls: () => count('status-calls'),
     /** How many subcommand help probes ran. */

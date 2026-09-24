@@ -228,11 +228,14 @@ JSON`). Missing cloud
   "ready" for a non-http(s) `EXAMIFY_LLM_BASE_URL`, and for Claude Code / Codex only "while
   signed in". Claude Code / Codex are asked whether they are signed in
   (`checkAgentCliSignIn`: `claude --setting-sources project auth status` / `codex login
-status`, only after `claude auth --help` / `codex login --help` lists `status`, since an
-  old Claude Code reads `auth status` as a prompt; the generate runner's lockdown; one 5 s
+status`, only after `claude auth --help` / `codex login --help` lists `status` in its
+  Commands list, since an old Claude Code reads `auth status` as a prompt; that answer kept
+  10 min per CLI + invoked path + binary file, never from a failed help run; the generate
+  runner's lockdown; one 5 s
   deadline, and the check stops waiting 1 s later whatever the command does), cached per
   process by `agentCliSignIn` (signed in / unknown 5 min then stale-while-revalidate up to
-  10 min, signed out 30 s then wait, `/onboarding` rechecks; forgotten after a
+  10 min, signed out 30 s then wait, the `/onboarding` page rechecks; student / parent
+  pages ask only the household's CLI, the wizard every found one; forgotten after a
   `provider_auth` generate or a `cli_auth` marking run). Signed out is `not_ready`
   (`needsSignIn`): the dashboard, wizard and exam name `claude auth login` / `codex login`
   and papers leave written questions out; `unknown` (older CLI, timeout) counts as ready,

@@ -56,6 +56,7 @@ export {
 export {
   getProvider,
   AGENT_CLI_BIN_ENV,
+  AGENT_CLI_PROBE_CACHE_MS,
   AGENT_CLI_SIGNIN_TIMEOUT_MS,
   agentCliHome,
   checkAgentCliSignIn,

@@ -46,12 +46,13 @@ const SIGNIN_ARGS: Record<AgentCli, readonly string[]> = {
 };
 
 /**
- * Asked first, once per binary: the subcommand's help must list `status`. A
- * Claude Code before 2.1.40 has no `auth` command and reads `auth status` as
- * a prompt (a whole agent run with the user's own tools and settings), and an
- * older Codex has no `login status`. Help runs nothing on either: an old CLI
- * prints its general help, which lists no `status` command, and the check is
- * `unknown` without running the status command at all.
+ * Asked first (kept a while per CLI and binary, see `probedStatus`): the
+ * subcommand's help must list `status`. A Claude Code before 2.1.40 has no
+ * `auth` command and reads `auth status` as a prompt (a whole agent run with
+ * the user's own tools and settings), and an older Codex has no `login
+ * status`. Help runs nothing on either: an old CLI prints its general help,
+ * which lists no `status` command, and the check is `unknown` without running
+ * the status command at all.
  */
 const SIGNIN_PROBE_ARGS: Record<AgentCli, readonly string[]> = {
   claude: ['auth', '--help'],
@@ -76,14 +77,25 @@ export function helpListsStatus(help: string): boolean {
   return false;
 }
 
-/** Per binary file (its real path, size and mtime, so an upgrade asks again): has `status`. */
-const probedStatus = new Map<string, boolean>();
+/**
+ * How long a help probe's answer is kept. A version manager's shim (Volta,
+ * mise) is one file for every tool it runs and does not change when a tool is
+ * upgraded, so the answer is asked again now and then as well.
+ */
+export const AGENT_CLI_PROBE_CACHE_MS = 10 * 60_000;
 
-function binaryFileKey(bin: string): string | null {
+/** Per CLI, invoked path and binary file: whether it has `status`, and when that was asked. */
+const probedStatus = new Map<string, { hasStatus: boolean; probedAt: number }>();
+
+/**
+ * The CLI, the path it is started by (a shim picks the tool by its name) and
+ * the file behind it (real path, size and mtime, so an upgrade asks again).
+ */
+function probeKey(cli: AgentCli, bin: string): string | null {
   try {
     const real = realpathSync(bin);
     const stat = statSync(real);
-    return `${real}\0${stat.size}\0${stat.mtimeMs}`;
+    return [cli, bin, real, stat.size, stat.mtimeMs].join('\0');
   } catch {
     return null;
   }
@@ -161,12 +173,18 @@ async function askStatus(
       maxBuffer: SIGNIN_MAX_BUFFER,
       captureStderr: true,
     });
-  const fileKey = binaryFileKey(bin);
-  let hasStatus = fileKey ? probedStatus.get(fileKey) : undefined;
-  if (hasStatus === undefined) {
+  const key = probeKey(cli, bin);
+  const cached = key ? probedStatus.get(key) : undefined;
+  let hasStatus: boolean;
+  if (cached && Date.now() - cached.probedAt < AGENT_CLI_PROBE_CACHE_MS) {
+    hasStatus = cached.hasStatus;
+  } else {
     const help = await run(SIGNIN_PROBE_ARGS[cli]);
     hasStatus = helpListsStatus(`${help.stdout}\n${help.stderrTail}`);
-    if (fileKey) probedStatus.set(fileKey, hasStatus);
+    // Help exits 0 on every version (an old CLI prints its general help). A
+    // failed run says nothing about the CLI: not kept, asked again next time.
+    if (help.status !== 0 || !help.stdout.trim()) return null;
+    if (key) probedStatus.set(key, { hasStatus, probedAt: Date.now() });
   }
   return hasStatus ? run(SIGNIN_ARGS[cli]) : null;
 }

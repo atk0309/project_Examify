@@ -377,8 +377,8 @@ only while they are signed in as the user that runs Examify, so Examify asks eac
 empty private folder, Claude Code without that user's own settings, Codex with a private copy
 of its sign-in), cut off after 5 seconds and remembered for a few minutes (a signed-out answer
 for 30 seconds; the setup wizard's page always asks again), so a page rarely waits. It first
-checks that the CLI's help lists that status command, so an older Claude Code, which would
-read `auth status` as a prompt, is never given it. When the answer is "signed out", the
+checks that the CLI's help lists that status command (again every 10 minutes), so an older
+Claude Code, which would read `auth status` as a prompt, is never given it. When the answer is "signed out", the
 parent dashboard, the setup wizard and the exam say so and name the sign-in command
 (`claude auth login` / `codex login`), and papers leave written questions out, as when nothing
 can mark them. A check with no clear answer (an older CLI, a timeout) counts as signed in, as
@@ -451,10 +451,10 @@ Sent to a third party only when you turn the feature on:
   involved; `EXAMIFY_AI_DETECT=0` skips the checks. When `OLLAMA_HOST` (or
   `EXAMIFY_LLM_BASE_URL`) points at another machine, the Ollama option names it: study
   files and written answers then go there.
-- **Sign-in checks.** While a household's AI is Claude Code or Codex (and on the setup
-  wizard's AI step), the app asks the installed CLI whether it is signed in, as above. No
-  family data is involved, and the answer is never shown or logged beyond "signed in" /
-  "not signed in".
+- **Sign-in checks.** The app asks Claude Code / Codex whether they are signed in, as
+  above: the household's own CLI when its pages render, and every installed one whenever
+  the setup wizard loads or runs an action, whatever the AI mode. No family data is
+  involved, and the answer is never shown or logged beyond "signed in" / "not signed in".
 - **Fonts.** Pages load the Newsreader and Hanken Grotesk stylesheet from Google Fonts.
 - **Optional:** Cloudflare Turnstile (`TURNSTILE_ENABLED=1`) and Plausible analytics
   (`PLAUSIBLE_DOMAIN`).

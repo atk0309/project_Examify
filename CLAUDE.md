@@ -787,11 +787,16 @@ project auth status` (JSON `loggedIn`; the option before the subcommand, which r
   the marking run would not have, do not count) / `codex login status` ("Logged in" /
   "Not logged in", on stderr) with the same `agentCliEnv` allowlist, an empty private
   run folder, Codex's staged `CODEX_HOME` (copy-back as above) and the same
-  `agentCliHomeOutsideCheckout` refusal. Before the first status command per binary
-  file (real path + size + mtime, so an upgrade asks again) it runs `claude auth
---help` / `codex login --help` and needs a `status` command listed: a Claude Code
-  before 2.1.40 has no `auth` command and reads `auth status` as a prompt, a whole agent
-  run with the user's own tools, so it is never given one. Both commands share one
+  `agentCliHomeOutsideCheckout` refusal. Before a status command it runs `claude auth
+--help` / `codex login --help` and needs a `status` command in the help's Commands
+  list (`helpListsStatus`; prose and wrapped lines do not count): a Claude Code before
+  2.1.40 has no `auth` command and reads `auth status` as a prompt, a whole agent run
+  with the user's own tools, so it is never given one. The probe's answer is kept per
+  CLI + invoked path + binary file (real path + size + mtime; a version manager's shim
+  is one file for every tool and picks it by name) for 10 min
+  (`AGENT_CLI_PROBE_CACHE_MS`: an upgrade behind an unchanged shim is noticed), and
+  only from a help run that exited 0 with output (a CLI that could not start is asked
+  again next time). Both commands share one
   5 s deadline (`AGENT_CLI_SIGNIN_TIMEOUT_MS`; the process group is killed), and the
   check stops waiting 1 s later even if the output never closes. It never throws:
   not found, a refused CLI folder, no status command, a timeout or an unparseable
@@ -803,11 +808,12 @@ project auth status` (JSON `loggedIn`; the option before the subcommand, which r
   `signed_in` / `unknown` fresh for 5 min, then served stale while one background
   check runs (past 10 min the render waits); `signed_out` fresh for 30 s, then the
   render waits for the new check, so signing in shows on the next load; `recheck`
-  (only the admin's `/onboarding` page) always waits for a new check; one check per
+  (only the admin's `/onboarding` page, `getOnboardingPageSnapshot`) never takes a
+  cached answer and waits for a check (one already running is shared); one check per
   key at a time. A generate that fails `provider_auth` or a marking run that fails
   `cli_auth` calls `forgetAgentCliSignIn(cli)`. Student / parent renders ask only the
-  household backend's CLI (`markingStatusForUser`); the wizard snapshot asks both
-  found CLIs. Never run a status command on a CLI whose help lacks it, never let a
+  household backend's CLI (`markingStatusForUser`); the wizard snapshot (the page and
+  every wizard action) asks both found CLIs, whatever the mode. Never run a status command on a CLI whose help lacks it, never let a
   render wait past the deadline, and never cache a failure's own guess.
 
 These are non-negotiable. Don't "fix" them out.

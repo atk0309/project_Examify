@@ -1,15 +1,18 @@
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   realpathSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
+  AGENT_CLI_PROBE_CACHE_MS,
   AGENT_CLI_SIGNIN_TIMEOUT_MS,
   checkAgentCliSignIn,
   helpListsStatus,
@@ -175,6 +178,13 @@ describe('checkAgentCliSignIn', () => {
     expect(record.env.CLAUDE_CONFIG_DIR).toBe('/srv/claude');
     expect(record.env.TMPDIR).toBe(record.cwd);
     expect(record.env.CLAUDE_CODE_SAFE_MODE).toBe('1');
+    // The help probe before it ran the same way, in the same folder.
+    const help = signedIn.helpRecord();
+    expect(help.argv).toEqual(['auth', '--help']);
+    expect(help.cwd).toBe(record.cwd);
+    expect(help.cwdEntries).toEqual([]);
+    for (const key of SECRET_KEYS) expect(help.env[key]).toBeUndefined();
+    expect(help.env.TMPDIR).toBe(record.cwd);
 
     const signedOut = fakeCli('claude', { mode: 'hang', signIn: 'out' });
     await expect(
@@ -199,6 +209,10 @@ describe('checkAgentCliSignIn', () => {
     expect(record.codexHome).toEqual({ entries: ['auth.json'], auth });
     expect(existsSync(record.cwd)).toBe(false);
     expect(readFileSync(path.join(userHome, 'auth.json'), 'utf8')).toBe(auth);
+    const help = signedIn.helpRecord();
+    expect(help.argv).toEqual(['login', '--help']);
+    for (const key of SECRET_KEYS) expect(help.env[key]).toBeUndefined();
+    expect(help.codexHome).toEqual({ entries: ['auth.json'], auth });
 
     const signedOut = fakeCli('codex', { mode: 'hang', signIn: 'out' });
     await expect(
@@ -218,8 +232,80 @@ describe('checkAgentCliSignIn', () => {
       );
       expect(old.promptRuns()).toBe(0);
       expect(old.statusCalls()).toBe(0);
-      // Its help is asked once per binary.
+      // Its help is asked once per binary, locked down like the rest.
       expect(old.helpCalls()).toBe(1);
+      for (const key of SECRET_KEYS) expect(old.helpRecord().env[key]).toBeUndefined();
+      expect(existsSync(old.helpRecord().cwd)).toBe(false);
+    }
+  });
+
+  it('keeps each CLI’s help answer apart when one shim file starts both', async () => {
+    // A version manager (Volta, mise) links every tool to one shim, which
+    // picks the tool by the name it was started as. Here Codex is current and
+    // Claude Code is old: its `auth status` would be a prompt.
+    const dir = mkdtempSync(path.join(tmpdir(), 'examify-shim-'));
+    const shim = path.join(dir, 'shim');
+    writeFileSync(
+      shim,
+      `#!/usr/bin/env node
+const fs = require('fs');
+const path = require('path');
+const tool = path.basename(process.argv[1]);
+const args = process.argv.slice(2).join(' ');
+fs.appendFileSync(path.join(${JSON.stringify(dir)}, 'calls'), tool + ' ' + args + '\\n');
+if (tool === 'codex' && args === 'login --help') { process.stdout.write('Commands:\\n  status  Show login status\\n'); process.exit(0); }
+if (tool === 'codex' && args === 'login status') { process.stderr.write('Not logged in\\n'); process.exit(1); }
+if (tool === 'claude' && args === 'auth --help') { process.stdout.write('Usage: claude [prompt]\\n\\nCommands:\\n  config  Manage configuration\\n'); process.exit(0); }
+fs.appendFileSync(path.join(${JSON.stringify(dir)}, 'prompt-runs'), args + '\\n');
+process.exit(1);
+`,
+    );
+    chmodSync(shim, 0o755);
+    mkdirSync(path.join(dir, 'bin'));
+    symlinkSync(shim, path.join(dir, 'bin', 'claude'));
+    symlinkSync(shim, path.join(dir, 'bin', 'codex'));
+    const env = hostEnv({
+      EXAMIFY_CLAUDE_BIN: path.join(dir, 'bin', 'claude'),
+      EXAMIFY_CODEX_BIN: path.join(dir, 'bin', 'codex'),
+    });
+    await expect(checkAgentCliSignIn('codex', env)).resolves.toBe('signed_out');
+    await expect(checkAgentCliSignIn('claude', env)).resolves.toBe('unknown');
+    await expect(checkAgentCliSignIn('codex', env)).resolves.toBe('signed_out');
+    expect(existsSync(path.join(dir, 'prompt-runs'))).toBe(false);
+    expect(readFileSync(path.join(dir, 'calls'), 'utf8').trim().split('\n')).toEqual([
+      'codex login --help',
+      'codex login status',
+      'claude auth --help',
+      'codex login status',
+    ]);
+  });
+
+  it('keeps no answer from a help probe that failed, and asks again', async () => {
+    const claude = fakeCli('claude', { mode: 'hang', signIn: 'help-fails' });
+    const env = hostEnv({ EXAMIFY_CLAUDE_BIN: claude.bin });
+    await expect(checkAgentCliSignIn('claude', env)).resolves.toBe('unknown');
+    expect(claude.statusCalls()).toBe(0);
+    // It can start now (say, a newer node on the service PATH): signed out is seen.
+    claude.setSignIn('out');
+    await expect(checkAgentCliSignIn('claude', env)).resolves.toBe('signed_out');
+    expect([claude.helpCalls(), claude.statusCalls()]).toEqual([2, 1]);
+  });
+
+  it('asks the help again after a while, for a CLI upgraded behind the same file', async () => {
+    const codex = fakeCli('codex', { mode: 'hang', signIn: 'old' });
+    const env = hostEnv({ EXAMIFY_CODEX_BIN: codex.bin });
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      await expect(checkAgentCliSignIn('codex', env)).resolves.toBe('unknown');
+      codex.setSignIn('out');
+      vi.setSystemTime(Date.now() + AGENT_CLI_PROBE_CACHE_MS - 1_000);
+      await expect(checkAgentCliSignIn('codex', env)).resolves.toBe('unknown');
+      expect(codex.helpCalls()).toBe(1);
+      vi.setSystemTime(Date.now() + 1_000);
+      await expect(checkAgentCliSignIn('codex', env)).resolves.toBe('signed_out');
+      expect(codex.helpCalls()).toBe(2);
+    } finally {
+      vi.useRealTimers();
     }
   });
 

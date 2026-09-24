@@ -76,18 +76,23 @@ get an initial response within a week.
   address (localhost, 127.x.x.x, `[::1]`); for any other it names the host that
   study files and written answers would go to. `EXAMIFY_AI_DETECT=0` skips the
   checks.
-- **App sign-in checks.** While a household's AI is Claude Code or Codex, and on the
-  setup wizard's AI step, the app runs `claude --setting-sources project auth status` /
-  `codex login status` as the user that runs Examify, locked down like a marking run:
+- **App sign-in checks.** The app runs `claude --setting-sources project auth status` /
+  `codex login status` as the user that runs Examify: for a household whose AI is Claude
+  Code or Codex, when its student and parent pages render (that CLI only); and for every
+  Claude Code / Codex it finds, whatever the mode, whenever the household admin's setup
+  wizard loads or one of its actions runs. Each run is locked down like a marking run:
   the env allowlist (no Examify secrets or API keys), an empty private temp folder,
   Codex with a private copy of its `auth.json` only, 5 seconds before the process
   group is killed (and the app stops waiting a second later whatever the command
-  does). It runs the status command only when the subcommand's help lists it: a
-  Claude Code before 2.1.40 would read `auth status` as a prompt. Answers are cached
-  per process (5 minutes, a signed-out one 30 seconds), so page renders cannot be
-  used to spawn processes. The output (it names the account) is parsed and dropped:
-  only "signed in", "not signed in" or "unknown" is kept, never logged or sent to
-  the browser.
+  does). It runs the status command only when the subcommand's help lists it (asked
+  first, and again every 10 minutes): a Claude Code before 2.1.40 would read
+  `auth status` as a prompt. Answers are cached per process (5 minutes, served stale
+  up to 10 while one background check runs; a signed-out one 30 seconds), with one
+  check per CLI at a time, so student and parent pages start at most one check per
+  CLI per window. The wizard page (household admin only, while content setup is
+  unfinished) asks again on each load. The output (it names the account) is parsed
+  and dropped: only "signed in", "not signed in" or "unknown" is kept, never logged or
+  sent to the browser.
 - **Claude Code / Codex generate** runs `claude -p` / `codex exec` on the host as
   the user that runs Examify, with that CLI's own sign-in. Study files are
   untrusted input, so the CLI gets no tools (no file reads, commands or web
