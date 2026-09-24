@@ -212,22 +212,22 @@ function errorCopy(error: OnboardingActionError, aiMode?: OnboardingAiMode | nul
   }
 }
 
-function modeConfigured(mode: OnboardingAiMode, snapshot: OnboardingSnapshot): boolean {
+/** A mode card's badge: `Configured` for keys and settings; a CLI's is its sign-in (`agentCliBadge`). */
+function modeBadge(mode: OnboardingAiMode, snapshot: OnboardingSnapshot): string | null {
   switch (mode) {
     case 'cloud':
-      return snapshot.anthropicConfigured;
+      return snapshot.anthropicConfigured ? 'Configured' : null;
     case 'cloud-openai':
-      return snapshot.openaiConfigured;
+      return snapshot.openaiConfigured ? 'Configured' : null;
     case 'claude-cli':
-      return snapshot.claudeCliFound && snapshot.claudeCliSignIn !== 'signed_out';
     case 'codex-cli':
-      return snapshot.codexCliFound && snapshot.codexCliSignIn !== 'signed_out';
+      return agentCliBadge(mode, snapshot);
     case 'local-agent':
-      return snapshot.localHttpConfigured && snapshot.localModelConfigured;
+      return snapshot.localHttpConfigured && snapshot.localModelConfigured ? 'Configured' : null;
     case 'local-cli':
-      return snapshot.localCmdConfigured;
+      return snapshot.localCmdConfigured ? 'Configured' : null;
     case 'skip-stub':
-      return true;
+      return 'Configured';
   }
 }
 
@@ -1704,11 +1704,7 @@ function AiStep({
       <div className="wizard-modes" role="radiogroup" aria-label="AI setup mode">
         {(Object.keys(AI_COPY) as OnboardingAiMode[]).map((mode) => {
           const selected = snapshot.aiMode === mode;
-          const badge = isOnboardingAgentCliMode(mode)
-            ? agentCliBadge(mode, snapshot)
-            : modeConfigured(mode, snapshot)
-              ? 'Configured'
-              : null;
+          const badge = modeBadge(mode, snapshot);
           return (
             <button
               key={mode}

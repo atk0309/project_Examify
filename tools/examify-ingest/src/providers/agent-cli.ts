@@ -159,7 +159,11 @@ export function agentCliHome(
 ): string {
   const configured = envValue(env, CLI_HOME[cli].env, platform)?.trim();
   if (configured) return path.resolve(configured);
-  return path.join(envValue(env, 'HOME', platform)?.trim() || os.homedir(), CLI_HOME[cli].dir);
+  // A runtime folder of this user, not part of the build: nothing to trace.
+  return path.join(
+    /*turbopackIgnore: true*/ envValue(env, 'HOME', platform)?.trim() || os.homedir(),
+    CLI_HOME[cli].dir,
+  );
 }
 
 /**
