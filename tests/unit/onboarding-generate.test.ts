@@ -1852,34 +1852,40 @@ describe('onboarding generate: Claude Code, Codex and local transports', () => {
     });
   });
 
-  it('maps a Codex that is not signed in to provider_auth', async () => {
-    const { fakeCli } = await import('../helpers/fake-agent-cli');
-    const { generateOnboardingSubject } = await import('@/lib/onboarding-generate');
-    const root = tempRoot();
-    seedSubject(root);
-    vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const { agentCliSignIn, resetAgentCliSignInCacheForTests } =
-      await import('@/lib/agent-cli-sign-in');
-    const { onboardingHostEnv } = await import('@/lib/onboarding');
-    resetAgentCliSignInCacheForTests();
-    // Its status says signed in, but the run is refused as not signed in.
-    const fake = fakeCli('codex', { mode: 'not-signed-in', signIn: 'in' });
-    const result = await withProcessEnv({ EXAMIFY_CODEX_BIN: fake.bin }, async () => {
-      await expect(agentCliSignIn('codex', onboardingHostEnv())).resolves.toBe('signed_in');
-      const generated = await generateOnboardingSubject({
-        subjectId: 'history',
-        provider: 'codex-cli',
-        seed: 0,
-        root,
-        force: true,
+  it.each([
+    ['claude-cli', 'claude', 'EXAMIFY_CLAUDE_BIN'],
+    ['codex-cli', 'codex', 'EXAMIFY_CODEX_BIN'],
+  ] as const)(
+    'maps a %s that is not signed in to provider_auth, and asks its sign-in again',
+    async (provider, cli, binEnv) => {
+      const { fakeCli } = await import('../helpers/fake-agent-cli');
+      const { generateOnboardingSubject } = await import('@/lib/onboarding-generate');
+      const { agentCliSignIn, resetAgentCliSignInCacheForTests } =
+        await import('@/lib/agent-cli-sign-in');
+      const { onboardingHostEnv } = await import('@/lib/onboarding');
+      const root = tempRoot();
+      seedSubject(root);
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      resetAgentCliSignInCacheForTests();
+      // Its status says signed in, but the run is refused as not signed in.
+      const fake = fakeCli(cli, { mode: 'not-signed-in', signIn: 'in' });
+      const result = await withProcessEnv({ [binEnv]: fake.bin }, async () => {
+        await expect(agentCliSignIn(cli, onboardingHostEnv())).resolves.toBe('signed_in');
+        const generated = await generateOnboardingSubject({
+          subjectId: 'history',
+          provider,
+          seed: 0,
+          root,
+          force: true,
+        });
+        // The cached "signed in" is forgotten: the next page asks again.
+        await agentCliSignIn(cli, onboardingHostEnv());
+        return generated;
       });
-      // The cached "signed in" is forgotten: the next page asks again.
-      await agentCliSignIn('codex', onboardingHostEnv());
-      return generated;
-    });
-    expect(result).toMatchObject({ ok: false, reason: 'provider_auth' });
-    expect(fake.statusCalls()).toBe(2);
-  });
+      expect(result).toMatchObject({ ok: false, reason: 'provider_auth' });
+      expect(fake.statusCalls()).toBe(2);
+    },
+  );
 
   it('Local endpoint uses only the URL (never the command) and needs EXAMIFY_LLM_MODEL', async () => {
     const { generateOnboardingSubject } = await import('@/lib/onboarding-generate');

@@ -59,6 +59,7 @@ export {
   AGENT_CLI_SIGNIN_TIMEOUT_MS,
   agentCliHome,
   checkAgentCliSignIn,
+  helpListsStatus,
   parseClaudeAuthStatus,
   parseCodexLoginStatus,
   type AgentCliSignIn,

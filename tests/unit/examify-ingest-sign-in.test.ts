@@ -12,6 +12,7 @@ import { describe, expect, it } from 'vitest';
 import {
   AGENT_CLI_SIGNIN_TIMEOUT_MS,
   checkAgentCliSignIn,
+  helpListsStatus,
   parseClaudeAuthStatus,
   parseCodexLoginStatus,
   safeTempRoot,
@@ -30,6 +31,20 @@ function hostEnv(extra: { [key: string]: string | undefined } = {}) {
     OPENAI_API_KEY: 'sk-openai-must-not-leak',
     ...extra,
   };
+}
+
+/**
+ * A fake whose help probe has already been answered (cached per binary file),
+ * then set to `signIn`: the deadline under test covers the status command only.
+ */
+async function warmedFake(cli: 'claude' | 'codex', signIn: 'hang' | 'orphan') {
+  const fake = fakeCli(cli, { mode: 'hang', signIn: 'in' });
+  const binEnv = cli === 'claude' ? 'EXAMIFY_CLAUDE_BIN' : 'EXAMIFY_CODEX_BIN';
+  await expect(checkAgentCliSignIn(cli, hostEnv({ [binEnv]: fake.bin }))).resolves.toBe(
+    'signed_in',
+  );
+  writeFileSync(path.join(fake.dir, 'behavior.json'), JSON.stringify({ mode: 'hang', signIn }));
+  return fake;
 }
 
 const SECRET_KEYS = [
@@ -66,6 +81,77 @@ describe('sign-in status output', () => {
     expect(parseCodexLoginStatus('Not logged in\n')).toBe('signed_out');
     expect(parseCodexLoginStatus("error: unrecognized subcommand 'status'")).toBe('unknown');
     expect(parseCodexLoginStatus('')).toBe('unknown');
+  });
+});
+
+describe('the status command in a CLI’s help', () => {
+  const CLAUDE_AUTH_HELP = [
+    'Usage: claude auth [options] [command]',
+    '',
+    'Manage authentication',
+    '',
+    'Options:',
+    '  -h, --help        Display help for command',
+    '',
+    'Commands:',
+    '  help [command]    display help for command',
+    '  login [options]   Sign in to your Anthropic account',
+    '  logout            Log out from your Anthropic account',
+    '  status [options]  Show authentication status',
+    '',
+  ].join('\n');
+  const CODEX_LOGIN_HELP = [
+    'Manage login',
+    '',
+    'Usage: codex login [OPTIONS] [COMMAND]',
+    '',
+    'Commands:',
+    '  status  Show login status',
+    '  help    Print this message or the help of the given subcommand(s)',
+    '',
+    'Options:',
+    '  -c, --config <key=value>',
+    '          Override a configuration value',
+  ].join('\n');
+
+  it('finds it in the Commands list of `claude auth --help` / `codex login --help`', () => {
+    expect(helpListsStatus(CLAUDE_AUTH_HELP)).toBe(true);
+    expect(helpListsStatus(CODEX_LOGIN_HELP)).toBe(true);
+    expect(helpListsStatus(CODEX_LOGIN_HELP.replace(/\n/g, '\r\n'))).toBe(true);
+  });
+
+  it('does not read one into an old CLI’s general help or prose', () => {
+    // An old Claude Code prints its general help for `claude auth --help`.
+    const general = [
+      'Usage: claude [options] [command] [prompt]',
+      '',
+      'Claude Code - starts an interactive session by default; it can run git status.',
+      '',
+      'Arguments:',
+      '  prompt                Your prompt',
+      '',
+      'Options:',
+      '  status                (an option line that starts with status)',
+      '',
+      'Commands:',
+      '  config                Manage configuration',
+      '  mcp                   Configure and manage MCP servers, and show their',
+      '                        status',
+      '  doctor                Check the health of your installation',
+    ].join('\n');
+    expect(helpListsStatus(general)).toBe(false);
+    // An older Codex: `login` without subcommands.
+    const oldCodex = [
+      'Manage login',
+      '',
+      'Usage: codex login [OPTIONS]',
+      '',
+      'Options:',
+      '      --api-key <API_KEY>  status of the key is not checked',
+      '  -h, --help               Print help',
+    ].join('\n');
+    expect(helpListsStatus(oldCodex)).toBe(false);
+    expect(helpListsStatus('')).toBe(false);
   });
 });
 
@@ -150,7 +236,7 @@ describe('checkAgentCliSignIn', () => {
   });
 
   it('is unknown when the CLI gives no answer in time', async () => {
-    const hang = fakeCli('claude', { mode: 'hang', signIn: 'hang' });
+    const hang = await warmedFake('claude', 'hang');
     const started = Date.now();
     await expect(
       checkAgentCliSignIn('claude', hostEnv({ EXAMIFY_CLAUDE_BIN: hang.bin }), {
@@ -167,7 +253,8 @@ describe('checkAgentCliSignIn', () => {
   });
 
   it('stops waiting soon after the deadline even when the output never closes', async () => {
-    const orphan = fakeCli('codex', { mode: 'hang', signIn: 'orphan' });
+    const orphan = await warmedFake('codex', 'orphan');
+    const pidFile = path.join(orphan.dir, 'orphan.pid');
     const started = Date.now();
     try {
       await expect(
@@ -179,9 +266,26 @@ describe('checkAgentCliSignIn', () => {
       // The private run folder (with its copy of the sign-in) is removed anyway.
       expect(existsSync(orphan.statusRecord().cwd)).toBe(false);
     } finally {
-      const pid = Number(readFileSync(path.join(orphan.dir, 'orphan.pid'), 'utf8'));
+      const pid = existsSync(pidFile) ? Number(readFileSync(pidFile, 'utf8')) : 0;
       if (pid > 0) process.kill(pid, 'SIGKILL');
     }
+  });
+
+  it('copies a sign-in Codex refreshed during its check back, and creates none', async () => {
+    const userHome = mkdtempSync(path.join(tmpdir(), 'examify-codex-home-'));
+    writeFileSync(path.join(userHome, 'auth.json'), '{"tokens":{"refresh_token":"r1"}}');
+    const refreshed = '{"tokens":{"refresh_token":"r2"}}';
+    const fake = fakeCli('codex', { mode: 'hang', signIn: 'in', refreshAuth: refreshed });
+    await expect(
+      checkAgentCliSignIn('codex', hostEnv({ EXAMIFY_CODEX_BIN: fake.bin, CODEX_HOME: userHome })),
+    ).resolves.toBe('signed_in');
+    expect(readFileSync(path.join(userHome, 'auth.json'), 'utf8')).toBe(refreshed);
+
+    const empty = mkdtempSync(path.join(tmpdir(), 'examify-codex-home-'));
+    await expect(
+      checkAgentCliSignIn('codex', hostEnv({ EXAMIFY_CODEX_BIN: fake.bin, CODEX_HOME: empty })),
+    ).resolves.toBe('signed_in');
+    expect(existsSync(path.join(empty, 'auth.json'))).toBe(false);
   });
 
   it('is unknown, and runs nothing, when the CLI is not found', async () => {

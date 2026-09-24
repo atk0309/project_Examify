@@ -652,6 +652,11 @@ export async function getOnboardingSnapshot(
   };
 }
 
+/** The snapshot the wizard page renders with: it always asks Claude Code / Codex again. */
+export function getOnboardingPageSnapshot(householdId: number): Promise<OnboardingSnapshot> {
+  return getOnboardingSnapshot(householdId, undefined, { recheckSignIn: true });
+}
+
 function subjectMetaPayload(
   id: string,
   label: string,

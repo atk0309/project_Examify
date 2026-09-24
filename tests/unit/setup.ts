@@ -33,6 +33,9 @@ Reflect.set(process.env, 'EXAMIFY_CODEX_BIN', path.join(TMP_ROOT, 'no-agent-cli'
 const NO_CLI_HOME = path.join(os.tmpdir(), 'examify-unit-no-agent-cli-home');
 Reflect.set(process.env, 'CLAUDE_CONFIG_DIR', path.join(NO_CLI_HOME, 'claude'));
 Reflect.set(process.env, 'CODEX_HOME', path.join(NO_CLI_HOME, 'codex'));
+// A headless sign-in token turns "signed out" into "unknown": never a developer's.
+Reflect.deleteProperty(process.env, 'CLAUDE_CODE_OAUTH_TOKEN');
+Reflect.deleteProperty(process.env, 'CODEX_API_KEY');
 if (!process.env.MAIL_OUTBOX_DIR) {
   Reflect.set(process.env, 'MAIL_OUTBOX_DIR', path.join(TMP_ROOT, `outbox-unit-${process.pid}`));
 }

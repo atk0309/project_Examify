@@ -39,6 +39,7 @@ export { runCodexCliText, type CodexCliTextRequest } from './codex-cli';
 export {
   AGENT_CLI_SIGNIN_TIMEOUT_MS,
   checkAgentCliSignIn,
+  helpListsStatus,
   parseClaudeAuthStatus,
   parseCodexLoginStatus,
   type AgentCliSignIn,

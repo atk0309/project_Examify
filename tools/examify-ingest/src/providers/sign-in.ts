@@ -58,9 +58,22 @@ const SIGNIN_PROBE_ARGS: Record<AgentCli, readonly string[]> = {
   codex: ['login', '--help'],
 };
 
-/** Whether help text lists a `status` command (`  status [options]  Show …`). */
+/**
+ * Whether help text lists a `status` command in its commands list
+ * (`Commands:` then `  status [options]  Show …`). Prose elsewhere (`git status`,
+ * a wrapped description that starts with "status") does not count: an old CLI's
+ * general help must never read as having one.
+ */
 export function helpListsStatus(help: string): boolean {
-  return /^\s+status\b/m.test(help);
+  let inCommands = false;
+  for (const line of help.split(/\r?\n/)) {
+    if (/^\S/.test(line)) {
+      inCommands = /^(sub)?commands:\s*$/i.test(line.trim());
+    } else if (inCommands && /^ {1,4}status\b/.test(line)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /** Per binary file (its real path, size and mtime, so an upgrade asks again): has `status`. */

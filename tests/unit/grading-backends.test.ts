@@ -743,14 +743,19 @@ describe('the household’s Claude Code / Codex sign-in on this server', () => {
     resetLegacyImportLatch();
     resetAgentCliSignInCacheForTests();
     saved = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
+    // Never the checkout's own .env (it could name a CLI or pass a sign-in token).
+    const { setEnvStoreRootForTests } = await import('@/lib/env-store');
+    setEnvStoreRootForTests(mkdtempSync(path.join(tmpdir(), 'examify-env-store-')));
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     for (const key of ENV_KEYS) {
       if (saved[key] === undefined) delete process.env[key];
       else process.env[key] = saved[key];
     }
     resetAgentCliSignInCacheForTests();
+    const { setEnvStoreRootForTests } = await import('@/lib/env-store');
+    setEnvStoreRootForTests(null);
   });
 
   async function household(aiMode: 'claude-cli' | 'codex-cli' | 'cloud') {
@@ -846,7 +851,7 @@ describe('the household’s Claude Code / Codex sign-in on this server', () => {
   });
 
   it('shows both CLIs’ sign-in in the wizard snapshot', async () => {
-    const { getOnboardingSnapshot } = await import('@/lib/onboarding');
+    const { getOnboardingPageSnapshot, getOnboardingSnapshot } = await import('@/lib/onboarding');
     const claude = fakeCli('claude', { mode: 'hang', signIn: 'out' });
     const codex = fakeCli('codex', { mode: 'hang', signIn: 'in' });
     process.env.EXAMIFY_CLAUDE_BIN = claude.bin;
@@ -862,14 +867,16 @@ describe('the household’s Claude Code / Codex sign-in on this server', () => {
     // The wizard's actions use the cached answer; the wizard page asks again.
     await getOnboardingSnapshot(host.householdId);
     expect([claude.statusCalls(), codex.statusCalls()]).toEqual([1, 1]);
-    await getOnboardingSnapshot(host.householdId, undefined, { recheckSignIn: true });
+    await getOnboardingPageSnapshot(host.householdId);
     expect([claude.statusCalls(), codex.statusCalls()]).toEqual([2, 2]);
+    await getOnboardingPageSnapshot(host.householdId);
+    expect([claude.statusCalls(), codex.statusCalls()]).toEqual([3, 3]);
 
     // Not found: nothing to ask, so unknown.
     resetAgentCliSignInCacheForTests();
     process.env.EXAMIFY_CLAUDE_BIN = path.join(mkdtempSync(path.join(tmpdir(), 'none-')), 'x');
     const missing = await getOnboardingSnapshot(host.householdId);
     expect(missing).toMatchObject({ claudeCliFound: false, claudeCliSignIn: 'unknown' });
-    expect(claude.statusCalls()).toBe(2);
+    expect(claude.statusCalls()).toBe(3);
   });
 });

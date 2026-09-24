@@ -16,7 +16,7 @@ import type { HouseholdMemberView } from '@/lib/household-types';
 import {
   adminCanOpenOnboarding,
   getOnboardingForUser,
-  getOnboardingSnapshot,
+  getOnboardingPageSnapshot,
 } from '@/lib/onboarding';
 
 export const dynamic = 'force-dynamic';
@@ -60,9 +60,7 @@ export default async function OnboardingPage() {
     <div className="stage">
       <div className="app-frame app-frame-wizard">
         <OnboardingWizard
-          snapshot={await getOnboardingSnapshot(info.householdId, undefined, {
-            recheckSignIn: true,
-          })}
+          snapshot={await getOnboardingPageSnapshot(info.householdId)}
           pendingInvites={pendingInvites}
           members={members}
           canInvite={canInvite(session.userId)}

@@ -10,7 +10,10 @@ export type FakeCliBehavior = (
   | { mode: 'crash'; stderr: string; code: number }
   | { mode: 'hang' }
 ) & {
-  /** Codex only: what it writes to $CODEX_HOME/auth.json (a refreshed sign-in) before answering. */
+  /**
+   * Codex only: what it writes to $CODEX_HOME/auth.json (a refreshed sign-in)
+   * before answering, on a run and on its sign-in check.
+   */
   refreshAuth?: string;
   /**
    * How it answers its sign-in check (`claude auth status` / `codex login
@@ -68,7 +71,23 @@ const statusArgs = name === 'claude' ? ['auth', 'status'] : ['login', 'status'];
 if (args.length === 2 && args[0] === statusArgs[0] && args[1] === '--help') {
   fs.appendFileSync(path.join(dir, 'help-calls'), 'x');
   if (behavior.signIn === 'old') {
-    process.stdout.write('Usage: ' + name + ' [options] [command] [prompt]\\n\\nCommands:\\n  config  Manage configuration\\n  mcp     Configure MCP servers\\n');
+    // An old CLI's general help: "status" in prose, an option and a wrapped
+    // description, but no status command in its Commands list.
+    process.stdout.write([
+      'Usage: ' + name + ' [options] [command] [prompt]',
+      '',
+      'Starts an interactive session by default; it can read git status and your files.',
+      '',
+      'Options:',
+      '  -c, --continue  Continue the most recent conversation',
+      '  status          Not a command: an option line',
+      '',
+      'Commands:',
+      '  config          Manage configuration',
+      '  mcp             Configure MCP servers and show their',
+      '                  status in a list',
+      '',
+    ].join('\\n'));
   } else if (name === 'claude') {
     process.stdout.write('Usage: claude auth [options] [command]\\n\\nManage authentication\\n\\nCommands:\\n  login [options]   Sign in to your Anthropic account\\n  logout            Log out from your Anthropic account\\n  status [options]  Show authentication status\\n');
   } else {
@@ -92,6 +111,9 @@ if (args.length >= 2 && args[args.length - 2] === statusArgs[0] && args[args.len
   };
   fs.writeFileSync(path.join(dir, 'status-record.json'), JSON.stringify(record));
   fs.appendFileSync(path.join(dir, 'status-calls'), 'x');
+  if (name === 'codex' && home && behavior.refreshAuth !== undefined) {
+    fs.writeFileSync(auth, behavior.refreshAuth);
+  }
   const signIn = behavior.signIn || 'in';
   if (signIn === 'hang') { setInterval(() => {}, 1000); return; }
   if (signIn === 'orphan') {
