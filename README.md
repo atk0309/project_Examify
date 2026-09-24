@@ -150,13 +150,26 @@ appears in no dashboard.
 ### Installer (recommended)
 
 `install.sh` asks a few questions (site URL, family data folder, auth mode, mail for
-invite-accept OTP, optional Turnstile, and Anthropic / OpenAI keys), generates the
-secrets, writes `.env`, installs, migrates, and builds. OpenAI, Codex and local-endpoint
+invite-accept OTP, optional Turnstile, and which AI to use), generates the secrets,
+writes `.env`, installs, migrates, and builds. OpenAI, Codex and local-endpoint
 generate from PDFs also need `pdftoppm` (from **poppler** / `poppler-utils`) on `PATH`.
 To build banks with your Claude or ChatGPT plan instead of an API key, install
 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) or Codex **as the user
-that runs Examify** and sign in once (`claude`, or `codex login`); the setup wizard finds
-it on `PATH` or in `~/.local/bin` (or set `EXAMIFY_CLAUDE_BIN` / `EXAMIFY_CODEX_BIN`).
+that runs Examify** and sign in once (`claude auth login`, or `codex login`); the setup
+wizard finds it on `PATH` or in `~/.local/bin` (or set `EXAMIFY_CLAUDE_BIN` /
+`EXAMIFY_CODEX_BIN`).
+
+**Which AI.** A new interactive install looks for what this user already has: Claude
+Code and Codex (and whether each is signed in) and Ollama (its models, at `OLLAMA_HOST`
+or `127.0.0.1:11434`). It lists them and offers them next to an API key or "decide
+later", defaulting to a signed-in Claude Code, then a signed-in Codex, then Ollama. The
+pick is written as `EXAMIFY_AI_MODE` with what it needs (the CLI's full path when it is
+not in `~/.local/bin`; Ollama's address and model). A household uses it for banks and
+marking until its admin picks another mode in the setup wizard. An Anthropic or OpenAI
+key typed at the key questions picks that mode the same way. These checks only ask
+each tool whether it is signed in and Ollama for its model list; each is cut off after
+15 seconds. `EXAMIFY_AI_DETECT=0` skips them, and a run that finds an existing `.env`
+does not run them.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/atk0309/project_Examify/main/install.sh | bash
@@ -415,6 +428,9 @@ Sent to a third party only when you turn the feature on:
   model text or your files.
 - **Mail.** Invite, sign-in and reset codes go through Resend or your SMTP server. The
   local outbox keeps them on disk.
+- **Installer checks.** A new interactive install asks Claude Code and Codex (when
+  installed) whether they are signed in, and Ollama for its model list. No family data is
+  involved; `EXAMIFY_AI_DETECT=0` skips the checks.
 - **Fonts.** Pages load the Newsreader and Hanken Grotesk stylesheet from Google Fonts.
 - **Optional:** Cloudflare Turnstile (`TURNSTILE_ENABLED=1`) and Plausible analytics
   (`PLAUSIBLE_DOMAIN`).
@@ -537,6 +553,9 @@ the server's `PATH` or in `~/.local/bin`) and `EXAMIFY_CLAUDE_MODEL` /
 `EXAMIFY_CODEX_MODEL` (else the CLI's own default) for Claude Code / Codex;
 `EXAMIFY_LLM_BASE_URL` + `EXAMIFY_LLM_MODEL` (e.g. `http://127.0.0.1:11434` and a model
 `ollama list` shows) for a local endpoint; `EXAMIFY_INGEST_LOCAL_CMD` for your own command.
+`EXAMIFY_AI_MODE` (one of the wizard's modes: `cloud`, `cloud-openai`, `claude-cli`,
+`codex-cli`, `local-agent`, `local-cli`, `skip-stub`; another value fails boot) is the
+mode a household uses until its admin picks one; the installer writes it.
 
 ## Deploy
 

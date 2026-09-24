@@ -498,6 +498,36 @@ describe('saveAttempt marks with the household AI mode', () => {
     }
   });
 
+  it("marks with the installer's EXAMIFY_AI_MODE until the household picks a mode", async () => {
+    const { bootstrapHousehold } = await import('@/lib/households');
+    const { getOnboardingSnapshot, installerAiMode, markingBackendForUser, saveOnboardingState } =
+      await import('@/lib/onboarding');
+    const host = bootstrapHousehold({ email: 'pat@example.com', householdName: 'Ours' });
+    if (!host.ok) throw new Error('bootstrap');
+    const original = process.env.EXAMIFY_AI_MODE;
+    try {
+      process.env.EXAMIFY_AI_MODE = 'codex-cli';
+      expect(markingBackendForUser(host.userId)).toBe('codex-cli');
+      let snap = getOnboardingSnapshot(host.householdId);
+      expect(snap.aiMode).toBe('codex-cli');
+      expect(snap.aiModeFromInstaller).toBe(true);
+
+      // Unknown or blank values count as unset.
+      expect(installerAiMode({ EXAMIFY_AI_MODE: 'claude' })).toBeNull();
+      expect(installerAiMode({ EXAMIFY_AI_MODE: '  ' })).toBeNull();
+      expect(installerAiMode({ EXAMIFY_AI_MODE: ' local-agent ' })).toBe('local-agent');
+
+      saveOnboardingState(host.householdId, { aiMode: 'cloud-openai' });
+      expect(markingBackendForUser(host.userId)).toBe('openai');
+      snap = getOnboardingSnapshot(host.householdId);
+      expect(snap.aiMode).toBe('cloud-openai');
+      expect(snap.aiModeFromInstaller).toBe(false);
+    } finally {
+      if (original === undefined) delete process.env.EXAMIFY_AI_MODE;
+      else process.env.EXAMIFY_AI_MODE = original;
+    }
+  });
+
   it('does not call a local endpoint with a mistyped address ready', async () => {
     const { bootstrapHousehold } = await import('@/lib/households');
     const { markingStatusForUser, saveOnboardingState } = await import('@/lib/onboarding');

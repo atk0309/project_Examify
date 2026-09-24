@@ -76,6 +76,7 @@ function snapshot(overrides: Partial<OnboardingSnapshot> = {}): OnboardingSnapsh
     builtinSubjects: [{ id: 'biology', label: 'Biology' }],
     dataDirDisplay: 'data',
     aiMode: null,
+    aiModeFromInstaller: false,
     replaceSample: false,
     hasDryRun: false,
     hasApplied: false,
@@ -272,6 +273,34 @@ describe('OnboardingWizard majors UI', () => {
     expect(screen.queryByTestId('wizard-anthropic-key')).toBeNull();
     expect(screen.getByTestId('wizard-ai-grading')).toHaveTextContent(copy);
   });
+
+  it.each([
+    [true, 'The installer picked Claude Code (your Claude plan) from what it found on this server'],
+    [false, null],
+  ] as const)(
+    "names the installer's pick until the household chooses (%s)",
+    (fromInstaller, copy) => {
+      render(
+        <OnboardingWizard
+          snapshot={snapshot({
+            aiMode: 'claude-cli',
+            aiModeFromInstaller: fromInstaller,
+            claudeCliFound: true,
+          })}
+          pendingInvites={[]}
+          members={[]}
+          canInvite={false}
+          authMode="magic-link"
+        />,
+      );
+      fireEvent.click(screen.getByTestId('wizard-get-started'));
+      fireEvent.click(screen.getByTestId('wizard-next'));
+      fireEvent.click(screen.getByTestId('wizard-next'));
+      expect(screen.getByTestId('wizard-ai-claude-cli')).toHaveAttribute('aria-checked', 'true');
+      if (copy) expect(screen.getByTestId('wizard-ai-installer')).toHaveTextContent(copy);
+      else expect(screen.queryByTestId('wizard-ai-installer')).toBeNull();
+    },
+  );
 
   it('keeps Clear and Rotate visible for a boot test sentinel', async () => {
     setOnboardingAiModeAction.mockResolvedValue({

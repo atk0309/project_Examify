@@ -37,6 +37,13 @@
 # The running app never writes into tracked checkout content (inside it, only
 # ./data and .env).
 #
+# AI: a new interactive install looks for Claude Code, Codex and Ollama for
+# this user (signed in? which models?) and offers them next to the API keys.
+# The pick is written as EXAMIFY_AI_MODE, which a household uses until its
+# admin picks a mode in /onboarding. EXAMIFY_AI_DETECT=0 skips the checks.
+# Non-interactive runs write a host EXAMIFY_AI_MODE, EXAMIFY_CLAUDE_BIN,
+# EXAMIFY_CODEX_BIN, EXAMIFY_LLM_BASE_URL and EXAMIFY_LLM_MODEL as given.
+#
 # Upgrading (never manages services; stop the server first):
 #   ./install.sh --upgrade
 #   First upgrade of an older install: curl -fsSL …/install.sh | bash -s -- --upgrade
@@ -97,6 +104,13 @@ Non-interactive (CI / automation):
 Family data folder (EXAMIFY_DATA_DIR, default ./data): database, mail
 outbox, uploaded study PDFs, subjects, generated questions and answer keys.
 Pick a folder outside the checkout if you might ever delete and re-clone it.
+
+AI: a new interactive install looks for Claude Code, Codex and Ollama for
+this user (signed in? which models?) and offers them next to the API keys.
+The pick is written as EXAMIFY_AI_MODE, which a household uses until its
+admin picks a mode in /onboarding. EXAMIFY_AI_DETECT=0 skips the checks.
+Non-interactive runs write a host EXAMIFY_AI_MODE, EXAMIFY_CLAUDE_BIN,
+EXAMIFY_CODEX_BIN, EXAMIFY_LLM_BASE_URL and EXAMIFY_LLM_MODEL as given.
 
 Upgrading (the installer never starts or stops services; stop the server first):
   ./install.sh --upgrade
@@ -1150,6 +1164,22 @@ write_env() {
     if [ -n "${OPENAI_API_KEY-}" ]; then
       printf 'OPENAI_API_KEY=%s\n' "$OPENAI_API_KEY"
     fi
+    if [ -n "${EXAMIFY_AI_MODE-}" ]; then
+      printf '%s\n' '# The AI a household uses until its admin picks one in /onboarding.'
+      printf 'EXAMIFY_AI_MODE=%s\n' "$EXAMIFY_AI_MODE"
+    fi
+    if [ -n "${EXAMIFY_CLAUDE_BIN-}" ]; then
+      printf 'EXAMIFY_CLAUDE_BIN=%s\n' "$EXAMIFY_CLAUDE_BIN"
+    fi
+    if [ -n "${EXAMIFY_CODEX_BIN-}" ]; then
+      printf 'EXAMIFY_CODEX_BIN=%s\n' "$EXAMIFY_CODEX_BIN"
+    fi
+    if [ -n "${EXAMIFY_LLM_BASE_URL-}" ]; then
+      printf 'EXAMIFY_LLM_BASE_URL=%s\n' "$EXAMIFY_LLM_BASE_URL"
+    fi
+    if [ -n "${EXAMIFY_LLM_MODEL-}" ]; then
+      printf 'EXAMIFY_LLM_MODEL=%s\n' "$EXAMIFY_LLM_MODEL"
+    fi
     printf '\n'
     printf '%s\n' '# Mail: magic-link, local-otp, and password-mode invite accept.'
     printf 'MAIL_TRANSPORT=%s\n' "${MAIL_TRANSPORT}"
@@ -2022,6 +2052,7 @@ main() {
     fi
     echo "     Auth mode:          ${AUTH_MODE}"
     echo "     Family data folder: ${DATA_DIR_ABS}"
+    ai_mode_summary
     echo
     echo "Invite family from the parent dashboard after setup."
     if [ "$AUTH_MODE" = "password" ]; then
@@ -2040,6 +2071,420 @@ main() {
     echo "OpenAI / PDF generate: install pdftoppm (poppler-utils) before using Cloud generate."
   fi
   echo "Back up the family data folder with: node scripts/examify-data.mjs backup"
+}
+
+# --- AI tools: what the installing user already has ---
+# A new interactive install looks for Claude Code, Codex and Ollama as this
+# user (the app runs their CLIs as the same user), says what it found, and
+# offers them next to the API keys. The pick becomes EXAMIFY_AI_MODE: the mode
+# a household uses until its admin picks one in /onboarding. No family data is
+# involved: each tool is only asked whether it is signed in, and Ollama for its
+# model list. EXAMIFY_AI_DETECT=0 skips the checks.
+
+# The wizard's mode ids (ONBOARDING_AI_MODES in src/lib/onboarding-types.ts).
+is_ai_mode() {
+  case "$1" in
+    cloud | cloud-openai | claude-cli | codex-cli | local-agent | local-cli | skip-stub) return 0 ;;
+  esac
+  return 1
+}
+
+# A value written unquoted into .env: no spaces, quotes, backticks, `$`, `#`
+# or backslashes, so every .env reader (Next, the CLIs, this script) sees it
+# exactly as written.
+plain_env_value() {
+  case "$1" in
+    '' | *[[:space:]]* | *\"* | *\'* | *\`* | *\$* | *\#* | *\\*) return 1 ;;
+  esac
+  return 0
+}
+
+# AI settings the host passed in are written as given: refuse what .env could
+# not hold or what the app would refuse at boot.
+check_host_ai_settings() {
+  local name value
+  EXAMIFY_AI_MODE="$(trim "${EXAMIFY_AI_MODE-}")"
+  if [ -n "$EXAMIFY_AI_MODE" ] && ! is_ai_mode "$EXAMIFY_AI_MODE"; then
+    die "EXAMIFY_AI_MODE must be one of: cloud, cloud-openai, claude-cli, codex-cli, local-agent, local-cli, skip-stub."
+  fi
+  for name in EXAMIFY_CLAUDE_BIN EXAMIFY_CODEX_BIN EXAMIFY_LLM_BASE_URL EXAMIFY_LLM_MODEL; do
+    value="$(trim "${!name-}")"
+    if [ -n "$value" ] && ! plain_env_value "$value"; then
+      die "${name} cannot be written to .env as given (it has spaces, quotes, \$, # or a backslash)." \
+        "Leave it unset here and add it to .env by hand after the install."
+    fi
+    printf -v "$name" '%s' "$value"
+  done
+  case "$EXAMIFY_LLM_BASE_URL" in
+    '' | http://* | https://*) ;;
+    *) die "EXAMIFY_LLM_BASE_URL must be an http:// or https:// address." ;;
+  esac
+}
+
+# Run a check for at most $1 seconds, so a tool that hangs never stalls the
+# install (GNU timeout when there is one; macOS has none by default).
+run_limited() {
+  local secs="$1"
+  shift
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "$secs" "$@"
+    return
+  fi
+  "$@" &
+  local pid=$!
+  (sleep "$secs" && kill "$pid" 2>/dev/null) &
+  local watcher=$!
+  local rc=0
+  wait "$pid" || rc=$?
+  kill "$watcher" 2>/dev/null || true
+  wait "$watcher" 2>/dev/null || true
+  return "$rc"
+}
+
+# Where the app finds `claude` / `codex` (resolveAgentCliBinary in
+# tools/examify-ingest/src/providers/agent-cli.ts): EXAMIFY_*_BIN (a full path,
+# or a name on PATH), else PATH, else ~/.local/bin (and ~/.claude/local for
+# Claude Code). Prints the full path.
+find_agent_cli() {
+  local cli="$1"
+  local name="$1"
+  local configured found dir
+  configured="$(trim "${2-}")"
+  if [ -n "$configured" ]; then
+    case "$configured" in
+      /*)
+        if [ -f "$configured" ] && [ -x "$configured" ]; then
+          printf '%s' "$configured"
+          return 0
+        fi
+        return 1
+        ;;
+      */*) return 1 ;;
+    esac
+    name="$configured"
+  fi
+  found="$(command -v "$name" 2>/dev/null || true)"
+  case "$found" in
+    /*)
+      if [ -f "$found" ] && [ -x "$found" ]; then
+        printf '%s' "$found"
+        return 0
+      fi
+      ;;
+  esac
+  [ -n "$configured" ] && return 1
+  [ -n "${HOME-}" ] || return 1
+  for dir in "$HOME/.local/bin" "$HOME/.claude/local"; do
+    if [ "$cli" = "codex" ] && [ "$dir" = "$HOME/.claude/local" ]; then
+      continue
+    fi
+    if [ -f "$dir/$name" ] && [ -x "$dir/$name" ]; then
+      printf '%s' "$dir/$name"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# The app looks in these folders whatever PATH its service gets, so a binary
+# there needs no EXAMIFY_*_BIN.
+in_agent_cli_home_dirs() {
+  [ -n "${HOME-}" ] || return 1
+  case "$1" in
+    "$HOME/.local/bin/"* | "$HOME/.claude/local/"*) return 0 ;;
+  esac
+  return 1
+}
+
+# signed_in, signed_out or unknown (an older CLI, or a check that timed out).
+claude_signin_state() {
+  local out=""
+  out="$(run_limited "$2" "$1" auth status </dev/null 2>/dev/null)" || true
+  case "$out" in
+    *'"loggedIn": true'* | *'"loggedIn":true'*) echo signed_in ;;
+    *'"loggedIn": false'* | *'"loggedIn":false'*) echo signed_out ;;
+    *) echo unknown ;;
+  esac
+}
+
+codex_signin_state() {
+  local out=""
+  out="$(run_limited "$2" "$1" login status </dev/null 2>&1)" || true
+  case "$out" in
+    *'Not logged in'*) echo signed_out ;;
+    *'Logged in'*) echo signed_in ;;
+    *) echo unknown ;;
+  esac
+}
+
+# Ollama's address as the app should use it: OLLAMA_HOST (host, host:port or
+# a URL; 0.0.0.0 is a listen address, so 127.0.0.1), else 127.0.0.1:11434.
+ollama_base_url() {
+  local host
+  host="$(trim "${OLLAMA_HOST-}")"
+  if [ -z "$host" ]; then
+    printf 'http://127.0.0.1:11434'
+    return
+  fi
+  case "$host" in
+    http://* | https://*) ;;
+    *) host="http://${host}" ;;
+  esac
+  host="${host%/}"
+  case "$host" in
+    *://0.0.0.0*) host="${host%%://*}://127.0.0.1${host#*://0.0.0.0}" ;;
+  esac
+  case "${host#*://}" in
+    *:*) ;;
+    *) host="${host}:11434" ;;
+  esac
+  printf '%s' "$host"
+}
+
+# One model name per line. Fails when nothing answers as Ollama.
+ollama_models() {
+  local base="$1"
+  local secs="$2"
+  local body=""
+  if command -v curl >/dev/null 2>&1; then
+    body="$(run_limited "$secs" curl -fsS --max-time "$secs" "${base}/api/tags" </dev/null 2>/dev/null)" || return 1
+    case "$body" in
+      *'"models"'*) ;;
+      *) return 1 ;;
+    esac
+    printf '%s' "$body" | grep -o '"name"[[:space:]]*:[[:space:]]*"[^"]*"' |
+      sed 's/.*"\([^"]*\)"$/\1/' || true
+    return 0
+  fi
+  command -v ollama >/dev/null 2>&1 || return 1
+  body="$(OLLAMA_HOST="$base" run_limited "$secs" ollama list </dev/null 2>/dev/null)" || return 1
+  printf '%s\n' "$body" | awk 'NR > 1 && $1 != "" { print $1 }'
+}
+
+detect_ai_tools() {
+  local secs="${EXAMIFY_AI_DETECT_TIMEOUT:-15}"
+  AI_CLAUDE_BIN="$(find_agent_cli claude "${EXAMIFY_CLAUDE_BIN-}" || true)"
+  AI_CLAUDE_STATE=""
+  if [ -n "$AI_CLAUDE_BIN" ]; then
+    AI_CLAUDE_STATE="$(claude_signin_state "$AI_CLAUDE_BIN" "$secs")"
+  fi
+  AI_CODEX_BIN="$(find_agent_cli codex "${EXAMIFY_CODEX_BIN-}" || true)"
+  AI_CODEX_STATE=""
+  if [ -n "$AI_CODEX_BIN" ]; then
+    AI_CODEX_STATE="$(codex_signin_state "$AI_CODEX_BIN" "$secs")"
+  fi
+  AI_OLLAMA_BASE="$(ollama_base_url)"
+  AI_OLLAMA_MODELS=""
+  AI_OLLAMA_STATE="absent"
+  if AI_OLLAMA_MODELS="$(ollama_models "$AI_OLLAMA_BASE" "$secs")"; then
+    if [ -n "$AI_OLLAMA_MODELS" ]; then
+      AI_OLLAMA_STATE="models"
+    else
+      AI_OLLAMA_STATE="empty"
+    fi
+  elif command -v ollama >/dev/null 2>&1; then
+    AI_OLLAMA_STATE="down"
+  fi
+}
+
+# "signed in", or how to sign in as this user.
+signin_note() {
+  case "$1" in
+    signed_in) printf 'signed in' ;;
+    signed_out) printf 'not signed in (sign in as %s: %s)' "$2" "$3" ;;
+    *) printf 'found; could not check the sign-in (sign in as %s: %s)' "$2" "$3" ;;
+  esac
+}
+
+# The models, comma-separated, at most five.
+ollama_model_list() {
+  printf '%s\n' "$AI_OLLAMA_MODELS" | awk 'NF { n++; if (n <= 5) printf "%s%s", (n > 1 ? ", " : ""), $0 } END { if (n > 5) printf ", …" }'
+}
+
+# Sets AI_PICK: tool (EXAMIFY_AI_MODE and its settings are set), key (ask for
+# API keys, as without any tool) or later (ask nothing; /onboarding decides).
+offer_ai_tools() {
+  local user
+  user="$(id -un 2>/dev/null || true)"
+  user="${user:-this user}"
+  AI_PICK="key"
+  if [ -z "$AI_CLAUDE_BIN" ] && [ -z "$AI_CODEX_BIN" ] && [ "$AI_OLLAMA_STATE" = "absent" ]; then
+    echo
+    echo "No Claude Code, Codex or Ollama found for ${user}. You can add one later and pick it in /onboarding."
+    return 0
+  fi
+  echo
+  echo "AI for making question banks and marking written answers. Found for ${user}:"
+  if [ -n "$AI_CLAUDE_BIN" ]; then
+    echo "  Claude Code: $(signin_note "$AI_CLAUDE_STATE" "$user" "claude auth login")"
+  fi
+  if [ -n "$AI_CODEX_BIN" ]; then
+    echo "  Codex: $(signin_note "$AI_CODEX_STATE" "$user" "codex login")"
+  fi
+  case "$AI_OLLAMA_STATE" in
+    models) echo "  Ollama at ${AI_OLLAMA_BASE}: $(ollama_model_list)" ;;
+    empty) echo "  Ollama at ${AI_OLLAMA_BASE}: running, no models yet (e.g. ollama pull llama3.2)" ;;
+    down) echo "  Ollama: installed, but nothing answers at ${AI_OLLAMA_BASE} (start it: ollama serve)" ;;
+  esac
+
+  local -a keys=()
+  local -a labels=()
+  if [ -n "$AI_CLAUDE_BIN" ]; then
+    keys+=(claude)
+    labels+=("Claude Code   your Claude plan; study files and written answers go to Anthropic")
+  fi
+  if [ -n "$AI_CODEX_BIN" ]; then
+    keys+=(codex)
+    labels+=("Codex         your ChatGPT plan; study files and written answers go to OpenAI")
+  fi
+  if [ "$AI_OLLAMA_STATE" = "models" ]; then
+    keys+=(ollama)
+    labels+=("Ollama        runs on this machine; nothing leaves it")
+  fi
+  keys+=(key later)
+  labels+=("An API key    Anthropic or OpenAI (asked next)" "Decide later  pick one in /onboarding")
+
+  # A tool that is ready first; otherwise the API key questions, as before.
+  local default_key="key"
+  if [ "$AI_CLAUDE_STATE" = "signed_in" ]; then
+    default_key="claude"
+  elif [ "$AI_CODEX_STATE" = "signed_in" ]; then
+    default_key="codex"
+  elif [ "$AI_OLLAMA_STATE" = "models" ]; then
+    default_key="ollama"
+  fi
+  local i default_num=1
+  echo
+  echo "What should Examify use? (You can change it any time in /onboarding.)"
+  for i in "${!keys[@]}"; do
+    echo "  $((i + 1))) ${labels[$i]}"
+    if [ "${keys[$i]}" = "$default_key" ]; then
+      default_num=$((i + 1))
+    fi
+  done
+  AI_CHOICE="${AI_CHOICE-}"
+  prompt AI_CHOICE "Choose 1-${#keys[@]}" "$default_num"
+  local pick=""
+  case "$AI_CHOICE" in
+    [1-9] | [1-9][0-9])
+      if [ "$AI_CHOICE" -le "${#keys[@]}" ]; then
+        pick="${keys[$((AI_CHOICE - 1))]}"
+      fi
+      ;;
+    *)
+      for i in "${!keys[@]}"; do
+        if [ "${keys[$i]}" = "$AI_CHOICE" ]; then
+          pick="${keys[$i]}"
+        fi
+      done
+      ;;
+  esac
+  # Like the other menus: anything else takes the default.
+  pick="${pick:-$default_key}"
+  case "$pick" in
+    claude) use_agent_cli claude-cli "$AI_CLAUDE_BIN" EXAMIFY_CLAUDE_BIN "$AI_CLAUDE_STATE" \
+      "Claude Code" "claude auth login" "$user" ;;
+    codex) use_agent_cli codex-cli "$AI_CODEX_BIN" EXAMIFY_CODEX_BIN "$AI_CODEX_STATE" \
+      "Codex" "codex login" "$user" ;;
+    ollama) use_ollama ;;
+    later) AI_PICK="later" ;;
+    *) AI_PICK="key" ;;
+  esac
+}
+
+# mode, binary, its EXAMIFY_*_BIN name, sign-in state, label, sign-in command, user.
+use_agent_cli() {
+  EXAMIFY_AI_MODE="$1"
+  AI_PICK="tool"
+  # The app's service may get a shorter PATH than this shell: name the binary
+  # unless it sits where the app always looks.
+  if ! in_agent_cli_home_dirs "$2"; then
+    if plain_env_value "$2"; then
+      printf -v "$3" '%s' "$2"
+    else
+      echo "Note: ${2} cannot be written to .env; set $3 to its full path by hand if Examify does not find it." >&2
+    fi
+  fi
+  if [ "$4" != "signed_in" ]; then
+    AI_SIGNIN_HINT="Sign ${5} in as ${7} before making banks: ${6}"
+    echo "$AI_SIGNIN_HINT"
+  fi
+}
+
+use_ollama() {
+  local first
+  first="$(printf '%s\n' "$AI_OLLAMA_MODELS" | awk 'NF { print; exit }')"
+  echo
+  echo "Reading PDFs needs a vision model (e.g. llama3.2-vision or qwen2.5vl) and pdftoppm;"
+  echo "notes and text work with any model. A model here must already be pulled."
+  prompt EXAMIFY_LLM_MODEL "Ollama model for banks and marking" "$first"
+  EXAMIFY_LLM_MODEL="$(trim "$EXAMIFY_LLM_MODEL")"
+  if ! plain_env_value "$EXAMIFY_LLM_MODEL"; then
+    echo "That model name cannot be written to .env; using ${first}." >&2
+    EXAMIFY_LLM_MODEL="$first"
+  fi
+  EXAMIFY_LLM_BASE_URL="${EXAMIFY_LLM_BASE_URL:-$AI_OLLAMA_BASE}"
+  EXAMIFY_AI_MODE="local-agent"
+  AI_PICK="tool"
+}
+
+# The interactive AI questions. A new .env gets the tool menu (unless the host
+# already chose EXAMIFY_AI_MODE); the API key questions follow when no tool
+# was picked, as before.
+collect_ai_settings() {
+  AI_PICK="key"
+  AI_SIGNIN_HINT=""
+  if [ -z "${EXAMIFY_AI_MODE-}" ] && [ ! -f .env ] && [ "${EXAMIFY_AI_DETECT:-1}" != "0" ]; then
+    detect_ai_tools
+    offer_ai_tools
+  fi
+  if [ "$AI_PICK" != "key" ]; then
+    ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-test}"
+    return 0
+  fi
+  echo
+  echo "Optional: ANTHROPIC_API_KEY marks free-text answers by sending each answer, its question,"
+  echo "and its rubric to Anthropic. It also powers /onboarding Cloud (Anthropic) generate."
+  echo "Leave blank to skip: free-text answers are saved but not marked (they count as not correct)."
+  echo "Add it later in /onboarding content setup, or in .env (then restart)."
+  prompt ANTHROPIC_API_KEY "Anthropic API key" "" secret
+  # Blank keeps the `test` placeholder: the wizard shows "not configured" and
+  # production grading treats it as no key (answers saved, not marked).
+  ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-test}"
+  echo
+  echo "Optional: OPENAI_API_KEY for /onboarding Cloud (OpenAI) generate."
+  echo "That generate sends the subject's study files (PDF pages, notes) to OpenAI."
+  echo "Same .env store as the wizard. Leave blank to skip (you can set it later)."
+  echo "OpenAI generate from PDFs needs pdftoppm (poppler-utils) on PATH; without it,"
+  echo "PDF-only generate fails closed. Install: apt install poppler-utils  (or brew install poppler)"
+  prompt OPENAI_API_KEY "OpenAI API key" "" secret
+  # A key typed here is the household's starting mode, unless the host chose one.
+  if [ -z "${EXAMIFY_AI_MODE-}" ]; then
+    if [ "$ANTHROPIC_API_KEY" != "test" ]; then
+      EXAMIFY_AI_MODE="cloud"
+    elif [ -n "${OPENAI_API_KEY-}" ]; then
+      EXAMIFY_AI_MODE="cloud-openai"
+    fi
+  fi
+}
+
+# The summary's AI line (a new .env only).
+ai_mode_summary() {
+  local label
+  case "${EXAMIFY_AI_MODE-}" in
+    cloud) label="Anthropic API key" ;;
+    cloud-openai) label="OpenAI API key" ;;
+    claude-cli) label="Claude Code" ;;
+    codex-cli) label="Codex" ;;
+    local-agent) label="Ollama / local endpoint (${EXAMIFY_LLM_MODEL:-no model set})" ;;
+    local-cli) label="Local command" ;;
+    skip-stub) label="Test stub" ;;
+    *) label="none yet: pick one in /onboarding" ;;
+  esac
+  echo "     AI:                 ${label}"
+  if [ -n "${AI_SIGNIN_HINT-}" ]; then
+    echo "     ${AI_SIGNIN_HINT}"
+  fi
 }
 
 # --- collect config, then write or keep .env ---
@@ -2061,6 +2506,7 @@ collect_and_write_env() {
     MAIL_WAS_SET=1
   fi
   MAIL_TRANSPORT="${MAIL_TRANSPORT:-auto}"
+  check_host_ai_settings
   # Interactive: do not pre-fill `test` or prompt() skips. Non-interactive
   # keeps the grader/boot sentinel when the host did not inject a key.
   if [ "$NONINTERACTIVE" = "1" ]; then
@@ -2179,22 +2625,7 @@ collect_and_write_env() {
   fi
 
   if [ "$NONINTERACTIVE" != "1" ]; then
-    echo
-    echo "Optional: ANTHROPIC_API_KEY marks free-text answers by sending each answer, its question,"
-    echo "and its rubric to Anthropic. It also powers /onboarding Cloud (Anthropic) generate."
-    echo "Leave blank to skip: free-text answers are saved but not marked (they count as not correct)."
-    echo "Add it later in /onboarding content setup, or in .env (then restart)."
-    prompt ANTHROPIC_API_KEY "Anthropic API key" "" secret
-    # Blank keeps the `test` placeholder: the wizard shows "not configured" and
-    # production grading treats it as no key (answers saved, not marked).
-    ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-test}"
-    echo
-    echo "Optional: OPENAI_API_KEY for /onboarding Cloud (OpenAI) generate."
-    echo "That generate sends the subject's study files (PDF pages, notes) to OpenAI."
-    echo "Same .env store as the wizard. Leave blank to skip (you can set it later)."
-    echo "OpenAI generate from PDFs needs pdftoppm (poppler-utils) on PATH; without it,"
-    echo "PDF-only generate fails closed. Install: apt install poppler-utils  (or brew install poppler)"
-    prompt OPENAI_API_KEY "OpenAI API key" "" secret
+    collect_ai_settings
   fi
 
   WROTE_ENV=0

@@ -154,7 +154,12 @@ Surface:
   behind the same confirmed hash and named prune confirm. Delete removes IR/source dirs only; prune of leftover generated JSON
   waits for a named HITL confirm on Apply (cancel = no deletes/writes). Ready
   lists live bank subject ids/names and question counts. Not a replacement for `install.sh`
-  auth-mode picking. Existing households are backfilled complete.
+  auth-mode picking. Existing households are backfilled complete. A household with no saved
+  AI mode uses `EXAMIFY_AI_MODE` (the installer's pick; `installerAiMode` reads it from the
+  merged host env, an unknown value counts as unset) for generate, marking and the wizard
+  (`effectiveAiMode`: saved mode, else the installer's; the snapshot's
+  `aiModeFromInstaller` shows `wizard-ai-installer`, which names the pick until the admin
+  chooses a mode).
   `/setup/wizard` redirects here.
 - **`/invite/[token]`** — accept a household invite (password, magic-link, or local OTP).
   In `AUTH_MODE=password` the URL is a secret that starts a join; membership and
@@ -785,8 +790,8 @@ These are non-negotiable. Don't "fix" them out.
   value, so `attempts.ts` is in the client graph: keep it free of `server-only`, the answer keys,
   and the grader. The validate+score+grade pass lives in `score.server.ts`, not here.
 - **Free-text is marked server-side by the household's AI, fail-safe.** `saveAttempt` passes
-  `markingBackendForUser(userId)` (the household's saved AI mode through
-  `markingBackendForAiMode`) to `scoreAttempt`, which marks every written answer of the attempt
+  `markingBackendForUser(userId)` (the household's AI mode, `effectiveAiMode`: saved, else
+  the installer's `EXAMIFY_AI_MODE`, through `markingBackendForAiMode`) to `scoreAttempt`, which marks every written answer of the attempt
   with `gradeAnswers(tasks, backend)` (`src/lib/grading/`, server-only): `cloud` → Anthropic
   (`gradeFreeText`, one request per answer); `cloud-openai` → OpenAI Chat Completions
   (`gpt-4o`, live `OPENAI_API_KEY`, the same `test` stub rule), one request per answer;
@@ -1089,6 +1094,25 @@ refused with copy naming both, like the `AUTH_MODE` conflict.
 `SITE_URL` must be the public origin family devices open:
 it builds invite / sign-in links and decides the session cookie (see Auth
 invariants); `install.sh` warns when it is localhost or plain http beyond the host.
+`EXAMIFY_AI_MODE` (optional; one of `ONBOARDING_AI_MODES`, another value fails boot) is the
+AI mode a household uses until its admin picks one. A new interactive `install.sh` (no
+`.env` yet, no host `EXAMIFY_AI_MODE`, `EXAMIFY_AI_DETECT` not `0`) looks for Claude Code
+and Codex as the installing user (`find_agent_cli`, the app's own search: `EXAMIFY_*_BIN`,
+`PATH`, `~/.local/bin`, `~/.claude/local`) and whether each is signed in
+(`claude auth status` `loggedIn`, `codex login status`), and for Ollama's models
+(`/api/tags` at `OLLAMA_HOST`, `0.0.0.0` read as `127.0.0.1`, else `127.0.0.1:11434`;
+`ollama list` without curl). Every check has stdin from `/dev/null` (the answers still to
+come are on stdin) and stops after `EXAMIFY_AI_DETECT_TIMEOUT` (15) seconds. It lists
+what it found and offers each tool, an API key or "decide later" (default: signed-in
+Claude Code, signed-in Codex, Ollama with a model, else the API key questions as before),
+then writes `EXAMIFY_AI_MODE` plus `EXAMIFY_CLAUDE_BIN` / `EXAMIFY_CODEX_BIN` (unless in
+`~/.local/bin` / `~/.claude/local`, where the app looks whatever the service `PATH`) or
+`EXAMIFY_LLM_BASE_URL` + `EXAMIFY_LLM_MODEL`. A typed Anthropic / OpenAI key sets `cloud` /
+`cloud-openai`. Host `EXAMIFY_AI_MODE`, `EXAMIFY_CLAUDE_BIN`, `EXAMIFY_CODEX_BIN`,
+`EXAMIFY_LLM_BASE_URL` and `EXAMIFY_LLM_MODEL` are written as given; an unknown mode, a
+value `.env` cannot hold unquoted (spaces, quotes, `$`, `#`, backslash) or a non-http(s)
+base URL is refused before `.env` is written. The mode list in `is_ai_mode` is
+parity-tested against `ONBOARDING_AI_MODES`.
 `CLIENT_IP_HEADER` (`x-forwarded-for` default | `x-real-ip` | `cf-connecting-ip`)
 names the one header the rate limiter trusts. `AUTH_MODE` defaults to `magic-link` (existing #56 hosts
 keep working). `password` sign-in needs no mail; password-mode invite accept

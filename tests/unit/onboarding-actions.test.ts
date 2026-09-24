@@ -512,6 +512,55 @@ describe('onboarding actions', () => {
     expect((await validateOnboardingAction()).ok).toBe(true);
   });
 
+  it("generates with the installer's EXAMIFY_AI_MODE until the household picks a mode", async () => {
+    const root = tempRoot();
+    const { setOnboardingContentRootForTests, saveOnboardingState } =
+      await import('@/lib/onboarding');
+    setOnboardingContentRootForTests(root);
+    const host = await signInHost();
+    fs.mkdirSync(path.join(root, 'content/subjects/history'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'content/source-pdfs/history'), { recursive: true });
+    writeFileSync(
+      path.join(root, 'content/subjects/history/subject.json'),
+      JSON.stringify({
+        id: 'history',
+        label: 'History',
+        icon: 'geography',
+        l: 0.6,
+        c: 0.08,
+        h: 40,
+      }),
+    );
+    writeFileSync(path.join(root, 'content/source-pdfs/history/notes.txt'), 'A source note.\n');
+    const { generateOnboardingSubjectAction } = await import('@/actions/onboarding');
+    const generate = new FormData();
+    generate.set('subjectId', 'history');
+    generate.set('seed', '0');
+    const original = process.env.EXAMIFY_AI_MODE;
+    try {
+      process.env.EXAMIFY_AI_MODE = 'skip-stub';
+      const viaInstaller = await generateOnboardingSubjectAction(generate);
+      expect(viaInstaller.ok).toBe(true);
+      if (!viaInstaller.ok) throw new Error('expected generate');
+      expect(viaInstaller.result.provider).toBe('test');
+      expect(viaInstaller.snapshot.aiMode).toBe('skip-stub');
+      expect(viaInstaller.snapshot.aiModeFromInstaller).toBe(true);
+
+      // A mode the household saved wins over the installer's.
+      process.env.EXAMIFY_AI_MODE = 'claude-cli';
+      saveOnboardingState(host.householdId, { aiMode: 'skip-stub' });
+      generate.set('force', '1');
+      const saved = await generateOnboardingSubjectAction(generate);
+      expect(saved.ok).toBe(true);
+      if (!saved.ok) throw new Error('expected generate');
+      expect(saved.result.provider).toBe('test');
+      expect(saved.snapshot.aiModeFromInstaller).toBe(false);
+    } finally {
+      if (original === undefined) delete process.env.EXAMIFY_AI_MODE;
+      else process.env.EXAMIFY_AI_MODE = original;
+    }
+  });
+
   it('refuses to clobber existing IR without force and names the overwrite', async () => {
     const root = tempRoot();
     const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');

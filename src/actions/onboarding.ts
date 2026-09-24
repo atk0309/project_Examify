@@ -27,6 +27,7 @@ import {
   completeOnboarding,
   deleteOnboardingSubject,
   detachSourcePdf,
+  effectiveAiMode,
   getOnboardingSnapshot,
   getHouseholdOnboarding,
   invalidateOnboardingEmit,
@@ -225,9 +226,10 @@ export async function generateOnboardingSubjectAction(
   const overwrite = rawOverwrite === 'skip' || rawOverwrite === 'force' ? rawOverwrite : undefined;
 
   const state = getHouseholdOnboarding(gate.householdId).state;
-  if (!state.aiMode) return { ok: false, reason: 'missing_provider' };
-  const provider = providerForOnboardingAiMode(state.aiMode);
-  const localTransport = localTransportForOnboardingAiMode(state.aiMode) ?? undefined;
+  const aiMode = effectiveAiMode(state);
+  if (!aiMode) return { ok: false, reason: 'missing_provider' };
+  const provider = providerForOnboardingAiMode(aiMode);
+  const localTransport = localTransportForOnboardingAiMode(aiMode) ?? undefined;
 
   const generated = await generateOnboardingSubject({
     subjectId,

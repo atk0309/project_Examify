@@ -470,7 +470,10 @@ export type OnboardingSnapshot = {
    * `data` (default), `data/<sub>`, or an absolute path.
    */
   dataDirDisplay: string;
+  /** The household's saved mode, else the installer's (`EXAMIFY_AI_MODE`). */
   aiMode: OnboardingAiMode | null;
+  /** `aiMode` is the installer's: the household has not picked one yet. */
+  aiModeFromInstaller: boolean;
   replaceSample: boolean;
   hasDryRun: boolean;
   hasApplied: boolean;

@@ -8,6 +8,7 @@ import {
 import { resolveDataPaths, UnsafeDataDirError } from './data-dir';
 import { isDedicatedDataFolder, SharedDataFolderError } from './data-folder';
 import { parseFamilies } from './families';
+import { ONBOARDING_AI_MODES } from './onboarding-types';
 import { findRepoRoot } from './repo-root';
 
 /**
@@ -229,6 +230,11 @@ function buildEnvSchema(isProd: boolean) {
       // Optional local-agent endpoint for examify-ingest generate --provider local
       // (CLI and /onboarding AI step). Not a secret. Never expose via NEXT_PUBLIC_*.
       EXAMIFY_LLM_BASE_URL: z.preprocess(emptyToUndef, z.string().url().optional()),
+
+      // The AI mode a household starts with until its admin picks one in
+      // /onboarding (install.sh writes it from what it found). One of the
+      // wizard's mode ids; a typo fails boot instead of being ignored.
+      EXAMIFY_AI_MODE: z.preprocess(emptyToUndef, z.enum(ONBOARDING_AI_MODES).optional()),
 
       // Cloudflare Turnstile captcha. OFF by default — local / simple self-hosts
       // need no Cloudflare account. Set TURNSTILE_ENABLED=1 and both keys to
