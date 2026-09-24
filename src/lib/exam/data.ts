@@ -513,13 +513,30 @@ export function shuffle<T>(arr: readonly T[]): T[] {
   return a;
 }
 
-/** Build a mini exam: pick up to EXAM_CONFIG.length questions for the bank. */
+/**
+ * The questions a paper draws from. Without `written`, only the multiple-choice
+ * ones: nothing on this server can mark a written answer, so asking one only
+ * costs the student a "not correct". A bank with no multiple choice keeps its
+ * written questions, so the exam still exists.
+ */
+export function examPool(bank: readonly Question[], written: boolean): readonly Question[] {
+  if (written) return bank;
+  const choiceOnly = bank.filter((q) => q.type === 'mcq');
+  return choiceOnly.length > 0 ? choiceOnly : bank;
+}
+
+/**
+ * Build a mini exam: pick up to EXAM_CONFIG.length questions for the bank, or
+ * of its multiple-choice questions only when `written` is false (see
+ * {@link examPool}).
+ */
 export function buildExam(
   subjectId: string,
   difficulty: DifficultyId,
   questions: QuestionBank = QUESTIONS,
+  options: { written?: boolean } = {},
 ): Question[] {
-  const bank = questions[subjectId]?.[difficulty] ?? [];
+  const bank = examPool(questions[subjectId]?.[difficulty] ?? [], options.written ?? true);
   const list = EXAM_CONFIG.shuffle ? shuffle(bank) : bank.slice();
   return list.slice(0, Math.min(EXAM_CONFIG.length, list.length));
 }
@@ -528,8 +545,11 @@ export function buildExam(
  * Resolve and validate one complete mini-exam paper.
  *
  * The ids must be unique, belong to the selected subject + difficulty bank,
- * and contain exactly the number of questions `buildExam()` returns. The
- * caller-provided order is preserved. This is public-bank validation only:
+ * and make a paper `buildExam()` can return: the full paper's length, or the
+ * length of a paper without written questions when every question is multiple
+ * choice. Both are accepted whatever this server can mark right now, so a
+ * paper started before marking was set up (or cleared) can still be finished.
+ * The caller-provided order is preserved. This is public-bank validation only:
  * answer keys remain server-only.
  */
 export function resolveExamPaper(
@@ -539,11 +559,17 @@ export function resolveExamPaper(
   questionBank: QuestionBank = QUESTIONS,
 ): Question[] | null {
   const bank = questionBank[subjectId]?.[difficulty] ?? [];
-  const expectedLength = Math.min(EXAM_CONFIG.length, bank.length);
-  if (expectedLength === 0 || ids.length !== expectedLength) return null;
+  const fullLength = Math.min(EXAM_CONFIG.length, bank.length);
+  const choiceOnlyLength = Math.min(EXAM_CONFIG.length, examPool(bank, false).length);
+  if (fullLength === 0 || (ids.length !== fullLength && ids.length !== choiceOnlyLength)) {
+    return null;
+  }
   if (new Set(ids).size !== ids.length) return null;
 
   const byId = new Map(bank.map((q) => [q.id, q]));
   const questions = ids.map((id) => byId.get(id));
-  return questions.every((q): q is Question => q !== undefined) ? questions : null;
+  if (!questions.every((q): q is Question => q !== undefined)) return null;
+  if (ids.length === fullLength) return questions;
+  // The shorter paper: only one without written questions.
+  return questions.every((q) => q.type === 'mcq') ? questions : null;
 }

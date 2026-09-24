@@ -47,8 +47,9 @@ Keep `project_Examify` (a calm, mobile-first exam-prep app) fully cloud-developa
   keyed by question `id`, and every key carries a mandatory `provenance { pdf, locator }`.
   Keep `attempts.ts` client-safe (it's in the client graph).
 - **Completed and resumable papers are validated server-side.** Their public question
-  ids must be unique, belong to the selected subject + difficulty, and contain exactly
-  the number of questions `buildExam()` returns. Draft answers must match each public
+  ids must be unique, belong to the selected subject + difficulty, and make a paper
+  `buildExam()` can return: the full length, or the multiple-choice-only length when
+  every question is multiple choice (both accepted whatever marks now). Draft answers must match each public
   question's type/range. This validation never reads or exposes answer keys.
 - **Content is hand-edited or emitted from BankIR.** The shipped bank is a
   hand-authored 3-subject sample plus additive generated subjects from
@@ -238,7 +239,11 @@ JSON`). Missing cloud
   warning with a reason code only (plus the backend off the Anthropic path; no answer /
   question / rubric / key / user id). A free item is "correct" at `PASS_THRESHOLD` (0.6). The UI
   renders only the bounded `Verdict` fields, never the rubric. Results are
-  server-driven (a "Marking…" state covers the submit round-trip). A rejected submit
+  server-driven (a "Marking…" state covers the submit round-trip). `ExamApp` gets the
+  household's marking status (`examMarking`): the difficulty screen says who marks written
+  answers, and when nothing here can (`not_ready`) papers leave written questions out
+  (`examPool`; a written-only bank keeps them, with a note that they count as not correct).
+  A rejected submit
   (no answer came back) keeps the answers and offers "Try again", which re-sends the
   identical payload (`exam-error-unreachable` / `exam-retry`); an `ok:false` paper
   (`invalid` | `forbidden`) gets a no-retry `exam-error-refused` screen. Next redirect /

@@ -609,6 +609,12 @@
     flex-direction: column;
     gap: var(--sp-3);
   }
+  /* What happens to written answers on this server, under the difficulties. */
+  .diff-note {
+    font-size: var(--fs-small);
+    color: var(--text-muted);
+    margin: var(--sp-4) 0 0;
+  }
   .diff-card {
     text-align: left;
     border: 1.5px solid var(--border);
@@ -838,6 +844,12 @@
   }
   .free-answer::placeholder {
     color: var(--text-faint);
+  }
+  /* Under a written question nothing on this server can mark. */
+  .free-note {
+    font-size: var(--fs-small);
+    color: var(--text-muted);
+    margin: var(--sp-2) 0 0;
   }
 
   /* ---- Marking / error interstitial ---- */

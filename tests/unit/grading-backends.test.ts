@@ -12,6 +12,9 @@ import {
   localChatCompletionsUrl,
 } from '@/lib/grading/backends';
 import {
+  EXAM_UNMARKED_WRITTEN,
+  examMarking,
+  examWrittenLine,
   ONBOARDING_AI_MODES,
   markingBackendForAiMode,
   markingReadiness,
@@ -134,8 +137,39 @@ describe('which AI marks written answers', () => {
       'Written answers get a test full mark: the OpenAI key is a placeholder.',
     );
     expect(parentMarkingLine('codex-cli', 'not_ready')).toBe(
-      'Written answers are not marked: this server needs Codex installed and signed in as the user that runs Examify. Until then they count as not correct.',
+      'Written answers are not marked: this server needs Codex installed and signed in as the user that runs Examify. Until then, exams leave written questions out, and any written answer counts as not correct.',
     );
+  });
+
+  it('tells a student before an exam what happens to written answers', () => {
+    expect(examMarking('claude-cli', 'ready')).toEqual({ written: 'marked', by: 'Claude Code' });
+    expect(examMarking('local-endpoint', 'ready')).toEqual({
+      written: 'marked',
+      by: 'your family’s own AI model',
+    });
+    expect(examMarking('openai', 'stub')).toEqual({ written: 'stub' });
+    expect(examMarking('anthropic', 'not_ready')).toEqual({ written: 'unmarked' });
+
+    const withWritten = { hasWritten: true, leftOut: false };
+    expect(examWrittenLine({ written: 'marked', by: 'OpenAI' }, withWritten)).toBe(
+      'Written answers are marked by OpenAI.',
+    );
+    expect(examWrittenLine({ written: 'stub' }, withWritten)).toBe(
+      'Written answers get a test mark on this server.',
+    );
+    expect(examWrittenLine({ written: 'unmarked' }, { hasWritten: true, leftOut: true })).toBe(
+      'Written questions are left out: this server can’t mark written answers yet.',
+    );
+    // Only written questions: they stay, and count as not correct.
+    expect(examWrittenLine({ written: 'unmarked' }, withWritten)).toBe(EXAM_UNMARKED_WRITTEN);
+    // Nothing to say about a bank without written questions.
+    for (const marking of [
+      { written: 'marked', by: 'OpenAI' },
+      { written: 'stub' },
+      { written: 'unmarked' },
+    ] as const) {
+      expect(examWrittenLine(marking, { hasWritten: false, leftOut: false })).toBeNull();
+    }
   });
 });
 

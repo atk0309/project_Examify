@@ -188,7 +188,7 @@ describe('OnboardingWizard majors UI', () => {
     const grading = screen.getByTestId('wizard-ai-grading');
     expect(grading).toHaveTextContent('Until you pick a mode, marking uses the Anthropic key');
     expect(grading).toHaveTextContent(
-      'saved but not marked until this server has an Anthropic API key: until then they count as not correct',
+      'Written answers are not marked until this server has an Anthropic API key: until then, exams leave written questions out, and any written answer counts as not correct',
     );
 
     fireEvent.click(screen.getByTestId('wizard-ai-cloud'));
@@ -213,7 +213,7 @@ describe('OnboardingWizard majors UI', () => {
     const grading = screen.getByTestId('wizard-ai-grading');
     expect(grading).toHaveTextContent('The test stub cannot mark written answers');
     expect(grading).toHaveTextContent('stub full mark and nothing is sent');
-    expect(grading).not.toHaveTextContent('saved but not marked');
+    expect(grading).not.toHaveTextContent('are not marked until');
   });
 
   it.each([
@@ -250,12 +250,12 @@ describe('OnboardingWizard majors UI', () => {
     [
       'claude-cli',
       { anthropicConfigured: true },
-      'saved but not marked until this server has Claude Code installed and signed in as the user that runs Examify',
+      'Written answers are not marked until this server has Claude Code installed and signed in as the user that runs Examify',
     ],
     [
       'local-agent',
       { localHttpConfigured: true },
-      'saved but not marked until this server has EXAMIFY_LLM_BASE_URL (an http or https address) and EXAMIFY_LLM_MODEL set',
+      'Written answers are not marked until this server has EXAMIFY_LLM_BASE_URL (an http or https address) and EXAMIFY_LLM_MODEL set',
     ],
   ] as const)('says who marks written answers in %s mode (%o)', (aiMode, flags, copy) => {
     render(

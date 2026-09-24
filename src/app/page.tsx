@@ -19,10 +19,16 @@ import {
   getOnboardingForUser,
   markingStatusForUser,
 } from '@/lib/onboarding';
-import { parentMarkingLine } from '@/lib/onboarding-types';
+import { examMarking, parentMarkingLine } from '@/lib/onboarding-types';
 import { resolveExamPaper } from '@/lib/exam/data';
 import { loadLivePublicBank } from '@/lib/exam/live-bank.server';
 import type { HouseholdMemberView } from '@/lib/household-types';
+
+/** Whether written answers get marked here, for the exam this user sits. */
+function examMarkingFor(userId: number) {
+  const { backend, readiness } = markingStatusForUser(userId);
+  return examMarking(backend, readiness);
+}
 
 /**
  * Reconstruct the user's resumable in-progress exams from their saved sessions.
@@ -82,6 +88,7 @@ export default async function HomePage() {
           resumable={resumableFor(session.userId, bank.questions)}
           subjects={bank.subjects}
           questionBank={bank.questions}
+          marking={examMarkingFor(session.userId)}
         />
       );
     }
@@ -140,6 +147,7 @@ export default async function HomePage() {
       resumable={resumableFor(session.userId, bank.questions)}
       subjects={bank.subjects}
       questionBank={bank.questions}
+      marking={examMarkingFor(session.userId)}
     />
   );
 }
