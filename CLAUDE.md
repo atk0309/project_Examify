@@ -1104,7 +1104,10 @@ and Codex as the installing user (`find_agent_cli`, the app's own search: `EXAMI
 (`claude auth status` `loggedIn`, `codex login status`), and for Ollama's models
 (`/api/tags` at `OLLAMA_HOST`, `0.0.0.0` read as `127.0.0.1`, else `127.0.0.1:11434`;
 `ollama list` without curl). Every check has stdin from `/dev/null` (the answers still to
-come are on stdin) and stops after `EXAMIFY_AI_DETECT_TIMEOUT` (15) seconds. It lists
+come are on stdin) and stops after `EXAMIFY_AI_DETECT_TIMEOUT` (15) seconds with everything it
+started: TERM to its whole process group, KILL 2 s later (`run_limited`, plain bash: the
+check runs as its own job under a watcher that holds none of the caller's pipe, the same
+with any `timeout` or none). It lists
 what it found and offers each tool, an API key or "decide later" (default: signed-in
 Claude Code, signed-in Codex, Ollama with a model, else the API key questions as before),
 then writes `EXAMIFY_AI_MODE` plus `EXAMIFY_CLAUDE_BIN` / `EXAMIFY_CODEX_BIN` (unless in

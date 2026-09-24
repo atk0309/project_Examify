@@ -200,7 +200,8 @@ JSON`). Missing cloud
   `EXAMIFY_AI_MODE`, `EXAMIFY_AI_DETECT` not `0`) looks for Claude Code / Codex as the
   installing user (the app's own binary search) and their sign-in (`claude auth status`,
   `codex login status`), and Ollama's models (`/api/tags` at `OLLAMA_HOST` or
-  `127.0.0.1:11434`). Each check reads stdin from `/dev/null` and stops after 15 s. It
+  `127.0.0.1:11434`). Each check reads stdin from `/dev/null` and stops after 15 s with
+  everything it started (TERM to its process group, KILL 2 s later). It
   offers what it found, an API key or "decide later", and writes `EXAMIFY_AI_MODE` plus the
   CLI path (unless in `~/.local/bin` / `~/.claude/local`) or `EXAMIFY_LLM_BASE_URL` +
   `EXAMIFY_LLM_MODEL`; a typed key sets `cloud` / `cloud-openai`. Host values are written as

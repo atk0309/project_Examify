@@ -2121,32 +2121,51 @@ check_host_ai_settings() {
   esac
 }
 
-# Run a check for at most $1 seconds, so a tool that hangs never stalls the
-# install (GNU timeout when there is one; macOS has none by default).
+# Run a check for at most $1 seconds, then stop it and everything it started,
+# so a tool that hangs never stalls the install: the check runs as its own job
+# (job control on for this call gives it its own process group), and a
+# background watcher sends TERM to that whole group when the time is up (a
+# launcher's child would otherwise keep the $(…) around this call open), then
+# KILL 2 s later for anything that ignores TERM. Plain bash, so it behaves the
+# same with any `timeout` or none (macOS).
 run_limited() {
   local secs="$1"
   shift
-  if command -v timeout >/dev/null 2>&1; then
-    timeout "$secs" "$@"
-    return
-  fi
+  local pid
+  set -m
   "$@" &
-  local pid=$!
-  # The watcher gets none of the caller's output: a $(…) around this call
-  # waits until every holder of its pipe closes it, and a sleep inheriting
-  # that pipe would hold every check for the whole limit. Stopping the
-  # watcher stops its sleep too.
+  pid=$!
+  set +m
+  # The watcher gets none of the caller's output (a sleep holding the $(…)
+  # pipe would hold every check for the whole limit); stopping it stops its
+  # sleep too. Should the job share our group after all, it signals the
+  # check alone.
   (
     sleep "$secs" &
     sleeper=$!
     trap 'kill "$sleeper" 2>/dev/null; exit 0' TERM
-    wait "$sleeper" && kill "$pid" 2>/dev/null
+    if wait "$sleeper"; then
+      kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
+      # Up to 2 s for the group to go; KILL whatever is left.
+      tries=0
+      while [ "$tries" -lt 20 ] && kill -0 -- "-$pid" 2>/dev/null; do
+        sleep 0.1
+        tries=$((tries + 1))
+      done
+      kill -KILL -- "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
+    fi
   ) </dev/null >/dev/null 2>&1 &
   local watcher=$!
   local rc=0
   wait "$pid" || rc=$?
-  kill "$watcher" 2>/dev/null || true
-  wait "$watcher" 2>/dev/null || true
+  if [ "$rc" -gt 128 ]; then
+    # Ended by a signal, most likely the watcher's TERM: let it finish, so
+    # whatever the check started and ignores TERM gets its KILL too.
+    wait "$watcher" 2>/dev/null || true
+  else
+    kill "$watcher" 2>/dev/null || true
+    wait "$watcher" 2>/dev/null || true
+  fi
   return "$rc"
 }
 

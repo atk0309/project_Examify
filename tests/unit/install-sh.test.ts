@@ -994,7 +994,13 @@ function dataEnv(overrides: Record<string, string | undefined> = {}): NodeJS.Pro
 const BASH = execFileSync('bash', ['-c', 'command -v bash'], { encoding: 'utf8' }).trim();
 
 type FakeAiTools = {
-  claude?: 'signed_in' | 'signed_out' | 'hang';
+  /**
+   * `hang`: never answers. `launcher`: a launcher that starts the real work
+   * as a child without exec, then waits for it. `deaf`: never answers and
+   * ignores TERM (so does the child it starts). `orphan`: a launcher that
+   * stops on TERM while its child ignores it.
+   */
+  claude?: 'signed_in' | 'signed_out' | 'hang' | 'launcher' | 'deaf' | 'orphan';
   codex?: 'signed_in' | 'signed_out';
   /** Models Ollama's /api/tags lists; `down`: an ollama binary with nothing answering. */
   ollama?: string[] | 'down';
@@ -1024,6 +1030,13 @@ function fakeAiTools(tools: FakeAiTools) {
       { mode: 0o755 },
     );
   if (tools.claude === 'hang') write('claude', 'exec sleep 30');
+  else if (tools.claude === 'launcher')
+    write(
+      'claude',
+      `(trap 'echo "claude child got TERM" >> ${JSON.stringify(log)}; exit 0' TERM; sleep 30 & wait) &\nwait`,
+    );
+  else if (tools.claude === 'deaf') write('claude', "trap '' TERM\nsleep 30");
+  else if (tools.claude === 'orphan') write('claude', "(trap '' TERM; exec sleep 30) &\nwait");
   else if (tools.claude) {
     const signedIn = tools.claude === 'signed_in';
     write(
@@ -1319,6 +1332,38 @@ describe('install.sh AI tools', () => {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it.each([
+    ['launcher', false],
+    ['launcher', true],
+    ['deaf', false],
+    ['deaf', true],
+    ['orphan', false],
+  ] as const)(
+    'stops a %s check and everything it started (without GNU timeout: %s)',
+    (claude, withoutTimeout) => {
+      const dir = tmpDir('examify-install-');
+      try {
+        const started = Date.now();
+        const { result, calls } = runAiInstall(
+          dir,
+          { claude },
+          `${BEFORE_AI}later\n`,
+          { EXAMIFY_AI_DETECT_TIMEOUT: '1' },
+          { withoutTimeout },
+        );
+        expect(result.status).toBe(0);
+        // 1 s limit + at most 2 s before KILL, with room for a slow runner:
+        // far from the 30 s the stand-in's child would hold the check open.
+        expect(Date.now() - started).toBeLessThan(12_000);
+        expect(result.stdout).toMatch(/ {2}Claude Code: found; could not check the sign-in/);
+        // TERM reaches the launcher's child too, not only the launcher.
+        if (claude === 'launcher') expect(calls).toContain('claude child got TERM');
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
 
   it('runs no checks with EXAMIFY_AI_DETECT=0 or when a .env already exists', () => {
     const dir = tmpDir('examify-install-');
