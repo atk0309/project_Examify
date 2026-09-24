@@ -1115,7 +1115,9 @@ then writes `EXAMIFY_AI_MODE` plus `EXAMIFY_CLAUDE_BIN` / `EXAMIFY_CODEX_BIN` as
 (`app_finds_agent_cli`: left out only when it is exactly `~/.local/bin/<cli>`, or
 `~/.claude/local/claude` for Claude Code, where the app looks whatever the service `PATH`,
 and no `EXAMIFY_*_BIN` was given; a given name, which the app looks up on `PATH` only, is
-replaced by its full path) or
+replaced by its full path; a CLI whose path must be written but `.env` cannot hold
+unquoted, `agent_cli_writable`, is listed with an `ln -s … ~/.local/bin/<cli>` hint and not
+offered, so no mode is written that cannot run) or
 `EXAMIFY_LLM_BASE_URL` + `EXAMIFY_LLM_MODEL`. A typed Anthropic / OpenAI key sets `cloud` /
 `cloud-openai`. Host `EXAMIFY_AI_MODE`, `EXAMIFY_CLAUDE_BIN`, `EXAMIFY_CODEX_BIN`,
 `EXAMIFY_LLM_BASE_URL` and `EXAMIFY_LLM_MODEL` are otherwise written as given; an unknown mode, a

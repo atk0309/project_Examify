@@ -1220,6 +1220,58 @@ describe('install.sh AI tools', () => {
     },
   );
 
+  it.each([
+    ['claude', 'Claude Code', 'claudeIn'],
+    ['codex', 'Codex', 'codexIn'],
+  ] as const)(
+    'does not offer a %s at a path .env cannot hold, and says how to link it',
+    (cli, label, inKey) => {
+      const dir = tmpDir('examify-install-');
+      try {
+        const { result, envFile, home } = runAiInstall(
+          dir,
+          { [cli]: 'signed_in', [inKey]: 'My Tools', homePath: ['My Tools'] },
+          `${BEFORE_AI}later\n`,
+        );
+        expect(result.status).toBe(0);
+        const found = path.join(home, 'My Tools', cli);
+        expect(result.stdout).toContain(
+          `  ${label}: signed in; not offered: .env cannot hold its path. Link it where Examify looks (ln -s ${found.replace(/ /g, '\\ ')} ~/.local/bin/${cli}), then pick it in /onboarding.\n`,
+        );
+        expect(result.stdout).not.toContain(`) ${label.padEnd(13)} your`);
+        // Only the API key and "decide later" are left; the key questions are the default.
+        expect(result.stdout).toContain('Choose 1-2 [1]: ');
+        expect(envFile).not.toContain('EXAMIFY_AI_MODE=');
+        expect(envFile).not.toContain('_BIN=');
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it('skips a signed-in CLI it cannot offer when picking the default', () => {
+    const dir = tmpDir('examify-install-');
+    try {
+      const { result, envFile } = runAiInstall(
+        dir,
+        {
+          claude: 'signed_in',
+          claudeIn: 'My Tools',
+          homePath: ['My Tools'],
+          codex: 'signed_out',
+          ollama: ['llama3.2:latest'],
+        },
+        `${BEFORE_AI}\n\n`,
+      );
+      expect(result.status).toBe(0);
+      // Codex (not signed in) is 1, Ollama 2: the default is Ollama, not Codex.
+      expect(result.stdout).toContain('Choose 1-4 [2]: ');
+      expect(envFile).toContain('EXAMIFY_AI_MODE=local-agent\n');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('writes the Ollama endpoint and the chosen model, keeping the answers after the checks', () => {
     const dir = tmpDir('examify-install-');
     try {

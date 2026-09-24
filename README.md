@@ -164,11 +164,13 @@ Code and Codex (and whether each is signed in) and Ollama (its models, at `OLLAM
 or `127.0.0.1:11434`). It lists them and offers them next to an API key or "decide
 later", defaulting to a signed-in Claude Code, then a signed-in Codex, then Ollama. The
 pick is written as `EXAMIFY_AI_MODE` with what it needs (the CLI's full path when it is
-not in `~/.local/bin`; Ollama's address and model). A household uses it for banks and
-marking until its admin picks another mode in the setup wizard. An Anthropic or OpenAI
-key typed at the key questions picks that mode the same way. These checks only ask
-each tool whether it is signed in and Ollama for its model list; each is cut off after
-15 seconds. `EXAMIFY_AI_DETECT=0` skips them, and a run that finds an existing `.env`
+not in `~/.local/bin`; Ollama's address and model). A CLI at a path `.env` cannot hold
+(a space, a quote, `$`, `#` or a backslash in it) is listed but not offered, with the
+`ln -s` that links it into `~/.local/bin`, where Examify looks for it. A household uses
+it for banks and marking until its admin picks another mode in the setup wizard. An
+Anthropic or OpenAI key typed at the key questions picks that mode the same way. These
+checks only ask each tool whether it is signed in and Ollama for its model list; each is
+cut off after 15 seconds. `EXAMIFY_AI_DETECT=0` skips them, and a run that finds an existing `.env`
 does not run them.
 
 ```bash

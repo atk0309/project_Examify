@@ -205,7 +205,8 @@ JSON`). Missing cloud
   after the check exits is stopped too). It
   offers what it found, an API key or "decide later", and writes `EXAMIFY_AI_MODE` plus the
   CLI's full path (left out only when it is exactly `~/.local/bin/<cli>` or
-  `~/.claude/local/claude`, where the app looks itself, and no `EXAMIFY_*_BIN` was given)
+  `~/.claude/local/claude`, where the app looks itself, and no `EXAMIFY_*_BIN` was given;
+  a CLI whose path `.env` cannot hold unquoted is listed with an `ln -s` hint, not offered)
   or `EXAMIFY_LLM_BASE_URL` +
   `EXAMIFY_LLM_MODEL`; a typed key sets `cloud` / `cloud-openai`. Host values are otherwise
   written as given; an unknown mode, a value `.env` cannot hold unquoted or a non-http(s) base URL is

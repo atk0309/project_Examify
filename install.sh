@@ -2227,6 +2227,13 @@ app_finds_agent_cli() {
   return 1
 }
 
+# True when the app will find CLI $1 at $2 once the installer is done: it
+# looks there by itself and no EXAMIFY_*_BIN ($3) was given, or .env can hold
+# the path unquoted.
+agent_cli_writable() {
+  { [ -z "$(trim "${!3-}")" ] && app_finds_agent_cli "$1" "$2"; } || plain_env_value "$2"
+}
+
 # signed_in, signed_out or unknown (an older CLI, or a check that timed out).
 claude_signin_state() {
   local out=""
@@ -2330,6 +2337,13 @@ signin_note() {
   esac
 }
 
+# Nothing when CLI $1 can be offered ($3 set); else why not, and the link that
+# puts it where the app looks by itself.
+unwritable_note() {
+  [ -n "$3" ] && return 0
+  printf '; not offered: .env cannot hold its path. Link it where Examify looks (ln -s %q ~/.local/bin/%s), then pick it in /onboarding.' "$2" "$1"
+}
+
 # The models, comma-separated, at most five.
 ollama_model_list() {
   printf '%s\n' "$AI_OLLAMA_MODELS" | awk 'NF { n++; if (n <= 5) printf "%s%s", (n > 1 ? ", " : ""), $0 } END { if (n > 5) printf ", …" }'
@@ -2349,11 +2363,16 @@ offer_ai_tools() {
   fi
   echo
   echo "AI for making question banks and marking written answers. Found for ${user}:"
+  # A CLI the app could not find from .env is listed, with how to fix that,
+  # but not offered: picking it would record a mode that cannot run.
+  local claude_ok="" codex_ok=""
   if [ -n "$AI_CLAUDE_BIN" ]; then
-    echo "  Claude Code: $(signin_note "$AI_CLAUDE_STATE" "$user" "claude auth login")"
+    agent_cli_writable claude "$AI_CLAUDE_BIN" EXAMIFY_CLAUDE_BIN && claude_ok=1
+    echo "  Claude Code: $(signin_note "$AI_CLAUDE_STATE" "$user" "claude auth login")$(unwritable_note claude "$AI_CLAUDE_BIN" "$claude_ok")"
   fi
   if [ -n "$AI_CODEX_BIN" ]; then
-    echo "  Codex: $(signin_note "$AI_CODEX_STATE" "$user" "codex login")"
+    agent_cli_writable codex "$AI_CODEX_BIN" EXAMIFY_CODEX_BIN && codex_ok=1
+    echo "  Codex: $(signin_note "$AI_CODEX_STATE" "$user" "codex login")$(unwritable_note codex "$AI_CODEX_BIN" "$codex_ok")"
   fi
   case "$AI_OLLAMA_STATE" in
     models) echo "  Ollama at ${AI_OLLAMA_BASE}: $(ollama_model_list)" ;;
@@ -2363,11 +2382,11 @@ offer_ai_tools() {
 
   local -a keys=()
   local -a labels=()
-  if [ -n "$AI_CLAUDE_BIN" ]; then
+  if [ -n "$claude_ok" ]; then
     keys+=(claude)
     labels+=("Claude Code   your Claude plan; study files and written answers go to Anthropic")
   fi
-  if [ -n "$AI_CODEX_BIN" ]; then
+  if [ -n "$codex_ok" ]; then
     keys+=(codex)
     labels+=("Codex         your ChatGPT plan; study files and written answers go to OpenAI")
   fi
@@ -2380,9 +2399,9 @@ offer_ai_tools() {
 
   # A tool that is ready first; otherwise the API key questions, as before.
   local default_key="key"
-  if [ "$AI_CLAUDE_STATE" = "signed_in" ]; then
+  if [ -n "$claude_ok" ] && [ "$AI_CLAUDE_STATE" = "signed_in" ]; then
     default_key="claude"
-  elif [ "$AI_CODEX_STATE" = "signed_in" ]; then
+  elif [ -n "$codex_ok" ] && [ "$AI_CODEX_STATE" = "signed_in" ]; then
     default_key="codex"
   elif [ "$AI_OLLAMA_STATE" = "models" ]; then
     default_key="ollama"
@@ -2433,13 +2452,10 @@ use_agent_cli() {
   # The app's service may get a shorter PATH than this shell: write the full
   # path unless the app finds this binary by itself. A given EXAMIFY_*_BIN
   # (a name the app would look up on PATH only) is replaced by the path.
+  # Only a CLI agent_cli_writable accepts is offered, so the path is plain.
   local cli="${1%-cli}"
   if [ -n "$(trim "${!3-}")" ] || ! app_finds_agent_cli "$cli" "$2"; then
-    if plain_env_value "$2"; then
-      printf -v "$3" '%s' "$2"
-    else
-      echo "Note: ${2} cannot be written to .env; set $3 to its full path by hand if Examify does not find it." >&2
-    fi
+    printf -v "$3" '%s' "$2"
   fi
   if [ "$4" != "signed_in" ]; then
     AI_SIGNIN_HINT="Sign ${5} in as ${7} before making banks: ${6}"
