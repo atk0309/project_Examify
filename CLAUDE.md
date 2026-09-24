@@ -811,7 +811,8 @@ project auth status` (JSON `loggedIn`; the option before the subcommand, which r
   (only the admin's `/onboarding` page, `getOnboardingPageSnapshot`) never takes a
   cached answer and waits for a check (one already running is shared); one check per
   key at a time. A generate that fails `provider_auth` or a marking run that fails
-  `cli_auth` calls `forgetAgentCliSignIn(cli)`. Student / parent renders ask only the
+  `cli_auth` calls `forgetAgentCliSignIn(cli)` (a check of that CLI still running is
+  then neither shared nor cached). Student / parent renders ask only the
   household backend's CLI (`markingStatusForUser`); the wizard snapshot (the page and
   every wizard action) asks both found CLIs, whatever the mode. Never run a status command on a CLI whose help lacks it, never let a
   render wait past the deadline, and never cache a failure's own guess.

@@ -314,6 +314,7 @@ export type MarkingStatus = {
   needsSignIn: boolean;
 };
 
+/** `markingReadiness` and `markingNeedsSignIn` together, for the dashboard and the exam. */
 export function markingStatus(backend: MarkingBackend, flags: MarkingFlags): MarkingStatus {
   return {
     backend,

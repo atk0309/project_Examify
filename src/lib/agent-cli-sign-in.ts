@@ -41,9 +41,13 @@ export type AgentCliSignInOptions = {
 type CacheEntry = { cli: ingest.AgentCli; state: AgentCliSignIn; checkedAt: number };
 
 const results = new Map<string, CacheEntry>();
-const running = new Map<string, Promise<AgentCliSignIn>>();
-/** Bumped by the test reset, so a check started before it is not cached after it. */
-let generation = 0;
+const running = new Map<string, { cli: ingest.AgentCli; check: Promise<AgentCliSignIn> }>();
+/**
+ * Bumped by `forgetAgentCliSignIn` (per CLI) and the test reset (all): a check
+ * that started before is neither cached nor shared after, so a "signed in" it
+ * brings back cannot outlive a run that was refused as not signed in.
+ */
+const epochs: Record<ingest.AgentCli, number> = { claude: 0, codex: 0 };
 
 /** The sign-in token the run passes on, when set (its value is not kept). */
 const ENV_TOKEN: Record<ingest.AgentCli, string> = {
@@ -66,6 +70,10 @@ function cacheKey(cli: ingest.AgentCli, env: ProviderEnv): string | null {
   ]);
 }
 
+/**
+ * The check running for `key`, or a new one. Its answer is cached when it
+ * ends, unless `cli` was forgotten (or the cache reset) in the meantime.
+ */
 function startCheck(
   key: string,
   cli: ingest.AgentCli,
@@ -73,10 +81,10 @@ function startCheck(
   deps: AgentCliSignInOptions,
 ): Promise<AgentCliSignIn> {
   const inFlight = running.get(key);
-  if (inFlight) return inFlight;
+  if (inFlight) return inFlight.check;
   const check = deps.check ?? ingest.checkAgentCliSignIn;
   const now = deps.now ?? Date.now;
-  const startedIn = generation;
+  const startedIn = epochs[cli];
   const started = (async (): Promise<AgentCliSignIn> => {
     let state: AgentCliSignIn;
     try {
@@ -84,13 +92,13 @@ function startCheck(
     } catch {
       state = 'unknown';
     }
-    if (startedIn === generation) {
+    if (startedIn === epochs[cli]) {
       results.set(key, { cli, state, checkedAt: now() });
       running.delete(key);
     }
     return state;
   })();
-  running.set(key, started);
+  running.set(key, { cli, check: started });
   return started;
 }
 
@@ -119,19 +127,25 @@ export async function agentCliSignIn(
 }
 
 /**
- * Forget `cli`'s cached answers, so the next render asks again: a generate or
- * marking run it refused as not signed in. Nothing is cached from that
- * failure itself; the status command stays the only answer.
+ * Forget `cli`'s cached answers, and any check of it still running, so the
+ * next render asks again: a generate or marking run it refused as not signed
+ * in. Nothing is cached from that failure itself; the status command stays
+ * the only answer.
  */
 export function forgetAgentCliSignIn(cli: ingest.AgentCli): void {
+  epochs[cli] += 1;
   for (const [key, entry] of results) {
     if (entry.cli === cli) results.delete(key);
+  }
+  for (const [key, entry] of running) {
+    if (entry.cli === cli) running.delete(key);
   }
 }
 
 /** Forget every cached answer (tests). A check still running finishes on its own. */
 export function resetAgentCliSignInCacheForTests(): void {
-  generation += 1;
+  epochs.claude += 1;
+  epochs.codex += 1;
   results.clear();
   running.clear();
 }

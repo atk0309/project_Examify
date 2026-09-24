@@ -219,6 +219,26 @@ describe('agentCliSignIn', () => {
     expect(script.calls()).toBe(3);
   });
 
+  it('does not cache a check that was running when the CLI was forgotten', async () => {
+    const claude = fakeCli('claude', { mode: 'hang' });
+    const env = hostEnv({ EXAMIFY_CLAUDE_BIN: claude.bin });
+    const script = scriptedCheck(['signed_in', 'signed_out']);
+    const deps = { check: script.check };
+    script.holdNext();
+    const first = agentCliSignIn('claude', env, deps);
+    // A marking run is refused as not signed in while that check still runs.
+    forgetAgentCliSignIn('claude');
+    // A render now starts its own check instead of sharing the old one.
+    const second = agentCliSignIn('claude', env, deps);
+    script.release();
+    await expect(first).resolves.toBe('signed_in');
+    await expect(second).resolves.toBe('signed_out');
+    expect(script.calls()).toBe(2);
+    // The old check's "signed in" was not cached over it.
+    await expect(agentCliSignIn('claude', env, deps)).resolves.toBe('signed_out');
+    expect(script.calls()).toBe(2);
+  });
+
   it('is unknown when the check itself fails', async () => {
     const claude = fakeCli('claude', { mode: 'hang' });
     const env = hostEnv({ EXAMIFY_CLAUDE_BIN: claude.bin });
