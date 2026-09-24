@@ -1007,8 +1007,11 @@ type FakeAiTools = {
   codex?: 'signed_in' | 'signed_out';
   /** Models Ollama's /api/tags lists; `down`: an ollama binary with nothing answering. */
   ollama?: string[] | 'down';
-  /** Put claude in ~/.local/bin (off PATH) instead of the bin folder. */
-  claudeInHome?: boolean;
+  /** Put claude / codex in this folder under HOME instead of the bin folder. */
+  claudeIn?: string;
+  codexIn?: string;
+  /** Folders under HOME to put on PATH, ahead of the bin folder. */
+  homePath?: string[];
 };
 
 /**
@@ -1024,14 +1027,19 @@ function fakeAiTools(tools: FakeAiTools) {
   fs.mkdirSync(bin);
   fs.mkdirSync(home);
   const log = path.join(root, 'calls.log');
-  const homeBin = path.join(home, '.local', 'bin');
-  fs.mkdirSync(homeBin, { recursive: true });
-  const write = (name: string, body: string) =>
+  const folderFor: Record<string, string | undefined> = {
+    claude: tools.claudeIn,
+    codex: tools.codexIn,
+  };
+  const write = (name: string, body: string) => {
+    const folder = folderFor[name] ? path.join(home, folderFor[name]) : bin;
+    fs.mkdirSync(folder, { recursive: true });
     fs.writeFileSync(
-      path.join(name === 'claude' && tools.claudeInHome ? homeBin : bin, name),
+      path.join(folder, name),
       `#!/bin/sh\necho "${name} $*" >> ${JSON.stringify(log)}\ncat > /dev/null\n${body}\n`,
       { mode: 0o755 },
     );
+  };
   if (tools.claude === 'hang') write('claude', 'exec sleep 30');
   else if (tools.claude === 'launcher')
     write(
@@ -1070,8 +1078,9 @@ function fakeAiTools(tools: FakeAiTools) {
   }
   if (tools.ollama === 'down') write('ollama', 'exit 1');
   const calls = () => (fs.existsSync(log) ? fs.readFileSync(log, 'utf8') : '');
-  const env = { PATH: `${bin}:/usr/bin:/bin`, HOME: home, EXAMIFY_AI_DETECT: '1' };
-  return { root, bin, env, calls };
+  const searchPath = [...(tools.homePath ?? []).map((dir) => path.join(home, dir)), bin].join(':');
+  const env = { PATH: `${searchPath}:/usr/bin:/bin`, HOME: home, EXAMIFY_AI_DETECT: '1' };
+  return { root, bin, home, searchPath, env, calls };
 }
 
 /** Site URL, data folder, sign-in, mail and Turnstile take their defaults. */
@@ -1104,7 +1113,7 @@ function runAiInstall(
   options: { withoutTimeout?: boolean } = {},
 ) {
   const fake = fakeAiTools(tools);
-  if (options.withoutTimeout) fake.env.PATH = `${fake.bin}:${systemPathWithoutTimeout()}`;
+  if (options.withoutTimeout) fake.env.PATH = `${fake.searchPath}:${systemPathWithoutTimeout()}`;
   const result = spawnSync(BASH, [SCRIPT, '--write-env-only'], {
     cwd: dir,
     env: { NODE_ENV: 'test', TMPDIR: process.env.TMPDIR, ...fake.env, ...extra },
@@ -1118,7 +1127,7 @@ function runAiInstall(
     : '';
   const calls = fake.calls();
   fs.rmSync(fake.root, { recursive: true, force: true });
-  return { result, envFile, calls, bin: fake.bin };
+  return { result, envFile, calls, bin: fake.bin, home: fake.home };
 }
 
 describe('install.sh AI tools', () => {
@@ -1158,22 +1167,58 @@ describe('install.sh AI tools', () => {
     }
   });
 
-  it('finds a Claude Code in ~/.local/bin off PATH, where the app looks anyway', () => {
+  it.each([
+    ['claude', '.local/bin'],
+    ['claude', '.claude/local'],
+    ['codex', '.local/bin'],
+  ] as const)('finds a %s in ~/%s off PATH, where the app looks anyway', (cli, folder) => {
     const dir = tmpDir('examify-install-');
     try {
       const { result, envFile, calls } = runAiInstall(
         dir,
-        { claude: 'signed_in', claudeInHome: true },
+        cli === 'claude'
+          ? { claude: 'signed_in', claudeIn: folder }
+          : { codex: 'signed_in', codexIn: folder },
         `${BEFORE_AI}\n`,
       );
       expect(result.status).toBe(0);
-      expect(calls).toContain('claude auth status');
-      expect(envFile).toContain('EXAMIFY_AI_MODE=claude-cli\n');
-      expect(envFile).not.toContain('EXAMIFY_CLAUDE_BIN=');
+      expect(calls).toContain(cli === 'claude' ? 'claude auth status' : 'codex login status');
+      expect(envFile).toContain(`EXAMIFY_AI_MODE=${cli}-cli\n`);
+      expect(envFile).not.toContain('_BIN=');
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it.each([
+    // Below ~/.local/bin: the app looks in that folder itself, not its subfolders.
+    ['claude', '.local/bin/tools', {}],
+    // The app looks in ~/.claude/local for Claude Code only.
+    ['codex', '.claude/local', {}],
+    // A name: the app then searches only its service's PATH for it.
+    ['claude', '.local/bin', { EXAMIFY_CLAUDE_BIN: 'claude' }],
+  ] as const)(
+    'writes the full path of a %s found on PATH in ~/%s (host %o)',
+    (cli, folder, host) => {
+      const dir = tmpDir('examify-install-');
+      try {
+        const { result, envFile, home } = runAiInstall(
+          dir,
+          cli === 'claude'
+            ? { claude: 'signed_in', claudeIn: folder, homePath: [folder] }
+            : { codex: 'signed_in', codexIn: folder, homePath: [folder] },
+          `${BEFORE_AI}\n`,
+          host,
+        );
+        expect(result.status).toBe(0);
+        expect(envFile).toContain(`EXAMIFY_AI_MODE=${cli}-cli\n`);
+        const name = cli === 'claude' ? 'EXAMIFY_CLAUDE_BIN' : 'EXAMIFY_CODEX_BIN';
+        expect(envFile).toContain(`${name}=${path.join(home, folder, cli)}\n`);
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
 
   it('writes the Ollama endpoint and the chosen model, keeping the answers after the checks', () => {
     const dir = tmpDir('examify-install-');

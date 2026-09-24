@@ -204,9 +204,11 @@ JSON`). Missing cloud
   everything it started (TERM to its process group, KILL 2 s later; a child left behind
   after the check exits is stopped too). It
   offers what it found, an API key or "decide later", and writes `EXAMIFY_AI_MODE` plus the
-  CLI path (unless in `~/.local/bin` / `~/.claude/local`) or `EXAMIFY_LLM_BASE_URL` +
-  `EXAMIFY_LLM_MODEL`; a typed key sets `cloud` / `cloud-openai`. Host values are written as
-  given; an unknown mode, a value `.env` cannot hold unquoted or a non-http(s) base URL is
+  CLI's full path (left out only when it is exactly `~/.local/bin/<cli>` or
+  `~/.claude/local/claude`, where the app looks itself, and no `EXAMIFY_*_BIN` was given)
+  or `EXAMIFY_LLM_BASE_URL` +
+  `EXAMIFY_LLM_MODEL`; a typed key sets `cloud` / `cloud-openai`. Host values are otherwise
+  written as given; an unknown mode, a value `.env` cannot hold unquoted or a non-http(s) base URL is
   refused. `EXAMIFY_AI_MODE` (validated in `env.ts`) is the mode a household uses until its
   admin picks one: `effectiveAiMode` (saved, else the installer's) drives generate, marking
   and the wizard (`wizard-ai-installer` names the pick). `is_ai_mode` is parity-tested

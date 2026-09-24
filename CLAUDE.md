@@ -1111,11 +1111,14 @@ until the whole group is gone, even when the check itself exits first, the same 
 `timeout` or none). It lists
 what it found and offers each tool, an API key or "decide later" (default: signed-in
 Claude Code, signed-in Codex, Ollama with a model, else the API key questions as before),
-then writes `EXAMIFY_AI_MODE` plus `EXAMIFY_CLAUDE_BIN` / `EXAMIFY_CODEX_BIN` (unless in
-`~/.local/bin` / `~/.claude/local`, where the app looks whatever the service `PATH`) or
+then writes `EXAMIFY_AI_MODE` plus `EXAMIFY_CLAUDE_BIN` / `EXAMIFY_CODEX_BIN` as a full path
+(`app_finds_agent_cli`: left out only when it is exactly `~/.local/bin/<cli>`, or
+`~/.claude/local/claude` for Claude Code, where the app looks whatever the service `PATH`,
+and no `EXAMIFY_*_BIN` was given; a given name, which the app looks up on `PATH` only, is
+replaced by its full path) or
 `EXAMIFY_LLM_BASE_URL` + `EXAMIFY_LLM_MODEL`. A typed Anthropic / OpenAI key sets `cloud` /
 `cloud-openai`. Host `EXAMIFY_AI_MODE`, `EXAMIFY_CLAUDE_BIN`, `EXAMIFY_CODEX_BIN`,
-`EXAMIFY_LLM_BASE_URL` and `EXAMIFY_LLM_MODEL` are written as given; an unknown mode, a
+`EXAMIFY_LLM_BASE_URL` and `EXAMIFY_LLM_MODEL` are otherwise written as given; an unknown mode, a
 value `.env` cannot hold unquoted (spaces, quotes, `$`, `#`, backslash) or a non-http(s)
 base URL is refused before `.env` is written. The mode list in `is_ai_mode` is
 parity-tested against `ONBOARDING_AI_MODES`.

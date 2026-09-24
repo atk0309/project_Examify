@@ -2216,13 +2216,14 @@ find_agent_cli() {
   return 1
 }
 
-# The app looks in these folders whatever PATH its service gets, so a binary
-# there needs no EXAMIFY_*_BIN.
-in_agent_cli_home_dirs() {
+# True when the app finds $2 as `$1` with no EXAMIFY_*_BIN whatever PATH its
+# service gets: exactly ~/.local/bin/<cli>, or ~/.claude/local/claude for
+# Claude Code (resolveAgentCliBinary looks in those folders themselves, not
+# their subfolders, and in ~/.claude/local for Claude Code only).
+app_finds_agent_cli() {
   [ -n "${HOME-}" ] || return 1
-  case "$1" in
-    "$HOME/.local/bin/"* | "$HOME/.claude/local/"*) return 0 ;;
-  esac
+  [ "$2" = "$HOME/.local/bin/$1" ] && return 0
+  [ "$1" = "claude" ] && [ "$2" = "$HOME/.claude/local/claude" ] && return 0
   return 1
 }
 
@@ -2429,9 +2430,11 @@ offer_ai_tools() {
 use_agent_cli() {
   EXAMIFY_AI_MODE="$1"
   AI_PICK="tool"
-  # The app's service may get a shorter PATH than this shell: name the binary
-  # unless it sits where the app always looks.
-  if ! in_agent_cli_home_dirs "$2"; then
+  # The app's service may get a shorter PATH than this shell: write the full
+  # path unless the app finds this binary by itself. A given EXAMIFY_*_BIN
+  # (a name the app would look up on PATH only) is replaced by the path.
+  local cli="${1%-cli}"
+  if [ -n "$(trim "${!3-}")" ] || ! app_finds_agent_cli "$cli" "$2"; then
     if plain_env_value "$2"; then
       printf -v "$3" '%s' "$2"
     else
