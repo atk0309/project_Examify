@@ -21,6 +21,13 @@ export const ONBOARDING_GENERATE_PROVIDERS = [
 ] as const;
 export type OnboardingGenerateProvider = (typeof ONBOARDING_GENERATE_PROVIDERS)[number];
 
+/**
+ * Whether Claude Code / Codex is signed in for the user that runs Examify
+ * (`claude auth status` / `codex login status`, cached a few minutes). `unknown`:
+ * not found, or the check gave no clear answer (it timed out, or an older CLI).
+ */
+export type AgentCliSignIn = 'signed_in' | 'signed_out' | 'unknown';
+
 /** Claude Code / Codex: the household's own AI plan through its command-line tool. */
 export type OnboardingAgentCliMode = Extract<OnboardingAiMode, 'claude-cli' | 'codex-cli'>;
 
@@ -71,24 +78,49 @@ export const ONBOARDING_AI_CAPABILITIES: Record<OnboardingAiMode, OnboardingAiCa
   'skip-stub': { pdfs: 'none', signIn: 'none' },
 };
 
+/** Claude Code / Codex sign-in commands, as install.sh and the README name them. */
+export const AGENT_CLI_SIGNIN_COMMAND: Record<OnboardingAgentCliMode, string> = {
+  'claude-cli': 'claude auth login',
+  'codex-cli': 'codex login',
+};
+
 const AGENT_CLI_COPY: Record<
   OnboardingAgentCliMode,
   { name: string; signIn: string; binEnv: string }
 > = {
   'claude-cli': {
     name: 'Claude Code',
-    signIn: 'run `claude` once and sign in',
+    signIn: `run \`${AGENT_CLI_SIGNIN_COMMAND['claude-cli']}\``,
     binEnv: 'EXAMIFY_CLAUDE_BIN',
   },
-  'codex-cli': { name: 'Codex', signIn: 'run `codex login`', binEnv: 'EXAMIFY_CODEX_BIN' },
+  'codex-cli': {
+    name: 'Codex',
+    signIn: `run \`${AGENT_CLI_SIGNIN_COMMAND['codex-cli']}\``,
+    binEnv: 'EXAMIFY_CODEX_BIN',
+  },
 };
 
-/** AI-step note for Claude Code / Codex: installed here or not, and how it signs in. */
-export function onboardingAgentCliSetupNote(mode: OnboardingAgentCliMode, found: boolean): string {
+/**
+ * AI-step note for Claude Code / Codex: installed here or not, signed in or
+ * not (`unknown`: the check gave no clear answer), and how it signs in.
+ */
+export function onboardingAgentCliSetupNote(
+  mode: OnboardingAgentCliMode,
+  found: boolean,
+  signIn: AgentCliSignIn = 'unknown',
+): string {
   const cli = AGENT_CLI_COPY[mode];
-  return found
-    ? `${cli.name} is installed on this server. Generate uses its own sign-in: if it is not signed in yet, ${cli.signIn} as the user that runs Examify.`
-    : `${cli.name} was not found on this server (PATH or ~/.local/bin). Install it as the user that runs Examify and ${cli.signIn}, then reload this page, or set ${cli.binEnv} in this host’s .env to its full path.`;
+  if (!found) {
+    return `${cli.name} was not found on this server (PATH or ~/.local/bin). Install it as the user that runs Examify and ${cli.signIn}, then reload this page, or set ${cli.binEnv} in this host’s .env to its full path.`;
+  }
+  switch (signIn) {
+    case 'signed_in':
+      return `${cli.name} is installed and signed in on this server. Generate and marking use its own sign-in.`;
+    case 'signed_out':
+      return `${cli.name} is installed on this server but not signed in as the user that runs Examify. As that user, ${cli.signIn}, then reload this page. Until then, Generate cannot make banks and written answers are not marked.`;
+    case 'unknown':
+      return `${cli.name} is installed on this server, but Examify could not tell whether it is signed in. Generate and marking use its own sign-in: if it is not signed in yet, ${cli.signIn} as the user that runs Examify.`;
+  }
 }
 
 /**
@@ -228,14 +260,18 @@ export type MarkingFlags = Pick<
   | 'openaiGradingStubActive'
   | 'claudeCliFound'
   | 'codexCliFound'
+  | 'claudeCliSignIn'
+  | 'codexCliSignIn'
   | 'localHttpConfigured'
   | 'localModelConfigured'
 >;
 
 /**
  * `ready`: it marks. `stub`: the `test` key gives full marks. `not_ready`:
- * answers stay unmarked. Claude Code / Codex are `ready` once found: their
- * sign-in is only known when they run, so their copy says marking needs it.
+ * answers stay unmarked. Claude Code / Codex are `ready` once found unless
+ * their sign-in check says signed out; a check with no clear answer
+ * (`unknown`) still counts as ready, and their copy says marking needs the
+ * sign-in.
  */
 export type MarkingReadiness = 'ready' | 'stub' | 'not_ready';
 
@@ -251,12 +287,39 @@ export function markingReadiness(backend: MarkingBackend, flags: MarkingFlags): 
           ? 'stub'
           : 'not_ready';
     case 'claude-cli':
-      return flags.claudeCliFound ? 'ready' : 'not_ready';
+      return flags.claudeCliFound && flags.claudeCliSignIn !== 'signed_out' ? 'ready' : 'not_ready';
     case 'codex-cli':
-      return flags.codexCliFound ? 'ready' : 'not_ready';
+      return flags.codexCliFound && flags.codexCliSignIn !== 'signed_out' ? 'ready' : 'not_ready';
     case 'local-endpoint':
       return flags.localHttpConfigured && flags.localModelConfigured ? 'ready' : 'not_ready';
   }
+}
+
+/** True when `backend` is a Claude Code / Codex that is installed here but signed out. */
+export function markingNeedsSignIn(backend: MarkingBackend, flags: MarkingFlags): boolean {
+  switch (backend) {
+    case 'claude-cli':
+      return flags.claudeCliFound && flags.claudeCliSignIn === 'signed_out';
+    case 'codex-cli':
+      return flags.codexCliFound && flags.codexCliSignIn === 'signed_out';
+    default:
+      return false;
+  }
+}
+
+/** Who marks this household's written answers, whether it can here, and whether it needs a sign-in. */
+export type MarkingStatus = {
+  backend: MarkingBackend;
+  readiness: MarkingReadiness;
+  needsSignIn: boolean;
+};
+
+export function markingStatus(backend: MarkingBackend, flags: MarkingFlags): MarkingStatus {
+  return {
+    backend,
+    readiness: markingReadiness(backend, flags),
+    needsSignIn: markingNeedsSignIn(backend, flags),
+  };
 }
 
 const MARKING_LABEL: Record<MarkingBackend, string> = {
@@ -266,6 +329,19 @@ const MARKING_LABEL: Record<MarkingBackend, string> = {
   'codex-cli': 'Codex',
   'local-endpoint': 'your local endpoint',
 };
+
+/**
+ * What exams do while nothing here marks written answers (`examPool`): leave
+ * them out, except a bank with only written questions, which keeps them.
+ */
+const WRITTEN_LEFT_OUT =
+  'Until then, exams leave written questions out (a bank with only written questions keeps them), and any written answer counts as not correct.';
+
+/** Claude Code / Codex, when it is the backend: its name and sign-in command. */
+function agentCliSignInFor(backend: MarkingBackend): { by: string; command: string } | null {
+  if (backend !== 'claude-cli' && backend !== 'codex-cli') return null;
+  return { by: MARKING_LABEL[backend], command: AGENT_CLI_SIGNIN_COMMAND[backend] };
+}
 
 /** What this server needs before a backend marks anything. */
 const MARKING_SETUP: Record<MarkingBackend, string> = {
@@ -298,11 +374,15 @@ export function onboardingMarkingCopy(
   const backend = markingBackendForAiMode(mode);
   const label = MARKING_LABEL[backend];
   const note = markingFallbackNote(mode);
+  const signIn = markingNeedsSignIn(backend, flags) ? agentCliSignInFor(backend) : null;
   switch (markingReadiness(backend, flags)) {
     case 'stub':
       return `${note}The ${label} key is the test placeholder, so written answers get a stub full mark and nothing is sent. Set a real key before real use.`;
     case 'not_ready':
-      return `${note}Written answers are not marked until this server has ${MARKING_SETUP[backend]}: until then, exams leave written questions out, and any written answer counts as not correct.`;
+      if (signIn) {
+        return `Written answers are not marked: ${signIn.by} is not signed in as the user that runs Examify. As that user, run \`${signIn.command}\`. ${WRITTEN_LEFT_OUT}`;
+      }
+      return `${note}Written answers are not marked until this server has ${MARKING_SETUP[backend]}. ${WRITTEN_LEFT_OUT}`;
     case 'ready':
       if (backend === 'claude-cli' || backend === 'codex-cli') {
         return `Written answers are marked by ${label} while it is signed in as the user that runs Examify: one run marks all of an exam’s written answers, each sent with its question and rubric, and can take up to a minute. Signed out, they are not marked and count as not correct.`;
@@ -314,9 +394,17 @@ export function onboardingMarkingCopy(
   }
 }
 
-/** The parent dashboard's one line on marking. */
-export function parentMarkingLine(backend: MarkingBackend, readiness: MarkingReadiness): string {
+/**
+ * The parent dashboard's one line on marking. `needsSignIn`: the backend is a
+ * Claude Code / Codex that is installed here but signed out (`markingNeedsSignIn`).
+ */
+export function parentMarkingLine(
+  backend: MarkingBackend,
+  readiness: MarkingReadiness,
+  needsSignIn = false,
+): string {
   const label = MARKING_LABEL[backend];
+  const signIn = needsSignIn ? agentCliSignInFor(backend) : null;
   switch (readiness) {
     case 'ready':
       if (backend === 'claude-cli' || backend === 'codex-cli') {
@@ -326,7 +414,10 @@ export function parentMarkingLine(backend: MarkingBackend, readiness: MarkingRea
     case 'stub':
       return `Written answers get a test full mark: the ${label} key is a placeholder.`;
     case 'not_ready':
-      return `Written answers are not marked: this server needs ${MARKING_SETUP[backend]}. Until then, exams leave written questions out, and any written answer counts as not correct.`;
+      if (signIn) {
+        return `Written answers are not marked: ${signIn.by} is not signed in on this server. As the user that runs Examify, run \`${signIn.command}\`. ${WRITTEN_LEFT_OUT}`;
+      }
+      return `Written answers are not marked: this server needs ${MARKING_SETUP[backend]}. ${WRITTEN_LEFT_OUT}`;
   }
 }
 
@@ -334,10 +425,13 @@ export function parentMarkingLine(backend: MarkingBackend, readiness: MarkingRea
  * What a student's exam knows about marking written answers. `marked`: an AI
  * on this server marks them (`by` names it). `stub`: the test key gives them a
  * stub full mark. `unmarked`: nothing here can mark them, so papers leave
- * written questions out where the bank has others (`examPool`).
+ * written questions out where the bank has others (`examPool`); `signIn` names
+ * the Claude Code / Codex that would, once signed in, and its sign-in command.
  */
 export type ExamMarking =
-  { written: 'marked'; by: string } | { written: 'stub' } | { written: 'unmarked' };
+  | { written: 'marked'; by: string }
+  | { written: 'stub' }
+  | { written: 'unmarked'; signIn?: { by: string; command: string } };
 
 /** Who marks, in words for a student. */
 const EXAM_MARKED_BY: Record<MarkingBackend, string> = {
@@ -345,14 +439,20 @@ const EXAM_MARKED_BY: Record<MarkingBackend, string> = {
   'local-endpoint': 'your family’s own AI model',
 };
 
-export function examMarking(backend: MarkingBackend, readiness: MarkingReadiness): ExamMarking {
+export function examMarking(
+  backend: MarkingBackend,
+  readiness: MarkingReadiness,
+  needsSignIn = false,
+): ExamMarking {
   switch (readiness) {
     case 'ready':
       return { written: 'marked', by: EXAM_MARKED_BY[backend] };
     case 'stub':
       return { written: 'stub' };
-    case 'not_ready':
-      return { written: 'unmarked' };
+    case 'not_ready': {
+      const signIn = needsSignIn ? agentCliSignInFor(backend) : null;
+      return signIn ? { written: 'unmarked', signIn } : { written: 'unmarked' };
+    }
   }
 }
 
@@ -372,6 +472,12 @@ export function examWrittenLine(
     case 'stub':
       return 'Written answers get a test mark on this server.';
     case 'unmarked':
+      if (marking.signIn) {
+        const { by, command } = marking.signIn;
+        return paper.leftOut
+          ? `Written questions are left out: ${by} isn’t signed in on this server. A parent can sign it in on the server with \`${command}\`.`
+          : `${by} isn’t signed in on this server, so written answers count as not correct. A parent can sign it in on the server with \`${command}\`.`;
+      }
       return paper.leftOut
         ? 'Written questions are left out: this server can’t mark written answers yet.'
         : EXAM_UNMARKED_WRITTEN;
@@ -381,6 +487,15 @@ export function examWrittenLine(
 /** Under a written question nothing on this server can mark. */
 export const EXAM_UNMARKED_WRITTEN =
   'This server can’t mark written answers yet, so they count as not correct.';
+
+/** The note under each written question when `marking` is `unmarked`. */
+export function examUnmarkedWrittenNote(marking: ExamMarking): string {
+  if (marking.written === 'unmarked' && marking.signIn) {
+    const { by, command } = marking.signIn;
+    return `${by} isn’t signed in on this server, so written answers count as not correct. A parent can sign it in on the server with \`${command}\`.`;
+  }
+  return EXAM_UNMARKED_WRITTEN;
+}
 
 export function providerForOnboardingAiMode(mode: OnboardingAiMode): OnboardingGenerateProvider {
   switch (mode) {
@@ -563,11 +678,18 @@ export type OnboardingSnapshot = {
   localCmdConfigured: boolean;
   /**
    * Claude Code / Codex binary found on this server (`EXAMIFY_CLAUDE_BIN` /
-   * `EXAMIFY_CODEX_BIN`, PATH, `~/.local/bin`). Not whether it is signed in —
-   * generate says so. Never the path.
+   * `EXAMIFY_CODEX_BIN`, PATH, `~/.local/bin`). Never the path.
    */
   claudeCliFound: boolean;
   codexCliFound: boolean;
+  /**
+   * Whether that CLI is signed in for the user that runs Examify
+   * (`claude auth status` / `codex login status`, cached a few minutes):
+   * `unknown` when it is not found or the check gave no clear answer. Never
+   * the account it is signed in with.
+   */
+  claudeCliSignIn: AgentCliSignIn;
+  codexCliSignIn: AgentCliSignIn;
   /**
    * Free-text marking currently uses the deterministic `test` stub (full
    * marks, no network): the live key is the sentinel and `gradingStubAllowed()`

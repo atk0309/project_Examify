@@ -188,7 +188,7 @@ file first.
    **No API key? Use the AI plan you already have.** `--provider claude-cli`
    runs Claude Code (`claude -p`) and `--provider codex-cli` runs Codex
    (`codex exec`) with their own sign-in. Install the CLI as the user that runs
-   Examify and sign in once (`claude`, or `codex login`); Examify finds it on
+   Examify and sign in once (`claude auth login`, or `codex login`); Examify finds it on
    `PATH` or in `~/.local/bin`, else set `EXAMIFY_CLAUDE_BIN` /
    `EXAMIFY_CODEX_BIN` to its full path. `EXAMIFY_CLAUDE_MODEL` /
    `EXAMIFY_CODEX_MODEL` (or `--model`) pick the model; otherwise the CLI

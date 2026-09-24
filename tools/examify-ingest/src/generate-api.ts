@@ -56,6 +56,12 @@ export {
 export {
   getProvider,
   AGENT_CLI_BIN_ENV,
+  AGENT_CLI_SIGNIN_TIMEOUT_MS,
+  agentCliHome,
+  checkAgentCliSignIn,
+  parseClaudeAuthStatus,
+  parseCodexLoginStatus,
+  type AgentCliSignIn,
   AGENT_CLI_MODEL_ENV,
   CLI_PROVIDER_TIMEOUT_MS,
   CliNotFoundError,

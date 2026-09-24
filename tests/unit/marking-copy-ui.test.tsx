@@ -46,6 +46,23 @@ describe('parent dashboard marking line', () => {
       'this server needs EXAMIFY_LLM_BASE_URL (an http or https address) and EXAMIFY_LLM_MODEL set',
     );
     expect(screen.getByTestId('parent-marking')).not.toHaveTextContent(/later|shortly/i);
+    expect(screen.getByTestId('parent-marking')).toHaveTextContent(
+      'Until then, exams leave written questions out (a bank with only written questions keeps them), and any written answer counts as not correct.',
+    );
+
+    // Claude Code found but signed out: the line names the sign-in command.
+    rerender(
+      <ParentDashboard
+        students={[]}
+        ownProgress={empty}
+        ownHistory={[]}
+        authMode="password"
+        markingLine={parentMarkingLine('claude-cli', 'not_ready', true)}
+      />,
+    );
+    expect(screen.getByTestId('parent-marking')).toHaveTextContent(
+      'Written answers are not marked: Claude Code is not signed in on this server. As the user that runs Examify, run `claude auth login`.',
+    );
 
     rerender(
       <ParentDashboard students={[]} ownProgress={empty} ownHistory={[]} authMode="password" />,

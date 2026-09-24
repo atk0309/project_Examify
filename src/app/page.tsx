@@ -16,19 +16,13 @@ import { getProgressForUser, getScoreHistory, resolveChildren } from '@/lib/prog
 import {
   adminNeedsOnboardingChip,
   adminShouldAutoStartOnboarding,
+  examMarkingForUser,
   getOnboardingForUser,
-  markingStatusForUser,
+  parentMarkingLineForUser,
 } from '@/lib/onboarding';
-import { examMarking, parentMarkingLine } from '@/lib/onboarding-types';
 import { resolveExamPaper } from '@/lib/exam/data';
 import { loadLivePublicBank } from '@/lib/exam/live-bank.server';
 import type { HouseholdMemberView } from '@/lib/household-types';
-
-/** Whether written answers get marked here, for the exam this user sits. */
-function examMarkingFor(userId: number) {
-  const { backend, readiness } = markingStatusForUser(userId);
-  return examMarking(backend, readiness);
-}
 
 /**
  * Reconstruct the user's resumable in-progress exams from their saved sessions.
@@ -88,7 +82,7 @@ export default async function HomePage() {
           resumable={resumableFor(session.userId, bank.questions)}
           subjects={bank.subjects}
           questionBank={bank.questions}
-          marking={examMarkingFor(session.userId)}
+          marking={await examMarkingForUser(session.userId)}
         />
       );
     }
@@ -98,7 +92,7 @@ export default async function HomePage() {
     // Children are resolved from the parent's own household only.
     const kids = session.email ? resolveChildren(session.email) : [];
     const ownHistory = getScoreHistory(session.userId);
-    const marking = markingStatusForUser(session.userId);
+    const markingLine = await parentMarkingLineForUser(session.userId);
     const membership = getMembershipForUser(session.userId);
     const pendingInvites =
       membership && canInvite(session.userId) ? listPendingInvites(membership.householdId) : [];
@@ -133,7 +127,7 @@ export default async function HomePage() {
           role: onboarding.role,
           onboardingComplete: onboarding.complete,
         })}
-        markingLine={parentMarkingLine(marking.backend, marking.readiness)}
+        markingLine={markingLine}
         subjects={bank.subjects}
       />
     );
@@ -147,7 +141,7 @@ export default async function HomePage() {
       resumable={resumableFor(session.userId, bank.questions)}
       subjects={bank.subjects}
       questionBank={bank.questions}
-      marking={examMarkingFor(session.userId)}
+      marking={await examMarkingForUser(session.userId)}
     />
   );
 }

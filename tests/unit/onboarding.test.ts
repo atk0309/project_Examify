@@ -515,7 +515,7 @@ describe('onboarding subjects and files', () => {
     expect(
       applyOnboardingEmit({ replaceSample: false, expectedHash: preview.dryRun.hash }, root).ok,
     ).toBe(true);
-    const snap = getOnboardingSnapshot(host.householdId, root);
+    const snap = await getOnboardingSnapshot(host.householdId, root);
     const history = snap.liveSubjects.find((row) => row.id === 'history');
     expect(history).toMatchObject({ id: 'history', label: 'History', questionCount: 1 });
     expect(snap.liveSubjects.some((row) => row.label && row.id)).toBe(true);
@@ -905,7 +905,7 @@ describe('onboarding household gate', () => {
     const previous = process.env.OPENAI_API_KEY;
     delete process.env.OPENAI_API_KEY;
     try {
-      const snap = getOnboardingSnapshot(host.householdId);
+      const snap = await getOnboardingSnapshot(host.householdId);
       expect(snap.openaiConfigured).toBe(false);
       expect(snap.openaiHostManaged).toBe(false);
       expect(snap.anthropicConfigured).toBe(false);
@@ -916,24 +916,24 @@ describe('onboarding household gate', () => {
     }
     process.env.OPENAI_API_KEY = 'sk-test-not-a-sentinel';
     try {
-      const injected = getOnboardingSnapshot(host.householdId);
+      const injected = await getOnboardingSnapshot(host.householdId);
       expect(injected.openaiConfigured).toBe(true);
       expect(injected.openaiHostManaged).toBe(true);
       writeFileSync(
         path.join(root, '.env'),
         'ANTHROPIC_API_KEY=test\nOPENAI_API_KEY=sk-test-not-a-sentinel\n',
       );
-      const matched = getOnboardingSnapshot(host.householdId);
+      const matched = await getOnboardingSnapshot(host.householdId);
       expect(matched.openaiConfigured).toBe(true);
       expect(matched.openaiHostManaged).toBe(false);
       setInitialEnvironForTests({ OPENAI_API_KEY: 'sk-test-not-a-sentinel' });
-      const execOwned = getOnboardingSnapshot(host.householdId);
+      const execOwned = await getOnboardingSnapshot(host.householdId);
       expect(execOwned.openaiConfigured).toBe(true);
       expect(execOwned.openaiHostManaged).toBe(true);
       setInitialEnvironForTests({ OPENAI_API_KEY: '' });
-      expect(getOnboardingSnapshot(host.householdId).openaiHostManaged).toBe(true);
+      expect((await getOnboardingSnapshot(host.householdId)).openaiHostManaged).toBe(true);
       setInitialEnvironForTests({ OPENAI_API_KEY: 'test' });
-      expect(getOnboardingSnapshot(host.householdId).openaiHostManaged).toBe(true);
+      expect((await getOnboardingSnapshot(host.householdId)).openaiHostManaged).toBe(true);
     } finally {
       if (previous === undefined) delete process.env.OPENAI_API_KEY;
       else process.env.OPENAI_API_KEY = previous;
@@ -954,7 +954,7 @@ describe('onboarding household gate', () => {
     const previous = process.env.ANTHROPIC_API_KEY;
     delete process.env.ANTHROPIC_API_KEY;
     try {
-      const snap = getOnboardingSnapshot(host.householdId);
+      const snap = await getOnboardingSnapshot(host.householdId);
       expect(snap.anthropicConfigured).toBe(false);
       expect(snap.anthropicPresent).toBe(false);
       expect(snap.anthropicHostManaged).toBe(false);
@@ -964,22 +964,22 @@ describe('onboarding household gate', () => {
     }
     process.env.ANTHROPIC_API_KEY = 'sk-anth-test-not-a-sentinel';
     try {
-      const injected = getOnboardingSnapshot(host.householdId);
+      const injected = await getOnboardingSnapshot(host.householdId);
       expect(injected.anthropicConfigured).toBe(true);
       expect(injected.anthropicHostManaged).toBe(true);
       writeFileSync(path.join(root, '.env'), 'ANTHROPIC_API_KEY=sk-anth-test-not-a-sentinel\n');
-      const matched = getOnboardingSnapshot(host.householdId);
+      const matched = await getOnboardingSnapshot(host.householdId);
       expect(matched.anthropicConfigured).toBe(true);
       expect(matched.anthropicHostManaged).toBe(false);
       setInitialEnvironForTests({ ANTHROPIC_API_KEY: 'sk-anth-test-not-a-sentinel' });
-      const execOwned = getOnboardingSnapshot(host.householdId);
+      const execOwned = await getOnboardingSnapshot(host.householdId);
       expect(execOwned.anthropicConfigured).toBe(true);
       expect(execOwned.anthropicHostManaged).toBe(true);
       setInitialEnvironForTests({ ANTHROPIC_API_KEY: '' });
-      expect(getOnboardingSnapshot(host.householdId).anthropicHostManaged).toBe(true);
+      expect((await getOnboardingSnapshot(host.householdId)).anthropicHostManaged).toBe(true);
       setInitialEnvironForTests({ ANTHROPIC_API_KEY: 'test' });
       process.env.ANTHROPIC_API_KEY = 'test';
-      const sentinel = getOnboardingSnapshot(host.householdId);
+      const sentinel = await getOnboardingSnapshot(host.householdId);
       expect(sentinel.anthropicHostManaged).toBe(true);
       expect(sentinel.anthropicWriteBlocked).toBe(false);
       expect(sentinel.anthropicConfigured).toBe(false);
@@ -990,7 +990,7 @@ describe('onboarding household gate', () => {
       setInitialEnvironForTests({ ANTHROPIC_API_KEY: '' });
       process.env.ANTHROPIC_API_KEY = '';
       writeFileSync(path.join(root, '.env'), 'ANTHROPIC_API_KEY=sk-from-store\n');
-      const emptyHost = getOnboardingSnapshot(host.householdId);
+      const emptyHost = await getOnboardingSnapshot(host.householdId);
       expect(emptyHost.anthropicHostManaged).toBe(true);
       expect(emptyHost.anthropicWriteBlocked).toBe(true);
       expect(emptyHost.anthropicConfigured).toBe(false);
@@ -1241,7 +1241,7 @@ describe('onboarding writes only the family data folder', () => {
       JSON.stringify(fixtureIr('history', 'History')),
     );
 
-    const snap = getOnboardingSnapshot(host.householdId, family);
+    const snap = await getOnboardingSnapshot(host.householdId, family);
     expect(snap.subjects.map((row) => row.id)).toEqual(['history']);
     expect(snap.builtinSubjects).toContainEqual({ id: 'biology', label: 'Biology' });
     expect(snap.liveSubjects.map((row) => row.id)).toContain('biology');

@@ -612,6 +612,42 @@ describe('ExamApp and what this server can mark', () => {
     await settle();
   });
 
+  it('names the signed-out Claude Code / Codex and its sign-in command, and leaves written questions out', async () => {
+    const signedOut: ExamMarking = {
+      written: 'unmarked',
+      signIn: { by: 'Claude Code', command: 'claude auth login' },
+    };
+    renderApp({ marking: signedOut });
+    openDifficulty('geo');
+    expect(screen.getByTestId('exam-written-line')).toHaveTextContent(
+      'Written questions are left out: Claude Code isn’t signed in on this server. A parent can sign it in on the server with `claude auth login`.',
+    );
+    fireEvent.click(screen.getByTestId('start-exam'));
+    await settle();
+    expect(progress()).toBe('Question 1 of 1');
+    expect(beginExamSession.mock.calls[0]![0].questionIds).toEqual(['g1']);
+  });
+
+  it('says under a resumed written question that Codex is signed out, and how to sign it in', async () => {
+    renderApp({
+      marking: { written: 'unmarked', signIn: { by: 'Codex', command: 'codex login' } },
+      resumable: [
+        {
+          subject: 'geo',
+          difficulty: 'easy',
+          questions: [mcq('g1'), free('g2')],
+          answers: [0, null],
+          currentIndex: 1,
+        },
+      ],
+    });
+    fireEvent.click(screen.getByTestId('resume-geo-easy'));
+    await settle();
+    expect(screen.getByTestId('exam-free-unmarked')).toHaveTextContent(
+      'Codex isn’t signed in on this server, so written answers count as not correct. A parent can sign it in on the server with `codex login`.',
+    );
+  });
+
   it('shows the note under a written question of a draft started while marking worked', async () => {
     renderApp({
       marking: unmarked,

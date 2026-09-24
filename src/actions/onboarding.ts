@@ -96,7 +96,7 @@ export type OnboardingActionError = {
   issues?: { file: string; message: string }[];
 };
 
-function snapshot(householdId: number): OnboardingSnapshot {
+function snapshot(householdId: number): Promise<OnboardingSnapshot> {
   return getOnboardingSnapshot(householdId);
 }
 
@@ -120,7 +120,7 @@ export async function addOnboardingSubjectAction(
   const result = addOnboardingSubject(parsed.data);
   if (!result.ok) return { ok: false, reason: result.reason };
   invalidateOnboardingEmit(gate.householdId);
-  return { ok: true, snapshot: snapshot(gate.householdId) };
+  return { ok: true, snapshot: await snapshot(gate.householdId) };
 }
 
 export async function renameOnboardingSubjectAction(
@@ -137,14 +137,18 @@ export async function renameOnboardingSubjectAction(
       icon: formData.get('icon'),
     });
   if (!parsed.success) return { ok: false, reason: 'invalid' };
-  return withOnboardingGenerateLock(async () => {
+  const done = await withOnboardingGenerateLock(async () => {
     const again = await requireOnboardingAdmin();
     if (!again.ok) return again;
     const result = renameOnboardingSubject(parsed.data);
-    if (!result.ok) return { ok: false, reason: result.reason };
+    if (!result.ok) return { ok: false as const, reason: result.reason };
     invalidateOnboardingEmit(again.householdId);
-    return { ok: true, snapshot: snapshot(again.householdId) };
+    return { ok: true as const, householdId: again.householdId };
   });
+  // The snapshot asks Claude Code / Codex whether they are signed in: not
+  // while holding the lock a generate commit waits on.
+  if (!done.ok) return done;
+  return { ok: true, snapshot: await snapshot(done.householdId) };
 }
 
 export async function deleteOnboardingSubjectAction(
@@ -153,14 +157,18 @@ export async function deleteOnboardingSubjectAction(
   const gate = await requireOnboardingAdmin();
   if (!gate.ok) return gate;
   const id = typeof formData.get('id') === 'string' ? formData.get('id') : '';
-  return withOnboardingGenerateLock(async () => {
+  const done = await withOnboardingGenerateLock(async () => {
     const again = await requireOnboardingAdmin();
     if (!again.ok) return again;
     const result = deleteOnboardingSubject(String(id));
-    if (!result.ok) return { ok: false, reason: result.reason };
+    if (!result.ok) return { ok: false as const, reason: result.reason };
     invalidateOnboardingEmit(again.householdId);
-    return { ok: true, snapshot: snapshot(again.householdId) };
+    return { ok: true as const, householdId: again.householdId };
   });
+  // The snapshot asks Claude Code / Codex whether they are signed in: not
+  // while holding the lock a generate commit waits on.
+  if (!done.ok) return done;
+  return { ok: true, snapshot: await snapshot(done.householdId) };
 }
 
 export async function attachOnboardingPdfAction(
@@ -177,7 +185,7 @@ export async function attachOnboardingPdfAction(
   const bytes = Buffer.from(await file.arrayBuffer());
   const result = attachSourcePdf({ subjectId, filename: file.name, bytes });
   if (!result.ok) return { ok: false, reason: result.reason };
-  return { ok: true, snapshot: snapshot(gate.householdId) };
+  return { ok: true, snapshot: await snapshot(gate.householdId) };
 }
 
 export async function detachOnboardingPdfAction(
@@ -192,7 +200,7 @@ export async function detachOnboardingPdfAction(
   }
   const result = detachSourcePdf({ subjectId, filename });
   if (!result.ok) return { ok: false, reason: result.reason };
-  return { ok: true, snapshot: snapshot(gate.householdId) };
+  return { ok: true, snapshot: await snapshot(gate.householdId) };
 }
 
 const generateSeedSchema = z.coerce.number().int();
@@ -254,7 +262,7 @@ export async function generateOnboardingSubjectAction(
   }
   // IR changed — any prior HITL dry-run / apply is stale. Generate never emit/applies.
   invalidateOnboardingEmit(gate.householdId);
-  return { ok: true, snapshot: snapshot(gate.householdId), result: generated.result };
+  return { ok: true, snapshot: await snapshot(gate.householdId), result: generated.result };
 }
 
 /** Queued behind generate on the same client — wizard uses the route handler. */
@@ -287,14 +295,14 @@ async function setOnboardingEnvStoreKeyAction(
   if (intent === 'clear') {
     const cleared = clearEnvStoreSecret(key);
     if (!cleared.ok) return { ok: false, reason: cleared.reason };
-    return { ok: true, snapshot: snapshot(gate.householdId) };
+    return { ok: true, snapshot: await snapshot(gate.householdId) };
   }
   if (intent !== 'set') return { ok: false, reason: 'invalid' };
   const raw = formData.get(field);
   if (typeof raw !== 'string') return { ok: false, reason: 'invalid' };
   const written = setEnvStoreSecret(key, raw);
   if (!written.ok) return { ok: false, reason: written.reason };
-  return { ok: true, snapshot: snapshot(gate.householdId) };
+  return { ok: true, snapshot: await snapshot(gate.householdId) };
 }
 
 export async function setOnboardingAnthropicKeyAction(
@@ -319,7 +327,7 @@ export async function setOnboardingAiModeAction(
     return { ok: false, reason: 'invalid' };
   }
   saveOnboardingState(gate.householdId, { aiMode: mode });
-  return { ok: true, snapshot: snapshot(gate.householdId) };
+  return { ok: true, snapshot: await snapshot(gate.householdId) };
 }
 
 export async function setReplaceSampleAction(
@@ -330,7 +338,7 @@ export async function setReplaceSampleAction(
   const enabled = formData.get('replaceSample') === '1';
   saveOnboardingState(gate.householdId, { replaceSample: enabled });
   invalidateOnboardingEmit(gate.householdId);
-  return { ok: true, snapshot: snapshot(gate.householdId) };
+  return { ok: true, snapshot: await snapshot(gate.householdId) };
 }
 
 export async function validateOnboardingAction(): Promise<
@@ -343,7 +351,7 @@ export async function validateOnboardingAction(): Promise<
   if (!result.ok) {
     return { ok: false, reason: 'invalid', issues: result.issues };
   }
-  return { ok: true, snapshot: snapshot(gate.householdId) };
+  return { ok: true, snapshot: await snapshot(gate.householdId) };
 }
 
 export async function previewOnboardingEmitAction(): Promise<
@@ -365,7 +373,7 @@ export async function previewOnboardingEmitAction(): Promise<
   saveOnboardingState(gate.householdId, { dryRunHash: preview.dryRun.hash });
   return {
     ok: true,
-    snapshot: snapshot(gate.householdId),
+    snapshot: await snapshot(gate.householdId),
     dryRun: publicDryRun(preview),
   };
 }
@@ -400,7 +408,7 @@ export async function applyOnboardingEmitAction(formData?: FormData): Promise<
   markOnboardingApplied(gate.householdId);
   return {
     ok: true,
-    snapshot: snapshot(gate.householdId),
+    snapshot: await snapshot(gate.householdId),
     written: applied.written,
     questionCount: applied.questionCount,
     subjectCount: applied.subjectCount,

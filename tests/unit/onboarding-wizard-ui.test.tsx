@@ -95,6 +95,8 @@ function snapshot(overrides: Partial<OnboardingSnapshot> = {}): OnboardingSnapsh
     localCmdConfigured: false,
     claudeCliFound: false,
     codexCliFound: false,
+    claudeCliSignIn: 'unknown',
+    codexCliSignIn: 'unknown',
     gradingStubActive: false,
     openaiGradingStubActive: false,
     liveSubjects: [
@@ -188,7 +190,7 @@ describe('OnboardingWizard majors UI', () => {
     const grading = screen.getByTestId('wizard-ai-grading');
     expect(grading).toHaveTextContent('Until you pick a mode, marking uses the Anthropic key');
     expect(grading).toHaveTextContent(
-      'Written answers are not marked until this server has an Anthropic API key: until then, exams leave written questions out, and any written answer counts as not correct',
+      'Written answers are not marked until this server has an Anthropic API key. Until then, exams leave written questions out (a bank with only written questions keeps them), and any written answer counts as not correct.',
     );
 
     fireEvent.click(screen.getByTestId('wizard-ai-cloud'));
@@ -1295,6 +1297,93 @@ describe('OnboardingWizard AI modes: Claude Code, Codex and local', () => {
     expect(badge('local-cli')).toBe('Configured');
     expect(badge('local-agent')).toBeNull();
     expect(badge('skip-stub')).toBe('Configured');
+  });
+
+  it('says whether each found CLI is signed in, and badges a signed-out one', () => {
+    renderAtAiStep(
+      snapshot({
+        aiMode: 'skip-stub',
+        subjects: [sourceSubject('alpha', 'Alpha')],
+        claudeCliFound: true,
+        claudeCliSignIn: 'signed_out',
+        codexCliFound: true,
+        codexCliSignIn: 'signed_in',
+      }),
+    );
+    expect(screen.getByTestId('wizard-ai-store')).toHaveTextContent(
+      'Claude Code not signed in · Codex signed in · Local endpoint',
+    );
+    const badge = (mode: string) =>
+      screen.getByTestId(`wizard-ai-${mode}`).querySelector('.wizard-mode-badge')?.textContent ??
+      null;
+    expect(badge('claude-cli')).toBe('Not signed in');
+    expect(badge('codex-cli')).toBe('Signed in');
+    cleanup();
+
+    // A check with no clear answer keeps "found", as before.
+    renderAtAiStep(
+      snapshot({
+        aiMode: 'skip-stub',
+        subjects: [sourceSubject('alpha', 'Alpha')],
+        claudeCliFound: true,
+        claudeCliSignIn: 'unknown',
+      }),
+    );
+    expect(screen.getByTestId('wizard-ai-store')).toHaveTextContent(
+      'Claude Code found · Codex not found',
+    );
+    expect(badge('claude-cli')).toBe('Found');
+    expect(badge('codex-cli')).toBeNull();
+  });
+
+  it.each([
+    ['claude-cli', { claudeCliFound: true, claudeCliSignIn: 'signed_out' }, 'claude auth login'],
+    ['codex-cli', { codexCliFound: true, codexCliSignIn: 'signed_out' }, 'codex login'],
+  ] as const)(
+    'tells the admin to sign %s in, and that exams leave written questions out',
+    (aiMode, flags, command) => {
+      renderAtAiStep(snapshot({ aiMode, subjects: [sourceSubject('alpha', 'Alpha')], ...flags }));
+      const name = aiMode === 'claude-cli' ? 'Claude Code' : 'Codex';
+      expect(screen.getByTestId('wizard-agent-cli-setup')).toHaveTextContent(
+        `${name} is installed on this server but not signed in as the user that runs Examify. As that user, run \`${command}\`, then reload this page.`,
+      );
+      expect(screen.getByTestId('wizard-ai-grading')).toHaveTextContent(
+        `Written answers are not marked: ${name} is not signed in as the user that runs Examify. As that user, run \`${command}\`. Until then, exams leave written questions out (a bank with only written questions keeps them), and any written answer counts as not correct.`,
+      );
+    },
+  );
+
+  it('says a signed-in CLI is ready, and an unchecked one may still need its sign-in', () => {
+    renderAtAiStep(
+      snapshot({
+        aiMode: 'claude-cli',
+        subjects: [sourceSubject('alpha', 'Alpha')],
+        claudeCliFound: true,
+        claudeCliSignIn: 'signed_in',
+      }),
+    );
+    expect(screen.getByTestId('wizard-agent-cli-setup')).toHaveTextContent(
+      'Claude Code is installed and signed in on this server.',
+    );
+    expect(screen.getByTestId('wizard-ai-grading')).toHaveTextContent(
+      'Written answers are marked by Claude Code while it is signed in',
+    );
+    cleanup();
+    renderAtAiStep(
+      snapshot({
+        aiMode: 'claude-cli',
+        subjects: [sourceSubject('alpha', 'Alpha')],
+        claudeCliFound: true,
+        claudeCliSignIn: 'unknown',
+      }),
+    );
+    expect(screen.getByTestId('wizard-agent-cli-setup')).toHaveTextContent(
+      'Examify could not tell whether it is signed in',
+    );
+    expect(screen.getByTestId('wizard-agent-cli-setup')).toHaveTextContent('claude auth login');
+    expect(screen.getByTestId('wizard-ai-grading')).toHaveTextContent(
+      'Written answers are marked by Claude Code while it is signed in',
+    );
   });
 
   it('tells the admin how to install and sign in when the chosen CLI is missing', () => {

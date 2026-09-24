@@ -2,6 +2,7 @@ import 'server-only';
 
 import path from 'node:path';
 import * as ingestGenerate from 'examify-ingest/generate';
+import { forgetAgentCliSignIn } from '@/lib/agent-cli-sign-in';
 import { getOnboardingContentRoot, isFamilyWritePathSafe } from '@/lib/content-root';
 import {
   BANK_IR_FILE,
@@ -373,6 +374,11 @@ export async function generateOnboardingSubject(input: {
 }): Promise<GenerateOnboardingSuccess | GenerateOnboardingError> {
   const result = await withOnboardingGenerateLock(() => generateOnboardingSubjectUnlocked(input));
   if (!result.ok) logGenerateFailure(input.subjectId, result);
+  // Claude Code / Codex refused the sign-in: the next page asks it again.
+  if (!result.ok && result.reason === 'provider_auth') {
+    if (input.provider === 'claude-cli') forgetAgentCliSignIn('claude');
+    if (input.provider === 'codex-cli') forgetAgentCliSignIn('codex');
+  }
   return result;
 }
 

@@ -60,7 +60,9 @@ export default async function OnboardingPage() {
     <div className="stage">
       <div className="app-frame app-frame-wizard">
         <OnboardingWizard
-          snapshot={getOnboardingSnapshot(info.householdId)}
+          snapshot={await getOnboardingSnapshot(info.householdId, undefined, {
+            recheckSignIn: true,
+          })}
           pendingInvites={pendingInvites}
           members={members}
           canInvite={canInvite(session.userId)}
