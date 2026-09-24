@@ -74,6 +74,10 @@ export default defineConfig({
       // next start runs NODE_ENV=production, where the `test` sentinel no
       // longer stubs grading unless this explicit opt-in is set.
       GRADING_STUB: '1',
+      // Never the developer's own Claude Code / Codex: the wizard asks a found
+      // CLI whether it is signed in. No spec needs one.
+      EXAMIFY_CLAUDE_BIN: path.join(process.cwd(), 'tests', '.tmp', 'no-agent-cli', 'claude'),
+      EXAMIFY_CODEX_BIN: path.join(process.cwd(), 'tests', '.tmp', 'no-agent-cli', 'codex'),
       SETUP_BOOTSTRAP_SECRET: 'e2e-setup-bootstrap-secret',
       NEXT_PUBLIC_TURNSTILE_SITE_KEY: '1x00000000000000000000AA',
       TURNSTILE_SECRET_KEY: '1x0000000000000000000000000000000AA',

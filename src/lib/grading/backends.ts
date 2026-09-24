@@ -19,6 +19,7 @@ import 'server-only';
    exactly like the Anthropic path; nothing here throws.
    ========================================================================== */
 import * as ingest from 'examify-ingest/generate';
+import { forgetAgentCliSignIn } from '@/lib/agent-cli-sign-in';
 import { OPENAI_ENV_KEY, envStoreSecretConfigured, getEnvStoreRoot } from '@/lib/env-store';
 import type { MarkingBackend } from '@/lib/onboarding-types';
 import {
@@ -256,6 +257,8 @@ export async function gradeViaAgentCli(
           });
   } catch (error) {
     const reason = cliFailureReason(error);
+    // Not signed in after all: the next page asks the CLI again.
+    if (reason === 'cli_auth') forgetAgentCliSignIn(cli);
     return tasks.map(() => needsReview(reason, backend));
   }
   let parsed: unknown;

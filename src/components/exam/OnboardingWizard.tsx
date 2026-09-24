@@ -50,6 +50,8 @@ import {
   onboardingSourceFileNames,
   onboardingSubjectIrRel,
   providerForOnboardingAiMode,
+  type AgentCliSignIn,
+  type OnboardingAgentCliMode,
   type OnboardingAiMode,
   type OnboardingDryRun,
   type OnboardingGenerateResult,
@@ -210,23 +212,51 @@ function errorCopy(error: OnboardingActionError, aiMode?: OnboardingAiMode | nul
   }
 }
 
-function modeConfigured(mode: OnboardingAiMode, snapshot: OnboardingSnapshot): boolean {
+/** A mode card's badge: `Configured` for keys and settings; a CLI's is its sign-in (`agentCliBadge`). */
+function modeBadge(mode: OnboardingAiMode, snapshot: OnboardingSnapshot): string | null {
   switch (mode) {
     case 'cloud':
-      return snapshot.anthropicConfigured;
+      return snapshot.anthropicConfigured ? 'Configured' : null;
     case 'cloud-openai':
-      return snapshot.openaiConfigured;
+      return snapshot.openaiConfigured ? 'Configured' : null;
     case 'claude-cli':
-      return snapshot.claudeCliFound;
     case 'codex-cli':
-      return snapshot.codexCliFound;
+      return agentCliBadge(mode, snapshot);
     case 'local-agent':
-      return snapshot.localHttpConfigured && snapshot.localModelConfigured;
+      return snapshot.localHttpConfigured && snapshot.localModelConfigured ? 'Configured' : null;
     case 'local-cli':
-      return snapshot.localCmdConfigured;
+      return snapshot.localCmdConfigured ? 'Configured' : null;
     case 'skip-stub':
-      return true;
+      return 'Configured';
   }
+}
+
+/** Claude Code / Codex on this server: found or not, and whether it is signed in. */
+function agentCliState(
+  mode: OnboardingAgentCliMode,
+  snapshot: OnboardingSnapshot,
+): { found: boolean; signIn: AgentCliSignIn } {
+  return mode === 'claude-cli'
+    ? { found: snapshot.claudeCliFound, signIn: snapshot.claudeCliSignIn }
+    : { found: snapshot.codexCliFound, signIn: snapshot.codexCliSignIn };
+}
+
+/** The AI step's store line for a CLI: `signed in`, `not signed in`, `found` (unknown) or `not found`. */
+function agentCliStoreWord(mode: OnboardingAgentCliMode, snapshot: OnboardingSnapshot): string {
+  const { found, signIn } = agentCliState(mode, snapshot);
+  if (!found) return 'not found';
+  if (signIn === 'signed_in') return 'signed in';
+  if (signIn === 'signed_out') return 'not signed in';
+  return 'found';
+}
+
+/** A CLI card's badge: `Signed in`, `Found` when the check gave no answer, `Not signed in`. */
+function agentCliBadge(mode: OnboardingAgentCliMode, snapshot: OnboardingSnapshot): string | null {
+  const { found, signIn } = agentCliState(mode, snapshot);
+  if (!found) return null;
+  if (signIn === 'signed_in') return 'Signed in';
+  if (signIn === 'signed_out') return 'Not signed in';
+  return 'Found';
 }
 
 export function OnboardingWizard({
@@ -1651,8 +1681,8 @@ function AiStep({
       <p className="login-fine" data-testid="wizard-ai-store">
         Anthropic {snapshot.anthropicConfigured ? 'configured' : 'not configured'} · OpenAI{' '}
         {snapshot.openaiConfigured ? 'configured' : 'not configured'} · Claude Code{' '}
-        {snapshot.claudeCliFound ? 'found' : 'not found'} · Codex{' '}
-        {snapshot.codexCliFound ? 'found' : 'not found'} · Local endpoint{' '}
+        {agentCliStoreWord('claude-cli', snapshot)} · Codex{' '}
+        {agentCliStoreWord('codex-cli', snapshot)} · Local endpoint{' '}
         {snapshot.localHttpConfigured ? 'configured' : 'not configured'} · Local command{' '}
         {snapshot.localCmdConfigured ? 'configured' : 'not configured'}
       </p>
@@ -1674,8 +1704,7 @@ function AiStep({
       <div className="wizard-modes" role="radiogroup" aria-label="AI setup mode">
         {(Object.keys(AI_COPY) as OnboardingAiMode[]).map((mode) => {
           const selected = snapshot.aiMode === mode;
-          const configured = modeConfigured(mode, snapshot);
-          const agentCli = isOnboardingAgentCliMode(mode);
+          const badge = modeBadge(mode, snapshot);
           return (
             <button
               key={mode}
@@ -1689,9 +1718,7 @@ function AiStep({
             >
               <span className="wizard-mode-head">
                 <strong>{AI_COPY[mode].title}</strong>
-                {configured ? (
-                  <span className="wizard-mode-badge">{agentCli ? 'Found' : 'Configured'}</span>
-                ) : null}
+                {badge ? <span className="wizard-mode-badge">{badge}</span> : null}
               </span>
               <span>{AI_COPY[mode].body}</span>
               <span data-testid={`wizard-ai-${mode}-caps`}>{onboardingAiCapabilityLine(mode)}</span>
@@ -1727,7 +1754,8 @@ function AiStep({
         <p className="wizard-callout" data-testid="wizard-agent-cli-setup">
           {onboardingAgentCliSetupNote(
             snapshot.aiMode,
-            snapshot.aiMode === 'claude-cli' ? snapshot.claudeCliFound : snapshot.codexCliFound,
+            agentCliState(snapshot.aiMode, snapshot).found,
+            agentCliState(snapshot.aiMode, snapshot).signIn,
           )}
         </p>
       ) : null}

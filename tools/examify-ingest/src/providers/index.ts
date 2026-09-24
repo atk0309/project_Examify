@@ -30,11 +30,21 @@ export {
   AGENT_CLI_DEFAULT_MODEL,
   AGENT_CLI_MODEL_ENV,
   agentCliEnv,
+  agentCliHome,
   resolveAgentCliBinary,
   type AgentCli,
 } from './agent-cli';
 export { runClaudeCliText, type ClaudeCliTextRequest } from './claude-cli';
 export { runCodexCliText, type CodexCliTextRequest } from './codex-cli';
+export {
+  AGENT_CLI_PROBE_CACHE_MS,
+  AGENT_CLI_SIGNIN_TIMEOUT_MS,
+  checkAgentCliSignIn,
+  helpListsStatus,
+  parseClaudeAuthStatus,
+  parseCodexLoginStatus,
+  type AgentCliSignIn,
+} from './sign-in';
 
 const PROVIDERS: Record<GenerateProviderId, GenerateProvider> = {
   anthropic: anthropicProvider,

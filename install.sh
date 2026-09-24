@@ -2555,7 +2555,7 @@ use_agent_cli() {
     printf -v "$3" '%s' "$2"
   fi
   if [ "$4" != "signed_in" ]; then
-    AI_SIGNIN_HINT="Sign ${5} in as ${7} before making banks: ${6}"
+    AI_SIGNIN_HINT="Sign ${5} in as ${7} before making banks or marking written answers: ${6}"
     echo "$AI_SIGNIN_HINT"
   fi
 }
@@ -2596,7 +2596,8 @@ collect_ai_settings() {
   echo
   echo "Optional: ANTHROPIC_API_KEY marks free-text answers by sending each answer, its question,"
   echo "and its rubric to Anthropic. It also powers /onboarding Cloud (Anthropic) generate."
-  echo "Leave blank to skip: until an AI can mark them, exams leave written questions out."
+  echo "Leave blank to skip: until an AI can mark them, exams leave written questions out"
+  echo "(a bank with only written questions keeps them, and those answers count as not correct)."
   echo "Add it later in /onboarding content setup, or in .env (then restart)."
   prompt ANTHROPIC_API_KEY "Anthropic API key" "" secret
   # Blank keeps the `test` placeholder: the wizard shows "not configured" and

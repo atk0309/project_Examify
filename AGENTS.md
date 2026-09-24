@@ -226,7 +226,20 @@ JSON`). Missing cloud
   The answer sits between fresh markers as data, never instructions. The wizard
   (`onboardingMarkingCopy`) and parent dashboard (`parentMarkingLine`) say who marks, never
   "ready" for a non-http(s) `EXAMIFY_LLM_BASE_URL`, and for Claude Code / Codex only "while
-  signed in" (a found binary is not a sign-in). On the
+  signed in". Claude Code / Codex are asked whether they are signed in
+  (`checkAgentCliSignIn`: `claude --setting-sources project auth status` / `codex login
+status`, only after `claude auth --help` / `codex login --help` lists `status` in its
+  Commands list, since an old Claude Code reads `auth status` as a prompt; that answer kept
+  10 min per CLI + invoked path + binary file, never from a failed help run; the generate
+  runner's lockdown; one 5 s
+  deadline, and the check stops waiting 1 s later whatever the command does), cached per
+  process by `agentCliSignIn` (signed in / unknown 5 min then stale-while-revalidate up to
+  10 min, signed out 30 s then wait, the `/onboarding` page rechecks; student / parent
+  pages ask only the household's CLI, the wizard every found one; forgotten after a
+  `provider_auth` generate or a `cli_auth` marking run). Signed out is `not_ready`
+  (`needsSignIn`): the dashboard, wizard and exam name `claude auth login` / `codex login`
+  and papers leave written questions out; `unknown` (older CLI, timeout) counts as ready,
+  as before. On the
   Anthropic path (`src/lib/grading/index.ts`), the
   live `ANTHROPIC_API_KEY` from `process.env` only so a wizard set / rotate /
   clear is visible without restart; `test` → deterministic stub only when
@@ -240,9 +253,12 @@ JSON`). Missing cloud
   question / rubric / key / user id). A free item is "correct" at `PASS_THRESHOLD` (0.6). The UI
   renders only the bounded `Verdict` fields, never the rubric. Results are
   server-driven (a "Marking…" state covers the submit round-trip). `ExamApp` gets the
-  household's marking status (`examMarking`): the difficulty screen says who marks written
+  household's marking status (`examMarkingForUser`): the difficulty screen says who marks written
   answers, and when nothing here can (`not_ready`) papers leave written questions out
-  (`examPool`; a written-only bank keeps them, with a note that they count as not correct).
+  (`examPool`; a written-only bank keeps them, with a note that they count as not correct;
+  a signed-out Claude Code / Codex is named with its sign-in command). The parent line, the
+  wizard's marking line and install.sh's blank-key prompt say a bank with only written
+  questions keeps them.
   A rejected submit
   (no answer came back) keeps the answers and offers "Try again", which re-sends the
   identical payload (`exam-error-unreachable` / `exam-retry`); an `ok:false` paper
@@ -321,7 +337,8 @@ JSON`). Missing cloud
   lock and re-check the admin gate after the wait; subject
   ids must be in the wizard catalog; AI modes are Anthropic / OpenAI (API key),
   Claude Code / Codex (`claude-cli` / `codex-cli`: the CLI's own sign-in; the card
-  says Found when the binary resolves, never its path), Local endpoint (passes only
+  says Signed in / Not signed in from its sign-in check, or Found when the binary
+  resolves and the check had no answer, never its path or account), Local endpoint (passes only
   `EXAMIFY_LLM_BASE_URL`, needs `EXAMIFY_LLM_MODEL`) and Local command (passes only
   `EXAMIFY_INGEST_LOCAL_CMD`; both show `--local-transport` in their CLI command), and
   the test stub; each card shows
@@ -436,7 +453,11 @@ Before merge, ensure these pass in CI:
   `exam-error-unreachable` / `exam-error-refused` / `exam-retry`. Each e2e spec
   belongs to exactly one Playwright config (`tests/e2e/suites.ts`).
 - Tests never touch a real data folder or the checkout's content: `tests/unit/setup.ts`
-  pins `EXAMIFY_DATA_DIR=tests/.tmp/unit-data-<pid>` and `DATABASE_URL` unconditionally;
+  pins `EXAMIFY_DATA_DIR=tests/.tmp/unit-data-<pid>` and `DATABASE_URL` unconditionally,
+  and `EXAMIFY_CLAUDE_BIN` / `EXAMIFY_CODEX_BIN` (a missing path) plus `CLAUDE_CONFIG_DIR` /
+  `CODEX_HOME` (a missing folder outside the checkout), so no test asks a developer's own
+  Claude Code / Codex whether it is signed in (use `tests/helpers/fake-agent-cli.ts`; the
+  Playwright webServer envs pin the binaries too);
   each Playwright config sets `EXAMIFY_DATA_DIR=tests/.tmp/e2e-{seeded,fresh,password}-data`
   (wiped + initialised by `setup-db.ts` via `E2E_DATA_DIR`; `--empty` seeds the `demo`
   fixture there). Family-layer tests use a temp family root **and** a separate temp fake
@@ -496,7 +517,10 @@ Before merge, ensure these pass in CI:
   folder). A CLI folder (`CLAUDE_CONFIG_DIR` / `CODEX_HOME`, else `~/.claude` /
   `~/.codex`) inside an Examify checkout is refused before the run. Never add
   Examify secrets, `ANTHROPIC_API_KEY` or
-  `OPENAI_API_KEY` to it, and never grant file, command or web tools.
+  `OPENAI_API_KEY` to it, and never grant file, command or web tools. The sign-in
+  check runs through the same pieces, never gives a status command to a CLI whose
+  help lacks it, never lets a render wait past its deadline, and never logs or
+  returns the status output (it names the account).
 - Preserve rate-limit boundaries and per-kind separation.
 - Keep sign-in role-gated by household membership (student = student member,
   parent = parent or admin member), derived via `isAllowedEmail`; never leak

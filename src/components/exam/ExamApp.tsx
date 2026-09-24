@@ -44,7 +44,7 @@ import {
   type ProgressData,
 } from '@/lib/exam/attempts';
 import type { SessionRole } from '@/lib/auth';
-import { EXAM_UNMARKED_WRITTEN, examWrittenLine, type ExamMarking } from '@/lib/onboarding-types';
+import { examUnmarkedWrittenNote, examWrittenLine, type ExamMarking } from '@/lib/onboarding-types';
 import { ProgressView } from './ProgressView';
 import { SubjectIcon, UIcon } from './icons';
 
@@ -487,7 +487,7 @@ function ExamScreen({
               />
               {marking.written === 'unmarked' ? (
                 <p className="free-note" data-testid="exam-free-unmarked">
-                  {EXAM_UNMARKED_WRITTEN}
+                  {examUnmarkedWrittenNote(marking)}
                 </p>
               ) : null}
             </>

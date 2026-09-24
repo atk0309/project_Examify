@@ -348,7 +348,8 @@ describe('install.sh', () => {
         'Optional: ANTHROPIC_API_KEY marks free-text answers by sending each answer, its question,',
       );
       expect(out).toContain(
-        'Leave blank to skip: until an AI can mark them, exams leave written questions out.',
+        'Leave blank to skip: until an AI can mark them, exams leave written questions out\n' +
+          '(a bank with only written questions keeps them, and those answers count as not correct).',
       );
       expect(out).toContain('Anthropic API key: ');
       expect(out).toContain(
@@ -1405,7 +1406,9 @@ describe('install.sh AI tools', () => {
       expect(result.status).toBe(0);
       // Nothing is ready, so the default stays the API key questions.
       expect(result.stdout).toContain('Choose 1-3 [2]: ');
-      expect(result.stdout).toMatch(/Sign Codex in as .+ before making banks: codex login/);
+      expect(result.stdout).toMatch(
+        /Sign Codex in as .+ before making banks or marking written answers: codex login/,
+      );
       expect(envFile).toContain('EXAMIFY_AI_MODE=codex-cli\n');
       expect(envFile).toContain(`EXAMIFY_CODEX_BIN=${bin}/codex\n`);
     } finally {

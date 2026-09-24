@@ -157,7 +157,7 @@ To build banks with your Claude or ChatGPT plan instead of an API key, install
 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) or Codex **as the user
 that runs Examify** and sign in once (`claude auth login`, or `codex login`); the setup
 wizard finds it on `PATH` or in `~/.local/bin` (or set `EXAMIFY_CLAUDE_BIN` /
-`EXAMIFY_CODEX_BIN`).
+`EXAMIFY_CODEX_BIN`) and says whether it is signed in.
 
 **Which AI.** A new interactive install looks for what this user already has: Claude
 Code and Codex (and whether each is signed in) and Ollama (its models, at `OLLAMA_HOST`
@@ -372,8 +372,18 @@ question, by the AI the household picked in `/onboarding`:
 
 The wizard's AI step and the parent dashboard say which one marks and what the server still
 needs (`EXAMIFY_LLM_BASE_URL` must be an http or https address). Claude Code and Codex mark
-only while they are signed in as the user that runs Examify; signed out, written answers
-are not marked and count as not correct. The "Marking…" screen says written answers can take
+only while they are signed in as the user that runs Examify, so Examify asks each one:
+`claude auth status` / `codex login status`, run like a marking run (the env allowlist, an
+empty private folder, Claude Code without that user's own settings, Codex with a private copy
+of its sign-in), cut off after 5 seconds and remembered for a few minutes (a signed-out answer
+for 30 seconds; the setup wizard's page always asks again), so a page rarely waits. It first
+checks that the CLI's help lists that status command (again every 10 minutes), so an older
+Claude Code, which would read `auth status` as a prompt, is never given it. When the answer is "signed out", the
+parent dashboard, the setup wizard and the exam say so and name the sign-in command
+(`claude auth login` / `codex login`), and papers leave written questions out, as when nothing
+can mark them. A check with no clear answer (an older CLI, a timeout) counts as signed in, as
+before; signed out after all, written answers are not marked and count as not correct, and
+the next page asks again. The "Marking…" screen says written answers can take
 up to a minute. Before a paper starts, the student sees who marks written answers. When
 nothing on the server can, the paper leaves written questions out and says so; a bank with
 only written questions keeps them, with a note under each that it counts as not correct.
@@ -389,7 +399,8 @@ goes to the model between fresh markers, as data to mark, never as instructions.
   with no network calls **only** outside production or when `GRADING_STUB=1` is set
   (the Playwright configs set it). In production without the flag, `test` counts as no
   key — `install.sh` writes it when the Anthropic prompt is left blank — so written
-  answers are not marked (exams leave them out), never given free full marks. Clear fails closed
+  answers are not marked (exams leave them out; a bank with only written questions keeps
+  them), never given free full marks. Clear fails closed
   (`needs_review`, no stub).
 - Grading is **fail-safe**: API requests have a 15-second deadline, and any timeout, network
   error, non-2xx, CLI failure, or malformed model output resolves to `needs_review` instead of throwing,
@@ -417,7 +428,8 @@ Sent to a third party only when you turn the feature on:
   AI the household picked: the Anthropic or OpenAI API with your key, Claude Code or Codex
   (to Anthropic or OpenAI under your plan), or your local endpoint. No names, emails or user
   ids are sent. Multiple-choice answers are scored on your server. When that AI is not set
-  up, nothing is sent: exams leave written questions out.
+  up, nothing is sent: exams leave written questions out (a bank with only written questions
+  keeps them, and those answers count as not correct).
 - **Cloud generate (Anthropic / OpenAI).** The `/onboarding` cloud modes and
   `examify-ingest generate --provider anthropic|openai` send that subject's source files
   (PDFs or their page images, notes, images) to the provider. Local modes send them to the
@@ -439,6 +451,10 @@ Sent to a third party only when you turn the feature on:
   involved; `EXAMIFY_AI_DETECT=0` skips the checks. When `OLLAMA_HOST` (or
   `EXAMIFY_LLM_BASE_URL`) points at another machine, the Ollama option names it: study
   files and written answers then go there.
+- **Sign-in checks.** The app asks Claude Code / Codex whether they are signed in, as
+  above: the household's own CLI when its pages render, and every installed one whenever
+  the setup wizard loads or runs an action, whatever the AI mode. No family data is
+  involved, and the answer is never shown or logged beyond "signed in" / "not signed in".
 - **Fonts.** Pages load the Newsreader and Hanken Grotesk stylesheet from Google Fonts.
 - **Optional:** Cloudflare Turnstile (`TURNSTILE_ENABLED=1`) and Plausible analytics
   (`PLAUSIBLE_DOMAIN`).

@@ -11,13 +11,18 @@ import {
   gradeViaLocalEndpoint,
   localChatCompletionsUrl,
 } from '@/lib/grading/backends';
+import { resetAgentCliSignInCacheForTests } from '@/lib/agent-cli-sign-in';
 import {
   EXAM_UNMARKED_WRITTEN,
   examMarking,
+  examUnmarkedWrittenNote,
   examWrittenLine,
   ONBOARDING_AI_MODES,
   markingBackendForAiMode,
+  markingNeedsSignIn,
   markingReadiness,
+  markingStatus,
+  onboardingMarkingCopy,
   parentMarkingLine,
   type MarkingFlags,
 } from '@/lib/onboarding-types';
@@ -120,6 +125,8 @@ describe('which AI marks written answers', () => {
       openaiGradingStubActive: false,
       claudeCliFound: false,
       codexCliFound: false,
+      claudeCliSignIn: 'unknown',
+      codexCliSignIn: 'unknown',
       localHttpConfigured: false,
       localModelConfigured: false,
     };
@@ -137,8 +144,137 @@ describe('which AI marks written answers', () => {
       'Written answers get a test full mark: the OpenAI key is a placeholder.',
     );
     expect(parentMarkingLine('codex-cli', 'not_ready')).toBe(
-      'Written answers are not marked: this server needs Codex installed and signed in as the user that runs Examify. Until then, exams leave written questions out, and any written answer counts as not correct.',
+      'Written answers are not marked: this server needs Codex installed and signed in as the user that runs Examify. Until then, exams leave written questions out (a bank with only written questions keeps them), and any written answer counts as not correct.',
     );
+  });
+
+  it('counts a found Claude Code / Codex ready unless its sign-in check says signed out', () => {
+    const none: MarkingFlags = {
+      anthropicConfigured: true,
+      gradingStubActive: false,
+      openaiConfigured: true,
+      openaiGradingStubActive: false,
+      claudeCliFound: false,
+      codexCliFound: false,
+      claudeCliSignIn: 'unknown',
+      codexCliSignIn: 'unknown',
+      localHttpConfigured: true,
+      localModelConfigured: true,
+    };
+    const cases = [
+      ['claude-cli', 'claudeCliFound', 'claudeCliSignIn'],
+      ['codex-cli', 'codexCliFound', 'codexCliSignIn'],
+    ] as const;
+    for (const [backend, found, signIn] of cases) {
+      const flags = (isFound: boolean, state: MarkingFlags[typeof signIn]): MarkingFlags => ({
+        ...none,
+        [found]: isFound,
+        [signIn]: state,
+      });
+      expect(markingReadiness(backend, flags(true, 'signed_in'))).toBe('ready');
+      // An unknown answer (timed out, older CLI) keeps counting it ready.
+      expect(markingReadiness(backend, flags(true, 'unknown'))).toBe('ready');
+      expect(markingReadiness(backend, flags(true, 'signed_out'))).toBe('not_ready');
+      expect(markingReadiness(backend, flags(false, 'signed_in'))).toBe('not_ready');
+
+      expect(markingNeedsSignIn(backend, flags(true, 'signed_out'))).toBe(true);
+      expect(markingNeedsSignIn(backend, flags(true, 'unknown'))).toBe(false);
+      expect(markingNeedsSignIn(backend, flags(true, 'signed_in'))).toBe(false);
+      // Not found is the install message, not the sign-in one.
+      expect(markingNeedsSignIn(backend, flags(false, 'signed_out'))).toBe(false);
+      expect(markingStatus(backend, flags(true, 'signed_out'))).toEqual({
+        backend,
+        readiness: 'not_ready',
+        needsSignIn: true,
+      });
+    }
+    // The other CLI's sign-in does not matter.
+    expect(
+      markingReadiness('claude-cli', {
+        ...none,
+        claudeCliFound: true,
+        codexCliFound: true,
+        codexCliSignIn: 'signed_out',
+      }),
+    ).toBe('ready');
+    const allOut: MarkingFlags = {
+      ...none,
+      claudeCliFound: true,
+      codexCliFound: true,
+      claudeCliSignIn: 'signed_out',
+      codexCliSignIn: 'signed_out',
+    };
+    for (const backend of ['anthropic', 'openai', 'local-endpoint'] as const) {
+      expect(markingReadiness(backend, allOut)).toBe('ready');
+      expect(markingNeedsSignIn(backend, allOut)).toBe(false);
+    }
+  });
+
+  it('names the sign-in command where a signed-out Claude Code / Codex leaves answers unmarked', () => {
+    const tail =
+      'Until then, exams leave written questions out (a bank with only written questions keeps them), and any written answer counts as not correct.';
+    expect(parentMarkingLine('claude-cli', 'not_ready', true)).toBe(
+      `Written answers are not marked: Claude Code is not signed in on this server. As the user that runs Examify, run \`claude auth login\`. ${tail}`,
+    );
+    expect(parentMarkingLine('codex-cli', 'not_ready', true)).toBe(
+      `Written answers are not marked: Codex is not signed in on this server. As the user that runs Examify, run \`codex login\`. ${tail}`,
+    );
+    // Only a Claude Code / Codex backend has a sign-in to name.
+    expect(parentMarkingLine('anthropic', 'not_ready', true)).toBe(
+      `Written answers are not marked: this server needs an Anthropic API key. ${tail}`,
+    );
+
+    const flags: MarkingFlags = {
+      anthropicConfigured: false,
+      gradingStubActive: false,
+      openaiConfigured: false,
+      openaiGradingStubActive: false,
+      claudeCliFound: true,
+      codexCliFound: true,
+      claudeCliSignIn: 'signed_out',
+      codexCliSignIn: 'signed_in',
+      localHttpConfigured: false,
+      localModelConfigured: false,
+    };
+    expect(onboardingMarkingCopy('claude-cli', flags)).toBe(
+      `Written answers are not marked: Claude Code is not signed in as the user that runs Examify. As that user, run \`claude auth login\`. ${tail}`,
+    );
+    expect(onboardingMarkingCopy('codex-cli', flags)).toContain(
+      'Written answers are marked by Codex while it is signed in',
+    );
+    expect(onboardingMarkingCopy('cloud', flags)).toBe(
+      `Written answers are not marked until this server has an Anthropic API key. ${tail}`,
+    );
+  });
+
+  it('tells a student which tool is signed out, and the command a parent runs', () => {
+    expect(examMarking('claude-cli', 'not_ready', true)).toEqual({
+      written: 'unmarked',
+      signIn: { by: 'Claude Code', command: 'claude auth login' },
+    });
+    expect(examMarking('codex-cli', 'not_ready', true)).toEqual({
+      written: 'unmarked',
+      signIn: { by: 'Codex', command: 'codex login' },
+    });
+    expect(examMarking('codex-cli', 'not_ready', false)).toEqual({ written: 'unmarked' });
+    expect(examMarking('anthropic', 'not_ready', true)).toEqual({ written: 'unmarked' });
+    expect(examMarking('claude-cli', 'ready', true)).toEqual({
+      written: 'marked',
+      by: 'Claude Code',
+    });
+
+    const signedOut = examMarking('codex-cli', 'not_ready', true);
+    expect(examWrittenLine(signedOut, { hasWritten: true, leftOut: true })).toBe(
+      'Written questions are left out: Codex isn’t signed in on this server. A parent can sign it in on the server with `codex login`.',
+    );
+    expect(examWrittenLine(signedOut, { hasWritten: true, leftOut: false })).toBe(
+      'Codex isn’t signed in on this server, so written answers count as not correct. A parent can sign it in on the server with `codex login`.',
+    );
+    expect(examWrittenLine(signedOut, { hasWritten: false, leftOut: false })).toBeNull();
+    expect(examUnmarkedWrittenNote(signedOut)).toBe(
+      'Codex isn’t signed in on this server, so written answers count as not correct. A parent can sign it in on the server with `codex login`.',
+    );
+    expect(examUnmarkedWrittenNote({ written: 'unmarked' })).toBe(EXAM_UNMARKED_WRITTEN);
   });
 
   it('tells a student before an exam what happens to written answers', () => {
@@ -475,12 +611,16 @@ describe('gradeAnswers — Claude Code / Codex (one locked-down run per attempt)
     });
     writeFileSync(path.join(root, '.env'), `EXAMIFY_CLAUDE_BIN=${fake.bin}\n`);
     setEnvStoreRootForTests(root);
+    // The repo .env names the CLI (tests/unit/setup.ts pins a host value, which would win).
+    const hostBin = process.env.EXAMIFY_CLAUDE_BIN;
+    delete process.env.EXAMIFY_CLAUDE_BIN;
     try {
       await expect(gradeAnswers(tasks.slice(0, 1), 'claude-cli')).resolves.toMatchObject([
         { status: 'graded', verdict: { score: 2 } },
       ]);
     } finally {
       setEnvStoreRootForTests(null);
+      process.env.EXAMIFY_CLAUDE_BIN = hostBin;
     }
     await expect(gradeAnswers([], 'claude-cli')).resolves.toEqual([]);
   });
@@ -542,7 +682,7 @@ describe('saveAttempt marks with the household AI mode', () => {
     try {
       process.env.EXAMIFY_AI_MODE = 'codex-cli';
       expect(markingBackendForUser(host.userId)).toBe('codex-cli');
-      let snap = getOnboardingSnapshot(host.householdId);
+      let snap = await getOnboardingSnapshot(host.householdId);
       expect(snap.aiMode).toBe('codex-cli');
       expect(snap.aiModeFromInstaller).toBe(true);
 
@@ -553,7 +693,7 @@ describe('saveAttempt marks with the household AI mode', () => {
 
       saveOnboardingState(host.householdId, { aiMode: 'cloud-openai' });
       expect(markingBackendForUser(host.userId)).toBe('openai');
-      snap = getOnboardingSnapshot(host.householdId);
+      snap = await getOnboardingSnapshot(host.householdId);
       expect(snap.aiMode).toBe('cloud-openai');
       expect(snap.aiModeFromInstaller).toBe(false);
     } finally {
@@ -573,17 +713,170 @@ describe('saveAttempt marks with the household AI mode', () => {
     try {
       process.env.EXAMIFY_LLM_MODEL = 'llama3.2';
       process.env.EXAMIFY_LLM_BASE_URL = 'http//127.0.0.1:11434';
-      expect(markingStatusForUser(host.userId)).toEqual({
+      await expect(markingStatusForUser(host.userId)).resolves.toEqual({
         backend: 'local-endpoint',
         readiness: 'not_ready',
+        needsSignIn: false,
       });
       process.env.EXAMIFY_LLM_BASE_URL = 'http://127.0.0.1:11434';
-      expect(markingStatusForUser(host.userId).readiness).toBe('ready');
+      expect((await markingStatusForUser(host.userId)).readiness).toBe('ready');
     } finally {
       for (const key of keys) {
         if (original[key] === undefined) delete process.env[key];
         else process.env[key] = original[key];
       }
     }
+  });
+});
+
+describe('the household’s Claude Code / Codex sign-in on this server', () => {
+  const ENV_KEYS = ['EXAMIFY_CLAUDE_BIN', 'EXAMIFY_CODEX_BIN', 'EXAMIFY_AI_MODE'] as const;
+  let saved: Record<string, string | undefined> = {};
+
+  beforeEach(async () => {
+    const { db, schema } = await import('@/lib/db');
+    const { resetLegacyImportLatch } = await import('@/lib/households');
+    db.delete(schema.examAttempts).run();
+    db.delete(schema.householdMembers).run();
+    db.delete(schema.households).run();
+    db.delete(schema.users).run();
+    resetLegacyImportLatch();
+    resetAgentCliSignInCacheForTests();
+    saved = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
+    // Never the checkout's own .env (it could name a CLI or pass a sign-in token).
+    const { setEnvStoreRootForTests } = await import('@/lib/env-store');
+    setEnvStoreRootForTests(mkdtempSync(path.join(tmpdir(), 'examify-env-store-')));
+  });
+
+  afterEach(async () => {
+    for (const key of ENV_KEYS) {
+      if (saved[key] === undefined) delete process.env[key];
+      else process.env[key] = saved[key];
+    }
+    resetAgentCliSignInCacheForTests();
+    const { setEnvStoreRootForTests } = await import('@/lib/env-store');
+    setEnvStoreRootForTests(null);
+  });
+
+  async function household(aiMode: 'claude-cli' | 'codex-cli' | 'cloud') {
+    const { bootstrapHousehold } = await import('@/lib/households');
+    const { saveOnboardingState } = await import('@/lib/onboarding');
+    const host = bootstrapHousehold({ email: 'pat@example.com', householdName: 'Ours' });
+    if (!host.ok) throw new Error('bootstrap');
+    saveOnboardingState(host.householdId, { aiMode });
+    return host;
+  }
+
+  it('leaves written questions out and names the sign-in when the CLI is signed out', async () => {
+    const { examMarkingForUser, markingStatusForUser, parentMarkingLineForUser } =
+      await import('@/lib/onboarding');
+    const claude = fakeCli('claude', { mode: 'hang', signIn: 'out' });
+    process.env.EXAMIFY_CLAUDE_BIN = claude.bin;
+    const host = await household('claude-cli');
+
+    await expect(markingStatusForUser(host.userId)).resolves.toEqual({
+      backend: 'claude-cli',
+      readiness: 'not_ready',
+      needsSignIn: true,
+    });
+    await expect(examMarkingForUser(host.userId)).resolves.toEqual({
+      written: 'unmarked',
+      signIn: { by: 'Claude Code', command: 'claude auth login' },
+    });
+    await expect(parentMarkingLineForUser(host.userId)).resolves.toContain(
+      'Claude Code is not signed in on this server. As the user that runs Examify, run `claude auth login`.',
+    );
+    // One check serves every render while it is fresh.
+    expect(claude.statusCalls()).toBe(1);
+  });
+
+  it('marks as today when the CLI is signed in, or when its check has no answer', async () => {
+    const { examMarkingForUser, markingStatusForUser } = await import('@/lib/onboarding');
+    const signedIn = fakeCli('codex', { mode: 'hang', signIn: 'in' });
+    process.env.EXAMIFY_CODEX_BIN = signedIn.bin;
+    const host = await household('codex-cli');
+    await expect(markingStatusForUser(host.userId)).resolves.toEqual({
+      backend: 'codex-cli',
+      readiness: 'ready',
+      needsSignIn: false,
+    });
+    await expect(examMarkingForUser(host.userId)).resolves.toEqual({
+      written: 'marked',
+      by: 'Codex',
+    });
+
+    resetAgentCliSignInCacheForTests();
+    const old = fakeCli('codex', { mode: 'hang', signIn: 'old' });
+    process.env.EXAMIFY_CODEX_BIN = old.bin;
+    await expect(markingStatusForUser(host.userId)).resolves.toMatchObject({
+      readiness: 'ready',
+      needsSignIn: false,
+    });
+    // An old CLI is never given the status command (it would read it as a prompt).
+    expect([old.helpCalls(), old.statusCalls(), old.promptRuns()]).toEqual([1, 0, 0]);
+  });
+
+  it('asks again after a marking run was refused as not signed in', async () => {
+    const { agentCliSignIn } = await import('@/lib/agent-cli-sign-in');
+    const { onboardingHostEnv } = await import('@/lib/onboarding');
+    // Its status says signed in, but the marking run is refused.
+    const claude = fakeCli('claude', { mode: 'not-signed-in', signIn: 'in' });
+    process.env.EXAMIFY_CLAUDE_BIN = claude.bin;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await expect(agentCliSignIn('claude', onboardingHostEnv())).resolves.toBe('signed_in');
+      await expect(gradeAnswers(tasks.slice(0, 1), 'claude-cli')).resolves.toEqual([
+        { status: 'needs_review' },
+      ]);
+      await agentCliSignIn('claude', onboardingHostEnv());
+      expect(claude.statusCalls()).toBe(2);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('asks only the CLI that marks for this household', async () => {
+    const { markingStatusForUser } = await import('@/lib/onboarding');
+    const claude = fakeCli('claude', { mode: 'hang', signIn: 'out' });
+    const codex = fakeCli('codex', { mode: 'hang', signIn: 'out' });
+    process.env.EXAMIFY_CLAUDE_BIN = claude.bin;
+    process.env.EXAMIFY_CODEX_BIN = codex.bin;
+    const host = await household('cloud');
+    await expect(markingStatusForUser(host.userId)).resolves.toMatchObject({
+      backend: 'anthropic',
+      needsSignIn: false,
+    });
+    expect(claude.statusCalls()).toBe(0);
+    expect(codex.statusCalls()).toBe(0);
+  });
+
+  it('shows both CLIs’ sign-in in the wizard snapshot', async () => {
+    const { getOnboardingPageSnapshot, getOnboardingSnapshot } = await import('@/lib/onboarding');
+    const claude = fakeCli('claude', { mode: 'hang', signIn: 'out' });
+    const codex = fakeCli('codex', { mode: 'hang', signIn: 'in' });
+    process.env.EXAMIFY_CLAUDE_BIN = claude.bin;
+    process.env.EXAMIFY_CODEX_BIN = codex.bin;
+    const host = await household('cloud');
+    const snap = await getOnboardingSnapshot(host.householdId);
+    expect(snap).toMatchObject({
+      claudeCliFound: true,
+      claudeCliSignIn: 'signed_out',
+      codexCliFound: true,
+      codexCliSignIn: 'signed_in',
+    });
+    // The wizard's actions use the cached answer; the wizard page asks again.
+    await getOnboardingSnapshot(host.householdId);
+    expect([claude.statusCalls(), codex.statusCalls()]).toEqual([1, 1]);
+    await getOnboardingPageSnapshot(host.householdId);
+    expect([claude.statusCalls(), codex.statusCalls()]).toEqual([2, 2]);
+    await getOnboardingPageSnapshot(host.householdId);
+    expect([claude.statusCalls(), codex.statusCalls()]).toEqual([3, 3]);
+
+    // Not found: nothing to ask, so unknown.
+    resetAgentCliSignInCacheForTests();
+    process.env.EXAMIFY_CLAUDE_BIN = path.join(mkdtempSync(path.join(tmpdir(), 'none-')), 'x');
+    const missing = await getOnboardingSnapshot(host.householdId);
+    expect(missing).toMatchObject({ claudeCliFound: false, claudeCliSignIn: 'unknown' });
+    expect(claude.statusCalls()).toBe(3);
   });
 });

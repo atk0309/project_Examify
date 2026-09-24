@@ -37,6 +37,7 @@ import {
   type PlannedFile,
   type ValidatedBank,
 } from 'examify-ingest';
+import { agentCliSignIn } from '@/lib/agent-cli-sign-in';
 import { getOnboardingContentRoot, isFamilyWritePathSafe } from '@/lib/content-root';
 import { db, schema } from '@/lib/db';
 import type { HouseholdRole } from '@/lib/db/schema';
@@ -58,12 +59,16 @@ import {
   EMPTY_AUTHORITATIVE_EMIT,
   ONBOARDING_AI_MODES,
   SUBJECT_ICON_OPTIONS,
+  examMarking,
   markingBackendForAiMode,
-  markingReadiness,
+  markingStatus,
+  parentMarkingLine,
   onboardingPruneConfirmMessage,
   onboardingPruneEntries,
+  type AgentCliSignIn,
+  type ExamMarking,
   type MarkingBackend,
-  type MarkingReadiness,
+  type MarkingStatus,
   type OnboardingAiMode,
   type OnboardingDryRun,
   type OnboardingIssue,
@@ -399,13 +404,32 @@ export function markingBackendForUser(userId: number): MarkingBackend {
   return markingBackendForAiMode(effectiveAiMode(getOnboardingForUser(userId).state));
 }
 
-/** The backend that marks this user's answers, and whether this host has it set up. */
-export function markingStatusForUser(userId: number): {
-  backend: MarkingBackend;
-  readiness: MarkingReadiness;
-} {
+/** What this user's exam knows about marking written answers (`ExamApp`'s `marking`). */
+export async function examMarkingForUser(userId: number): Promise<ExamMarking> {
+  const { backend, readiness, needsSignIn } = await markingStatusForUser(userId);
+  return examMarking(backend, readiness, needsSignIn);
+}
+
+/** The parent dashboard's line on who marks this household's written answers. */
+export async function parentMarkingLineForUser(userId: number): Promise<string> {
+  const { backend, readiness, needsSignIn } = await markingStatusForUser(userId);
+  return parentMarkingLine(backend, readiness, needsSignIn);
+}
+
+/**
+ * The backend that marks this user's answers, whether this host has it set up,
+ * and whether it needs a sign-in. Only a Claude Code / Codex backend is asked
+ * whether it is signed in (cached; the first check waits a few seconds at most).
+ */
+export async function markingStatusForUser(userId: number): Promise<MarkingStatus> {
   const backend = markingBackendForUser(userId);
-  return { backend, readiness: markingReadiness(backend, aiFlags()) };
+  const hostEnv = onboardingHostEnv();
+  const cli = backend === 'claude-cli' ? 'claude' : backend === 'codex-cli' ? 'codex' : null;
+  const flags = aiFlags(hostEnv);
+  return markingStatus(backend, {
+    ...flags,
+    ...(await agentCliSignInFlags(hostEnv, flags, cli ? [cli] : [])),
+  });
 }
 
 export function getOnboardingForUser(userId: number): {
@@ -513,7 +537,7 @@ export function onboardingHostEnv(): Record<string, string | undefined> {
   return mergeRepoEnvFiles(getEnvStoreRoot(), process.env);
 }
 
-function aiFlags(): {
+function aiFlags(hostEnv: Record<string, string | undefined> = onboardingHostEnv()): {
   anthropicConfigured: boolean;
   openaiConfigured: boolean;
   anthropicPresent: boolean;
@@ -532,7 +556,6 @@ function aiFlags(): {
   gradingStubActive: boolean;
   openaiGradingStubActive: boolean;
 } {
-  const hostEnv = onboardingHostEnv();
   return {
     // Both keys: wizard + install.sh write the same repo-root `.env`
     // (findRepoRoot) and update process.env. OPENAI_API_KEY is not in
@@ -562,6 +585,27 @@ function aiFlags(): {
   };
 }
 
+/**
+ * Whether the found Claude Code / Codex among `clis` is signed in (cached, see
+ * agent-cli-sign-in.ts). A CLI that is not found, or not asked, is `unknown`.
+ */
+async function agentCliSignInFlags(
+  hostEnv: Record<string, string | undefined>,
+  found: { claudeCliFound: boolean; codexCliFound: boolean },
+  clis: readonly ('claude' | 'codex')[],
+  recheck = false,
+): Promise<{ claudeCliSignIn: AgentCliSignIn; codexCliSignIn: AgentCliSignIn }> {
+  const ask = (cli: 'claude' | 'codex', isFound: boolean): Promise<AgentCliSignIn> =>
+    isFound && clis.includes(cli)
+      ? agentCliSignIn(cli, hostEnv, { recheck })
+      : Promise.resolve('unknown');
+  const [claudeCliSignIn, codexCliSignIn] = await Promise.all([
+    ask('claude', found.claudeCliFound),
+    ask('codex', found.codexCliFound),
+  ]);
+  return { claudeCliSignIn, codexCliSignIn };
+}
+
 /** How CLI hints name the family root from the checkout root (`data`, `data/x`, or absolute). */
 export function onboardingDataDirDisplay(root = getOnboardingContentRoot()): string {
   try {
@@ -571,12 +615,27 @@ export function onboardingDataDirDisplay(root = getOnboardingContentRoot()): str
   }
 }
 
-export function getOnboardingSnapshot(
+/**
+ * The wizard's view of this household and host. `recheckSignIn` (the wizard
+ * page itself, admin only): ask Claude Code / Codex again instead of using a
+ * cached answer, so a sign-in shows up on reload; the wizard's actions use the
+ * cache.
+ */
+export async function getOnboardingSnapshot(
   householdId: number,
   root = getOnboardingContentRoot(),
-): OnboardingSnapshot {
+  options: { recheckSignIn?: boolean } = {},
+): Promise<OnboardingSnapshot> {
   const state = getHouseholdOnboarding(householdId).state;
   const fromInstaller = state.aiMode ? null : installerAiMode();
+  const hostEnv = onboardingHostEnv();
+  const flags = aiFlags(hostEnv);
+  const signIn = await agentCliSignInFlags(
+    hostEnv,
+    flags,
+    ['claude', 'codex'],
+    options.recheckSignIn === true,
+  );
   return {
     subjects: listOnboardingSubjects(root),
     sampleSubjects: SAMPLE_SUBJECTS.map((subject) => ({ id: subject.id, label: subject.label })),
@@ -588,8 +647,14 @@ export function getOnboardingSnapshot(
     hasDryRun: Boolean(state.dryRunHash),
     hasApplied: state.applied === true,
     liveSubjects: liveSubjectSummaries(root),
-    ...aiFlags(),
+    ...flags,
+    ...signIn,
   };
+}
+
+/** The snapshot the wizard page renders with: it always asks Claude Code / Codex again. */
+export function getOnboardingPageSnapshot(householdId: number): Promise<OnboardingSnapshot> {
+  return getOnboardingSnapshot(householdId, undefined, { recheckSignIn: true });
 }
 
 function subjectMetaPayload(

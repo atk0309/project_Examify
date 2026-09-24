@@ -65,6 +65,10 @@ export default defineConfig({
       // stubs with both the `test` sentinel and the explicit GRADING_STUB=1.
       ANTHROPIC_API_KEY: 'test',
       GRADING_STUB: '1',
+      // Never the developer's own Claude Code / Codex: the wizard asks a found
+      // CLI whether it is signed in. No spec needs one.
+      EXAMIFY_CLAUDE_BIN: path.join(process.cwd(), 'tests', '.tmp', 'no-agent-cli', 'claude'),
+      EXAMIFY_CODEX_BIN: path.join(process.cwd(), 'tests', '.tmp', 'no-agent-cli', 'codex'),
       SETUP_BOOTSTRAP_SECRET: 'e2e-setup-bootstrap-secret',
       // Pin captcha off (as `install.sh` leaves it). Spreading process.env
       // (or a host .env loaded by next start) must not re-enable Turnstile.

@@ -52,7 +52,10 @@ Surface:
   `ANTHROPIC_API_KEY=test` sentinel stays “not configured” but Clear/Rotate
   remain available after the first Save; Claude Code / Codex modes
   (`claude-cli` / `codex-cli`) run the household's signed-in CLI with no API
-  key, and the card says “Found” when the binary resolves, never its path;
+  key, and the card says “Signed in” / “Not signed in” from the CLI's own
+  sign-in check (`agent-cli-sign-in.ts`), or “Found” when the binary resolves
+  and the check gave no clear answer, never its path; a signed-out CLI's
+  setup note names `claude auth login` / `codex login`;
   Local endpoint passes only `EXAMIFY_LLM_BASE_URL` and needs
   `EXAMIFY_LLM_MODEL`, Local command passes only `EXAMIFY_INGEST_LOCAL_CMD`
   (`localTransportForOnboardingAiMode` → ingest `localTransportEnv`), and their
@@ -318,6 +321,8 @@ src/
     onboarding-generate.ts # AI-step generateSubject bridge (preview then commit if !cancelled);
                         #   maps failures to safe reason codes + one `[onboarding] generate failed` log line
     onboarding-admin.ts # shared household-admin gate for wizard actions + cancel route
+    agent-cli-sign-in.ts # Claude Code / Codex signed in? per-process cache over ingest
+                        #   `checkAgentCliSignIn` (providers/sign-in.ts); forgotten on a refused run
     onboarding-types.ts # client-safe wizard snapshot / AI mode types
     repo-root.ts        # shared `findRepoRoot` (checkout root: env-store `.env`, data-dir, ingest keys)
     data-dir.ts         # THE family data folder resolver (getDataPaths / resolveCliDataPaths,
@@ -741,7 +746,7 @@ chosen, answer }`, free-text `{ type:'free', id, q, response, maxScore, score, s
 
 - **Agent CLIs get nothing but the request.** `claude-cli` / `codex-cli` (generate, and
   marking for a household on that mode, through the same `runClaudeCliText` /
-  `runCodexCliText`) run with
+  `runCodexCliText`; the sign-in check below runs through the same pieces) run with
   no tools (`--tools ""`; Codex: `--sandbox read-only`, shell / apps / plugins /
   browser / image features off, `web_search="disabled"`, `--ignore-user-config`),
   in an empty private `0700` temp folder (`safeTempRoot` in `temp-root.ts`, which
@@ -775,6 +780,42 @@ chosen, answer }`, free-text `{ type:'free', id, q, response, maxScore, score, s
   `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` to that allowlist (the `test` sentinel
   would also break the CLI's own sign-in), and never grant file, command or web
   tools: study files are untrusted input.
+- **The sign-in check asks, nothing more.** `checkAgentCliSignIn`
+  (`tools/examify-ingest/src/providers/sign-in.ts`) runs `claude --setting-sources
+project auth status` (JSON `loggedIn`; the option before the subcommand, which refuses
+  it after, so the service user's own settings, e.g. an `env` key or `apiKeyHelper`
+  the marking run would not have, do not count) / `codex login status` ("Logged in" /
+  "Not logged in", on stderr) with the same `agentCliEnv` allowlist, an empty private
+  run folder, Codex's staged `CODEX_HOME` (copy-back as above) and the same
+  `agentCliHomeOutsideCheckout` refusal. Before a status command it runs `claude auth
+--help` / `codex login --help` and needs a `status` command in the help's Commands
+  list (`helpListsStatus`; prose and wrapped lines do not count): a Claude Code before
+  2.1.40 has no `auth` command and reads `auth status` as a prompt, a whole agent run
+  with the user's own tools, so it is never given one. The probe's answer is kept per
+  CLI + invoked path + binary file (real path + size + mtime; a version manager's shim
+  is one file for every tool and picks it by name) for 10 min
+  (`AGENT_CLI_PROBE_CACHE_MS`: an upgrade behind an unchanged shim is noticed), and
+  only from a help run that exited 0 with output (a CLI that could not start is asked
+  again next time). Both commands share one
+  5 s deadline (`AGENT_CLI_SIGNIN_TIMEOUT_MS`; the process group is killed), and the
+  check stops waiting 1 s later even if the output never closes. It never throws:
+  not found, a refused CLI folder, no status command, a timeout or an unparseable
+  answer are `unknown`; `signed_out` with `CLAUDE_CODE_OAUTH_TOKEN` / `CODEX_API_KEY`
+  passed on is `unknown` too (`codex login status` ignores that key; `codex exec`
+  uses it). The output (it names the account) is parsed and dropped, never logged or
+  returned. `agentCliSignIn` (`src/lib/agent-cli-sign-in.ts`, server-only) caches it
+  per process, keyed by CLI + binary path + CLI folder + whether a token is passed:
+  `signed_in` / `unknown` fresh for 5 min, then served stale while one background
+  check runs (past 10 min the render waits); `signed_out` fresh for 30 s, then the
+  render waits for the new check, so signing in shows on the next load; `recheck`
+  (only the admin's `/onboarding` page, `getOnboardingPageSnapshot`) never takes a
+  cached answer and waits for a check (one already running is shared); one check per
+  key at a time. A generate that fails `provider_auth` or a marking run that fails
+  `cli_auth` calls `forgetAgentCliSignIn(cli)` (a check of that CLI still running is
+  then neither shared nor cached). Student / parent renders ask only the
+  household backend's CLI (`markingStatusForUser`); the wizard snapshot (the page and
+  every wizard action) asks both found CLIs, whatever the mode. Never run a status command on a CLI whose help lacks it, never let a
+  render wait past the deadline, and never cache a failure's own guess.
 
 These are non-negotiable. Don't "fix" them out.
 
@@ -818,19 +859,27 @@ These are non-negotiable. Don't "fix" them out.
   `markingStatusForUser`, `markingReadiness` over the snapshot flags) say which AI marks and
   what the server still needs. Local endpoint counts only with an http(s)
   `EXAMIFY_LLM_BASE_URL` (`localChatCompletionsUrl`, the URL the marking request uses) and a
-  model; Claude Code / Codex count once found, and since their sign-in is only known when they
-  run, their copy says they mark while signed in and that signed out the answers count as not
-  correct. The "Marking…" screen says written answers can take up to a
+  model; Claude Code / Codex count once found unless their sign-in check says `signed_out`
+  (`claudeCliSignIn` / `codexCliSignIn`; `unknown` still counts, as before). Signed out is
+  `not_ready` with `needsSignIn` (`markingNeedsSignIn`, `MarkingStatus`): the parent line, the
+  wizard's marking line and setup note, and the exam (`examMarking(…, needsSignIn)` →
+  `unmarked` + `signIn { by, command }`) name the tool and its sign-in command
+  (`AGENT_CLI_SIGNIN_COMMAND`: `claude auth login` / `codex login`). Their ready copy still
+  says they mark while signed in and that signed out the answers count as not correct (a
+  check says only that credentials exist). The "Marking…" screen says written answers can take up to a
   minute (`marking-written-note`, only when the paper has one and something marks it).
-  The exam knows the same status: `page.tsx` passes `examMarking(backend, readiness)` to
-  `ExamApp` (`marking`: `marked` + who, `stub`, or `unmarked`). Before a paper starts, the
+  The exam knows the same status: `page.tsx` passes `examMarkingForUser` (`examMarking`) to
+  `ExamApp` (`marking`: `marked` + who, `stub`, or `unmarked`, with `signIn` when a
+  Claude Code / Codex is signed out). Before a paper starts, the
   difficulty screen says what happens to its written questions (`exam-written-line`,
   `examWrittenLine`, only when the bank has some). `unmarked` (`not_ready`): `buildExam(…,
 { written: false })` draws from multiple choice only (`examPool`), so a student is never
   asked a question that can only count as not correct; a bank with only written questions
-  keeps them, each with `exam-free-unmarked` (`EXAM_UNMARKED_WRITTEN`), and so does a draft
-  resumed after marking stopped. The parent line and the wizard's marking line say exams
-  leave written questions out until marking is set up.
+  keeps them, each with `exam-free-unmarked` (`examUnmarkedWrittenNote`: `EXAM_UNMARKED_WRITTEN`,
+  or the signed-out tool and its command), and so does a draft resumed after marking stopped.
+  The parent line and the wizard's marking line say exams leave written questions out until
+  marking is set up, and that a bank with only written questions keeps them (`WRITTEN_LEFT_OUT`;
+  install.sh's blank-key prompt says the same).
   Live `ANTHROPIC_API_KEY` is read from `process.env` only (never the boot-frozen
   `env.ts` snapshot) so a wizard set / rotate / clear is visible on the next
   grade. The `test` sentinel stubs only when `gradingStubAllowed()`:
@@ -1199,7 +1248,12 @@ See `.env.example` for the canonical list.
 - **Test data folders, never a real one.** `tests/unit/setup.ts` sets
   `EXAMIFY_DATA_DIR=tests/.tmp/unit-data-<pid>` (wiped at start) and
   `DATABASE_URL=file:tests/.tmp/unit.db` **unconditionally**, so a developer's exported
-  values can't point unit tests at real family data. Each Playwright config sets its own
+  values can't point unit tests at real family data. It also pins `EXAMIFY_CLAUDE_BIN` /
+  `EXAMIFY_CODEX_BIN` to a missing path under `tests/.tmp` and `CLAUDE_CONFIG_DIR` /
+  `CODEX_HOME` to a missing folder outside the checkout, so no test runs a developer's own
+  Claude Code / Codex sign-in check (tests that need one point the binary at
+  `tests/helpers/fake-agent-cli.ts`, which answers the help probe and the status command);
+  the three Playwright webServer envs pin the binaries the same way. Each Playwright config sets its own
   `EXAMIFY_DATA_DIR=tests/.tmp/e2e-{seeded,fresh,password}-data` in the webServer env;
   the prepare scripts pass `E2E_DATA_DIR` and `setup-db.ts` wipes + initialises it
   (refusing anything outside `tests/.tmp`). `--empty` seeds the committed `demo` fixture
