@@ -231,7 +231,10 @@ describe('gradeAnswers — Local endpoint', () => {
     const [url, init] = fetchSpy.mock.calls[0]!;
     expect(String(url)).toBe('http://127.0.0.1:11434/v1/chat/completions');
     expect(JSON.stringify((init as RequestInit).headers)).not.toContain('sk-');
-    expect(JSON.parse(String((init as RequestInit).body)).model).toBe('llama3.2');
+    const body = JSON.parse(String((init as RequestInit).body)) as Record<string, unknown>;
+    expect(body.model).toBe('llama3.2');
+    // Some local servers (LM Studio) refuse json_object with a 400.
+    expect(body).not.toHaveProperty('response_format');
   });
 
   it('marks nothing without a URL and a model (no_endpoint)', async () => {

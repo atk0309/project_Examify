@@ -8,7 +8,9 @@ import 'server-only';
      `OPENAI_API_KEY` (same `test` sentinel rule as Anthropic), 15 s each.
    - Local endpoint: the same call to `EXAMIFY_LLM_BASE_URL` with
      `EXAMIFY_LLM_MODEL`, all answers under one 45 s deadline (a local model
-     often serves one request at a time, so answers queue).
+     often serves one request at a time, so answers queue). No JSON mode:
+     some local servers (LM Studio) refuse `response_format: json_object`
+     with a 400, and the reply is parsed leniently anyway.
    - Claude Code / Codex: ONE locked-down CLI run marks every answer of the
      attempt (the same runner as generate: no tools, a private run folder, the
      env allowlist, a private CODEX_HOME), 45 s. The CLI starts once, and the
@@ -55,6 +57,7 @@ export function markingHostEnv(): ProviderEnv {
   return ingest.mergeRepoEnvFiles(getEnvStoreRoot(), process.env);
 }
 
+/** The live `OPENAI_API_KEY`, trimmed; blank is unset. */
 function liveOpenAiKey(): string | undefined {
   const live = process.env[OPENAI_ENV_KEY];
   if (typeof live !== 'string') return undefined;
@@ -68,6 +71,8 @@ type ChatTarget = {
   model: string;
   signal: AbortSignal;
   backend: MarkingBackend;
+  /** Ask for `response_format: json_object` (OpenAI only; see the header). */
+  jsonMode: boolean;
 };
 
 /** First message's text from an OpenAI-compatible Chat Completions response. */
@@ -79,6 +84,7 @@ function firstChoiceText(data: unknown): string | null {
   return typeof content === 'string' ? content : null;
 }
 
+/** Mark one answer with an OpenAI-compatible Chat Completions call; never throws. */
 async function gradeViaChatCompletions(args: GradeArgs, target: ChatTarget): Promise<GradeResult> {
   try {
     const res = await fetch(target.url, {
@@ -88,7 +94,7 @@ async function gradeViaChatCompletions(args: GradeArgs, target: ChatTarget): Pro
         model: target.model,
         temperature: 0,
         max_tokens: 700,
-        response_format: { type: 'json_object' },
+        ...(target.jsonMode ? { response_format: { type: 'json_object' } } : {}),
         messages: [
           { role: 'system', content: systemPrompt() },
           { role: 'user', content: userPrompt(args) },
@@ -133,6 +139,7 @@ export async function gradeViaOpenAi(tasks: readonly GradeArgs[]): Promise<Grade
         model: OPENAI_MODEL,
         signal: AbortSignal.timeout(API_GRADING_TIMEOUT_MS),
         backend: 'openai',
+        jsonMode: true,
       }),
     ),
   );
@@ -162,6 +169,7 @@ export async function gradeViaLocalEndpoint(
         model,
         signal,
         backend: 'local-endpoint',
+        jsonMode: false,
       }),
     ),
   );

@@ -85,10 +85,12 @@ export function answerFence(): string {
   return `ANSWER-${randomBytes(6).toString('hex')}`;
 }
 
+/** The answer between its opening and closing markers. */
 function fencedAnswer(answer: string, fence: string): string[] {
   return [`<<<${fence}`, answer, `${fence}>>>`];
 }
 
+/** The system prompt for marking one answer (Anthropic, OpenAI, local endpoint). */
 export function systemPrompt(): string {
   return [
     "You are marking a child's short free-text exam answer against a rubric.",
@@ -100,6 +102,7 @@ export function systemPrompt(): string {
   ].join('\n');
 }
 
+/** One answer to mark: question, maximum score, rubric, then the fenced answer. */
 export function userPrompt(args: GradeArgs, fence = answerFence()): string {
   return [
     `Question: ${args.question}`,

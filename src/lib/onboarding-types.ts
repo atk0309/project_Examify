@@ -235,6 +235,7 @@ export type MarkingFlags = Pick<
 /** `ready`: it marks. `stub`: the `test` key gives full marks. `not_ready`: answers stay unmarked. */
 export type MarkingReadiness = 'ready' | 'stub' | 'not_ready';
 
+/** Whether this host can mark with `backend`, from the wizard snapshot's setup flags. */
 export function markingReadiness(backend: MarkingBackend, flags: MarkingFlags): MarkingReadiness {
   switch (backend) {
     case 'anthropic':

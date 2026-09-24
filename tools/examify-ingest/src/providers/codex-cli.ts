@@ -327,6 +327,7 @@ export async function runCodexCliText(request: CodexCliTextRequest): Promise<str
   return text;
 }
 
+/** Generate: one `codex exec` run over the sources, parsed as BankIR. */
 async function callCodexCli(request: ProviderRequest, deps: ProviderDeps): Promise<BankIR> {
   const images = codexImages(request);
   const text = await runCodexCliText({

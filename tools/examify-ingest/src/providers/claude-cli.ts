@@ -150,6 +150,7 @@ export async function runClaudeCliText(request: ClaudeCliTextRequest): Promise<s
   return text;
 }
 
+/** Generate: one `claude -p` run over the sources, parsed as BankIR. */
 async function callClaudeCli(request: ProviderRequest, deps: ProviderDeps): Promise<BankIR> {
   const text = await runClaudeCliText({
     systemPrompt: request.prompt,
