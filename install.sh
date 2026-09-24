@@ -2596,7 +2596,7 @@ collect_ai_settings() {
   echo
   echo "Optional: ANTHROPIC_API_KEY marks free-text answers by sending each answer, its question,"
   echo "and its rubric to Anthropic. It also powers /onboarding Cloud (Anthropic) generate."
-  echo "Leave blank to skip: free-text answers are saved but not marked (they count as not correct)."
+  echo "Leave blank to skip: until an AI can mark them, exams leave written questions out."
   echo "Add it later in /onboarding content setup, or in .env (then restart)."
   prompt ANTHROPIC_API_KEY "Anthropic API key" "" secret
   # Blank keeps the `test` placeholder: the wizard shows "not configured" and

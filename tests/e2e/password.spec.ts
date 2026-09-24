@@ -110,8 +110,15 @@ test('student signs in with a password, sits a whole exam, and sees results + pr
   await signIn(page, STUDENT, 'Student');
   await expect(page.getByRole('heading', { name: 'Pick a subject to practise.' })).toBeVisible();
 
-  // Maths · Easy mixes MCQ with a free-text question.
-  await startExam(page, 'maths', 'easy');
+  // Maths · Easy mixes MCQ with a free-text question. Before it starts, the
+  // page says what happens to written answers on this server (the test key).
+  await page.getByTestId('subject-card-maths').click();
+  await page.getByTestId('difficulty-easy').click();
+  await expect(page.getByTestId('exam-written-line')).toHaveText(
+    'Written answers get a test mark on this server.',
+  );
+  await page.getByTestId('start-exam').click();
+  await expect(page.getByTestId('exam-progress')).toHaveText(/^Question 1 of \d+$/);
   const total = await examTotal(page);
   const kinds: Answered['kind'][] = [];
   for (let n = 1; n <= total; n++) {

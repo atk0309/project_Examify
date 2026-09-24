@@ -374,7 +374,11 @@ The wizard's AI step and the parent dashboard say which one marks and what the s
 needs (`EXAMIFY_LLM_BASE_URL` must be an http or https address). Claude Code and Codex mark
 only while they are signed in as the user that runs Examify; signed out, written answers
 are not marked and count as not correct. The "Marking…" screen says written answers can take
-up to a minute. The CLI and
+up to a minute. Before a paper starts, the student sees who marks written answers. When
+nothing on the server can, the paper leaves written questions out and says so; a bank with
+only written questions keeps them, with a note under each that it counts as not correct.
+The server accepts either paper, so an exam started before marking was set up (or cleared)
+can still be finished. The CLI and
 local deadlines keep a submit under a reverse proxy's usual 60-second timeout. Each answer
 goes to the model between fresh markers, as data to mark, never as instructions.
 
@@ -384,8 +388,8 @@ goes to the model between fresh markers, as data to mark, never as instructions.
   boot-frozen snapshot. The `test` sentinel swaps in a deterministic full-score stub
   with no network calls **only** outside production or when `GRADING_STUB=1` is set
   (the Playwright configs set it). In production without the flag, `test` counts as no
-  key — `install.sh` writes it when the Anthropic prompt is left blank — so free-text
-  answers are saved but not marked, never given free full marks. Clear fails closed
+  key — `install.sh` writes it when the Anthropic prompt is left blank — so written
+  answers are not marked (exams leave them out), never given free full marks. Clear fails closed
   (`needs_review`, no stub).
 - Grading is **fail-safe**: API requests have a 15-second deadline, and any timeout, network
   error, non-2xx, CLI failure, or malformed model output resolves to `needs_review` instead of throwing,
@@ -413,7 +417,7 @@ Sent to a third party only when you turn the feature on:
   AI the household picked: the Anthropic or OpenAI API with your key, Claude Code or Codex
   (to Anthropic or OpenAI under your plan), or your local endpoint. No names, emails or user
   ids are sent. Multiple-choice answers are scored on your server. When that AI is not set
-  up, free-text answers are saved but not marked.
+  up, nothing is sent: exams leave written questions out.
 - **Cloud generate (Anthropic / OpenAI).** The `/onboarding` cloud modes and
   `examify-ingest generate --provider anthropic|openai` send that subject's source files
   (PDFs or their page images, notes, images) to the provider. Local modes send them to the

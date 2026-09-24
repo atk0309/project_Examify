@@ -70,6 +70,22 @@ describe('beginExamSession action (create on start)', () => {
     expect(getExamSessions(userId)).toHaveLength(1);
   });
 
+  it('creates a draft for the paper without written questions', async () => {
+    const { beginExamSession } = await import('@/actions/saveExamProgress');
+    const { getExamSessions } = await import('@/lib/exam-session');
+    const userId = await seedUser('alex@example.com');
+    sessionHolder.current = { userId, role: 'student', email: 'alex@example.com' };
+
+    const choiceOnly = QUESTIONS.maths!.easy!.filter((q) => q.type === 'mcq');
+    const res = await beginExamSession({
+      ...goodInput(),
+      questionIds: choiceOnly.map((q) => q.id),
+      answers: choiceOnly.map(() => null),
+    });
+    expect(res).toEqual({ ok: true });
+    expect(getExamSessions(userId)[0]!.questionIds).toEqual(choiceOnly.map((q) => q.id));
+  });
+
   it('lets a parent in student mode create under their OWN id', async () => {
     const { beginExamSession } = await import('@/actions/saveExamProgress');
     const { getExamSessions } = await import('@/lib/exam-session');
@@ -132,9 +148,10 @@ describe('beginExamSession action (create on start)', () => {
     const userId = await seedUser('alex@example.com');
     sessionHolder.current = { userId, role: 'student', email: 'alex@example.com' };
 
+    // Short by a multiple-choice question, so not the paper without written questions either.
     const incomplete = goodInput();
-    incomplete.questionIds.pop();
-    incomplete.answers.pop();
+    incomplete.questionIds.shift();
+    incomplete.answers.shift();
     expect(await beginExamSession(incomplete)).toEqual({ ok: false, reason: 'invalid' });
 
     const duplicate = goodInput();

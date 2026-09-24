@@ -28,6 +28,7 @@ import {
   countQuestions,
   DIFFICULTIES,
   difficultiesWithQuestions,
+  examPool,
   QUESTIONS,
   SUBJECTS,
   type DifficultyId,
@@ -43,6 +44,7 @@ import {
   type ProgressData,
 } from '@/lib/exam/attempts';
 import type { SessionRole } from '@/lib/auth';
+import { EXAM_UNMARKED_WRITTEN, examWrittenLine, type ExamMarking } from '@/lib/onboarding-types';
 import { ProgressView } from './ProgressView';
 import { SubjectIcon, UIcon } from './icons';
 
@@ -324,6 +326,7 @@ function DifficultyScreen({
   subject,
   sat,
   questionBank,
+  marking,
   onBack,
   onHome,
   onStart,
@@ -331,6 +334,7 @@ function DifficultyScreen({
   subject: Subject;
   sat: number;
   questionBank: QuestionBank;
+  marking: ExamMarking;
   onBack: () => void;
   onHome: () => void;
   onStart: (diff: DifficultyId) => void;
@@ -339,6 +343,12 @@ function DifficultyScreen({
     difficultiesWithQuestions(subject.id, questionBank).includes(d.id),
   );
   const [sel, setSel] = useState<DifficultyId>(available[0]?.id ?? 'easy');
+  // What this paper does with written questions, for the chosen difficulty.
+  const bank = questionBank[subject.id]?.[sel] ?? [];
+  const writtenLine = examWrittenLine(marking, {
+    hasWritten: bank.some((q) => q.type === 'free'),
+    leftOut: examPool(bank, marking.written !== 'unmarked').every((q) => q.type === 'mcq'),
+  });
   const rankClass: Record<DifficultyId, string> = { easy: 'r1', medium: 'r2', hard: 'r3' };
   return (
     <div className="screen" style={accentCSS(subject, sat)}>
@@ -368,6 +378,11 @@ function DifficultyScreen({
             />
           ))}
         </div>
+        {writtenLine ? (
+          <p className="diff-note" data-testid="exam-written-line">
+            {writtenLine}
+          </p>
+        ) : null}
         <div className="action-dock">
           <button
             className="btn btn-primary"
@@ -399,6 +414,7 @@ function ExamScreen({
   questions,
   answers,
   current,
+  marking,
   onSetAnswer,
   onSetIndex,
   onBack,
@@ -411,6 +427,7 @@ function ExamScreen({
   questions: Question[];
   answers: Answer[];
   current: number;
+  marking: ExamMarking;
   onSetAnswer: (index: number, value: Answer) => void;
   onSetIndex: (index: number) => void;
   onBack: () => void;
@@ -457,16 +474,23 @@ function ExamScreen({
           <span className="question-num">Question {i + 1}</span>
           <h2 className="question-text">{q.q}</h2>
           {q.type === 'free' ? (
-            <textarea
-              className="free-answer"
-              value={typeof answer === 'string' ? answer : ''}
-              onChange={(e) => setAnswer(e.target.value)}
-              placeholder="Type your answer…"
-              rows={6}
-              maxLength={4000}
-              aria-label="Your answer"
-              data-testid="exam-free-answer"
-            />
+            <>
+              <textarea
+                className="free-answer"
+                value={typeof answer === 'string' ? answer : ''}
+                onChange={(e) => setAnswer(e.target.value)}
+                placeholder="Type your answer…"
+                rows={6}
+                maxLength={4000}
+                aria-label="Your answer"
+                data-testid="exam-free-answer"
+              />
+              {marking.written === 'unmarked' ? (
+                <p className="free-note" data-testid="exam-free-unmarked">
+                  {EXAM_UNMARKED_WRITTEN}
+                </p>
+              ) : null}
+            </>
           ) : (
             <div className="choices">
               {q.choices.map((c, ci) => (
@@ -505,7 +529,7 @@ function MarkingScreen({
 }: {
   subject: Subject;
   sat: number;
-  /** The exam has written answers, which an AI marks (up to a minute). */
+  /** The exam has written answers an AI marks (up to a minute). */
   written: boolean;
 }) {
   return (
@@ -781,6 +805,7 @@ export function ExamApp({
   resumable = [],
   subjects = SUBJECTS,
   questionBank = QUESTIONS,
+  marking,
 }: {
   role: SessionRole;
   /** True when a parent is playing as a student — shows the exit affordance. */
@@ -791,6 +816,11 @@ export function ExamApp({
   /** Live public bank from the `/` RSC. Defaults to the build-time merge. */
   subjects?: readonly Subject[];
   questionBank?: QuestionBank;
+  /**
+   * Whether this household's AI marks written answers here. Unmarked: papers
+   * leave written questions out where they can, and the exam says so.
+   */
+  marking: ExamMarking;
 }) {
   const router = useRouter();
   const sat = 1; // balanced; the Tweaks panel is not shipped
@@ -936,7 +966,9 @@ export function ExamApp({
   };
   const startExam = (diff: DifficultyId) => {
     if (!subject) return;
-    const qs = buildExam(subject.id, diff, questionBank);
+    const qs = buildExam(subject.id, diff, questionBank, {
+      written: marking.written !== 'unmarked',
+    });
     if (qs.length === 0) return;
     flushPendingSave(); // the exam being left keeps its latest answers
     replaceLiveExam(comboKey(subject.id, diff));
@@ -1109,6 +1141,7 @@ export function ExamApp({
         subject={subject}
         sat={sat}
         questionBank={questionBank}
+        marking={marking}
         onBack={goHome}
         onHome={goHome}
         onStart={startExam}
@@ -1123,6 +1156,7 @@ export function ExamApp({
         questions={questions}
         answers={answers}
         current={current}
+        marking={marking}
         onSetAnswer={setAnswerAt}
         onSetIndex={goToIndex}
         onBack={() => setScreen('difficulty')}
@@ -1135,7 +1169,9 @@ export function ExamApp({
       <MarkingScreen
         subject={subject}
         sat={sat}
-        written={questions.some((question) => question.type === 'free')}
+        written={
+          marking.written !== 'unmarked' && questions.some((question) => question.type === 'free')
+        }
       />
     );
   } else if (screen === 'examError') {
@@ -1166,6 +1202,7 @@ export function ExamApp({
         subject={subject}
         sat={sat}
         questionBank={questionBank}
+        marking={marking}
         onBack={goHome}
         onHome={goHome}
         onStart={startExam}

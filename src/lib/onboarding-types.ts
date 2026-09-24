@@ -302,7 +302,7 @@ export function onboardingMarkingCopy(
     case 'stub':
       return `${note}The ${label} key is the test placeholder, so written answers get a stub full mark and nothing is sent. Set a real key before real use.`;
     case 'not_ready':
-      return `${note}Written answers are saved but not marked until this server has ${MARKING_SETUP[backend]}: until then they count as not correct.`;
+      return `${note}Written answers are not marked until this server has ${MARKING_SETUP[backend]}: until then, exams leave written questions out, and any written answer counts as not correct.`;
     case 'ready':
       if (backend === 'claude-cli' || backend === 'codex-cli') {
         return `Written answers are marked by ${label} while it is signed in as the user that runs Examify: one run marks all of an exam’s written answers, each sent with its question and rubric, and can take up to a minute. Signed out, they are not marked and count as not correct.`;
@@ -326,9 +326,61 @@ export function parentMarkingLine(backend: MarkingBackend, readiness: MarkingRea
     case 'stub':
       return `Written answers get a test full mark: the ${label} key is a placeholder.`;
     case 'not_ready':
-      return `Written answers are not marked: this server needs ${MARKING_SETUP[backend]}. Until then they count as not correct.`;
+      return `Written answers are not marked: this server needs ${MARKING_SETUP[backend]}. Until then, exams leave written questions out, and any written answer counts as not correct.`;
   }
 }
+
+/**
+ * What a student's exam knows about marking written answers. `marked`: an AI
+ * on this server marks them (`by` names it). `stub`: the test key gives them a
+ * stub full mark. `unmarked`: nothing here can mark them, so papers leave
+ * written questions out where the bank has others (`examPool`).
+ */
+export type ExamMarking =
+  { written: 'marked'; by: string } | { written: 'stub' } | { written: 'unmarked' };
+
+/** Who marks, in words for a student. */
+const EXAM_MARKED_BY: Record<MarkingBackend, string> = {
+  ...MARKING_LABEL,
+  'local-endpoint': 'your family’s own AI model',
+};
+
+export function examMarking(backend: MarkingBackend, readiness: MarkingReadiness): ExamMarking {
+  switch (readiness) {
+    case 'ready':
+      return { written: 'marked', by: EXAM_MARKED_BY[backend] };
+    case 'stub':
+      return { written: 'stub' };
+    case 'not_ready':
+      return { written: 'unmarked' };
+  }
+}
+
+/**
+ * The line a student sees before starting a paper, about its written
+ * questions: null when the bank has none. `leftOut`: the paper leaves them
+ * out. Never promises marking later.
+ */
+export function examWrittenLine(
+  marking: ExamMarking,
+  paper: { hasWritten: boolean; leftOut: boolean },
+): string | null {
+  if (!paper.hasWritten) return null;
+  switch (marking.written) {
+    case 'marked':
+      return `Written answers are marked by ${marking.by}.`;
+    case 'stub':
+      return 'Written answers get a test mark on this server.';
+    case 'unmarked':
+      return paper.leftOut
+        ? 'Written questions are left out: this server can’t mark written answers yet.'
+        : EXAM_UNMARKED_WRITTEN;
+  }
+}
+
+/** Under a written question nothing on this server can mark. */
+export const EXAM_UNMARKED_WRITTEN =
+  'This server can’t mark written answers yet, so they count as not correct.';
 
 export function providerForOnboardingAiMode(mode: OnboardingAiMode): OnboardingGenerateProvider {
   switch (mode) {

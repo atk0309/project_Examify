@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RecordAttemptInput, RecordAttemptResult } from '@/actions/recordAttempt';
 import type { SaveExamProgressInput } from '@/actions/saveExamProgress';
 import type { DifficultyId, Question, QuestionBank, Subject } from '@/lib/exam/data';
+import type { ExamMarking } from '@/lib/onboarding-types';
 
 // A stateful stand-in for the `exam_sessions` table with the real contract:
 // begin upserts, the autosave is update-only, discard and a marked finish delete.
@@ -105,7 +106,17 @@ class Crashed extends Component<{ children: ReactNode }, { error: unknown }> {
   }
 }
 
-function renderApp(props: { resumable?: Resumable[]; role?: 'student' | 'parent' } = {}) {
+const marked: ExamMarking = { written: 'marked', by: 'Anthropic' };
+
+function renderApp(
+  props: {
+    resumable?: Resumable[];
+    role?: 'student' | 'parent';
+    marking?: ExamMarking;
+    subjects?: Subject[];
+    questionBank?: QuestionBank;
+  } = {},
+) {
   const role = props.role ?? 'student';
   return render(
     <Crashed>
@@ -113,9 +124,10 @@ function renderApp(props: { resumable?: Resumable[]; role?: 'student' | 'parent'
         role={role}
         studentMode={role === 'parent'}
         initialProgress={empty}
-        subjects={subjects}
-        questionBank={bank}
+        subjects={props.subjects ?? subjects}
+        questionBank={props.questionBank ?? bank}
         resumable={props.resumable ?? []}
+        marking={props.marking ?? marked}
       />
     </Crashed>,
   );
@@ -500,5 +512,122 @@ describe('ExamApp resume prefers the newest copy of a draft', () => {
     // Geography, left for Maths, is still offered too.
     goHome();
     expect(screen.getByTestId('resume-geo-easy')).toBeInTheDocument();
+  });
+});
+
+describe('ExamApp and what this server can mark', () => {
+  const unmarked: ExamMarking = { written: 'unmarked' };
+  const openDifficulty = (subjectId: string) => {
+    fireEvent.click(screen.getByTestId(`subject-card-${subjectId}`));
+    fireEvent.click(screen.getByTestId('difficulty-easy'));
+  };
+
+  it('names who marks written answers and keeps them in the paper', async () => {
+    renderApp();
+    openDifficulty('geo');
+    expect(screen.getByTestId('exam-written-line')).toHaveTextContent(
+      'Written answers are marked by Anthropic.',
+    );
+    fireEvent.click(screen.getByTestId('start-exam'));
+    await settle();
+    expect(progress()).toBe('Question 1 of 2');
+    expect(beginExamSession.mock.calls[0]![0].questionIds).toEqual(['g1', 'g2']);
+    answer();
+    clickNext();
+    expect(screen.getByTestId('exam-free-answer')).toBeInTheDocument();
+    expect(screen.queryByTestId('exam-free-unmarked')).toBeNull();
+  });
+
+  it('says a test mark is given while the test key stands in', () => {
+    renderApp({ marking: { written: 'stub' } });
+    openDifficulty('geo');
+    expect(screen.getByTestId('exam-written-line')).toHaveTextContent(
+      'Written answers get a test mark on this server.',
+    );
+  });
+
+  it('says nothing about written answers for a paper without any', () => {
+    renderApp({ marking: unmarked });
+    openDifficulty('maths');
+    expect(screen.queryByTestId('exam-written-line')).toBeNull();
+  });
+
+  it('leaves written questions out when nothing here can mark them, and says so', async () => {
+    renderApp({ marking: unmarked });
+    openDifficulty('geo');
+    expect(screen.getByTestId('exam-written-line')).toHaveTextContent(
+      'Written questions are left out: this server can’t mark written answers yet.',
+    );
+    fireEvent.click(screen.getByTestId('start-exam'));
+    await settle();
+    expect(progress()).toBe('Question 1 of 1');
+    expect(beginExamSession.mock.calls[0]![0].questionIds).toEqual(['g1']);
+    answer();
+    clickNext(); // Finish
+    await settle();
+    expect(recordAttempt.mock.calls[0]![0].items).toEqual([{ type: 'mcq', id: 'g1', chosen: 0 }]);
+  });
+
+  it('keeps a paper of written questions only, saying under each that it counts as not correct', async () => {
+    const essay: Subject = {
+      id: 'essay',
+      label: 'Essay',
+      icon: 'geography',
+      l: 0.6,
+      c: 0.1,
+      h: 40,
+    };
+    let release = () => {};
+    recordAttempt.mockImplementation(
+      (input) =>
+        new Promise((resolve) => {
+          release = () => void defaultRecordAttempt(input).then(resolve);
+        }),
+    );
+    renderApp({
+      marking: unmarked,
+      subjects: [essay],
+      questionBank: { essay: { easy: [free('e1'), free('e2')] } },
+    });
+    openDifficulty('essay');
+    expect(screen.getByTestId('exam-written-line')).toHaveTextContent(
+      'This server can’t mark written answers yet, so they count as not correct.',
+    );
+    fireEvent.click(screen.getByTestId('start-exam'));
+    await settle();
+    expect(progress()).toBe('Question 1 of 2');
+    expect(screen.getByTestId('exam-free-unmarked')).toHaveTextContent(
+      'This server can’t mark written answers yet, so they count as not correct.',
+    );
+    answer();
+    clickNext();
+    expect(screen.getByTestId('exam-free-unmarked')).toBeInTheDocument();
+    answer();
+    clickNext(); // Finish
+    await settle();
+    // Nothing marks them, so no "up to a minute" wait is promised.
+    expect(screen.getByText('Marking your answers…')).toBeInTheDocument();
+    expect(screen.queryByTestId('marking-written-note')).toBeNull();
+    release();
+    await settle();
+  });
+
+  it('shows the note under a written question of a draft started while marking worked', async () => {
+    renderApp({
+      marking: unmarked,
+      resumable: [
+        {
+          subject: 'geo',
+          difficulty: 'easy',
+          questions: [mcq('g1'), free('g2')],
+          answers: [0, null],
+          currentIndex: 1,
+        },
+      ],
+    });
+    fireEvent.click(screen.getByTestId('resume-geo-easy'));
+    await settle();
+    expect(progress()).toBe('Question 2 of 2');
+    expect(screen.getByTestId('exam-free-unmarked')).toBeInTheDocument();
   });
 });

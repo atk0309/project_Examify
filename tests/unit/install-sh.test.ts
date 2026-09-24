@@ -348,7 +348,7 @@ describe('install.sh', () => {
         'Optional: ANTHROPIC_API_KEY marks free-text answers by sending each answer, its question,',
       );
       expect(out).toContain(
-        'Leave blank to skip: free-text answers are saved but not marked (they count as not correct).',
+        'Leave blank to skip: until an AI can mark them, exams leave written questions out.',
       );
       expect(out).toContain('Anthropic API key: ');
       expect(out).toContain(

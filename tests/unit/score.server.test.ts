@@ -106,9 +106,21 @@ describe('scoreAttempt — mcq', () => {
   });
 
   it('rejects an incomplete paper', async () => {
-    const items = mathsEasyItems(1).slice(0, -1);
+    // Short by a multiple-choice question, so not the paper without written questions either.
+    const items = mathsEasyItems(1).slice(1);
     const res = await scoreAttempt({ subject: 'maths', difficulty: 'easy', items });
     expect(res).toEqual({ ok: false, reason: 'invalid_items' });
+  });
+
+  it('scores the paper without written questions (nothing here could mark them)', async () => {
+    const items = mathsEasyItems(2).filter((item) => item.type === 'mcq');
+    expect(items.length).toBeLessThan(QUESTIONS.maths!.easy!.length);
+    const res = await scoreAttempt({ subject: 'maths', difficulty: 'easy', items });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.total).toBe(items.length);
+    expect(res.correct).toBe(2);
+    expect(res.items.every((item) => item.type === 'mcq')).toBe(true);
   });
 
   it('rejects duplicate question ids', async () => {

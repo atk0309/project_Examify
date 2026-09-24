@@ -699,8 +699,11 @@ chosen, answer }`, free-text `{ type:'free', id, q, response, maxScore, score, s
   items. The client submits only `{ type, id, chosen|response }`; the scorer resolves each item by
   `id` against the public bank (`./data`) for its snapshot and the server-only keys
   (`./answer-keys.server`) for the correct index / rubric (item must exist; `chosen` in range;
-  ids must be unique; and the payload must contain exactly the number of questions
-  `buildExam()` returns for that bank). The same public-paper validation guards resumable
+  ids must be unique; and the payload must be a paper `buildExam()` can return for that bank:
+  the full paper's length, or, when every question is multiple choice, the length of the
+  paper without written questions; `resolveExamPaper` accepts both whatever the server can
+  mark now, so a draft started before marking was set up or cleared still resumes and
+  submits). The same public-paper validation guards resumable
   drafts, including answer type/range and current-index checks. `saveAttempt`
   (`src/lib/progress.ts`, now async) persists only what the scorer returns and returns the
   inserted `AttemptRecord`.
@@ -818,7 +821,16 @@ These are non-negotiable. Don't "fix" them out.
   model; Claude Code / Codex count once found, and since their sign-in is only known when they
   run, their copy says they mark while signed in and that signed out the answers count as not
   correct. The "Marking…" screen says written answers can take up to a
-  minute (`marking-written-note`, only when the paper has one).
+  minute (`marking-written-note`, only when the paper has one and something marks it).
+  The exam knows the same status: `page.tsx` passes `examMarking(backend, readiness)` to
+  `ExamApp` (`marking`: `marked` + who, `stub`, or `unmarked`). Before a paper starts, the
+  difficulty screen says what happens to its written questions (`exam-written-line`,
+  `examWrittenLine`, only when the bank has some). `unmarked` (`not_ready`): `buildExam(…,
+{ written: false })` draws from multiple choice only (`examPool`), so a student is never
+  asked a question that can only count as not correct; a bank with only written questions
+  keeps them, each with `exam-free-unmarked` (`EXAM_UNMARKED_WRITTEN`), and so does a draft
+  resumed after marking stopped. The parent line and the wizard's marking line say exams
+  leave written questions out until marking is set up.
   Live `ANTHROPIC_API_KEY` is read from `process.env` only (never the boot-frozen
   `env.ts` snapshot) so a wizard set / rotate / clear is visible on the next
   grade. The `test` sentinel stubs only when `gradingStubAllowed()`:
