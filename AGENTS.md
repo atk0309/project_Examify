@@ -133,7 +133,8 @@ JSON`). Missing cloud
   only, never an npm `.cmd` shim, with env names folded to upper case when the repo
   `.env` files are merged (the host env still wins); model from
   `--model`, `EXAMIFY_CLAUDE_MODEL` / `EXAMIFY_CODEX_MODEL`, else the CLI's). Local HTTP
-  sends `--model`, else `EXAMIFY_LLM_MODEL`, else `local`; the local transport
+  sends `--model`, else `EXAMIFY_LLM_MODEL`, else `local`, with JSON mode first and once
+  more without it on a 400 (LM Studio refuses `json_object`); the local transport
   (command / endpoint) is in the cacheKey so one never serves the other's cached IR,
   and wizard Local command drops `EXAMIFY_LLM_MODEL`. The generate flag
   `--local-transport endpoint|command` keeps only that transport's settings

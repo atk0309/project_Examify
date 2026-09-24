@@ -1282,12 +1282,15 @@
     height: 16px;
   }
 
+  /* Side by side while both cards fit; stacked on a phone, where two cards
+     of stats would make the page scroll sideways. */
   .compare-totals {
     display: flex;
+    flex-wrap: wrap;
     gap: var(--sp-3);
   }
   .compare-col {
-    flex: 1;
+    flex: 1 1 11rem;
     border: 1px solid var(--border);
     border-radius: var(--r-lg);
     background: var(--surface);

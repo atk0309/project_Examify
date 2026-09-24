@@ -489,7 +489,9 @@ model from `--model`, `EXAMIFY_CLAUDE_MODEL` /
 10-minute deadline (`CLI_PROVIDER_TIMEOUT_MS`). Both run through
 `providers/command.ts` (shared with the local command: abort / deadline kill the
 process group). Local HTTP sends `--model`, else `EXAMIFY_LLM_MODEL`, else `local`
-(`GenerateProvider.modelEnv`). The local transport (command / endpoint) is part of
+(`GenerateProvider.modelEnv`), and asks for JSON mode (`response_format: json_object`)
+first; a 400 (LM Studio takes only `json_schema` / `text`) gets the same request once
+more without it, and only a 400 is retried. The local transport (command / endpoint) is part of
 the cacheKey (`GenerateProvider.transport`; absent for every other provider, so their
 keys are unchanged), so one transport never serves the other's cached IR; wizard
 Local command also drops `EXAMIFY_LLM_MODEL`, which the command never gets. The
