@@ -146,6 +146,17 @@ describe('parseEnv production fail-closed', () => {
     );
   });
 
+  it('keeps EXAMIFY_AI_MODE optional and refuses a mode the wizard does not have', () => {
+    expect(parseEnv(prodBase).EXAMIFY_AI_MODE).toBeUndefined();
+    expect(parseEnv({ ...prodBase, EXAMIFY_AI_MODE: '' }).EXAMIFY_AI_MODE).toBeUndefined();
+    expect(parseEnv({ ...prodBase, EXAMIFY_AI_MODE: 'claude-cli' }).EXAMIFY_AI_MODE).toBe(
+      'claude-cli',
+    );
+    expect(() => parseEnv({ ...prodBase, EXAMIFY_AI_MODE: 'claude' })).toThrow(
+      /Invalid environment variables/,
+    );
+  });
+
   it('defaults AUTH_MODE to magic-link and accepts password / local-otp', () => {
     expect(parseEnv(prodBase).AUTH_MODE).toBe('magic-link');
     expect(parseEnv({ ...prodBase, AUTH_MODE: 'password' }).AUTH_MODE).toBe('password');

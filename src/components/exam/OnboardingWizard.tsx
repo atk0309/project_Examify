@@ -1665,6 +1665,12 @@ function AiStep({
       <p className="login-fine" data-testid="wizard-ai-grading">
         {onboardingMarkingCopy(snapshot.aiMode, snapshot)}
       </p>
+      {snapshot.aiModeFromInstaller && snapshot.aiMode ? (
+        <p className="login-fine" data-testid="wizard-ai-installer">
+          The installer picked {AI_COPY[snapshot.aiMode].title} from what it found on this server
+          (EXAMIFY_AI_MODE). Pick another mode below to change it.
+        </p>
+      ) : null}
       <div className="wizard-modes" role="radiogroup" aria-label="AI setup mode">
         {(Object.keys(AI_COPY) as OnboardingAiMode[]).map((mode) => {
           const selected = snapshot.aiMode === mode;

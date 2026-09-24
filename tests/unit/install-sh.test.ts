@@ -38,7 +38,11 @@ function installEnv(overrides: Record<string, string | undefined> = {}): NodeJS.
  * prompt prints to stdout and reads its answer from `input` (empty: every
  * prompt takes its default), and nothing blocks on a tty.
  */
-function interactiveWriteEnvOnly(dir: string, input = '') {
+function interactiveWriteEnvOnly(
+  dir: string,
+  input = '',
+  env: Record<string, string | undefined> = {},
+) {
   // spawnSync honours `detached` (setsid: new session, no controlling tty)
   // even though @types/node only declares it on spawn().
   const options = {
@@ -48,6 +52,9 @@ function interactiveWriteEnvOnly(dir: string, input = '') {
       PATH: process.env.PATH,
       HOME: process.env.HOME,
       TMPDIR: process.env.TMPDIR,
+      // The AI tool checks look at this machine; tests opt in with fake tools.
+      EXAMIFY_AI_DETECT: '0',
+      ...env,
     },
     input,
     encoding: 'utf8',
@@ -981,6 +988,721 @@ function dataEnv(overrides: Record<string, string | undefined> = {}): NodeJS.Pro
   if (!('DATABASE_URL' in overrides)) delete env.DATABASE_URL;
   return env;
 }
+
+// --- AI tools: stand-ins for claude / codex / Ollama's API, first on PATH ---
+
+const BASH = execFileSync('bash', ['-c', 'command -v bash'], { encoding: 'utf8' }).trim();
+
+type FakeAiTools = {
+  /**
+   * `hang`: never answers. `launcher`: a launcher that starts the real work
+   * as a child without exec, then waits for it. `deaf`: never answers and
+   * ignores TERM (so does the child it starts). `orphan`: a launcher that
+   * stops on TERM while its child ignores it. `quitter`: a launcher that
+   * catches TERM and exits 0, leaving a child that ignores TERM. `leaver`:
+   * exits 0 at once, leaving a child that ignores TERM on its output.
+   */
+  claude?:
+    'signed_in' | 'signed_out' | 'hang' | 'launcher' | 'deaf' | 'orphan' | 'quitter' | 'leaver';
+  codex?: 'signed_in' | 'signed_out';
+  /** Models Ollama's /api/tags lists; `down`: an ollama binary with nothing answering. */
+  ollama?: string[] | 'down';
+  /** Put claude / codex in this folder under HOME instead of the bin folder. */
+  claudeIn?: string;
+  codexIn?: string;
+  /** Folders under HOME to put on PATH, ahead of the bin folder. */
+  homePath?: string[];
+};
+
+/**
+ * A bin folder of stand-in AI tools. Each logs its argv and reads its stdin to
+ * the end first, so a check the installer forgot to feed </dev/null would eat
+ * the answers still to come. curl is always faked (unreachable unless Ollama
+ * has models), so no test reaches a real server.
+ */
+function fakeAiTools(tools: FakeAiTools) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-ai-tools-'));
+  const bin = path.join(root, 'bin');
+  const home = path.join(root, 'home');
+  fs.mkdirSync(bin);
+  fs.mkdirSync(home);
+  const log = path.join(root, 'calls.log');
+  const folderFor: Record<string, string | undefined> = {
+    claude: tools.claudeIn,
+    codex: tools.codexIn,
+  };
+  const write = (name: string, body: string) => {
+    const folder = folderFor[name] ? path.join(home, folderFor[name]) : bin;
+    fs.mkdirSync(folder, { recursive: true });
+    fs.writeFileSync(
+      path.join(folder, name),
+      `#!/bin/sh\necho "${name} $*" >> ${JSON.stringify(log)}\ncat > /dev/null\n${body}\n`,
+      { mode: 0o755 },
+    );
+  };
+  if (tools.claude === 'hang') write('claude', 'exec sleep 30');
+  else if (tools.claude === 'launcher')
+    write(
+      'claude',
+      `(trap 'echo "claude child got TERM" >> ${JSON.stringify(log)}; exit 0' TERM; sleep 30 & wait) &\nwait`,
+    );
+  else if (tools.claude === 'deaf') write('claude', "trap '' TERM\nsleep 30");
+  else if (tools.claude === 'orphan') write('claude', "(trap '' TERM; exec sleep 30) &\nwait");
+  else if (tools.claude === 'quitter')
+    write('claude', "(trap '' TERM; exec sleep 30) &\ntrap 'exit 0' TERM\nwait");
+  else if (tools.claude === 'leaver') write('claude', "(trap '' TERM; exec sleep 30) &\nexit 0");
+  else if (tools.claude) {
+    const signedIn = tools.claude === 'signed_in';
+    write(
+      'claude',
+      `[ "$1 $2" = "auth status" ] || exit 1\nprintf '{\\n  "loggedIn": ${signedIn},\\n  "authMethod": "claude.ai"\\n}\\n'\nexit ${signedIn ? 0 : 1}`,
+    );
+  }
+  if (tools.codex) {
+    const signedIn = tools.codex === 'signed_in';
+    write(
+      'codex',
+      `[ "$1 $2" = "login status" ] || exit 1\necho "${signedIn ? 'Logged in using ChatGPT' : 'Not logged in'}" >&2\nexit ${signedIn ? 0 : 1}`,
+    );
+  }
+  if (Array.isArray(tools.ollama)) {
+    const body = JSON.stringify({
+      models: tools.ollama.map((name) => ({ name, model: name, details: { family: 'llama' } })),
+    });
+    write(
+      'curl',
+      `for a in "$@"; do last="$a"; done\ncase "$last" in */api/tags) printf '%s' '${body}' ;; *) exit 7 ;; esac`,
+    );
+  } else {
+    write('curl', 'exit 7');
+  }
+  if (tools.ollama === 'down') write('ollama', 'exit 1');
+  const calls = () => (fs.existsSync(log) ? fs.readFileSync(log, 'utf8') : '');
+  const searchPath = [...(tools.homePath ?? []).map((dir) => path.join(home, dir)), bin].join(':');
+  const env = { PATH: `${searchPath}:/usr/bin:/bin`, HOME: home, EXAMIFY_AI_DETECT: '1' };
+  return { root, bin, home, searchPath, env, calls };
+}
+
+/** Site URL, data folder, sign-in, mail and Turnstile take their defaults. */
+const BEFORE_AI = '\n'.repeat(5);
+
+let noTimeoutDir: string | null = null;
+/**
+ * /usr/bin and /bin as symlinks, minus `timeout`: a PATH like macOS's, to show
+ * the installer's checks need no `timeout`.
+ */
+function systemPathWithoutTimeout(): string {
+  if (noTimeoutDir) return noTimeoutDir;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-no-timeout-'));
+  for (const source of ['/usr/bin', '/bin']) {
+    if (!fs.existsSync(source)) continue;
+    for (const name of fs.readdirSync(source)) {
+      if (name === 'timeout' || fs.existsSync(path.join(dir, name))) continue;
+      fs.symlinkSync(path.join(source, name), path.join(dir, name));
+    }
+  }
+  noTimeoutDir = dir;
+  return dir;
+}
+
+function runAiInstall(
+  dir: string,
+  tools: FakeAiTools,
+  input: string,
+  extra: Record<string, string> = {},
+  options: { withoutTimeout?: boolean } = {},
+) {
+  const fake = fakeAiTools(tools);
+  if (options.withoutTimeout) fake.env.PATH = `${fake.searchPath}:${systemPathWithoutTimeout()}`;
+  const result = spawnSync(BASH, [SCRIPT, '--write-env-only'], {
+    cwd: dir,
+    env: { NODE_ENV: 'test', TMPDIR: process.env.TMPDIR, ...fake.env, ...extra },
+    input,
+    encoding: 'utf8',
+    detached: true,
+    timeout: 30_000,
+  } as SpawnSyncOptionsWithStringEncoding);
+  const envFile = fs.existsSync(path.join(dir, '.env'))
+    ? fs.readFileSync(path.join(dir, '.env'), 'utf8')
+    : '';
+  const calls = fake.calls();
+  fs.rmSync(fake.root, { recursive: true, force: true });
+  return { result, envFile, calls, bin: fake.bin, home: fake.home };
+}
+
+describe('install.sh AI tools', () => {
+  it('lists what it finds for this user and defaults to a signed-in Claude Code', () => {
+    const dir = tmpDir('examify-install-');
+    try {
+      const { result, envFile, calls, bin } = runAiInstall(
+        dir,
+        { claude: 'signed_in', codex: 'signed_out', ollama: ['llama3.2:latest', 'qwen2.5vl:7b'] },
+        `${BEFORE_AI}\n`,
+      );
+      expect(result.status).toBe(0);
+      const out = result.stdout;
+      expect(out).toContain('AI for making question banks and marking written answers. Found for');
+      expect(out).toContain('  Claude Code: signed in\n');
+      expect(out).toMatch(/ {2}Codex: not signed in \(sign in as .+: codex login\)\n/);
+      expect(out).toContain('  Ollama at http://127.0.0.1:11434: llama3.2:latest, qwen2.5vl:7b\n');
+      expect(out).toContain(
+        '  1) Claude Code   your Claude plan; study files and written answers go to Anthropic',
+      );
+      expect(out).toContain('  3) Ollama        runs on this machine; nothing leaves it');
+      expect(out).toContain('  5) Decide later  pick one in /onboarding');
+      expect(out).toContain('Choose 1-5 [1]: ');
+      // A tool was picked: no API key questions.
+      expect(out).not.toContain('Anthropic API key: ');
+      expect(envFile).toContain('EXAMIFY_AI_MODE=claude-cli\n');
+      // Not in ~/.local/bin, so the app's service may not find it on its PATH.
+      expect(envFile).toContain(`EXAMIFY_CLAUDE_BIN=${bin}/claude\n`);
+      expect(envFile).toContain('ANTHROPIC_API_KEY=test\n');
+      expect(envFile).not.toContain('EXAMIFY_CODEX_BIN=');
+      expect(envFile).not.toContain('EXAMIFY_LLM_');
+      expect(calls).toContain('claude auth status');
+      expect(calls).toContain('codex login status');
+      expect(calls).toContain('http://127.0.0.1:11434/api/tags');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['claude', '.local/bin'],
+    ['claude', '.claude/local'],
+    ['codex', '.local/bin'],
+  ] as const)('finds a %s in ~/%s off PATH, where the app looks anyway', (cli, folder) => {
+    const dir = tmpDir('examify-install-');
+    try {
+      const { result, envFile, calls } = runAiInstall(
+        dir,
+        cli === 'claude'
+          ? { claude: 'signed_in', claudeIn: folder }
+          : { codex: 'signed_in', codexIn: folder },
+        `${BEFORE_AI}\n`,
+      );
+      expect(result.status).toBe(0);
+      expect(calls).toContain(cli === 'claude' ? 'claude auth status' : 'codex login status');
+      expect(envFile).toContain(`EXAMIFY_AI_MODE=${cli}-cli\n`);
+      expect(envFile).not.toContain('_BIN=');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    // Below ~/.local/bin: the app looks in that folder itself, not its subfolders.
+    ['claude', '.local/bin/tools', {}],
+    // The app looks in ~/.claude/local for Claude Code only.
+    ['codex', '.claude/local', {}],
+    // A name: the app then searches only its service's PATH for it.
+    ['claude', '.local/bin', { EXAMIFY_CLAUDE_BIN: 'claude' }],
+  ] as const)(
+    'writes the full path of a %s found on PATH in ~/%s (host %o)',
+    (cli, folder, host) => {
+      const dir = tmpDir('examify-install-');
+      try {
+        const { result, envFile, home } = runAiInstall(
+          dir,
+          cli === 'claude'
+            ? { claude: 'signed_in', claudeIn: folder, homePath: [folder] }
+            : { codex: 'signed_in', codexIn: folder, homePath: [folder] },
+          `${BEFORE_AI}\n`,
+          host,
+        );
+        expect(result.status).toBe(0);
+        expect(envFile).toContain(`EXAMIFY_AI_MODE=${cli}-cli\n`);
+        const name = cli === 'claude' ? 'EXAMIFY_CLAUDE_BIN' : 'EXAMIFY_CODEX_BIN';
+        expect(envFile).toContain(`${name}=${path.join(home, folder, cli)}\n`);
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.each([
+    ['claude', 'Claude Code', 'claudeIn'],
+    ['codex', 'Codex', 'codexIn'],
+  ] as const)(
+    'does not offer a %s at a path .env cannot hold, and says how to link it',
+    (cli, label, inKey) => {
+      const dir = tmpDir('examify-install-');
+      try {
+        const { result, envFile, home } = runAiInstall(
+          dir,
+          { [cli]: 'signed_in', [inKey]: 'My Tools', homePath: ['My Tools'] },
+          `${BEFORE_AI}later\n`,
+        );
+        expect(result.status).toBe(0);
+        // The temp HOME has no characters bash would quote; only the space in
+        // "My Tools" is escaped, as bash's printf %q does.
+        const quoted = `${home}/My\\ Tools/${cli}`;
+        expect(result.stdout).toContain(
+          `  ${label}: signed in; not offered: .env cannot hold its path. Link it where Examify looks (ln -s ${quoted} ~/.local/bin/${cli}), then pick it in /onboarding.\n`,
+        );
+        expect(result.stdout).not.toContain(`) ${label.padEnd(13)} your`);
+        // Only the API key and "decide later" are left; the key questions are the default.
+        expect(result.stdout).toContain('Choose 1-2 [1]: ');
+        expect(envFile).not.toContain('EXAMIFY_AI_MODE=');
+        expect(envFile).not.toContain('_BIN=');
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it('skips a signed-in CLI it cannot offer when picking the default', () => {
+    const dir = tmpDir('examify-install-');
+    try {
+      const { result, envFile } = runAiInstall(
+        dir,
+        {
+          claude: 'signed_in',
+          claudeIn: 'My Tools',
+          homePath: ['My Tools'],
+          codex: 'signed_out',
+          ollama: ['llama3.2:latest'],
+        },
+        `${BEFORE_AI}\n\n`,
+      );
+      expect(result.status).toBe(0);
+      // Codex (not signed in) is 1, Ollama 2: the default is Ollama, not Codex.
+      expect(result.stdout).toContain('Choose 1-4 [2]: ');
+      expect(envFile).toContain('EXAMIFY_AI_MODE=local-agent\n');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('writes the Ollama endpoint and the chosen model, keeping the answers after the checks', () => {
+    const dir = tmpDir('examify-install-');
+    try {
+      const { result, envFile, calls } = runAiInstall(
+        dir,
+        { claude: 'signed_in', ollama: ['llama3.2:latest', 'qwen2.5vl:7b'] },
+        `${BEFORE_AI}ollama\nqwen2.5vl:7b\n`,
+        // A listen address: the app connects to 127.0.0.1 on that port.
+        { OLLAMA_HOST: '0.0.0.0:11500' },
+      );
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain('Reading PDFs needs a vision model');
+      expect(result.stdout).toContain('Ollama model for banks and marking [llama3.2:latest]: ');
+      expect(calls).toContain('http://127.0.0.1:11500/api/tags');
+      expect(envFile).toContain('EXAMIFY_AI_MODE=local-agent\n');
+      expect(envFile).toContain('EXAMIFY_LLM_BASE_URL=http://127.0.0.1:11500\n');
+      expect(envFile).toContain('EXAMIFY_LLM_MODEL=qwen2.5vl:7b\n');
+      expect(envFile).not.toContain('EXAMIFY_CLAUDE_BIN=');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    // OLLAMA_HOST on this machine: nothing leaves it.
+    [
+      { OLLAMA_HOST: 'localhost:11500' },
+      'runs on this machine; nothing leaves it',
+      'http://localhost:11500',
+    ],
+    // IPv6 without a port: Ollama's port, not the colons inside the brackets.
+    [{ OLLAMA_HOST: '[::1]' }, 'runs on this machine; nothing leaves it', 'http://[::1]:11434'],
+    [
+      { OLLAMA_HOST: 'http://[::1]' },
+      'runs on this machine; nothing leaves it',
+      'http://[::1]:11434',
+    ],
+    // The IPv6 listen-anywhere address: the app connects to [::1], as for 0.0.0.0.
+    [
+      { OLLAMA_HOST: '[::]:11500' },
+      'runs on this machine; nothing leaves it',
+      'http://[::1]:11500',
+    ],
+    [
+      { OLLAMA_HOST: '[::1]:11434' },
+      'runs on this machine; nothing leaves it',
+      'http://[::1]:11434',
+    ],
+    // Another machine: say where study files and answers go.
+    [
+      { OLLAMA_HOST: '10.0.0.5' },
+      'on 10.0.0.5; study files and written answers go there',
+      'http://10.0.0.5:11434',
+    ],
+    // A host EXAMIFY_LLM_BASE_URL is what gets written, so it is what the label describes.
+    [
+      { EXAMIFY_LLM_BASE_URL: 'https://llm.example.com/v1' },
+      'on llm.example.com; study files and written answers go there',
+      'https://llm.example.com/v1',
+    ],
+  ])('describes where Ollama sends study files (%o)', (host, label, written) => {
+    const dir = tmpDir('examify-install-');
+    try {
+      const { result, envFile } = runAiInstall(
+        dir,
+        { ollama: ['llama3.2:latest'] },
+        `${BEFORE_AI}\n\n`,
+        host,
+      );
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain(`  1) Ollama        ${label}\n`);
+      expect(envFile).toContain('EXAMIFY_AI_MODE=local-agent\n');
+      expect(envFile).toContain(`EXAMIFY_LLM_BASE_URL=${written}\n`);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.each(['abc', '-1', '0', '1.5', ''])(
+    'uses 15 s for the checks when EXAMIFY_AI_DETECT_TIMEOUT is %j',
+    (value) => {
+      const dir = tmpDir('examify-install-');
+      try {
+        const { result, envFile } = runAiInstall(dir, { claude: 'signed_in' }, `${BEFORE_AI}\n`, {
+          EXAMIFY_AI_DETECT_TIMEOUT: value,
+        });
+        expect(result.status).toBe(0);
+        // A bad limit is named; an unset one is just the default.
+        if (value) {
+          expect(result.stderr).toContain(
+            'EXAMIFY_AI_DETECT_TIMEOUT must be a whole number of seconds from 1 to 3600; using 15.',
+          );
+        } else {
+          expect(result.stderr).not.toContain('EXAMIFY_AI_DETECT_TIMEOUT');
+        }
+        expect(result.stdout).toContain('  Claude Code: signed in\n');
+        expect(envFile).toContain('EXAMIFY_AI_MODE=claude-cli\n');
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it('defaults to Ollama when no CLI is signed in, with its first model', () => {
+    const dir = tmpDir('examify-install-');
+    try {
+      const { result, envFile } = runAiInstall(
+        dir,
+        { claude: 'signed_out', ollama: ['llama3.2:latest'] },
+        `${BEFORE_AI}\n\n`,
+      );
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain('Choose 1-4 [2]: ');
+      expect(envFile).toContain('EXAMIFY_AI_MODE=local-agent\n');
+      expect(envFile).toContain('EXAMIFY_LLM_MODEL=llama3.2:latest\n');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('writes a Codex that is not signed in yet, and says how to sign it in', () => {
+    const dir = tmpDir('examify-install-');
+    try {
+      const { result, envFile, bin } = runAiInstall(
+        dir,
+        { codex: 'signed_out' },
+        `${BEFORE_AI}1\n`,
+      );
+      expect(result.status).toBe(0);
+      // Nothing is ready, so the default stays the API key questions.
+      expect(result.stdout).toContain('Choose 1-3 [2]: ');
+      expect(result.stdout).toMatch(/Sign Codex in as .+ before making banks: codex login/);
+      expect(envFile).toContain('EXAMIFY_AI_MODE=codex-cli\n');
+      expect(envFile).toContain(`EXAMIFY_CODEX_BIN=${bin}/codex\n`);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('asks for the API keys when picked, and asks nothing for "decide later"', () => {
+    const dir = tmpDir('examify-install-');
+    try {
+      const key = runAiInstall(dir, { claude: 'signed_in' }, `${BEFORE_AI}key\nsk-ant-typed\n\n`);
+      expect(key.result.status).toBe(0);
+      expect(key.result.stdout).toContain('Anthropic API key: ');
+      expect(key.envFile).toContain('ANTHROPIC_API_KEY=sk-ant-typed\n');
+      expect(key.envFile).toContain('EXAMIFY_AI_MODE=cloud\n');
+      expect(key.envFile).not.toContain('EXAMIFY_CLAUDE_BIN=');
+
+      fs.rmSync(path.join(dir, '.env'));
+      const later = runAiInstall(dir, { claude: 'signed_in' }, `${BEFORE_AI}3\n`);
+      expect(later.result.stdout).toContain('  3) Decide later  pick one in /onboarding');
+      expect(later.result.status).toBe(0);
+      expect(later.result.stdout).not.toContain('Anthropic API key: ');
+      expect(later.envFile).toContain('ANTHROPIC_API_KEY=test\n');
+      expect(later.envFile).not.toContain('EXAMIFY_AI_MODE=');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('with nothing found asks for the keys as before; a typed key picks its mode', () => {
+    const dir = tmpDir('examify-install-');
+    try {
+      const blank = runAiInstall(dir, {}, BEFORE_AI);
+      expect(blank.result.status).toBe(0);
+      expect(blank.result.stdout).toMatch(
+        /No Claude Code, Codex or Ollama found for .+\. You can add one later and pick it in \/onboarding\./,
+      );
+      expect(blank.result.stdout).not.toContain('What should Examify use?');
+      expect(blank.result.stdout).toContain('Anthropic API key: ');
+      expect(blank.envFile).not.toContain('EXAMIFY_AI_MODE=');
+
+      fs.rmSync(path.join(dir, '.env'));
+      const openai = runAiInstall(dir, {}, `${BEFORE_AI}\nsk-openai-typed\n`);
+      expect(openai.result.status).toBe(0);
+      expect(openai.envFile).toContain('OPENAI_API_KEY=sk-openai-typed\n');
+      expect(openai.envFile).toContain('EXAMIFY_AI_MODE=cloud-openai\n');
+
+      fs.rmSync(path.join(dir, '.env'));
+      const down = runAiInstall(dir, { ollama: 'down' }, `${BEFORE_AI}\n`);
+      expect(down.result.status).toBe(0);
+      expect(down.result.stdout).toContain(
+        'Ollama: installed, but nothing answers at http://127.0.0.1:11434 (start it: ollama serve)',
+      );
+      // Not usable yet, so not offered.
+      expect(down.result.stdout).not.toContain(') Ollama ');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('cuts off a check that hangs instead of stalling the install', () => {
+    const dir = tmpDir('examify-install-');
+    try {
+      const started = Date.now();
+      const { result } = runAiInstall(dir, { claude: 'hang' }, `${BEFORE_AI}later\n`, {
+        EXAMIFY_AI_DETECT_TIMEOUT: '1',
+      });
+      expect(result.status).toBe(0);
+      expect(Date.now() - started).toBeLessThan(15_000);
+      expect(result.stdout).toMatch(/ {2}Claude Code: found; could not check the sign-in/);
+      expect(result.stdout).toContain('Choose 1-3 [2]: ');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('without GNU timeout, a quick check returns at once and a hung one is still cut off', () => {
+    const dir = tmpDir('examify-install-');
+    try {
+      // Three quick checks under an 8s limit: each must return when its tool
+      // does, not when the fallback timer ends (its sleep held $(…) open).
+      let started = Date.now();
+      const quick = runAiInstall(
+        dir,
+        { claude: 'signed_in', codex: 'signed_in', ollama: ['llama3.2:latest'] },
+        `${BEFORE_AI}\n`,
+        { EXAMIFY_AI_DETECT_TIMEOUT: '8' },
+        { withoutTimeout: true },
+      );
+      expect(quick.result.status).toBe(0);
+      expect(Date.now() - started).toBeLessThan(6_000);
+      expect(quick.result.stdout).toContain('  Claude Code: signed in\n');
+      expect(quick.result.stdout).toContain('  Codex: signed in\n');
+      expect(quick.envFile).toContain('EXAMIFY_AI_MODE=claude-cli\n');
+
+      fs.rmSync(path.join(dir, '.env'));
+      started = Date.now();
+      const hung = runAiInstall(
+        dir,
+        { claude: 'hang' },
+        `${BEFORE_AI}later\n`,
+        { EXAMIFY_AI_DETECT_TIMEOUT: '1' },
+        { withoutTimeout: true },
+      );
+      expect(hung.result.status).toBe(0);
+      expect(Date.now() - started).toBeLessThan(10_000);
+      expect(hung.result.stdout).toMatch(/ {2}Claude Code: found; could not check the sign-in/);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['launcher', false],
+    ['launcher', true],
+    ['deaf', false],
+    ['deaf', true],
+    ['orphan', false],
+    ['quitter', false],
+    ['quitter', true],
+    ['leaver', false],
+  ] as const)(
+    'stops a %s check and everything it started (without GNU timeout: %s)',
+    (claude, withoutTimeout) => {
+      const dir = tmpDir('examify-install-');
+      try {
+        const started = Date.now();
+        const { result, calls } = runAiInstall(
+          dir,
+          { claude },
+          `${BEFORE_AI}later\n`,
+          { EXAMIFY_AI_DETECT_TIMEOUT: '1' },
+          { withoutTimeout },
+        );
+        expect(result.status).toBe(0);
+        // 1 s limit + at most 2 s before KILL, with room for a slow runner:
+        // far from the 30 s the stand-in's child would hold the check open.
+        expect(Date.now() - started).toBeLessThan(12_000);
+        expect(result.stdout).toMatch(/ {2}Claude Code: found; could not check the sign-in/);
+        // TERM reaches the launcher's child too, not only the launcher.
+        if (claude === 'launcher') expect(calls).toContain('claude child got TERM');
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it('runs no checks with EXAMIFY_AI_DETECT=0 or when a .env already exists', () => {
+    const dir = tmpDir('examify-install-');
+    try {
+      const off = runAiInstall(dir, { claude: 'signed_in' }, BEFORE_AI, { EXAMIFY_AI_DETECT: '0' });
+      expect(off.result.status).toBe(0);
+      expect(off.calls).toBe('');
+      expect(off.result.stdout).not.toContain('Found for');
+      expect(off.result.stdout).toContain('Anthropic API key: ');
+
+      // A kept .env keeps its own AI settings; the checks would be wasted.
+      const kept = runAiInstall(dir, { claude: 'signed_in' }, '\n'.repeat(8));
+      expect(kept.result.status).toBe(0);
+      expect(kept.result.stdout).toContain('Keeping existing .env');
+      expect(kept.calls).toBe('');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('writes a host EXAMIFY_AI_MODE and its settings as given, without checking tools', () => {
+    const dir = tmpDir('examify-install-');
+    try {
+      const fake = fakeAiTools({ claude: 'signed_in' });
+      const result = spawnSync(BASH, [SCRIPT, '--write-env-only'], {
+        cwd: dir,
+        env: installEnv({
+          ...fake.env,
+          EXAMIFY_AI_MODE: 'local-agent',
+          EXAMIFY_LLM_BASE_URL: 'http://127.0.0.1:11434',
+          EXAMIFY_LLM_MODEL: 'llama3.2',
+          EXAMIFY_CODEX_BIN: '/opt/codex/bin/codex',
+        }),
+        encoding: 'utf8',
+      });
+      expect(result.status).toBe(0);
+      expect(fake.calls()).toBe('');
+      fs.rmSync(fake.root, { recursive: true, force: true });
+      const envFile = fs.readFileSync(path.join(dir, '.env'), 'utf8');
+      expect(envFile).toContain('EXAMIFY_AI_MODE=local-agent\n');
+      expect(envFile).toContain('EXAMIFY_LLM_BASE_URL=http://127.0.0.1:11434\n');
+      expect(envFile).toContain('EXAMIFY_LLM_MODEL=llama3.2\n');
+      expect(envFile).toContain('EXAMIFY_CODEX_BIN=/opt/codex/bin/codex\n');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    [{ EXAMIFY_AI_MODE: 'claude' }, 'EXAMIFY_AI_MODE must be one of: cloud, cloud-openai'],
+    [{ EXAMIFY_LLM_MODEL: 'llama 3' }, 'EXAMIFY_LLM_MODEL cannot be written to .env as given'],
+    [{ EXAMIFY_CLAUDE_BIN: '/opt/$HOME/claude' }, 'EXAMIFY_CLAUDE_BIN cannot be written'],
+    [{ EXAMIFY_LLM_BASE_URL: '127.0.0.1:11434' }, 'EXAMIFY_LLM_BASE_URL must be an http://'],
+    [{ EXAMIFY_LLM_BASE_URL: 'http://' }, 'EXAMIFY_LLM_BASE_URL must be an http://'],
+  ])('refuses host AI settings .env or the app could not use (%o)', (host, message) => {
+    const dir = tmpDir('examify-install-');
+    try {
+      const result = spawnSync('bash', [SCRIPT, '--write-env-only'], {
+        cwd: dir,
+        env: installEnv(host),
+        encoding: 'utf8',
+      });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(message);
+      expect(fs.existsSync(path.join(dir, '.env'))).toBe(false);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('knows the same modes as the wizard (ONBOARDING_AI_MODES)', async () => {
+    const { ONBOARDING_AI_MODES } = await import('@/lib/onboarding-types');
+    const script = fs.readFileSync(SCRIPT, 'utf8');
+    const line = /^is_ai_mode\(\) \{\n {2}case "\$1" in\n {4}(.+)\) return 0 ;;$/m.exec(script);
+    expect(line?.[1]?.split(' | ').sort()).toEqual([...ONBOARDING_AI_MODES].sort());
+    for (const mode of ONBOARDING_AI_MODES) {
+      expect(script).toContain(`must be one of: ${ONBOARDING_AI_MODES.join(', ')}.`);
+      expect(mode).toMatch(/^[a-z-]+$/);
+    }
+  });
+
+  it('checks EXAMIFY_LLM_BASE_URL never more loosely than the app (z.string().url())', async () => {
+    const { z } = await import('zod');
+    const appTakes = (url: string) => z.string().url().safeParse(url).success;
+    const script = fs.readFileSync(SCRIPT, 'utf8');
+    const fn = (name: string) =>
+      new RegExp(`^${name}\\(\\) \\{\\n[\\s\\S]*?^\\}$`, 'm').exec(script)?.[0] ?? '';
+    const accepted = [
+      'http://127.0.0.1:11434',
+      'http://127.0.0.1:11434/v1',
+      'https://llm.example.com/v1',
+      'http://localhost:8080/v1?x=1#y',
+      'http://localhost.:8080',
+      'http://[::1]:11434/v1',
+      'http://[::]',
+      'http://[fe80::1]',
+      'http://[2001:db8:0:0:0:0:0:1]:80',
+      'http://user:pw@llm.lan:65535/',
+      'http://my_host-1.lan',
+      'http://10.0.0.5:',
+      'http://0.0.0.0',
+    ];
+    // Refused by the app too.
+    const broken = [
+      'http://',
+      'http://:11434',
+      'http://host:99999',
+      'http://999.1.1.1',
+      'http://1.2.3.4.5',
+      'http://[:::1]',
+      'http://[1::2::3]',
+      'http://[12345::1]',
+      'http://[1:2:3:4:5:6:7:8:9]',
+      'http://user@',
+      '127.0.0.1:11434',
+    ];
+    // Taken by the app, but refused here rather than guessed at.
+    const odd = [
+      'ftp://host',
+      'HTTP://host',
+      'http://127.1',
+      'http://1234',
+      'http://0x7f.0.0.1',
+      'http://010.0.0.1',
+      'http://[::ffff:127.0.0.1]',
+      'http://xn--nxasmq6b.com',
+    ];
+    const all = [...accepted, ...broken, ...odd];
+    const run = spawnSync(
+      BASH,
+      [
+        '-c',
+        `${fn('is_http_url')}\n${fn('is_ipv6_text')}\nfor u in "$@"; do if is_http_url "$u"; then echo yes; else echo no; fi; done`,
+        'bash',
+        ...all,
+      ],
+      { encoding: 'utf8' },
+    );
+    expect(run.stderr).toBe('');
+    const verdicts = run.stdout.trim().split('\n');
+    expect(verdicts).toHaveLength(all.length);
+    all.forEach((url, i) => {
+      const ok = verdicts[i] === 'yes';
+      expect({ url, ok }).toEqual({ url, ok: accepted.includes(url) });
+      // Never looser than the app.
+      if (ok) expect({ url, app: appTakes(url) }).toEqual({ url, app: true });
+    });
+    for (const url of broken) expect({ url, app: appTakes(url) }).toEqual({ url, app: false });
+    for (const url of odd) expect({ url, app: appTakes(url) }).toEqual({ url, app: true });
+  });
+});
 
 describe('install.sh family data folder (.env)', () => {
   it('writes EXAMIFY_DATA_DIR=./data and no DATABASE_URL unless the host sets one', () => {

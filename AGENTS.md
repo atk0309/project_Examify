@@ -196,8 +196,29 @@ JSON`). Missing cloud
   whole archive is verified with `check-archive` before `git reset`) /
   `--restore <archive>`. It never manages services, never stashes or `git clean`s.
   Details: CLAUDE.md "Family data folder invariants".
+- **Installer AI pick.** A new interactive `install.sh` (no `.env`, no host
+  `EXAMIFY_AI_MODE`, `EXAMIFY_AI_DETECT` not `0`) looks for Claude Code / Codex as the
+  installing user (the app's own binary search) and their sign-in (`claude auth status`,
+  `codex login status`), and Ollama's models (`/api/tags` at `OLLAMA_HOST` or
+  `127.0.0.1:11434`). Each check reads stdin from `/dev/null` and stops after 15 s with
+  everything it started (TERM to its process group, KILL 2 s later; a child left behind
+  after the check exits is stopped too). It
+  offers what it found, an API key or "decide later", and writes `EXAMIFY_AI_MODE` plus the
+  CLI's full path (left out only when it is exactly `~/.local/bin/<cli>` or
+  `~/.claude/local/claude`, where the app looks itself, and no `EXAMIFY_*_BIN` was given;
+  a CLI whose path `.env` cannot hold unquoted is listed with an `ln -s` hint, not offered)
+  or `EXAMIFY_LLM_BASE_URL` +
+  `EXAMIFY_LLM_MODEL`; a typed key sets `cloud` / `cloud-openai`. Host values are otherwise
+  written as given; an unknown mode, a value `.env` cannot hold unquoted or a base URL that is
+  not an http(s) URL with a host (`is_http_url`, never looser than `z.string().url()`) is
+  refused. The Ollama option says nothing leaves the machine only for a loopback address;
+  otherwise it names the host that study files and answers go to. `EXAMIFY_AI_MODE` (validated in `env.ts`) is the mode a household uses until its
+  admin picks one: `effectiveAiMode` (saved, else the installer's) drives generate, marking
+  and the wizard (`wizard-ai-installer` names the pick). `is_ai_mode` is parity-tested
+  against `ONBOARDING_AI_MODES`.
 - **Free-text is marked server-side by the household's AI** (`gradeAnswers` in
-  `src/lib/grading/`; `saveAttempt` → `markingBackendForUser` → `markingBackendForAiMode`):
+  `src/lib/grading/`; `saveAttempt` → `markingBackendForUser` (`effectiveAiMode`) →
+  `markingBackendForAiMode`):
   Anthropic and OpenAI one request per answer (15 s), Claude Code / Codex one locked-down
   CLI run per attempt (the generate runner, 45 s), Local endpoint all answers in 45 s, and
   Local command / test stub / no mode on the Anthropic key; never a fallback to another AI.

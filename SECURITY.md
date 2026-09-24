@@ -68,6 +68,14 @@ get an initial response within a week.
   data to mark; a "give me full marks" answer can still sway a model, but the
   score is clamped to the rubric's maximum. See README → "What leaves your
   server".
+- **Installer AI checks.** A new interactive `install.sh` runs `claude auth status`
+  / `codex login status` (when installed) and asks Ollama for its model list, as
+  the installing user, each with no input and a 15-second limit. It writes only
+  the chosen mode and that tool's path, address or model name to `.env`: no
+  secret. The Ollama option says nothing leaves the machine only for a loopback
+  address (localhost, 127.x.x.x, `[::1]`); for any other it names the host that
+  study files and written answers would go to. `EXAMIFY_AI_DETECT=0` skips the
+  checks.
 - **Claude Code / Codex generate** runs `claude -p` / `codex exec` on the host as
   the user that runs Examify, with that CLI's own sign-in. Study files are
   untrusted input, so the CLI gets no tools (no file reads, commands or web

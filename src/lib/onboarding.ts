@@ -377,9 +377,26 @@ export function getHouseholdOnboarding(householdId: number): {
   };
 }
 
-/** Which AI marks this user's written answers: their household's saved mode. */
+/**
+ * `EXAMIFY_AI_MODE` (install.sh writes it from what it found on this server):
+ * the mode a household uses until its admin picks one. Read from the same
+ * merged env as the wizard's badges; an unknown value counts as unset.
+ */
+export function installerAiMode(
+  env: Record<string, string | undefined> = onboardingHostEnv(),
+): OnboardingAiMode | null {
+  const raw = env.EXAMIFY_AI_MODE?.trim() ?? '';
+  return isOnboardingAiMode(raw) ? raw : null;
+}
+
+/** The household's saved AI mode, else the installer's. Generate and marking use this. */
+export function effectiveAiMode(state: OnboardingState): OnboardingAiMode | null {
+  return state.aiMode ?? installerAiMode();
+}
+
+/** Which AI marks this user's written answers: their household's mode. */
 export function markingBackendForUser(userId: number): MarkingBackend {
-  return markingBackendForAiMode(getOnboardingForUser(userId).state.aiMode);
+  return markingBackendForAiMode(effectiveAiMode(getOnboardingForUser(userId).state));
 }
 
 /** The backend that marks this user's answers, and whether this host has it set up. */
@@ -559,12 +576,14 @@ export function getOnboardingSnapshot(
   root = getOnboardingContentRoot(),
 ): OnboardingSnapshot {
   const state = getHouseholdOnboarding(householdId).state;
+  const fromInstaller = state.aiMode ? null : installerAiMode();
   return {
     subjects: listOnboardingSubjects(root),
     sampleSubjects: SAMPLE_SUBJECTS.map((subject) => ({ id: subject.id, label: subject.label })),
     builtinSubjects: [...BUILTIN_SUBJECTS],
     dataDirDisplay: onboardingDataDirDisplay(root),
-    aiMode: state.aiMode ?? null,
+    aiMode: state.aiMode ?? fromInstaller,
+    aiModeFromInstaller: fromInstaller !== null,
     replaceSample: state.replaceSample === true,
     hasDryRun: Boolean(state.dryRunHash),
     hasApplied: state.applied === true,
