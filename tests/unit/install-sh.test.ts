@@ -1234,9 +1234,11 @@ describe('install.sh AI tools', () => {
           `${BEFORE_AI}later\n`,
         );
         expect(result.status).toBe(0);
-        const found = path.join(home, 'My Tools', cli);
+        // The temp HOME has no characters bash would quote; only the space in
+        // "My Tools" is escaped, as bash's printf %q does.
+        const quoted = `${home}/My\\ Tools/${cli}`;
         expect(result.stdout).toContain(
-          `  ${label}: signed in; not offered: .env cannot hold its path. Link it where Examify looks (ln -s ${found.replace(/ /g, '\\ ')} ~/.local/bin/${cli}), then pick it in /onboarding.\n`,
+          `  ${label}: signed in; not offered: .env cannot hold its path. Link it where Examify looks (ln -s ${quoted} ~/.local/bin/${cli}), then pick it in /onboarding.\n`,
         );
         expect(result.stdout).not.toContain(`) ${label.padEnd(13)} your`);
         // Only the API key and "decide later" are left; the key questions are the default.
