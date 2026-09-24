@@ -998,9 +998,12 @@ type FakeAiTools = {
    * `hang`: never answers. `launcher`: a launcher that starts the real work
    * as a child without exec, then waits for it. `deaf`: never answers and
    * ignores TERM (so does the child it starts). `orphan`: a launcher that
-   * stops on TERM while its child ignores it.
+   * stops on TERM while its child ignores it. `quitter`: a launcher that
+   * catches TERM and exits 0, leaving a child that ignores TERM. `leaver`:
+   * exits 0 at once, leaving a child that ignores TERM on its output.
    */
-  claude?: 'signed_in' | 'signed_out' | 'hang' | 'launcher' | 'deaf' | 'orphan';
+  claude?:
+    'signed_in' | 'signed_out' | 'hang' | 'launcher' | 'deaf' | 'orphan' | 'quitter' | 'leaver';
   codex?: 'signed_in' | 'signed_out';
   /** Models Ollama's /api/tags lists; `down`: an ollama binary with nothing answering. */
   ollama?: string[] | 'down';
@@ -1037,6 +1040,9 @@ function fakeAiTools(tools: FakeAiTools) {
     );
   else if (tools.claude === 'deaf') write('claude', "trap '' TERM\nsleep 30");
   else if (tools.claude === 'orphan') write('claude', "(trap '' TERM; exec sleep 30) &\nwait");
+  else if (tools.claude === 'quitter')
+    write('claude', "(trap '' TERM; exec sleep 30) &\ntrap 'exit 0' TERM\nwait");
+  else if (tools.claude === 'leaver') write('claude', "(trap '' TERM; exec sleep 30) &\nexit 0");
   else if (tools.claude) {
     const signedIn = tools.claude === 'signed_in';
     write(
@@ -1073,8 +1079,8 @@ const BEFORE_AI = '\n'.repeat(5);
 
 let noTimeoutDir: string | null = null;
 /**
- * /usr/bin and /bin as symlinks, minus `timeout`: a PATH like macOS's, where
- * the installer's checks fall back to their own background timer.
+ * /usr/bin and /bin as symlinks, minus `timeout`: a PATH like macOS's, to show
+ * the installer's checks need no `timeout`.
  */
 function systemPathWithoutTimeout(): string {
   if (noTimeoutDir) return noTimeoutDir;
@@ -1339,6 +1345,9 @@ describe('install.sh AI tools', () => {
     ['deaf', false],
     ['deaf', true],
     ['orphan', false],
+    ['quitter', false],
+    ['quitter', true],
+    ['leaver', false],
   ] as const)(
     'stops a %s check and everything it started (without GNU timeout: %s)',
     (claude, withoutTimeout) => {

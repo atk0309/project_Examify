@@ -2126,8 +2126,9 @@ check_host_ai_settings() {
 # (job control on for this call gives it its own process group), and a
 # background watcher sends TERM to that whole group when the time is up (a
 # launcher's child would otherwise keep the $(…) around this call open), then
-# KILL 2 s later for anything that ignores TERM. Plain bash, so it behaves the
-# same with any `timeout` or none (macOS).
+# KILL 2 s later for anything that ignores TERM. The watcher stays until the
+# whole group is gone, not just the check itself. Plain bash, so it behaves
+# the same with any `timeout` or none (macOS).
 run_limited() {
   local secs="$1"
   shift
@@ -2158,14 +2159,15 @@ run_limited() {
   local watcher=$!
   local rc=0
   wait "$pid" || rc=$?
-  if [ "$rc" -gt 128 ]; then
-    # Ended by a signal, most likely the watcher's TERM: let it finish, so
-    # whatever the check started and ignores TERM gets its KILL too.
-    wait "$watcher" 2>/dev/null || true
-  else
-    kill "$watcher" 2>/dev/null || true
-    wait "$watcher" 2>/dev/null || true
-  fi
+  # The check has exited, however it ended (even cleanly, after catching the
+  # watcher's TERM), but a child it left in its group may still hold the
+  # $(…) open: keep the watcher until the group is gone, so anything left
+  # still gets TERM at the deadline and then KILL.
+  while kill -0 -- "-$pid" 2>/dev/null && kill -0 "$watcher" 2>/dev/null; do
+    sleep 0.1
+  done
+  kill "$watcher" 2>/dev/null || true
+  wait "$watcher" 2>/dev/null || true
   return "$rc"
 }
 
