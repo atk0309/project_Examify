@@ -16,7 +16,7 @@ const key = (subject: string, difficulty: string) => `${subject}::${difficulty}`
 // Every action call in order, e.g. "save maths::easy".
 const calls: string[] = [];
 
-const recordAttempt = vi.fn(async (input: RecordAttemptInput): Promise<RecordAttemptResult> => {
+const defaultRecordAttempt = async (input: RecordAttemptInput): Promise<RecordAttemptResult> => {
   calls.push(`record ${key(input.subject, input.difficulty)}`);
   drafts.delete(key(input.subject, input.difficulty));
   const attempt = {
@@ -30,7 +30,8 @@ const recordAttempt = vi.fn(async (input: RecordAttemptInput): Promise<RecordAtt
     items: [],
   };
   return { ok: true, scorePct: 0, attempt, progress: { attempts: [attempt], subjects: [] } };
-});
+};
+const recordAttempt = vi.fn(defaultRecordAttempt);
 const beginExamSession = vi.fn(async (input: SaveExamProgressInput) => {
   calls.push(`begin ${key(input.subject, input.difficulty)}`);
   const { questionIds, answers, currentIndex } = input;
@@ -159,6 +160,68 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+});
+
+describe('ExamApp marking screen', () => {
+  it('says written answers can take up to a minute, only when the paper has one', async () => {
+    // Finishing waits on a submit the test releases (React holds later async
+    // transitions while one is pending, so every one is released before the end).
+    const held: (() => void)[] = [];
+    recordAttempt.mockImplementation(
+      (input) =>
+        new Promise((resolve) => {
+          const attempt = {
+            id: held.length + 1,
+            subject: input.subject,
+            difficulty: input.difficulty as DifficultyId,
+            total: input.items.length,
+            correct: 0,
+            scorePct: 0,
+            createdAt: 0,
+            items: [],
+          };
+          held.push(() =>
+            resolve({
+              ok: true,
+              scorePct: 0,
+              attempt,
+              progress: { attempts: [attempt], subjects: [] },
+            }),
+          );
+        }),
+    );
+    try {
+      renderApp();
+      await startExam('geo');
+      answer();
+      clickNext();
+      await settle();
+      answer();
+      clickNext(); // Finish: geo has a written answer
+      await settle();
+      expect(screen.getByText('Marking your answers…')).toBeInTheDocument();
+      expect(screen.getByTestId('marking-written-note')).toHaveTextContent(
+        'Written answers can take up to a minute to mark.',
+      );
+      held.shift()?.();
+      await settle();
+      cleanup();
+
+      renderApp();
+      await startExam('maths');
+      for (let i = 0; i < 3; i += 1) {
+        answer();
+        clickNext();
+        await settle();
+      }
+      expect(screen.getByText('Marking your answers…')).toBeInTheDocument();
+      expect(screen.queryByTestId('marking-written-note')).toBeNull();
+    } finally {
+      while (held.length > 0) held.shift()?.();
+      await settle();
+      recordAttempt.mockImplementation(defaultRecordAttempt);
+    }
+  });
 });
 
 describe('ExamApp when the server cannot be reached', () => {

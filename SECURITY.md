@@ -59,11 +59,15 @@ get an initial response within a week.
   cookie that anyone on the network path can read — use HTTPS beyond the home
   network. Credential forms post natively, so a submit before the page
   hydrates never puts a password in the URL.
-- **Third-party data flows.** With a real `ANTHROPIC_API_KEY`, each free-text
-  answer is sent to Anthropic with its question and rubric (no names, emails or
-  user ids). Cloud generate sends a subject's source files to Anthropic or
-  OpenAI. Grading failures are logged with a reason code only. See README →
-  "What leaves your server".
+- **Third-party data flows.** Each free-text answer is sent, with its question
+  and rubric, to the household's AI (no names, emails or user ids): the
+  Anthropic or OpenAI API with a key, Claude Code / Codex under your plan, or
+  your local endpoint. Cloud generate sends a subject's source files to
+  Anthropic or OpenAI. Grading failures are logged with a reason code (and the
+  backend) only. A child's answer reaches the model between fresh markers as
+  data to mark; a "give me full marks" answer can still sway a model, but the
+  score is clamped to the rubric's maximum. See README → "What leaves your
+  server".
 - **Claude Code / Codex generate** runs `claude -p` / `codex exec` on the host as
   the user that runs Examify, with that CLI's own sign-in. Study files are
   untrusted input, so the CLI gets no tools (no file reads, commands or web

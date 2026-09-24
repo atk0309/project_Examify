@@ -3,8 +3,11 @@ import 'server-only';
 /* ============================================================================
    EXAMIFY — FREE-TEXT GRADING (server-only)
    ----------------------------------------------------------------------------
-   Grades a child's short free-text answer against a server-only rubric using
-   Claude. Paths:
+   Marks a child's short free-text answers against server-only rubrics with
+   the household's AI (`gradeAnswers`; `markingBackendForAiMode` maps the
+   wizard's mode): OpenAI, Local endpoint, Claude Code and Codex live in
+   `./backends.ts`; Anthropic, below, is also the path for Local command, the
+   test stub and a household with no mode. The Anthropic paths:
    - live `ANTHROPIC_API_KEY === 'test'` (process.env only, never the boot-frozen
      `env.ts` snapshot) → a deterministic full-score stub, no network — but
      only when `gradingStubAllowed()`: outside production, or in production
@@ -28,90 +31,37 @@ import 'server-only';
    raw model text are never returned to callers (and so never reach the client).
    ========================================================================== */
 import { ANTHROPIC_ENV_KEY, envStoreSecretConfigured } from '@/lib/env-store';
-import type { Verdict } from '@/lib/db/schema';
+import type { MarkingBackend } from '@/lib/onboarding-types';
+import {
+  gradeViaAgentCli,
+  gradeViaLocalEndpoint,
+  gradeViaOpenAi,
+  markingHostEnv,
+} from './backends';
+import {
+  API_GRADING_TIMEOUT_MS,
+  gradingStubAllowed,
+  needsReview,
+  stubGrade,
+  systemPrompt,
+  thrownReason,
+  toVerdict,
+  userPrompt,
+  type GradeArgs,
+  type GradeResult,
+} from './shared';
 
-export type GradeResult = { status: 'graded'; verdict: Verdict } | { status: 'needs_review' };
-
-export type GradeArgs = {
-  question: string;
-  rubric: string;
-  maxScore: number;
-  studentAnswer: string;
-};
+export {
+  clampScore,
+  gradingStubAllowed,
+  type GradeArgs,
+  type GradeResult,
+  type NeedsReviewReason,
+} from './shared';
+export { localChatCompletionsUrl } from './backends';
 
 const MODEL = 'claude-sonnet-4-6';
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
-const GRADING_TIMEOUT_MS = 15_000;
-
-/** Round and clamp a raw model score into `[0, max]`. */
-export function clampScore(raw: number, max: number): number {
-  if (!Number.isFinite(raw)) return 0;
-  return Math.min(Math.max(Math.round(raw), 0), max);
-}
-
-/** True for an array whose every element is a string (used to vet list fields). */
-function isStringArray(v: unknown): v is string[] {
-  return Array.isArray(v) && v.every((x) => typeof x === 'string');
-}
-
-/**
- * Coerce an arbitrary parsed JSON value into a `Verdict`, or `null` if the shape
- * is untrustworthy. A missing/non-string `verdict`, a non-finite `score`, or a
- * present-but-non-array list field all fail to `null` (→ needs_review). Absent
- * list fields default to `[]`.
- */
-function toVerdict(value: unknown, maxScore: number): Verdict | null {
-  if (typeof value !== 'object' || value === null) return null;
-  const o = value as Record<string, unknown>;
-
-  if (typeof o.score !== 'number' || !Number.isFinite(o.score)) return null;
-  if (typeof o.verdict !== 'string' || o.verdict.trim() === '') return null;
-
-  const lists: Record<'gotRight' | 'toReview' | 'spelling', string[]> = {
-    gotRight: [],
-    toReview: [],
-    spelling: [],
-  };
-  for (const key of ['gotRight', 'toReview', 'spelling'] as const) {
-    if (o[key] === undefined) continue;
-    if (!isStringArray(o[key])) return null;
-    lists[key] = o[key];
-  }
-
-  return {
-    score: clampScore(o.score, maxScore),
-    verdict: o.verdict,
-    gotRight: lists.gotRight,
-    toReview: lists.toReview,
-    spelling: lists.spelling,
-  };
-}
-
-function systemPrompt(): string {
-  return [
-    "You are marking a child's short free-text exam answer against a rubric.",
-    'Be encouraging but fair. Reply with STRICT JSON only — no prose, no code fences —',
-    'matching exactly this shape:',
-    '{"score": <integer 0..maxScore>, "verdict": "<one short sentence>",',
-    ' "gotRight": ["..."], "toReview": ["..."], "spelling": ["..."]}',
-    '`gotRight` lists what the answer got right; `toReview` lists what was missed or wrong;',
-    '`spelling` lists spelling slips (do not deduct marks for spelling). Keep each item short.',
-  ].join('\n');
-}
-
-function userPrompt(args: GradeArgs): string {
-  return [
-    `Question: ${args.question}`,
-    '',
-    `Maximum score: ${args.maxScore}`,
-    '',
-    'Rubric:',
-    args.rubric,
-    '',
-    "Student's answer:",
-    args.studentAnswer,
-  ].join('\n');
-}
 
 /**
  * Wizard / install writes update `process.env` and `.env`. Computed
@@ -127,40 +77,6 @@ function liveAnthropicApiKey(): string | undefined {
 }
 
 /**
- * True when the `test` sentinel may stub grading: any non-production
- * NODE_ENV, or production with the explicit `GRADING_STUB=1` opt-in. Read
- * live (not `env.ts`) like the key, so the gate matches the running server.
- */
-export function gradingStubAllowed(env: Record<string, string | undefined> = process.env): boolean {
-  return env.NODE_ENV !== 'production' || env.GRADING_STUB === '1';
-}
-
-/** Short, content-free code for why an answer was not marked. */
-export type NeedsReviewReason =
-  | 'no_key'
-  | 'stub_disabled_in_production'
-  | `http_${number}`
-  | 'timeout'
-  | 'network_error'
-  | 'bad_json'
-  | 'bad_shape';
-
-/** Log the reason code only (no answer, rubric, key, message or user id). */
-function needsReview(reason: NeedsReviewReason): GradeResult {
-  console.warn('[grading] free-text answer not marked', { reason });
-  return { status: 'needs_review' };
-}
-
-/** Classify a thrown fetch / body / parse error without reading its message. */
-function thrownReason(error: unknown): 'timeout' | 'bad_json' | 'network_error' {
-  if (error instanceof SyntaxError) return 'bad_json';
-  const name =
-    typeof error === 'object' && error !== null ? (error as { name?: unknown }).name : undefined;
-  if (name === 'TimeoutError' || name === 'AbortError') return 'timeout';
-  return 'network_error';
-}
-
-/**
  * Grade one free-text answer. Returns `{ status: 'graded', verdict }` on success
  * or `{ status: 'needs_review' }` on any failure (never throws).
  */
@@ -170,16 +86,7 @@ export async function gradeFreeText(args: GradeArgs): Promise<GradeResult> {
   // the stub is allowed here (never a silent full-marks default in production).
   if (apiKey === 'test') {
     if (!gradingStubAllowed()) return needsReview('stub_disabled_in_production');
-    return {
-      status: 'graded',
-      verdict: {
-        score: args.maxScore,
-        verdict: 'Looks good.',
-        gotRight: [],
-        toReview: [],
-        spelling: [],
-      },
-    };
+    return stubGrade(args);
   }
   if (!envStoreSecretConfigured('ANTHROPIC_API_KEY') || !apiKey) {
     return needsReview('no_key');
@@ -199,7 +106,7 @@ export async function gradeFreeText(args: GradeArgs): Promise<GradeResult> {
         system: systemPrompt(),
         messages: [{ role: 'user', content: userPrompt(args) }],
       }),
-      signal: AbortSignal.timeout(GRADING_TIMEOUT_MS),
+      signal: AbortSignal.timeout(API_GRADING_TIMEOUT_MS),
     });
     if (!res.ok) return needsReview(`http_${res.status}`);
 
@@ -214,6 +121,35 @@ export async function gradeFreeText(args: GradeArgs): Promise<GradeResult> {
     // Network error, deadline, non-JSON body, or JSON.parse throwing → not
     // marked. Classify by type/name only; the message may quote model text.
     return needsReview(thrownReason(error));
+  }
+}
+
+/**
+ * Mark every written answer of an attempt with the household's backend
+ * (`markingBackendForAiMode`), in order. Anthropic keeps the per-answer path
+ * above; the others live in `./backends.ts`. Never throws: anything
+ * unexpected leaves every answer unmarked (`internal_error`).
+ */
+export async function gradeAnswers(
+  tasks: readonly GradeArgs[],
+  backend: MarkingBackend = 'anthropic',
+): Promise<GradeResult[]> {
+  if (tasks.length === 0) return [];
+  try {
+    switch (backend) {
+      case 'anthropic':
+        return await Promise.all(tasks.map((task) => gradeFreeText(task)));
+      case 'openai':
+        return await gradeViaOpenAi(tasks);
+      case 'local-endpoint':
+        return await gradeViaLocalEndpoint(tasks, markingHostEnv());
+      case 'claude-cli':
+        return await gradeViaAgentCli(tasks, 'claude', markingHostEnv());
+      case 'codex-cli':
+        return await gradeViaAgentCli(tasks, 'codex', markingHostEnv());
+    }
+  } catch {
+    return tasks.map(() => needsReview('internal_error', backend));
   }
 }
 

@@ -60,7 +60,7 @@ export const CODEX_DISABLED_FEATURES = [
  * (`stageCodexHome`); the final answer is written to `lastMessagePath`.
  */
 export function codexCliArgs(
-  request: ProviderRequest,
+  request: Pick<ProviderRequest, 'model'>,
   dir: string,
   lastMessagePath: string,
   imagePaths: readonly string[],
@@ -134,7 +134,7 @@ export function stageCodexHome(sourceHome: string, runHome: string): () => void 
   };
 }
 
-type CodexImage = { bytes: Buffer; mediaType: string; caption: string };
+export type CodexImage = { bytes: Buffer; mediaType: string; caption: string };
 
 /** Image sources, then rasterized PDF pages — attached with `--image` in this order. */
 export function codexImages(request: ProviderRequest): CodexImage[] {
@@ -271,10 +271,27 @@ export function codexFailure(outcome: CodexOutcome): ProviderFailureError | null
   );
 }
 
-async function callCodexCli(request: ProviderRequest, deps: ProviderDeps): Promise<BankIR> {
-  const bin = requireAgentCliBinary('codex', deps.env);
-  const sourceHome = agentCliHomeOutsideCheckout('codex', deps.env);
-  const images = codexImages(request);
+/** One locked-down `codex exec` run: the prompt, attached images, and the model. */
+export type CodexCliTextRequest = {
+  prompt: string;
+  images: readonly CodexImage[];
+  model: string;
+  env: ProviderDeps['env'];
+  signal?: AbortSignal;
+  timeoutMs: number;
+};
+
+/**
+ * Run `codex exec` with everything above (read-only sandbox, features off, a
+ * private run folder and CODEX_HOME, the env allowlist) and return its final
+ * message. Failures are typed `ProviderFailureError`s; a missing CLI is a
+ * `CliNotFoundError`. Generate parses BankIR from the text; marking parses
+ * verdicts.
+ */
+export async function runCodexCliText(request: CodexCliTextRequest): Promise<string> {
+  const bin = requireAgentCliBinary('codex', request.env);
+  const sourceHome = agentCliHomeOutsideCheckout('codex', request.env);
+  const { images } = request;
   const outcome = await withAgentCliWorkDir('codex', async (dir): Promise<CodexOutcome> => {
     const work = path.join(dir, 'work');
     mkdirSync(work, { mode: 0o700 });
@@ -286,12 +303,12 @@ async function callCodexCli(request: ProviderRequest, deps: ProviderDeps): Promi
       const result = await runProviderCommand({
         cmd: bin,
         args: codexCliArgs(request, work, lastMessagePath, imagePaths),
-        stdin: codexPrompt(request, images),
+        stdin: request.prompt,
         label: 'codex',
-        userSignal: deps.signal,
-        timeoutMs: CLI_PROVIDER_TIMEOUT_MS,
+        userSignal: request.signal,
+        timeoutMs: request.timeoutMs,
         cwd: work,
-        env: { ...agentCliEnv(deps.env, 'codex', dir), CODEX_HOME: home },
+        env: { ...agentCliEnv(request.env, 'codex', dir), CODEX_HOME: home },
         maxBuffer: AGENT_CLI_MAX_BUFFER,
         captureStderr: true,
       });
@@ -307,6 +324,20 @@ async function callCodexCli(request: ProviderRequest, deps: ProviderDeps): Promi
     ? outcome.last
     : lastAgentMessage(parseJsonLines(outcome.stdout));
   if (!text.trim()) throw new ProviderFailureError('output', 'codex returned no final message');
+  return text;
+}
+
+/** Generate: one `codex exec` run over the sources, parsed as BankIR. */
+async function callCodexCli(request: ProviderRequest, deps: ProviderDeps): Promise<BankIR> {
+  const images = codexImages(request);
+  const text = await runCodexCliText({
+    prompt: codexPrompt(request, images),
+    images,
+    model: request.model,
+    env: deps.env,
+    signal: deps.signal,
+    timeoutMs: CLI_PROVIDER_TIMEOUT_MS,
+  });
   return parseProviderBankIr(text);
 }
 

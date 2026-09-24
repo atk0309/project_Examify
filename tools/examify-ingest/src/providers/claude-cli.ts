@@ -36,7 +36,7 @@ import {
  * no project CLAUDE.md or settings apply either; `CLAUDE_CODE_SAFE_MODE=1`
  * (agent-cli.ts) also turns off plugins and skills. Not saved as a session.
  */
-export function claudeCliArgs(request: ProviderRequest): string[] {
+export function claudeCliArgs(request: Pick<ProviderRequest, 'prompt' | 'model'>): string[] {
   return [
     '-p',
     '--input-format',
@@ -56,11 +56,9 @@ export function claudeCliArgs(request: ProviderRequest): string[] {
   ];
 }
 
-export function claudeCliStdin(request: ProviderRequest): string {
-  const message = {
-    type: 'user',
-    message: { role: 'user', content: buildAnthropicContent(request) },
-  };
+/** One stream-json user message carrying Anthropic content blocks. */
+export function claudeCliStdin(content: readonly unknown[]): string {
+  const message = { type: 'user', message: { role: 'user', content } };
   return `${JSON.stringify(message)}\n`;
 }
 
@@ -77,19 +75,36 @@ export function claudeResultEvent(stdout: string): ClaudeResult | null {
   return (events[events.length - 1] as ClaudeResult | undefined) ?? null;
 }
 
-async function callClaudeCli(request: ProviderRequest, deps: ProviderDeps): Promise<BankIR> {
-  const bin = requireAgentCliBinary('claude', deps.env);
-  agentCliHomeOutsideCheckout('claude', deps.env);
+/** One locked-down `claude -p` run: a system prompt, content blocks, and the model. */
+export type ClaudeCliTextRequest = {
+  systemPrompt: string;
+  content: readonly unknown[];
+  model: string;
+  env: ProviderDeps['env'];
+  signal?: AbortSignal;
+  timeoutMs: number;
+};
+
+/**
+ * Run `claude -p` with everything above (no tools, no user settings, safe
+ * mode, a private run folder, the env allowlist) and return the final
+ * `result` text. Failures are typed `ProviderFailureError`s; a missing CLI is a
+ * `CliNotFoundError`. Generate parses BankIR from the text; marking parses
+ * verdicts.
+ */
+export async function runClaudeCliText(request: ClaudeCliTextRequest): Promise<string> {
+  const bin = requireAgentCliBinary('claude', request.env);
+  agentCliHomeOutsideCheckout('claude', request.env);
   const { status, stdout, stderrTail } = await withAgentCliWorkDir('claude', (dir) =>
     runProviderCommand({
       cmd: bin,
-      args: claudeCliArgs(request),
-      stdin: claudeCliStdin(request),
+      args: claudeCliArgs({ prompt: request.systemPrompt, model: request.model }),
+      stdin: claudeCliStdin(request.content),
       label: 'claude',
-      userSignal: deps.signal,
-      timeoutMs: CLI_PROVIDER_TIMEOUT_MS,
+      userSignal: request.signal,
+      timeoutMs: request.timeoutMs,
       cwd: dir,
-      env: agentCliEnv(deps.env, 'claude', dir),
+      env: agentCliEnv(request.env, 'claude', dir),
       maxBuffer: AGENT_CLI_MAX_BUFFER,
       captureStderr: true,
     }),
@@ -132,6 +147,19 @@ async function callClaudeCli(request: ProviderRequest, deps: ProviderDeps): Prom
     );
   }
   if (!text.trim()) throw new ProviderFailureError('output', 'claude returned no text');
+  return text;
+}
+
+/** Generate: one `claude -p` run over the sources, parsed as BankIR. */
+async function callClaudeCli(request: ProviderRequest, deps: ProviderDeps): Promise<BankIR> {
+  const text = await runClaudeCliText({
+    systemPrompt: request.prompt,
+    content: buildAnthropicContent(request),
+    model: request.model,
+    env: deps.env,
+    signal: deps.signal,
+    timeoutMs: CLI_PROVIDER_TIMEOUT_MS,
+  });
   return parseProviderBankIr(text);
 }
 

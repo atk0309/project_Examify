@@ -17,7 +17,9 @@ import {
   adminNeedsOnboardingChip,
   adminShouldAutoStartOnboarding,
   getOnboardingForUser,
+  markingStatusForUser,
 } from '@/lib/onboarding';
+import { parentMarkingLine } from '@/lib/onboarding-types';
 import { resolveExamPaper } from '@/lib/exam/data';
 import { loadLivePublicBank } from '@/lib/exam/live-bank.server';
 import type { HouseholdMemberView } from '@/lib/household-types';
@@ -89,6 +91,7 @@ export default async function HomePage() {
     // Children are resolved from the parent's own household only.
     const kids = session.email ? resolveChildren(session.email) : [];
     const ownHistory = getScoreHistory(session.userId);
+    const marking = markingStatusForUser(session.userId);
     const membership = getMembershipForUser(session.userId);
     const pendingInvites =
       membership && canInvite(session.userId) ? listPendingInvites(membership.householdId) : [];
@@ -123,6 +126,7 @@ export default async function HomePage() {
           role: onboarding.role,
           onboardingComplete: onboarding.complete,
         })}
+        markingLine={parentMarkingLine(marking.backend, marking.readiness)}
         subjects={bank.subjects}
       />
     );

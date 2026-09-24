@@ -8,17 +8,18 @@ import 'server-only';
    / `scorePct` from the submitted items: each item is resolved by `id` against
    the live public bank (`./live-bank.server`, disk overlay + sample) for its
    snapshot, and against the SERVER-ONLY live keys for the correct index /
-   rubric. MCQ
-   items score by index; free-text items are graded by Claude
-   (`@/lib/grading`), all concurrently. Returns `{ ok: false }` (never throws)
-   on any inconsistency so callers can map it to a clean error.
+   rubric. MCQ items score by index; free-text items are marked together by
+   the household's marking backend (`gradeAnswers` in `@/lib/grading`).
+   Returns `{ ok: false }` (never throws) on any inconsistency so callers can
+   map it to a clean error.
 
    This is the server-only successor to the old pure `validateAndScoreAttempt`;
    it lives here (not in `./attempts.ts`) because `attempts.ts` is in the client
    graph and may not import the answer keys.
    ========================================================================== */
 import type { AttemptItem, FreeAttemptItem } from '@/lib/db/schema';
-import { gradeFreeText } from '@/lib/grading';
+import { gradeAnswers } from '@/lib/grading';
+import type { MarkingBackend } from '@/lib/onboarding-types';
 import { DIFFICULTIES, resolveExamPaper, type DifficultyId } from './data';
 import { loadLiveBankAndKeys } from './live-bank.server';
 import { isFreePass, type AttemptInput, type ValidateResult } from './attempts';
@@ -30,9 +31,13 @@ type Slot = { item: AttemptItem; correct: boolean };
 
 /**
  * Validate a submitted attempt against the public bank + server-only keys and
- * re-derive its score, grading any free-text items. Never throws.
+ * re-derive its score, marking any free-text items with `markingBackend` (the
+ * household's; the Anthropic key path when not given). Never throws.
  */
-export async function scoreAttempt(input: AttemptInput): Promise<ValidateResult> {
+export async function scoreAttempt(
+  input: AttemptInput,
+  options: { markingBackend?: MarkingBackend } = {},
+): Promise<ValidateResult> {
   const { bank, keys } = loadLiveBankAndKeys();
   const subjectIds = new Set(bank.subjects.map((subject) => subject.id));
   if (!subjectIds.has(input.subject)) return { ok: false, reason: 'invalid_subject' };
@@ -101,16 +106,15 @@ export async function scoreAttempt(input: AttemptInput): Promise<ValidateResult>
     }
   }
 
-  // Grade every free-text item concurrently.
-  const graded = await Promise.all(
-    freeTasks.map((t) =>
-      gradeFreeText({
-        question: t.q,
-        rubric: t.rubric,
-        maxScore: t.maxScore,
-        studentAnswer: t.response,
-      }),
-    ),
+  // Mark every free-text item with the household's backend (never throws).
+  const graded = await gradeAnswers(
+    freeTasks.map((t) => ({
+      question: t.q,
+      rubric: t.rubric,
+      maxScore: t.maxScore,
+      studentAnswer: t.response,
+    })),
+    options.markingBackend ?? 'anthropic',
   );
 
   freeTasks.forEach((t, gi) => {

@@ -23,8 +23,9 @@ allowlist to hand-edit.
 - **Invite-only households** — first-run bootstrap creates the admin; parents invite
   students and other parents with a link. A parent sees only their own household's
   child(ren).
-- **MCQ + free-text questions** — free-text answers are marked server-side by an LLM
-  against a rubric you write, with a bounded, encouraging verdict.
+- **MCQ + free-text questions** — free-text answers are marked server-side by the AI you
+  set up (Anthropic or OpenAI key, Claude Code, Codex or a local endpoint) against a rubric
+  you write, with a bounded, encouraging verdict.
 - **Bring your own AI to build question banks** — from your study PDFs and notes, with an
   Anthropic or OpenAI API key, **Claude Code** or **Codex** already signed in on the
   server (your Claude or ChatGPT plan, no API key), a local OpenAI-compatible endpoint
@@ -140,7 +141,7 @@ appears in no dashboard.
 | Auth        | `AUTH_MODE`: password / magic-link / local-otp + iron-session, **invite-only households** |
 | Captcha     | Optional Cloudflare Turnstile (off when keys are unset)                                   |
 | Email       | Resend, SMTP, or local outbox (`MAIL_TRANSPORT`)                                          |
-| Grading     | Anthropic Messages API (free-text); `test` stub outside production / `GRADING_STUB=1`     |
+| Grading     | The household's AI mode (Anthropic / OpenAI API, Claude Code, Codex, local endpoint)      |
 | Tests       | Vitest (unit), Playwright (e2e)                                                           |
 | Lint/Format | ESLint 9 + Prettier + Tailwind plugin                                                     |
 
@@ -343,8 +344,24 @@ generating a question bank from your own study-material PDFs and notes — is in
 
 ## Free-text grading
 
-Free-text answers are graded server-side by the Anthropic Messages API
-(`claude-sonnet-4-6`), strictly against the rubric you wrote for that question:
+Free-text answers are marked server-side, strictly against the rubric you wrote for that
+question, by the AI the household picked in `/onboarding`:
+
+| AI mode                                  | Marks with                                                                                                                                    |
+| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| Anthropic                                | the Anthropic Messages API (`claude-sonnet-4-6`), one request per answer                                                                      |
+| OpenAI                                   | OpenAI Chat Completions (`gpt-4o`, `OPENAI_API_KEY`), one request per answer                                                                  |
+| Claude Code / Codex                      | one `claude -p` / `codex exec` run per finished exam, locked down like generate (no tools, private folder, env allowlist); 45 seconds at most |
+| Local endpoint                           | `EXAMIFY_LLM_BASE_URL` with `EXAMIFY_LLM_MODEL`; all of an exam's answers share 45 seconds                                                    |
+| Local command, test stub, or no mode yet | the Anthropic key, as below (a local command only builds banks)                                                                               |
+
+The wizard's AI step and the parent dashboard say which one marks and what the server still
+needs (`EXAMIFY_LLM_BASE_URL` must be an http or https address). Claude Code and Codex mark
+only while they are signed in as the user that runs Examify; signed out, written answers
+are not marked and count as not correct. The "Marking…" screen says written answers can take
+up to a minute. The CLI and
+local deadlines keep a submit under a reverse proxy's usual 60-second timeout. Each answer
+goes to the model between fresh markers, as data to mark, never as instructions.
 
 - Configure `ANTHROPIC_API_KEY` (optional in production — wizard clear +
   restart will not brick boot). The grader reads the live key from
@@ -355,13 +372,15 @@ Free-text answers are graded server-side by the Anthropic Messages API
   key — `install.sh` writes it when the Anthropic prompt is left blank — so free-text
   answers are saved but not marked, never given free full marks. Clear fails closed
   (`needs_review`, no stub).
-- Grading is **fail-safe**: requests have a 15-second deadline, and any timeout, network
-  error, non-2xx, or malformed model output resolves to `needs_review` instead of throwing,
+- Grading is **fail-safe**: API requests have a 15-second deadline, and any timeout, network
+  error, non-2xx, CLI failure, or malformed model output resolves to `needs_review` instead of throwing,
   so a finished exam is never lost. A `needs_review` item is final (nothing re-grades
   it): it shows "We couldn’t mark this one automatically, so it counts as not correct."
   Each one logs a server warning, `[grading] free-text answer not marked`, with a reason
   code (`no_key`, `stub_disabled_in_production`, `http_<status>`, `timeout`,
-  `network_error`, `bad_json`, `bad_shape`) and never the answer, rubric or key.
+  `network_error`, `bad_json`, `bad_shape`, `no_cli`, `cli_auth`, `cli_error`, `no_endpoint`,
+  `internal_error`), the backend for everything but Anthropic, and never the answer, rubric
+  or key. An OpenAI `test` key stubs like the Anthropic one.
 - A free-text item counts as "correct" when the score reaches **60%** of `maxScore`
   (`PASS_THRESHOLD` in `src/lib/exam/attempts.ts`).
 - The UI renders only the bounded verdict (score, one-line feedback, got-right /
@@ -375,10 +394,11 @@ in-progress drafts, uploaded PDFs and notes, generated question banks and answer
 
 Sent to a third party only when you turn the feature on:
 
-- **Free-text marking (Anthropic).** With a real `ANTHROPIC_API_KEY`, each free-text answer
-  is sent to the Anthropic API with its question and rubric. No names, emails or user ids
-  are sent. Multiple-choice answers are scored on your server. Without a key, free-text
-  answers are saved but not marked.
+- **Free-text marking.** Each free-text answer goes, with its question and rubric, to the
+  AI the household picked: the Anthropic or OpenAI API with your key, Claude Code or Codex
+  (to Anthropic or OpenAI under your plan), or your local endpoint. No names, emails or user
+  ids are sent. Multiple-choice answers are scored on your server. When that AI is not set
+  up, free-text answers are saved but not marked.
 - **Cloud generate (Anthropic / OpenAI).** The `/onboarding` cloud modes and
   `examify-ingest generate --provider anthropic|openai` send that subject's source files
   (PDFs or their page images, notes, images) to the provider. Local modes send them to the

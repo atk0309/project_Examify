@@ -38,6 +38,7 @@ export function ParentDashboard({
   canInvite = false,
   authMode,
   needsOnboarding = false,
+  markingLine,
   subjects = SUBJECTS,
 }: {
   students: ChildSnapshot[];
@@ -48,6 +49,8 @@ export function ParentDashboard({
   canInvite?: boolean;
   authMode: AuthMode;
   needsOnboarding?: boolean;
+  /** Who marks written answers here (`parentMarkingLine`). */
+  markingLine?: string;
   subjects?: readonly Subject[];
 }) {
   const router = useRouter();
@@ -103,6 +106,11 @@ export function ParentDashboard({
               >
                 Finish content setup
               </Link>
+            ) : null}
+            {markingLine ? (
+              <p className="hero-note" data-testid="parent-marking">
+                {markingLine}
+              </p>
             ) : null}
           </div>
 

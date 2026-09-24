@@ -498,7 +498,16 @@ function ExamScreen({
 }
 
 /* ---------------------------------- Marking --------------------------------- */
-function MarkingScreen({ subject, sat }: { subject: Subject; sat: number }) {
+function MarkingScreen({
+  subject,
+  sat,
+  written,
+}: {
+  subject: Subject;
+  sat: number;
+  /** The exam has written answers, which an AI marks (up to a minute). */
+  written: boolean;
+}) {
   return (
     <div className="screen" style={accentCSS(subject, sat)}>
       <TopBar label="Results" />
@@ -506,6 +515,11 @@ function MarkingScreen({ subject, sat }: { subject: Subject; sat: number }) {
         <div className="marking" role="status" aria-live="polite">
           <span className="marking-spinner" />
           <p className="marking-text">Marking your answers…</p>
+          {written ? (
+            <p className="marking-note" data-testid="marking-written-note">
+              Written answers can take up to a minute to mark.
+            </p>
+          ) : null}
         </div>
       </div>
     </div>
@@ -1117,7 +1131,13 @@ export function ExamApp({
       />
     );
   } else if (screen === 'marking') {
-    view = <MarkingScreen subject={subject} sat={sat} />;
+    view = (
+      <MarkingScreen
+        subject={subject}
+        sat={sat}
+        written={questions.some((question) => question.type === 'free')}
+      />
+    );
   } else if (screen === 'examError') {
     view = (
       <ExamErrorScreen

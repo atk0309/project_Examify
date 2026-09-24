@@ -11,6 +11,8 @@ import {
 import { scoreAttempt } from './exam/score.server';
 import type { DifficultyId } from './exam/data';
 import { loadLivePublicBank } from './exam/live-bank.server';
+import { markingBackendForUser } from './onboarding';
+import type { MarkingBackend } from './onboarding-types';
 
 /** Cap on how many attempts a progress view loads. */
 const ATTEMPT_LIMIT = 50;
@@ -24,11 +26,16 @@ export type SaveAttemptResult =
  * who sat it, or a parent in student mode — always the caller's own id). The
  * score is re-derived from the items here (the client's totals are ignored), so
  * a caller can pass straight-through whatever the browser sent. Free-text items
- * are graded server-side, so this is async. Returns the freshly-inserted
- * attempt so the caller can render results without a re-read.
+ * are marked server-side by the caller's household AI (`markingBackendForUser`),
+ * so this is async. Returns the freshly-inserted attempt so the caller can
+ * render results without a re-read.
  */
-export async function saveAttempt(userId: number, input: AttemptInput): Promise<SaveAttemptResult> {
-  const scored = await scoreAttempt(input);
+export async function saveAttempt(
+  userId: number,
+  input: AttemptInput,
+  markingBackend: MarkingBackend = markingBackendForUser(userId),
+): Promise<SaveAttemptResult> {
+  const scored = await scoreAttempt(input, { markingBackend });
   if (!scored.ok) return scored;
 
   const row = db

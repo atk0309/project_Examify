@@ -70,7 +70,11 @@ export {
   providerRequestSignal,
   throwIfAborted,
   resolveAgentCliBinary,
+  runClaudeCliText,
+  runCodexCliText,
   splitCommandLine,
   type AgentCli,
+  type ClaudeCliTextRequest,
+  type CodexCliTextRequest,
   type ProviderFailureKind,
 } from './providers';
