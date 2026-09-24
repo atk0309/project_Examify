@@ -1304,6 +1304,19 @@ describe('install.sh AI tools', () => {
       'runs on this machine; nothing leaves it',
       'http://localhost:11500',
     ],
+    // IPv6 without a port: Ollama's port, not the colons inside the brackets.
+    [{ OLLAMA_HOST: '[::1]' }, 'runs on this machine; nothing leaves it', 'http://[::1]:11434'],
+    [
+      { OLLAMA_HOST: 'http://[::1]' },
+      'runs on this machine; nothing leaves it',
+      'http://[::1]:11434',
+    ],
+    // The IPv6 listen-anywhere address: the app connects to [::1], as for 0.0.0.0.
+    [
+      { OLLAMA_HOST: '[::]:11500' },
+      'runs on this machine; nothing leaves it',
+      'http://[::1]:11500',
+    ],
     [
       { OLLAMA_HOST: '[::1]:11434' },
       'runs on this machine; nothing leaves it',
@@ -1338,6 +1351,31 @@ describe('install.sh AI tools', () => {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it.each(['abc', '-1', '0', '1.5', ''])(
+    'uses 15 s for the checks when EXAMIFY_AI_DETECT_TIMEOUT is %j',
+    (value) => {
+      const dir = tmpDir('examify-install-');
+      try {
+        const { result, envFile } = runAiInstall(dir, { claude: 'signed_in' }, `${BEFORE_AI}\n`, {
+          EXAMIFY_AI_DETECT_TIMEOUT: value,
+        });
+        expect(result.status).toBe(0);
+        // A bad limit is named; an unset one is just the default.
+        if (value) {
+          expect(result.stderr).toContain(
+            'EXAMIFY_AI_DETECT_TIMEOUT must be a whole number of seconds from 1 to 3600; using 15.',
+          );
+        } else {
+          expect(result.stderr).not.toContain('EXAMIFY_AI_DETECT_TIMEOUT');
+        }
+        expect(result.stdout).toContain('  Claude Code: signed in\n');
+        expect(envFile).toContain('EXAMIFY_AI_MODE=claude-cli\n');
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
 
   it('defaults to Ollama when no CLI is signed in, with its first model', () => {
     const dir = tmpDir('examify-install-');

@@ -1102,9 +1102,11 @@ AI mode a household uses until its admin picks one. A new interactive `install.s
 and Codex as the installing user (`find_agent_cli`, the app's own search: `EXAMIFY_*_BIN`,
 `PATH`, `~/.local/bin`, `~/.claude/local`) and whether each is signed in
 (`claude auth status` `loggedIn`, `codex login status`), and for Ollama's models
-(`/api/tags` at `OLLAMA_HOST`, `0.0.0.0` read as `127.0.0.1`, else `127.0.0.1:11434`;
+(`/api/tags` at `OLLAMA_HOST`, `0.0.0.0` read as `127.0.0.1` and `[::]` as `[::1]`, port
+11434 unless one follows the host or the `]` of an IPv6 address; else `127.0.0.1:11434`;
 `ollama list` without curl). Every check has stdin from `/dev/null` (the answers still to
-come are on stdin) and stops after `EXAMIFY_AI_DETECT_TIMEOUT` (15) seconds with everything it
+come are on stdin) and stops after `EXAMIFY_AI_DETECT_TIMEOUT` seconds (a whole number from
+1 to 3600, else 15 with a note: a value `sleep` refused would leave no limit) with everything it
 started: TERM to its whole process group, KILL 2 s later (`run_limited`, plain bash: the
 check runs as its own job under a watcher that holds none of the caller's pipe and stays
 until the whole group is gone, even when the check itself exits first, the same with any

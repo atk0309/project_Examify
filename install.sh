@@ -2328,10 +2328,15 @@ ollama_base_url() {
     *) host="http://${host}" ;;
   esac
   host="${host%/}"
+  # Listen-anywhere addresses: the app connects to this machine's loopback.
   case "$host" in
     *://0.0.0.0*) host="${host%%://*}://127.0.0.1${host#*://0.0.0.0}" ;;
+    *://\[::\]*) host="${host%%://*}://[::1]${host#*://\[::\]}" ;;
   esac
+  # Ollama's port unless one is given (after the ] of an IPv6 address).
   case "${host#*://}" in
+    \[*\]:*) ;;
+    \[*) host="${host}:11434" ;;
     *:*) ;;
     *) host="${host}:11434" ;;
   esac
@@ -2384,7 +2389,12 @@ ollama_models() {
 # Sets AI_CLAUDE_* / AI_CODEX_* (binary, sign-in) and AI_OLLAMA_* (address,
 # state: models / empty / down / absent, and the model names).
 detect_ai_tools() {
+  # A limit sleep cannot take would leave a hung check with no limit at all.
   local secs="${EXAMIFY_AI_DETECT_TIMEOUT:-15}"
+  if ! [[ "$secs" =~ ^[1-9][0-9]{0,3}$ ]] || [ "$secs" -gt 3600 ]; then
+    echo "EXAMIFY_AI_DETECT_TIMEOUT must be a whole number of seconds from 1 to 3600; using 15." >&2
+    secs=15
+  fi
   AI_CLAUDE_BIN="$(find_agent_cli claude "${EXAMIFY_CLAUDE_BIN-}" || true)"
   AI_CLAUDE_STATE=""
   if [ -n "$AI_CLAUDE_BIN" ]; then
