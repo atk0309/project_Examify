@@ -33,6 +33,8 @@ export {
   resolveAgentCliBinary,
   type AgentCli,
 } from './agent-cli';
+export { runClaudeCliText, type ClaudeCliTextRequest } from './claude-cli';
+export { runCodexCliText, type CodexCliTextRequest } from './codex-cli';
 
 const PROVIDERS: Record<GenerateProviderId, GenerateProvider> = {
   anthropic: anthropicProvider,

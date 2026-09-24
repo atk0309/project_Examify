@@ -95,6 +95,7 @@ function snapshot(overrides: Partial<OnboardingSnapshot> = {}): OnboardingSnapsh
     claudeCliFound: false,
     codexCliFound: false,
     gradingStubActive: false,
+    openaiGradingStubActive: false,
     liveSubjects: [
       { id: 'maths', label: 'Maths', questionCount: 12 },
       { id: 'biology', label: 'Biology', questionCount: 6 },
@@ -181,16 +182,18 @@ describe('OnboardingWizard majors UI', () => {
     expect(screen.getByTestId('wizard-ai-sends')).toHaveTextContent(
       'the subject’s source files (PDFs, notes, images) go to the mode you pick',
     );
-    // Marking uses the Anthropic key whatever generate mode is picked, so the
-    // disclosure shows before (and independent of) any mode choice.
+    // Before a mode is picked, marking falls back to the Anthropic key; the
+    // disclosure shows either way and follows the mode once one is picked.
     const grading = screen.getByTestId('wizard-ai-grading');
-    expect(grading).toHaveTextContent('Marking is separate from generate');
-    expect(grading).toHaveTextContent('saved but not marked (they count as not correct)');
-    expect(grading).toHaveTextContent('sent to Anthropic with its question and rubric');
+    expect(grading).toHaveTextContent('Until you pick a mode, marking uses the Anthropic key');
+    expect(grading).toHaveTextContent(
+      'saved but not marked until this server has an Anthropic API key: until then they count as not correct',
+    );
 
     fireEvent.click(screen.getByTestId('wizard-ai-cloud'));
     await screen.findByTestId('wizard-anthropic-key');
     expect(screen.getAllByTestId('wizard-ai-grading')).toHaveLength(1);
+    expect(screen.getByTestId('wizard-ai-grading')).not.toHaveTextContent('Until you pick a mode');
   });
 
   it('says the test placeholder stub-marks answers when that stub is active', () => {
@@ -207,31 +210,60 @@ describe('OnboardingWizard majors UI', () => {
     fireEvent.click(screen.getByTestId('wizard-next'));
     fireEvent.click(screen.getByTestId('wizard-next'));
     const grading = screen.getByTestId('wizard-ai-grading');
-    expect(grading).toHaveTextContent('local stub full mark and nothing is sent');
+    expect(grading).toHaveTextContent('The test stub cannot mark written answers');
+    expect(grading).toHaveTextContent('stub full mark and nothing is sent');
     expect(grading).not.toHaveTextContent('saved but not marked');
   });
 
-  it.each(['cloud-openai', 'local-agent', 'skip-stub'] as const)(
-    'discloses marking via Anthropic in %s mode when the key is configured',
-    (aiMode) => {
-      render(
-        <OnboardingWizard
-          snapshot={snapshot({ aiMode, anthropicConfigured: true })}
-          pendingInvites={[]}
-          members={[]}
-          canInvite={false}
-          authMode="magic-link"
-        />,
-      );
-      fireEvent.click(screen.getByTestId('wizard-get-started'));
-      fireEvent.click(screen.getByTestId('wizard-next'));
-      fireEvent.click(screen.getByTestId('wizard-next'));
-      expect(screen.queryByTestId('wizard-anthropic-key')).toBeNull();
-      expect(screen.getByTestId('wizard-ai-grading')).toHaveTextContent(
-        'each free-text answer is sent to Anthropic with its question and rubric, whichever mode you pick here',
-      );
-    },
-  );
+  it.each([
+    [
+      'cloud-openai',
+      { openaiConfigured: true },
+      'Written answers are marked by OpenAI: each one is sent with its question and rubric',
+    ],
+    ['claude-cli', { claudeCliFound: true }, 'marked by Claude Code with this server’s sign-in'],
+    ['codex-cli', { codexCliFound: true }, 'marked by Codex with this server’s sign-in'],
+    [
+      'local-agent',
+      { localHttpConfigured: true, localModelConfigured: true },
+      'marked by your local endpoint (EXAMIFY_LLM_MODEL)',
+    ],
+    [
+      'local-cli',
+      { anthropicConfigured: true },
+      'Local command cannot mark written answers, so marking uses the Anthropic key. Written answers are marked by Anthropic',
+    ],
+    [
+      'skip-stub',
+      { anthropicConfigured: true },
+      'The test stub cannot mark written answers, so marking uses the Anthropic key. Written answers are marked by Anthropic',
+    ],
+    [
+      'claude-cli',
+      { anthropicConfigured: true },
+      'saved but not marked until this server has Claude Code installed and signed in as the user that runs Examify',
+    ],
+    [
+      'local-agent',
+      { localHttpConfigured: true },
+      'saved but not marked until this server has EXAMIFY_LLM_BASE_URL and EXAMIFY_LLM_MODEL set',
+    ],
+  ] as const)('says who marks written answers in %s mode (%o)', (aiMode, flags, copy) => {
+    render(
+      <OnboardingWizard
+        snapshot={snapshot({ aiMode, ...flags })}
+        pendingInvites={[]}
+        members={[]}
+        canInvite={false}
+        authMode="magic-link"
+      />,
+    );
+    fireEvent.click(screen.getByTestId('wizard-get-started'));
+    fireEvent.click(screen.getByTestId('wizard-next'));
+    fireEvent.click(screen.getByTestId('wizard-next'));
+    expect(screen.queryByTestId('wizard-anthropic-key')).toBeNull();
+    expect(screen.getByTestId('wizard-ai-grading')).toHaveTextContent(copy);
+  });
 
   it('keeps Clear and Rotate visible for a boot test sentinel', async () => {
     setOnboardingAiModeAction.mockResolvedValue({

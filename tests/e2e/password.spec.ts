@@ -184,6 +184,10 @@ test('parent signs in with a password and sees the child’s progress', async ({
   await expect(child.getByTestId('attempt-row').first()).toContainText('Maths');
   // The parent has not sat an exam; the child's attempt is not theirs.
   await expect(page.getByText("You haven't tried a mini exam yet")).toBeVisible();
+  // No AI mode yet and the test Anthropic key: the dashboard says so honestly.
+  await expect(page.getByTestId('parent-marking')).toHaveText(
+    'Written answers get a test full mark: the Anthropic key is a placeholder.',
+  );
 });
 
 test('a wrong password or role shows the generic sign-in error', async ({ page }) => {

@@ -217,6 +217,10 @@ the deadline kill the whole process group. The CLI's own folder
 (`CLAUDE_CONFIG_DIR` / `CODEX_HOME`, else `~/.claude` / `~/.codex`) inside an
 Examify checkout (on realpaths; for Codex, also an `auth.json` that links
 into one) is refused before anything runs, as a `command` failure.
+`runClaudeCliText` / `runCodexCliText` (exported from `examify-ingest/generate`)
+are that locked-down run returning the final text: generate parses BankIR from
+it, and the app marks written answers with the same runners (one run per
+finished exam, 45 seconds).
 
 Claude Code runs as
 

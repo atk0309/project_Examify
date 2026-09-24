@@ -195,7 +195,14 @@ JSON`). Missing cloud
   whole archive is verified with `check-archive` before `git reset`) /
   `--restore <archive>`. It never manages services, never stashes or `git clean`s.
   Details: CLAUDE.md "Family data folder invariants".
-- **Free-text is LLM-graded server-side** (`src/lib/grading/index.ts`,
+- **Free-text is marked server-side by the household's AI** (`gradeAnswers` in
+  `src/lib/grading/`; `saveAttempt` → `markingBackendForUser` → `markingBackendForAiMode`):
+  Anthropic and OpenAI one request per answer (15 s), Claude Code / Codex one locked-down
+  CLI run per attempt (the generate runner, 45 s), Local endpoint all answers in 45 s, and
+  Local command / test stub / no mode on the Anthropic key; never a fallback to another AI.
+  The answer sits between fresh markers as data, never instructions. The wizard
+  (`onboardingMarkingCopy`) and parent dashboard (`parentMarkingLine`) say who marks. On the
+  Anthropic path (`src/lib/grading/index.ts`), the
   live `ANTHROPIC_API_KEY` from `process.env` only so a wizard set / rotate /
   clear is visible without restart; `test` → deterministic stub only when
   `NODE_ENV !== 'production'` or `GRADING_STUB=1` (Playwright sets it), else
@@ -204,7 +211,8 @@ JSON`). Missing cloud
   production restart after clear does not brick boot). Grading never throws — failures
   fall to `needs_review`, which is final (nothing re-grades it), counts as not correct,
   renders `NEEDS_REVIEW_COPY` (never promise later marking) and logs one `[grading]`
-  warning with a reason code only (no answer / question / rubric / key / user id). A free item is "correct" at `PASS_THRESHOLD` (0.6). The UI
+  warning with a reason code only (plus the backend off the Anthropic path; no answer /
+  question / rubric / key / user id). A free item is "correct" at `PASS_THRESHOLD` (0.6). The UI
   renders only the bounded `Verdict` fields, never the rubric. Results are
   server-driven (a "Marking…" state covers the submit round-trip). A rejected submit
   (no answer came back) keeps the answers and offers "Try again", which re-sends the
@@ -445,8 +453,8 @@ Before merge, ensure these pass in CI:
   log lines.
   Backups and `migration-conflicts/` / `before-restore-*/` hold answer keys (and
   archives hold `.env` secrets); the outbox is never backed up.
-- Agent CLIs (`claude-cli` / `codex-cli`) run with no tools (`--tools ""`; Codex
-  read-only sandbox, shell / apps / web search off, `--ignore-user-config`), in an
+- Agent CLIs (`claude-cli` / `codex-cli`; generate and marking) run with no tools
+  (`--tools ""`; Codex read-only sandbox, shell / apps / web search off, `--ignore-user-config`), in an
   empty private temp folder (`safeTempRoot`, shared with PDF page rasterizing:
   outside every Examify checkout on its realpath, even when `TMPDIR` points into
   one), with no saved session, none of

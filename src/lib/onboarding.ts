@@ -58,8 +58,12 @@ import {
   EMPTY_AUTHORITATIVE_EMIT,
   ONBOARDING_AI_MODES,
   SUBJECT_ICON_OPTIONS,
+  markingBackendForAiMode,
+  markingReadiness,
   onboardingPruneConfirmMessage,
   onboardingPruneEntries,
+  type MarkingBackend,
+  type MarkingReadiness,
   type OnboardingAiMode,
   type OnboardingDryRun,
   type OnboardingIssue,
@@ -373,6 +377,20 @@ export function getHouseholdOnboarding(householdId: number): {
   };
 }
 
+/** Which AI marks this user's written answers: their household's saved mode. */
+export function markingBackendForUser(userId: number): MarkingBackend {
+  return markingBackendForAiMode(getOnboardingForUser(userId).state.aiMode);
+}
+
+/** The backend that marks this user's answers, and whether this host has it set up. */
+export function markingStatusForUser(userId: number): {
+  backend: MarkingBackend;
+  readiness: MarkingReadiness;
+} {
+  const backend = markingBackendForUser(userId);
+  return { backend, readiness: markingReadiness(backend, aiFlags()) };
+}
+
 export function getOnboardingForUser(userId: number): {
   householdId: number | null;
   role: HouseholdRole | null;
@@ -495,6 +513,7 @@ function aiFlags(): {
   claudeCliFound: boolean;
   codexCliFound: boolean;
   gradingStubActive: boolean;
+  openaiGradingStubActive: boolean;
 } {
   const hostEnv = onboardingHostEnv();
   return {
@@ -521,6 +540,7 @@ function aiFlags(): {
     // Same gate as gradeFreeText, so the wizard's marking copy matches what
     // the grader will actually do with the sentinel on this host.
     gradingStubActive: envStoreSecretLiveTest('ANTHROPIC_API_KEY') && gradingStubAllowed(),
+    openaiGradingStubActive: envStoreSecretLiveTest('OPENAI_API_KEY') && gradingStubAllowed(),
   };
 }
 

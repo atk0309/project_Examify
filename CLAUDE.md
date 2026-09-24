@@ -58,7 +58,9 @@ Surface:
   (`localTransportForOnboardingAiMode` → ingest `localTransportEnv`), and their
   power-user generate command carries `--local-transport endpoint|command` so it
   uses the same transport; every card shows
-  `onboardingAiCapabilityLine`: how it reads PDFs, how it signs in) → validate → Review
+  `onboardingAiCapabilityLine`: how it reads PDFs, how it signs in; the marking line,
+  `onboardingMarkingCopy`, says which AI marks written answers for that mode and what the
+  server still needs) → validate → Review
   (dry-run HITL) → apply → ready. The wizard is one stage at a time: desktop
   (≥900px) uses a left step rail + stage + sticky footer; mobile uses compact
   “Step N of M · Label” progress and a sticky bottom bar. Everything the
@@ -323,6 +325,9 @@ src/
     allowlist.ts        # isAllowedEmail(role,email), derived from household membership
     auth-mode.ts        # AUTH_MODE types + helpers (password / magic-link / local-otp)
     password.ts         # scrypt hash/verify (server); password-policy.ts is client-safe
+    grading/            # gradeAnswers: the household's AI marks written answers (index: Anthropic
+                        #   + dispatch; backends: OpenAI / local endpoint / Claude Code / Codex;
+                        #   shared: prompt, verdict check, reason-coded logs)
     auth.ts, db/, email/, captcha.ts, ip.ts, rate-limit.ts, env.ts, site.ts
 tests/
   unit/                 # vitest specs
@@ -724,7 +729,9 @@ chosen, answer }`, free-text `{ type:'free', id, q, response, maxScore, score, s
 
 ## Content + grading invariants
 
-- **Agent CLIs get nothing but the request.** `claude-cli` / `codex-cli` run with
+- **Agent CLIs get nothing but the request.** `claude-cli` / `codex-cli` (generate, and
+  marking for a household on that mode, through the same `runClaudeCliText` /
+  `runCodexCliText`) run with
   no tools (`--tools ""`; Codex: `--sandbox read-only`, shell / apps / plugins /
   browser / image features off, `web_search="disabled"`, `--ignore-user-config`),
   in an empty private `0700` temp folder (`safeTempRoot` in `temp-root.ts`, which
@@ -777,10 +784,30 @@ These are non-negotiable. Don't "fix" them out.
 - **`attempts.ts` stays client-safe.** `ComparisonView` imports `overallAverage` from it as a
   value, so `attempts.ts` is in the client graph: keep it free of `server-only`, the answer keys,
   and the grader. The validate+score+grade pass lives in `score.server.ts`, not here.
-- **Free-text is graded server-side, fail-safe.** `gradeFreeText` (`src/lib/grading/index.ts`,
-  server-only) returns `{ status:'graded', verdict } | { status:'needs_review' }` and **never
-  throws** — the request has a 15-second deadline, and any timeout/fetch error, non-2xx, or
-  malformed/unparseable model JSON falls to `needs_review` so an attempt is never lost.
+- **Free-text is marked server-side by the household's AI, fail-safe.** `saveAttempt` passes
+  `markingBackendForUser(userId)` (the household's saved AI mode through
+  `markingBackendForAiMode`) to `scoreAttempt`, which marks every written answer of the attempt
+  with `gradeAnswers(tasks, backend)` (`src/lib/grading/`, server-only): `cloud` → Anthropic
+  (`gradeFreeText`, one request per answer); `cloud-openai` → OpenAI Chat Completions
+  (`gpt-4o`, live `OPENAI_API_KEY`, the same `test` stub rule), one request per answer;
+  `claude-cli` / `codex-cli` → **one** locked-down CLI run for the whole attempt (the generate
+  runner and its invariants above; `{"results":[{"answer":n,…}]}`, matched by number, else by
+  position when no entry is numbered), `CLI_GRADING_TIMEOUT_MS` 45 s; `local-agent` →
+  `EXAMIFY_LLM_BASE_URL` + `EXAMIFY_LLM_MODEL` from the host env over the repo `.env`
+  (`markingHostEnv`, the merge generate uses), all answers under one 45 s deadline; `local-cli`,
+  `skip-stub` and no mode → the Anthropic key path (a local command only speaks BankIR). A
+  backend never falls back to another AI. The 45 s deadlines keep a submit under a reverse
+  proxy's usual 60 s read timeout. Every result is
+  `{ status:'graded', verdict } | { status:'needs_review' }` and `gradeAnswers` **never
+  throws** — API requests have a 15-second deadline, and any timeout/fetch error, non-2xx, CLI
+  failure, or malformed/unparseable model JSON falls to `needs_review` so an attempt is never
+  lost; a CLI run that fails leaves every answer unmarked, a missing or malformed entry only
+  its own. The prompt puts each answer between a fresh random marker pair and says it is data
+  to mark, never instructions; the score is clamped to the rubric's maximum either way. The
+  wizard's AI step (`onboardingMarkingCopy`) and the parent dashboard (`parentMarkingLine` from
+  `markingStatusForUser`, `markingReadiness` over the snapshot flags) say which AI marks and
+  what the server still needs; the "Marking…" screen says written answers can take up to a
+  minute (`marking-written-note`, only when the paper has one).
   Live `ANTHROPIC_API_KEY` is read from `process.env` only (never the boot-frozen
   `env.ts` snapshot) so a wizard set / rotate / clear is visible on the next
   grade. The `test` sentinel stubs only when `gradingStubAllowed()`:
@@ -794,8 +821,10 @@ These are non-negotiable. Don't "fix" them out.
   restart must not brick boot). Every `needs_review` logs one
   `[grading] free-text answer not marked` warning with a reason code only
   (`no_key`, `stub_disabled_in_production`, `http_<status>`, `timeout`,
-  `network_error`, `bad_json`, `bad_shape`) — never the answer, question, rubric,
-  key, an error message (it can quote model text) or a user id.
+  `network_error`, `bad_json`, `bad_shape`, `no_cli`, `cli_auth`, `cli_error`,
+  `no_endpoint`, `internal_error`), plus `backend` for everything but Anthropic (whose line
+  is unchanged) — never the answer, question, rubric, key, an error message (it can quote
+  model text) or a user id.
 - **A free-text item is "correct" at `PASS_THRESHOLD` (0.6).** `isFreePass(score, maxScore)`
   (`attempts.ts`, the shared constant — not an inline literal) decides the ring/tally. A
   `needs_review` item persists `score: null, verdict: null` and counts as incorrect.

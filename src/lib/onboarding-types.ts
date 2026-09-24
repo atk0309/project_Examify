@@ -187,6 +187,141 @@ export function onboardingGenerateCancelledNote(kept: number): string {
   return `Generate cancelled. Kept ${kept} subject${kept === 1 ? '' : 's'} already generated.`;
 }
 
+/** Which AI marks a household's written (free-text) answers. */
+export const MARKING_BACKENDS = [
+  'anthropic',
+  'openai',
+  'claude-cli',
+  'codex-cli',
+  'local-endpoint',
+] as const;
+export type MarkingBackend = (typeof MARKING_BACKENDS)[number];
+
+/**
+ * The saved AI mode marks written answers when it can: Anthropic / OpenAI with
+ * their API keys, Claude Code / Codex with their own sign-in, Local endpoint
+ * with its model. Local command speaks the BankIR contract only and the test
+ * stub is not an AI, so they (and a household with no mode yet) keep the
+ * Anthropic key path the app always had.
+ */
+export function markingBackendForAiMode(mode: OnboardingAiMode | null | undefined): MarkingBackend {
+  switch (mode) {
+    case 'cloud-openai':
+      return 'openai';
+    case 'claude-cli':
+      return 'claude-cli';
+    case 'codex-cli':
+      return 'codex-cli';
+    case 'local-agent':
+      return 'local-endpoint';
+    default:
+      return 'anthropic';
+  }
+}
+
+/** The host facts marking needs: the snapshot's configured / found flags. */
+export type MarkingFlags = Pick<
+  OnboardingSnapshot,
+  | 'anthropicConfigured'
+  | 'gradingStubActive'
+  | 'openaiConfigured'
+  | 'openaiGradingStubActive'
+  | 'claudeCliFound'
+  | 'codexCliFound'
+  | 'localHttpConfigured'
+  | 'localModelConfigured'
+>;
+
+/** `ready`: it marks. `stub`: the `test` key gives full marks. `not_ready`: answers stay unmarked. */
+export type MarkingReadiness = 'ready' | 'stub' | 'not_ready';
+
+export function markingReadiness(backend: MarkingBackend, flags: MarkingFlags): MarkingReadiness {
+  switch (backend) {
+    case 'anthropic':
+      return flags.anthropicConfigured ? 'ready' : flags.gradingStubActive ? 'stub' : 'not_ready';
+    case 'openai':
+      return flags.openaiConfigured
+        ? 'ready'
+        : flags.openaiGradingStubActive
+          ? 'stub'
+          : 'not_ready';
+    case 'claude-cli':
+      return flags.claudeCliFound ? 'ready' : 'not_ready';
+    case 'codex-cli':
+      return flags.codexCliFound ? 'ready' : 'not_ready';
+    case 'local-endpoint':
+      return flags.localHttpConfigured && flags.localModelConfigured ? 'ready' : 'not_ready';
+  }
+}
+
+const MARKING_LABEL: Record<MarkingBackend, string> = {
+  anthropic: 'Anthropic',
+  openai: 'OpenAI',
+  'claude-cli': 'Claude Code',
+  'codex-cli': 'Codex',
+  'local-endpoint': 'your local endpoint',
+};
+
+/** What this server needs before a backend marks anything. */
+const MARKING_SETUP: Record<MarkingBackend, string> = {
+  anthropic: 'an Anthropic API key',
+  openai: 'an OpenAI API key',
+  'claude-cli': 'Claude Code installed and signed in as the user that runs Examify',
+  'codex-cli': 'Codex installed and signed in as the user that runs Examify',
+  'local-endpoint': 'EXAMIFY_LLM_BASE_URL and EXAMIFY_LLM_MODEL set',
+};
+
+/** Why a mode with no marking path of its own uses the Anthropic key. */
+function markingFallbackNote(mode: OnboardingAiMode | null | undefined): string {
+  if (mode === 'local-cli')
+    return 'Local command cannot mark written answers, so marking uses the Anthropic key. ';
+  if (mode === 'skip-stub')
+    return 'The test stub cannot mark written answers, so marking uses the Anthropic key. ';
+  if (!mode) return 'Until you pick a mode, marking uses the Anthropic key. ';
+  return '';
+}
+
+/**
+ * The AI step's marking line: who marks written answers for this mode, what is
+ * sent, and what is missing. Never promises marking later: an answer that is
+ * not marked counts as not correct.
+ */
+export function onboardingMarkingCopy(
+  mode: OnboardingAiMode | null | undefined,
+  flags: MarkingFlags,
+): string {
+  const backend = markingBackendForAiMode(mode);
+  const label = MARKING_LABEL[backend];
+  const note = markingFallbackNote(mode);
+  switch (markingReadiness(backend, flags)) {
+    case 'stub':
+      return `${note}The ${label} key is the test placeholder, so written answers get a stub full mark and nothing is sent. Set a real key before real use.`;
+    case 'not_ready':
+      return `${note}Written answers are saved but not marked until this server has ${MARKING_SETUP[backend]}: until then they count as not correct.`;
+    case 'ready':
+      if (backend === 'claude-cli' || backend === 'codex-cli') {
+        return `Written answers are marked by ${label} with this server’s sign-in: one run marks all of an exam’s written answers, each sent with its question and rubric, and can take up to a minute.`;
+      }
+      if (backend === 'local-endpoint') {
+        return 'Written answers are marked by your local endpoint (EXAMIFY_LLM_MODEL), each sent with its question and rubric. A slow model can leave answers unmarked: all of an exam’s answers share a 45-second limit.';
+      }
+      return `${note}Written answers are marked by ${label}: each one is sent with its question and rubric.`;
+  }
+}
+
+/** The parent dashboard's one line on marking. */
+export function parentMarkingLine(backend: MarkingBackend, readiness: MarkingReadiness): string {
+  const label = MARKING_LABEL[backend];
+  switch (readiness) {
+    case 'ready':
+      return `Written answers are marked by ${label}.`;
+    case 'stub':
+      return `Written answers get a test full mark: the ${label} key is a placeholder.`;
+    case 'not_ready':
+      return `Written answers are not marked: this server needs ${MARKING_SETUP[backend]}. Until then they count as not correct.`;
+  }
+}
+
 export function providerForOnboardingAiMode(mode: OnboardingAiMode): OnboardingGenerateProvider {
   switch (mode) {
     case 'cloud':
@@ -376,6 +511,8 @@ export type OnboardingSnapshot = {
    * holds (non-production, or `GRADING_STUB=1`). Never the key itself.
    */
   gradingStubActive: boolean;
+  /** The same for the OpenAI key (a household whose mode is OpenAI marks with it). */
+  openaiGradingStubActive: boolean;
   /** Sample + generated live bank (Ready). Silent wrong bank stays visible. */
   liveSubjects: OnboardingLiveSubject[];
 };
