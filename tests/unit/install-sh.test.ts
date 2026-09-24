@@ -1058,13 +1058,34 @@ function fakeAiTools(tools: FakeAiTools) {
 /** Site URL, data folder, sign-in, mail and Turnstile take their defaults. */
 const BEFORE_AI = '\n'.repeat(5);
 
+let noTimeoutDir: string | null = null;
+/**
+ * /usr/bin and /bin as symlinks, minus `timeout`: a PATH like macOS's, where
+ * the installer's checks fall back to their own background timer.
+ */
+function systemPathWithoutTimeout(): string {
+  if (noTimeoutDir) return noTimeoutDir;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-no-timeout-'));
+  for (const source of ['/usr/bin', '/bin']) {
+    if (!fs.existsSync(source)) continue;
+    for (const name of fs.readdirSync(source)) {
+      if (name === 'timeout' || fs.existsSync(path.join(dir, name))) continue;
+      fs.symlinkSync(path.join(source, name), path.join(dir, name));
+    }
+  }
+  noTimeoutDir = dir;
+  return dir;
+}
+
 function runAiInstall(
   dir: string,
   tools: FakeAiTools,
   input: string,
   extra: Record<string, string> = {},
+  options: { withoutTimeout?: boolean } = {},
 ) {
   const fake = fakeAiTools(tools);
+  if (options.withoutTimeout) fake.env.PATH = `${fake.bin}:${systemPathWithoutTimeout()}`;
   const result = spawnSync(BASH, [SCRIPT, '--write-env-only'], {
     cwd: dir,
     env: { NODE_ENV: 'test', TMPDIR: process.env.TMPDIR, ...fake.env, ...extra },
@@ -1258,6 +1279,42 @@ describe('install.sh AI tools', () => {
       expect(Date.now() - started).toBeLessThan(15_000);
       expect(result.stdout).toMatch(/ {2}Claude Code: found; could not check the sign-in/);
       expect(result.stdout).toContain('Choose 1-3 [2]: ');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('without GNU timeout, a quick check returns at once and a hung one is still cut off', () => {
+    const dir = tmpDir('examify-install-');
+    try {
+      // Three quick checks under an 8s limit: each must return when its tool
+      // does, not when the fallback timer ends (its sleep held $(…) open).
+      let started = Date.now();
+      const quick = runAiInstall(
+        dir,
+        { claude: 'signed_in', codex: 'signed_in', ollama: ['llama3.2:latest'] },
+        `${BEFORE_AI}\n`,
+        { EXAMIFY_AI_DETECT_TIMEOUT: '8' },
+        { withoutTimeout: true },
+      );
+      expect(quick.result.status).toBe(0);
+      expect(Date.now() - started).toBeLessThan(6_000);
+      expect(quick.result.stdout).toContain('  Claude Code: signed in\n');
+      expect(quick.result.stdout).toContain('  Codex: signed in\n');
+      expect(quick.envFile).toContain('EXAMIFY_AI_MODE=claude-cli\n');
+
+      fs.rmSync(path.join(dir, '.env'));
+      started = Date.now();
+      const hung = runAiInstall(
+        dir,
+        { claude: 'hang' },
+        `${BEFORE_AI}later\n`,
+        { EXAMIFY_AI_DETECT_TIMEOUT: '1' },
+        { withoutTimeout: true },
+      );
+      expect(hung.result.status).toBe(0);
+      expect(Date.now() - started).toBeLessThan(10_000);
+      expect(hung.result.stdout).toMatch(/ {2}Claude Code: found; could not check the sign-in/);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

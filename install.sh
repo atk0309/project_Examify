@@ -2132,7 +2132,16 @@ run_limited() {
   fi
   "$@" &
   local pid=$!
-  (sleep "$secs" && kill "$pid" 2>/dev/null) &
+  # The watcher gets none of the caller's output: a $(…) around this call
+  # waits until every holder of its pipe closes it, and a sleep inheriting
+  # that pipe would hold every check for the whole limit. Stopping the
+  # watcher stops its sleep too.
+  (
+    sleep "$secs" &
+    sleeper=$!
+    trap 'kill "$sleeper" 2>/dev/null; exit 0' TERM
+    wait "$sleeper" && kill "$pid" 2>/dev/null
+  ) </dev/null >/dev/null 2>&1 &
   local watcher=$!
   local rc=0
   wait "$pid" || rc=$?
@@ -2207,6 +2216,7 @@ claude_signin_state() {
   esac
 }
 
+# The same for Codex, from `codex login status` (it prints to stderr).
 codex_signin_state() {
   local out=""
   out="$(run_limited "$2" "$1" login status </dev/null 2>&1)" || true
@@ -2261,6 +2271,8 @@ ollama_models() {
   printf '%s\n' "$body" | awk 'NR > 1 && $1 != "" { print $1 }'
 }
 
+# Sets AI_CLAUDE_* / AI_CODEX_* (binary, sign-in) and AI_OLLAMA_* (address,
+# state: models / empty / down / absent, and the model names).
 detect_ai_tools() {
   local secs="${EXAMIFY_AI_DETECT_TIMEOUT:-15}"
   AI_CLAUDE_BIN="$(find_agent_cli claude "${EXAMIFY_CLAUDE_BIN-}" || true)"
@@ -2411,6 +2423,8 @@ use_agent_cli() {
   fi
 }
 
+# Ollama picked: ask which model (default: the first listed) and point the
+# local endpoint at it.
 use_ollama() {
   local first
   first="$(printf '%s\n' "$AI_OLLAMA_MODELS" | awk 'NF { print; exit }')"
