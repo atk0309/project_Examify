@@ -356,7 +356,10 @@ question, by the AI the household picked in `/onboarding`:
 | Local command, test stub, or no mode yet | the Anthropic key, as below (a local command only builds banks)                                                                               |
 
 The wizard's AI step and the parent dashboard say which one marks and what the server still
-needs, and the "Marking…" screen says written answers can take up to a minute. The CLI and
+needs (`EXAMIFY_LLM_BASE_URL` must be an http or https address). Claude Code and Codex mark
+only while they are signed in as the user that runs Examify; signed out, written answers
+are not marked and count as not correct. The "Marking…" screen says written answers can take
+up to a minute. The CLI and
 local deadlines keep a submit under a reverse proxy's usual 60-second timeout. Each answer
 goes to the model between fresh markers, as data to mark, never as instructions.
 

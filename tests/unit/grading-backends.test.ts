@@ -6,7 +6,11 @@ import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { gradeAnswers } from '@/lib/grading';
-import { gradeViaAgentCli, gradeViaLocalEndpoint } from '@/lib/grading/backends';
+import {
+  gradeViaAgentCli,
+  gradeViaLocalEndpoint,
+  localChatCompletionsUrl,
+} from '@/lib/grading/backends';
 import {
   ONBOARDING_AI_MODES,
   markingBackendForAiMode,
@@ -121,9 +125,11 @@ describe('which AI marks written answers', () => {
     expect(markingReadiness('local-endpoint', { ...none, localHttpConfigured: true })).toBe(
       'not_ready',
     );
+    // Found is not signed in: the line says marking needs the sign-in.
     expect(parentMarkingLine('claude-cli', 'ready')).toBe(
-      'Written answers are marked by Claude Code.',
+      'Written answers are marked by Claude Code while it is signed in on this server. Signed out, they count as not correct.',
     );
+    expect(parentMarkingLine('openai', 'ready')).toBe('Written answers are marked by OpenAI.');
     expect(parentMarkingLine('openai', 'stub')).toBe(
       'Written answers get a test full mark: the OpenAI key is a placeholder.',
     );
@@ -235,6 +241,18 @@ describe('gradeAnswers — Local endpoint', () => {
     expect(body.model).toBe('llama3.2');
     // Some local servers (LM Studio) refuse json_object with a 400.
     expect(body).not.toHaveProperty('response_format');
+  });
+
+  it('builds the Chat Completions URL only from an http(s) address', () => {
+    expect(String(localChatCompletionsUrl(' http://127.0.0.1:11434 '))).toBe(
+      'http://127.0.0.1:11434/v1/chat/completions',
+    );
+    expect(String(localChatCompletionsUrl('https://llm.lan/'))).toBe(
+      'https://llm.lan/v1/chat/completions',
+    );
+    for (const base of [undefined, '', '   ', 'not a url', '127.0.0.1:11434', 'ftp://llm.lan']) {
+      expect(localChatCompletionsUrl(base)).toBeNull();
+    }
   });
 
   it('marks nothing without a URL and a model (no_endpoint)', async () => {
@@ -477,6 +495,31 @@ describe('saveAttempt marks with the household AI mode', () => {
     } finally {
       if (original === undefined) delete process.env.OPENAI_API_KEY;
       else process.env.OPENAI_API_KEY = original;
+    }
+  });
+
+  it('does not call a local endpoint with a mistyped address ready', async () => {
+    const { bootstrapHousehold } = await import('@/lib/households');
+    const { markingStatusForUser, saveOnboardingState } = await import('@/lib/onboarding');
+    const host = bootstrapHousehold({ email: 'pat@example.com', householdName: 'Ours' });
+    if (!host.ok) throw new Error('bootstrap');
+    saveOnboardingState(host.householdId, { aiMode: 'local-agent' });
+    const keys = ['EXAMIFY_LLM_BASE_URL', 'EXAMIFY_LLM_MODEL'] as const;
+    const original = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+    try {
+      process.env.EXAMIFY_LLM_MODEL = 'llama3.2';
+      process.env.EXAMIFY_LLM_BASE_URL = 'http//127.0.0.1:11434';
+      expect(markingStatusForUser(host.userId)).toEqual({
+        backend: 'local-endpoint',
+        readiness: 'not_ready',
+      });
+      process.env.EXAMIFY_LLM_BASE_URL = 'http://127.0.0.1:11434';
+      expect(markingStatusForUser(host.userId).readiness).toBe('ready');
+    } finally {
+      for (const key of keys) {
+        if (original[key] === undefined) delete process.env[key];
+        else process.env[key] = original[key];
+      }
     }
   });
 });

@@ -232,7 +232,11 @@ export type MarkingFlags = Pick<
   | 'localModelConfigured'
 >;
 
-/** `ready`: it marks. `stub`: the `test` key gives full marks. `not_ready`: answers stay unmarked. */
+/**
+ * `ready`: it marks. `stub`: the `test` key gives full marks. `not_ready`:
+ * answers stay unmarked. Claude Code / Codex are `ready` once found: their
+ * sign-in is only known when they run, so their copy says marking needs it.
+ */
 export type MarkingReadiness = 'ready' | 'stub' | 'not_ready';
 
 /** Whether this host can mark with `backend`, from the wizard snapshot's setup flags. */
@@ -269,7 +273,7 @@ const MARKING_SETUP: Record<MarkingBackend, string> = {
   openai: 'an OpenAI API key',
   'claude-cli': 'Claude Code installed and signed in as the user that runs Examify',
   'codex-cli': 'Codex installed and signed in as the user that runs Examify',
-  'local-endpoint': 'EXAMIFY_LLM_BASE_URL and EXAMIFY_LLM_MODEL set',
+  'local-endpoint': 'EXAMIFY_LLM_BASE_URL (an http or https address) and EXAMIFY_LLM_MODEL set',
 };
 
 /** Why a mode with no marking path of its own uses the Anthropic key. */
@@ -301,7 +305,7 @@ export function onboardingMarkingCopy(
       return `${note}Written answers are saved but not marked until this server has ${MARKING_SETUP[backend]}: until then they count as not correct.`;
     case 'ready':
       if (backend === 'claude-cli' || backend === 'codex-cli') {
-        return `Written answers are marked by ${label} with this server’s sign-in: one run marks all of an exam’s written answers, each sent with its question and rubric, and can take up to a minute.`;
+        return `Written answers are marked by ${label} while it is signed in as the user that runs Examify: one run marks all of an exam’s written answers, each sent with its question and rubric, and can take up to a minute. Signed out, they are not marked and count as not correct.`;
       }
       if (backend === 'local-endpoint') {
         return 'Written answers are marked by your local endpoint (EXAMIFY_LLM_MODEL), each sent with its question and rubric. A slow model can leave answers unmarked: all of an exam’s answers share a 45-second limit.';
@@ -315,6 +319,9 @@ export function parentMarkingLine(backend: MarkingBackend, readiness: MarkingRea
   const label = MARKING_LABEL[backend];
   switch (readiness) {
     case 'ready':
+      if (backend === 'claude-cli' || backend === 'codex-cli') {
+        return `Written answers are marked by ${label} while it is signed in on this server. Signed out, they count as not correct.`;
+      }
       return `Written answers are marked by ${label}.`;
     case 'stub':
       return `Written answers get a test full mark: the ${label} key is a placeholder.`;
@@ -493,7 +500,7 @@ export type OnboardingSnapshot = {
    */
   anthropicWriteBlocked: boolean;
   openaiWriteBlocked: boolean;
-  /** `EXAMIFY_LLM_BASE_URL` is set (Local endpoint mode). */
+  /** `EXAMIFY_LLM_BASE_URL` is set to an http(s) address (Local endpoint mode). */
   localHttpConfigured: boolean;
   /** `EXAMIFY_LLM_MODEL` is set — the model name the local endpoint gets. */
   localModelConfigured: boolean;

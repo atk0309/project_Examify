@@ -806,7 +806,11 @@ These are non-negotiable. Don't "fix" them out.
   to mark, never instructions; the score is clamped to the rubric's maximum either way. The
   wizard's AI step (`onboardingMarkingCopy`) and the parent dashboard (`parentMarkingLine` from
   `markingStatusForUser`, `markingReadiness` over the snapshot flags) say which AI marks and
-  what the server still needs; the "Marking…" screen says written answers can take up to a
+  what the server still needs. Local endpoint counts only with an http(s)
+  `EXAMIFY_LLM_BASE_URL` (`localChatCompletionsUrl`, the URL the marking request uses) and a
+  model; Claude Code / Codex count once found, and since their sign-in is only known when they
+  run, their copy says they mark while signed in and that signed out the answers count as not
+  correct. The "Marking…" screen says written answers can take up to a
   minute (`marking-written-note`, only when the paper has one).
   Live `ANTHROPIC_API_KEY` is read from `process.env` only (never the boot-frozen
   `env.ts` snapshot) so a wizard set / rotate / clear is visible on the next

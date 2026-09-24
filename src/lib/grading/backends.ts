@@ -145,26 +145,36 @@ export async function gradeViaOpenAi(tasks: readonly GradeArgs[]): Promise<Grade
   );
 }
 
+/**
+ * The Chat Completions URL for an `EXAMIFY_LLM_BASE_URL` value (the same URL
+ * generate's local transport builds), or `null` when it is blank or not an
+ * http(s) address. The wizard and parent dashboard call the endpoint ready
+ * only when this is not `null`, so a typo is never shown as marking.
+ */
+export function localChatCompletionsUrl(base: string | undefined): URL | null {
+  const trimmed = base?.trim() ?? '';
+  if (!trimmed) return null;
+  try {
+    const url = new URL('/v1/chat/completions', trimmed.endsWith('/') ? trimmed : `${trimmed}/`);
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url : null;
+  } catch {
+    return null;
+  }
+}
+
 /** The wizard's Local endpoint: `EXAMIFY_LLM_BASE_URL` + `EXAMIFY_LLM_MODEL`, no key. */
 export async function gradeViaLocalEndpoint(
   tasks: readonly GradeArgs[],
   env: ProviderEnv,
 ): Promise<GradeResult[]> {
-  const base = env.EXAMIFY_LLM_BASE_URL?.trim() ?? '';
+  const url = localChatCompletionsUrl(env.EXAMIFY_LLM_BASE_URL);
   const model = env[ingest.LOCAL_MODEL_ENV]?.trim() ?? '';
-  let url: URL | null = null;
-  try {
-    // Same URL as generate's local transport.
-    if (base) url = new URL('/v1/chat/completions', base.endsWith('/') ? base : `${base}/`);
-  } catch {
-    url = null;
-  }
   if (!url || !model) return tasks.map(() => needsReview('no_endpoint', 'local-endpoint'));
   const signal = AbortSignal.timeout(LOCAL_GRADING_TIMEOUT_MS);
   return Promise.all(
     tasks.map((task) =>
       gradeViaChatCompletions(task, {
-        url: url!,
+        url,
         headers: {},
         model,
         signal,

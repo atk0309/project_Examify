@@ -43,7 +43,7 @@ import type { HouseholdRole } from '@/lib/db/schema';
 import { SAMPLE_QUESTIONS, SAMPLE_SUBJECTS } from '@/lib/exam/data';
 import { GENERATED_SUBJECTS } from '@/lib/exam/generated-public';
 import { loadLivePublicBank } from '@/lib/exam/live-bank.server';
-import { gradingStubAllowed } from '@/lib/grading';
+import { gradingStubAllowed, localChatCompletionsUrl } from '@/lib/grading';
 import {
   envStoreSecretConfigured,
   envStoreSecretHostManaged,
@@ -532,7 +532,8 @@ function aiFlags(): {
     anthropicWriteBlocked: envStoreSecretWriteBlocked('ANTHROPIC_API_KEY'),
     openaiWriteBlocked: envStoreSecretWriteBlocked('OPENAI_API_KEY'),
     // Same merged env generate gets, so "Configured" / "Found" match what runs.
-    localHttpConfigured: Boolean(hostEnv.EXAMIFY_LLM_BASE_URL?.trim()),
+    // An http(s) address, like the marking and generate requests need.
+    localHttpConfigured: localChatCompletionsUrl(hostEnv.EXAMIFY_LLM_BASE_URL) !== null,
     localModelConfigured: Boolean(hostEnv.EXAMIFY_LLM_MODEL?.trim()),
     localCmdConfigured: Boolean(hostEnv.EXAMIFY_INGEST_LOCAL_CMD?.trim()),
     claudeCliFound: resolveAgentCliBinary('claude', hostEnv) !== null,

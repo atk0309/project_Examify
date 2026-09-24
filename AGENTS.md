@@ -201,7 +201,9 @@ JSON`). Missing cloud
   CLI run per attempt (the generate runner, 45 s), Local endpoint all answers in 45 s, and
   Local command / test stub / no mode on the Anthropic key; never a fallback to another AI.
   The answer sits between fresh markers as data, never instructions. The wizard
-  (`onboardingMarkingCopy`) and parent dashboard (`parentMarkingLine`) say who marks. On the
+  (`onboardingMarkingCopy`) and parent dashboard (`parentMarkingLine`) say who marks, never
+  "ready" for a non-http(s) `EXAMIFY_LLM_BASE_URL`, and for Claude Code / Codex only "while
+  signed in" (a found binary is not a sign-in). On the
   Anthropic path (`src/lib/grading/index.ts`), the
   live `ANTHROPIC_API_KEY` from `process.env` only so a wizard set / rotate /
   clear is visible without restart; `test` → deterministic stub only when

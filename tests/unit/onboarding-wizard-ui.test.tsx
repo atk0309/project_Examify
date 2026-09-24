@@ -221,8 +221,16 @@ describe('OnboardingWizard majors UI', () => {
       { openaiConfigured: true },
       'Written answers are marked by OpenAI: each one is sent with its question and rubric',
     ],
-    ['claude-cli', { claudeCliFound: true }, 'marked by Claude Code with this server’s sign-in'],
-    ['codex-cli', { codexCliFound: true }, 'marked by Codex with this server’s sign-in'],
+    [
+      'claude-cli',
+      { claudeCliFound: true },
+      'marked by Claude Code while it is signed in as the user that runs Examify',
+    ],
+    [
+      'codex-cli',
+      { codexCliFound: true },
+      'Signed out, they are not marked and count as not correct.',
+    ],
     [
       'local-agent',
       { localHttpConfigured: true, localModelConfigured: true },
@@ -246,7 +254,7 @@ describe('OnboardingWizard majors UI', () => {
     [
       'local-agent',
       { localHttpConfigured: true },
-      'saved but not marked until this server has EXAMIFY_LLM_BASE_URL and EXAMIFY_LLM_MODEL set',
+      'saved but not marked until this server has EXAMIFY_LLM_BASE_URL (an http or https address) and EXAMIFY_LLM_MODEL set',
     ],
   ] as const)('says who marks written answers in %s mode (%o)', (aiMode, flags, copy) => {
     render(

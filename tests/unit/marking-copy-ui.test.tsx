@@ -30,7 +30,7 @@ describe('parent dashboard marking line', () => {
       />,
     );
     expect(screen.getByTestId('parent-marking')).toHaveTextContent(
-      'Written answers are marked by Claude Code.',
+      'Written answers are marked by Claude Code while it is signed in on this server. Signed out, they count as not correct.',
     );
 
     rerender(
@@ -43,7 +43,7 @@ describe('parent dashboard marking line', () => {
       />,
     );
     expect(screen.getByTestId('parent-marking')).toHaveTextContent(
-      'this server needs EXAMIFY_LLM_BASE_URL and EXAMIFY_LLM_MODEL set',
+      'this server needs EXAMIFY_LLM_BASE_URL (an http or https address) and EXAMIFY_LLM_MODEL set',
     );
     expect(screen.getByTestId('parent-marking')).not.toHaveTextContent(/later|shortly/i);
 
