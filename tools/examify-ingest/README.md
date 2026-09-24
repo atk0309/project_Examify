@@ -188,7 +188,9 @@ content as `--provider openai`: fenced text + images / page images). The
 command wins when both are set; `--local-transport endpoint|command` uses
 only that one (the other's settings are dropped, as in the wizard's Local
 endpoint / Local command modes). The endpoint gets `--model`, else
-`EXAMIFY_LLM_MODEL`, else `local`. The transport in use (`command` /
+`EXAMIFY_LLM_MODEL`, else `local`. It asks for JSON mode (`response_format:
+json_object`) first; a server that answers that with a 400 (LM Studio takes only
+`json_schema` or `text`) gets the same request once more without it. The transport in use (`command` /
 `endpoint`) is part of the `cacheKey`, so a bank cached by one is never
 served to the other.
 

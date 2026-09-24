@@ -1288,6 +1288,60 @@ describe('examify-ingest generate', () => {
     expect(result.manifest.provider).toBe('local');
   });
 
+  it('local endpoint asks once more without JSON mode when the server refuses it (LM Studio)', async () => {
+    const bank = realBankIr('plants');
+    bank.difficulties.easy[0]!.provenance = { pdf: 'notes.txt', locator: 'p1' };
+    const run = (statuses: number[]) => {
+      const root = examifyRepo();
+      const formats: unknown[] = [];
+      const fetchLocal = async (_input: unknown, init?: RequestInit) => {
+        formats.push(
+          (JSON.parse(String(init?.body)) as { response_format?: unknown }).response_format,
+        );
+        const status = statuses.shift() ?? 200;
+        return status === 200
+          ? new Response(
+              JSON.stringify({ choices: [{ message: { content: JSON.stringify(bank) } }] }),
+              { status },
+            )
+          : new Response(
+              JSON.stringify({ error: "'response_format.type' must be 'json_schema' or 'text'" }),
+              { status },
+            );
+      };
+      const result = generateSubject({
+        repoRoot: root,
+        subject: bank.subject,
+        subjectDir: path.join(root, 'content/subjects/plants'),
+        sources: resolveSubjectSources(root, 'plants', path.join(root, 'content/subjects/plants')),
+        provider: 'local',
+        seed: 0,
+        dryRunIr: true,
+        env: { EXAMIFY_LLM_BASE_URL: 'http://127.0.0.1:9', EXAMIFY_LLM_MODEL: 'qwen2.5-vl' },
+        fetch: fetchLocal as typeof fetch,
+      });
+      return { result, formats };
+    };
+
+    // JSON mode first; a 400 → the same request without it.
+    const lmStudio = run([400, 200]);
+    expect((await lmStudio.result).manifest.provider).toBe('local');
+    expect(lmStudio.formats).toEqual([{ type: 'json_object' }, undefined]);
+
+    // A server that takes JSON mode gets one request.
+    const ollama = run([200]);
+    await ollama.result;
+    expect(ollama.formats).toEqual([{ type: 'json_object' }]);
+
+    // Only a 400 is retried, and only once; the second answer is the error.
+    const twice = run([400, 400]);
+    await expect(twice.result).rejects.toMatchObject({ kind: 'http', status: 400 });
+    expect(twice.formats).toHaveLength(2);
+    const down = run([503]);
+    await expect(down.result).rejects.toMatchObject({ kind: 'http', status: 503 });
+    expect(down.formats).toHaveLength(1);
+  });
+
   it('local endpoint sends EXAMIFY_LLM_MODEL as the model; --model wins over it', async () => {
     const bank = realBankIr('plants');
     bank.difficulties.easy[0]!.provenance = { pdf: 'notes.txt', locator: 'p1' };

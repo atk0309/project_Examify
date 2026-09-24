@@ -91,6 +91,19 @@ async function expectAnswerKept(page: Page, answered: Answered) {
 
 test.describe.configure({ mode: 'serial' });
 
+/** At phone width (390px) nothing on the page makes it scroll sideways. */
+async function expectFitsPhone(page: Page) {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const overflow = await page.evaluate(() => {
+    const width = document.documentElement.clientWidth;
+    const wide = [...document.querySelectorAll<HTMLElement>('body *')]
+      .filter((el) => el.getBoundingClientRect().right > width + 0.5)
+      .map((el) => el.className || el.tagName);
+    return { scroll: document.documentElement.scrollWidth - width, wide: wide.slice(0, 5) };
+  });
+  expect(overflow).toEqual({ scroll: 0, wide: [] });
+}
+
 test('student signs in with a password, sits a whole exam, and sees results + progress', async ({
   page,
 }) => {
@@ -138,6 +151,7 @@ test('student signs in with a password, sits a whole exam, and sees results + pr
   await expect(attempt).toContainText(scoreText);
   await attempt.getByRole('button').click();
   await expect(attempt.locator('.review-row')).toHaveCount(total);
+  await expectFitsPhone(page);
 });
 
 test('an exam in progress resumes after a reload with earlier answers kept', async ({ page }) => {
@@ -188,6 +202,10 @@ test('parent signs in with a password and sees the child’s progress', async ({
   await expect(page.getByTestId('parent-marking')).toHaveText(
     'Written answers get a test full mark: the Anthropic key is a placeholder.',
   );
+
+  // On a phone the dashboard, the You-vs-child comparison included, fits.
+  await expect(page.getByText('You vs Student')).toBeVisible();
+  await expectFitsPhone(page);
 });
 
 test('a wrong password or role shows the generic sign-in error', async ({ page }) => {

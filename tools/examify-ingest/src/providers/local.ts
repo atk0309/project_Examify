@@ -92,21 +92,30 @@ async function generateViaHttp(
   const fetchFn = deps.fetch ?? fetch;
   const url = new URL('/v1/chat/completions', baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`);
   const payload = await withProviderSignal(deps.signal, async (signal) => {
-    const res = await fetchFn(url, {
-      method: 'POST',
-      signal,
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        model: request.model,
-        temperature: 0,
-        seed: request.seed,
-        response_format: { type: 'json_object' },
-        messages: [
-          { role: 'system', content: request.prompt },
-          { role: 'user', content: buildOpenAiCompatibleUserContent(request) },
-        ],
-      }),
-    });
+    const send = (jsonMode: boolean) =>
+      fetchFn(url, {
+        method: 'POST',
+        signal,
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          model: request.model,
+          temperature: 0,
+          seed: request.seed,
+          ...(jsonMode ? { response_format: { type: 'json_object' } } : {}),
+          messages: [
+            { role: 'system', content: request.prompt },
+            { role: 'user', content: buildOpenAiCompatibleUserContent(request) },
+          ],
+        }),
+      });
+    let res = await send(true);
+    // JSON mode keeps a small model's bank valid (Ollama, llama.cpp, vLLM), but
+    // LM Studio takes only json_schema / text and answers json_object with a
+    // 400: ask once more without it. The reply is parsed leniently either way.
+    if (res.status === 400) {
+      await res.body?.cancel().catch(() => {});
+      res = await send(false);
+    }
     return readProviderJson<{ choices?: { message?: { content?: string } }[] }>(
       res,
       'local endpoint',
