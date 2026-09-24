@@ -2099,6 +2099,65 @@ plain_env_value() {
   return 0
 }
 
+# True for an http(s) URL the app takes (env.ts: z.string().url(), a WHATWG
+# URL parse) with a host: a name, a dotted-decimal IPv4 address or a
+# bracketed IPv6 address, then an optional port and anything after it. Odd
+# forms the parser also reads (127.1, 0x7f.0.0.1, octal, punycode, IPv4 in
+# IPv6) are refused rather than guessed at: never looser than the app.
+is_http_url() {
+  local authority host port last part
+  case "$1" in
+    http://* | https://*) authority="${1#*://}" ;;
+    *) return 1 ;;
+  esac
+  authority="${authority%%[/?#]*}"
+  authority="${authority##*@}"
+  if [[ "$authority" =~ ^\[([0-9A-Fa-f:]+)\](:([0-9]*))?$ ]]; then
+    port="${BASH_REMATCH[3]}"
+    is_ipv6_text "${BASH_REMATCH[1]}" || return 1
+  elif [[ "$authority" =~ ^([A-Za-z0-9_~.-]+)(:([0-9]*))?$ ]]; then
+    host="${BASH_REMATCH[1]%.}"
+    port="${BASH_REMATCH[3]}"
+    [[ "$host" =~ ^[A-Za-z0-9_~-]+(\.[A-Za-z0-9_~-]+)*$ ]] || return 1
+    case ".$host" in *.[Xx][Nn]--*) return 1 ;; esac
+    last="${host##*.}"
+    case "$last" in
+      0[Xx]*) return 1 ;;
+      *[!0-9]*) ;;
+      *)
+        # A name ending in a number is read as an IPv4 address.
+        [[ "$host" =~ ^(0|[1-9][0-9]?[0-9]?)\.(0|[1-9][0-9]?[0-9]?)\.(0|[1-9][0-9]?[0-9]?)\.(0|[1-9][0-9]?[0-9]?)$ ]] || return 1
+        for part in "${BASH_REMATCH[@]:1}"; do
+          [ "$part" -le 255 ] || return 1
+        done
+        ;;
+    esac
+  else
+    return 1
+  fi
+  [ -z "$port" ] || { [ "${#port}" -le 5 ] && [ "$((10#$port))" -le 65535 ]; }
+}
+
+# True for the inside of [...] in a URL: up to eight groups of 1-4 hex
+# digits, at most one :: standing for the zero groups left out.
+is_ipv6_text() {
+  local g n=0 compressed=0
+  local -a groups
+  case "$1" in *:::* | *::*::*) return 1 ;; *::*) compressed=1 ;; esac
+  case "$1" in : | :[!:]* | *[!:]:) return 1 ;; esac
+  IFS=: read -r -a groups <<<"$1"
+  for g in "${groups[@]}"; do
+    [ -z "$g" ] && continue
+    [ "${#g}" -le 4 ] || return 1
+    n=$((n + 1))
+  done
+  if [ "$compressed" = "1" ]; then
+    [ "$n" -le 7 ]
+  else
+    [ "$n" -eq 8 ]
+  fi
+}
+
 # AI settings the host passed in are written as given: refuse what .env could
 # not hold or what the app would refuse at boot.
 check_host_ai_settings() {
@@ -2115,10 +2174,9 @@ check_host_ai_settings() {
     fi
     printf -v "$name" '%s' "$value"
   done
-  case "$EXAMIFY_LLM_BASE_URL" in
-    '' | http://* | https://*) ;;
-    *) die "EXAMIFY_LLM_BASE_URL must be an http:// or https:// address." ;;
-  esac
+  if [ -n "$EXAMIFY_LLM_BASE_URL" ] && ! is_http_url "$EXAMIFY_LLM_BASE_URL"; then
+    die "EXAMIFY_LLM_BASE_URL must be an http:// or https:// address with a host, such as http://127.0.0.1:11434/v1."
+  fi
 }
 
 # Run a check for at most $1 seconds, then stop it and everything it started,
@@ -2280,6 +2338,29 @@ ollama_base_url() {
   printf '%s' "$host"
 }
 
+# The host of an http(s) URL, without user info or port ([...] kept for IPv6).
+url_host() {
+  local host="${1#*://}"
+  host="${host%%[/?#]*}"
+  host="${host##*@}"
+  case "$host" in
+    \[*) host="${host%%]*}]" ;;
+    *) host="${host%:*}" ;;
+  esac
+  printf '%s' "${host%.}"
+}
+
+# True when an http(s) URL points at this machine: localhost, 127.x.x.x or
+# [::1]. Anything else may be another machine.
+is_loopback_url() {
+  local host
+  host="$(url_host "$1")"
+  case "$host" in
+    [Ll][Oo][Cc][Aa][Ll][Hh][Oo][Ss][Tt] | '[::1]') return 0 ;;
+  esac
+  [[ "$host" =~ ^127\.[0-9]+\.[0-9]+\.[0-9]+$ ]]
+}
+
 # One model name per line. Fails when nothing answers as Ollama.
 ollama_models() {
   local base="$1"
@@ -2392,7 +2473,13 @@ offer_ai_tools() {
   fi
   if [ "$AI_OLLAMA_STATE" = "models" ]; then
     keys+=(ollama)
-    labels+=("Ollama        runs on this machine; nothing leaves it")
+    # Where use_ollama points the app: a host EXAMIFY_LLM_BASE_URL wins.
+    local ollama_url="${EXAMIFY_LLM_BASE_URL:-$AI_OLLAMA_BASE}"
+    if is_loopback_url "$ollama_url"; then
+      labels+=("Ollama        runs on this machine; nothing leaves it")
+    else
+      labels+=("Ollama        on $(url_host "$ollama_url"); study files and written answers go there")
+    fi
   fi
   keys+=(key later)
   labels+=("An API key    Anthropic or OpenAI (asked next)" "Decide later  pick one in /onboarding")

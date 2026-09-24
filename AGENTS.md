@@ -209,8 +209,10 @@ JSON`). Missing cloud
   a CLI whose path `.env` cannot hold unquoted is listed with an `ln -s` hint, not offered)
   or `EXAMIFY_LLM_BASE_URL` +
   `EXAMIFY_LLM_MODEL`; a typed key sets `cloud` / `cloud-openai`. Host values are otherwise
-  written as given; an unknown mode, a value `.env` cannot hold unquoted or a non-http(s) base URL is
-  refused. `EXAMIFY_AI_MODE` (validated in `env.ts`) is the mode a household uses until its
+  written as given; an unknown mode, a value `.env` cannot hold unquoted or a base URL that is
+  not an http(s) URL with a host (`is_http_url`, never looser than `z.string().url()`) is
+  refused. The Ollama option says nothing leaves the machine only for a loopback address;
+  otherwise it names the host that study files and answers go to. `EXAMIFY_AI_MODE` (validated in `env.ts`) is the mode a household uses until its
   admin picks one: `effectiveAiMode` (saved, else the installer's) drives generate, marking
   and the wizard (`wizard-ai-installer` names the pick). `is_ai_mode` is parity-tested
   against `ONBOARDING_AI_MODES`.

@@ -432,7 +432,9 @@ Sent to a third party only when you turn the feature on:
   local outbox keeps them on disk.
 - **Installer checks.** A new interactive install asks Claude Code and Codex (when
   installed) whether they are signed in, and Ollama for its model list. No family data is
-  involved; `EXAMIFY_AI_DETECT=0` skips the checks.
+  involved; `EXAMIFY_AI_DETECT=0` skips the checks. When `OLLAMA_HOST` (or
+  `EXAMIFY_LLM_BASE_URL`) points at another machine, the Ollama option names it: study
+  files and written answers then go there.
 - **Fonts.** Pages load the Newsreader and Hanken Grotesk stylesheet from Google Fonts.
 - **Optional:** Cloudflare Turnstile (`TURNSTILE_ENABLED=1`) and Plausible analytics
   (`PLAUSIBLE_DOMAIN`).

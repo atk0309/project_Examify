@@ -1121,9 +1121,14 @@ offered, so no mode is written that cannot run) or
 `EXAMIFY_LLM_BASE_URL` + `EXAMIFY_LLM_MODEL`. A typed Anthropic / OpenAI key sets `cloud` /
 `cloud-openai`. Host `EXAMIFY_AI_MODE`, `EXAMIFY_CLAUDE_BIN`, `EXAMIFY_CODEX_BIN`,
 `EXAMIFY_LLM_BASE_URL` and `EXAMIFY_LLM_MODEL` are otherwise written as given; an unknown mode, a
-value `.env` cannot hold unquoted (spaces, quotes, `$`, `#`, backslash) or a non-http(s)
-base URL is refused before `.env` is written. The mode list in `is_ai_mode` is
-parity-tested against `ONBOARDING_AI_MODES`.
+value `.env` cannot hold unquoted (spaces, quotes, `$`, `#`, backslash) or a base URL that
+is not an http(s) URL with a host is refused before `.env` is written (`is_http_url`: a name,
+dotted-decimal IPv4 or bracketed IPv6 host and an optional port; odd forms the URL parser
+also reads are refused, so it is never looser than `env.ts`'s `z.string().url()`, which the
+test suite checks it against). The Ollama menu line says "runs on this machine; nothing
+leaves it" only when the address it would write is localhost, 127.x.x.x or `[::1]`
+(`is_loopback_url`); otherwise it names the host that study files and answers go to. The
+mode list in `is_ai_mode` is parity-tested against `ONBOARDING_AI_MODES`.
 `CLIENT_IP_HEADER` (`x-forwarded-for` default | `x-real-ip` | `cf-connecting-ip`)
 names the one header the rate limiter trusts. `AUTH_MODE` defaults to `magic-link` (existing #56 hosts
 keep working). `password` sign-in needs no mail; password-mode invite accept

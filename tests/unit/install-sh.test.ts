@@ -1297,6 +1297,48 @@ describe('install.sh AI tools', () => {
     }
   });
 
+  it.each([
+    // OLLAMA_HOST on this machine: nothing leaves it.
+    [
+      { OLLAMA_HOST: 'localhost:11500' },
+      'runs on this machine; nothing leaves it',
+      'http://localhost:11500',
+    ],
+    [
+      { OLLAMA_HOST: '[::1]:11434' },
+      'runs on this machine; nothing leaves it',
+      'http://[::1]:11434',
+    ],
+    // Another machine: say where study files and answers go.
+    [
+      { OLLAMA_HOST: '10.0.0.5' },
+      'on 10.0.0.5; study files and written answers go there',
+      'http://10.0.0.5:11434',
+    ],
+    // A host EXAMIFY_LLM_BASE_URL is what gets written, so it is what the label describes.
+    [
+      { EXAMIFY_LLM_BASE_URL: 'https://llm.example.com/v1' },
+      'on llm.example.com; study files and written answers go there',
+      'https://llm.example.com/v1',
+    ],
+  ])('describes where Ollama sends study files (%o)', (host, label, written) => {
+    const dir = tmpDir('examify-install-');
+    try {
+      const { result, envFile } = runAiInstall(
+        dir,
+        { ollama: ['llama3.2:latest'] },
+        `${BEFORE_AI}\n\n`,
+        host,
+      );
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain(`  1) Ollama        ${label}\n`);
+      expect(envFile).toContain('EXAMIFY_AI_MODE=local-agent\n');
+      expect(envFile).toContain(`EXAMIFY_LLM_BASE_URL=${written}\n`);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('defaults to Ollama when no CLI is signed in, with its first model', () => {
     const dir = tmpDir('examify-install-');
     try {
@@ -1525,6 +1567,7 @@ describe('install.sh AI tools', () => {
     [{ EXAMIFY_LLM_MODEL: 'llama 3' }, 'EXAMIFY_LLM_MODEL cannot be written to .env as given'],
     [{ EXAMIFY_CLAUDE_BIN: '/opt/$HOME/claude' }, 'EXAMIFY_CLAUDE_BIN cannot be written'],
     [{ EXAMIFY_LLM_BASE_URL: '127.0.0.1:11434' }, 'EXAMIFY_LLM_BASE_URL must be an http://'],
+    [{ EXAMIFY_LLM_BASE_URL: 'http://' }, 'EXAMIFY_LLM_BASE_URL must be an http://'],
   ])('refuses host AI settings .env or the app could not use (%o)', (host, message) => {
     const dir = tmpDir('examify-install-');
     try {
@@ -1550,6 +1593,76 @@ describe('install.sh AI tools', () => {
       expect(script).toContain(`must be one of: ${ONBOARDING_AI_MODES.join(', ')}.`);
       expect(mode).toMatch(/^[a-z-]+$/);
     }
+  });
+
+  it('checks EXAMIFY_LLM_BASE_URL never more loosely than the app (z.string().url())', async () => {
+    const { z } = await import('zod');
+    const appTakes = (url: string) => z.string().url().safeParse(url).success;
+    const script = fs.readFileSync(SCRIPT, 'utf8');
+    const fn = (name: string) =>
+      new RegExp(`^${name}\\(\\) \\{\\n[\\s\\S]*?^\\}$`, 'm').exec(script)?.[0] ?? '';
+    const accepted = [
+      'http://127.0.0.1:11434',
+      'http://127.0.0.1:11434/v1',
+      'https://llm.example.com/v1',
+      'http://localhost:8080/v1?x=1#y',
+      'http://localhost.:8080',
+      'http://[::1]:11434/v1',
+      'http://[::]',
+      'http://[fe80::1]',
+      'http://[2001:db8:0:0:0:0:0:1]:80',
+      'http://user:pw@llm.lan:65535/',
+      'http://my_host-1.lan',
+      'http://10.0.0.5:',
+      'http://0.0.0.0',
+    ];
+    // Refused by the app too.
+    const broken = [
+      'http://',
+      'http://:11434',
+      'http://host:99999',
+      'http://999.1.1.1',
+      'http://1.2.3.4.5',
+      'http://[:::1]',
+      'http://[1::2::3]',
+      'http://[12345::1]',
+      'http://[1:2:3:4:5:6:7:8:9]',
+      'http://user@',
+      '127.0.0.1:11434',
+    ];
+    // Taken by the app, but refused here rather than guessed at.
+    const odd = [
+      'ftp://host',
+      'HTTP://host',
+      'http://127.1',
+      'http://1234',
+      'http://0x7f.0.0.1',
+      'http://010.0.0.1',
+      'http://[::ffff:127.0.0.1]',
+      'http://xn--nxasmq6b.com',
+    ];
+    const all = [...accepted, ...broken, ...odd];
+    const run = spawnSync(
+      BASH,
+      [
+        '-c',
+        `${fn('is_http_url')}\n${fn('is_ipv6_text')}\nfor u in "$@"; do if is_http_url "$u"; then echo yes; else echo no; fi; done`,
+        'bash',
+        ...all,
+      ],
+      { encoding: 'utf8' },
+    );
+    expect(run.stderr).toBe('');
+    const verdicts = run.stdout.trim().split('\n');
+    expect(verdicts).toHaveLength(all.length);
+    all.forEach((url, i) => {
+      const ok = verdicts[i] === 'yes';
+      expect({ url, ok }).toEqual({ url, ok: accepted.includes(url) });
+      // Never looser than the app.
+      if (ok) expect({ url, app: appTakes(url) }).toEqual({ url, app: true });
+    });
+    for (const url of broken) expect({ url, app: appTakes(url) }).toEqual({ url, app: false });
+    for (const url of odd) expect({ url, app: appTakes(url) }).toEqual({ url, app: true });
   });
 });
 
