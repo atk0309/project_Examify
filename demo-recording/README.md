@@ -31,7 +31,7 @@ The demo-only fetch guard reserves atomic request slots across Node processes,
 allows only the exact OpenAI/Anthropic endpoints and models, rejects images/tools/
 unknown features, caps request JSON at 32 KiB and output at 8192 tokens, and permits
 at most eight attempts per provider. HTTP failures count; no retries in Playwright
-or fetch. Missing or implausible usage halts subsequent requests. Provider responses
+or fetch. Missing or implausible usage and transport failures halt later request starts; already-reserved in-flight requests remain bounded by the same slots. Provider responses
 are genuine and unchanged. This is harness instrumentation; it is not a product
 budget feature. It requires integration review before being relied on for a live run.
 
@@ -50,3 +50,10 @@ The current script exercises OpenAI in live mode. A second Anthropic pass must b
 explicitly selected, retain the same session ledger, and remain within its eight
 attempts. Do not reset/retry a paid run without checking the remaining budget.
 Live failures must remain visible as failures, not be replaced with fixture output.
+
+This is a known-script cost guard, not an account-wide billing cap or a sandbox
+against arbitrary runner code. Each fresh runner creates a fresh ledger. Never
+automatically rerun live: reconcile recorded slots/actual provider usage and obtain
+a new remaining-budget approval first. No paid retry is authorized by a failed run.
+The amounts above assume standard pricing, token-limit compliance, and no other
+key usage. Validate these assumptions before enabling live.

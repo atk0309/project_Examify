@@ -43,3 +43,23 @@ test('missing usage halts further calls without retrying', () => {
   );
   assert.deepEqual(r, { calls: 1, refused: 2 });
 });
+
+test('transport failure halts future calls; consumed slot is never refunded', () => {
+  const source = intro.replace(
+    'return new Response(JSON.stringify({usage:{prompt_tokens:20,completion_tokens:10}}),{status:200});',
+    "throw new Error('synthetic timeout');",
+  );
+  const r = run(
+    source +
+      `let refused=0; for(let i=0;i<2;i++){try{await fetch(url,init);}catch{refused++;}} console.log(JSON.stringify({calls,refused}));`,
+  );
+  assert.deepEqual(r, { calls: 1, refused: 2 });
+});
+
+test('loopback forwarding also refuses redirects', () => {
+  const r = run(
+    intro +
+      `await fetch('http://127.0.0.1:3115/api/health', {}); console.log(JSON.stringify({calls,redirects}));`,
+  );
+  assert.deepEqual(r, { calls: 1, redirects: ['error'] });
+});

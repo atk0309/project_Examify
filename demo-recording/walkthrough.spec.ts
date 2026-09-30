@@ -7,6 +7,7 @@ test('fresh household → source pack → generate → apply → sit exam → pr
   const start = Date.now();
   async function chapter(name: string) {
     chapters.push({ name, elapsedSeconds: (Date.now() - start) / 1000 });
+    console.log(`Chapter: ${name}`);
     await page.waitForTimeout(9000);
   }
   const installLog = await fs.readFile('demo-recording/evidence/install-excerpt.txt', 'utf8');
@@ -34,7 +35,8 @@ test('fresh household → source pack → generate → apply → sit exam → pr
   await expect(page.getByTestId('wizard-subjects')).toContainText('Generate demo');
   await chapter('Demo source pack copied into the isolated family data folder');
   await page.getByTestId('wizard-next').click();
-  await page.getByRole('button', { name: /Generate demo/ }).click();
+  const demoTab = page.getByTestId('wizard-file-tab-demo');
+  if (await demoTab.count()) await demoTab.click();
   await expect(page.getByTestId('wizard-file-sources-demo')).toContainText('notes.txt');
   await page.getByTestId('wizard-next').click();
   // The main clip uses OpenAI for generation and grading. A second short pass

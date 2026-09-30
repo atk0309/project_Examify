@@ -14,6 +14,7 @@ export default defineConfig({
   outputDir: path.join(root, 'demo-recording/output'),
   use: {
     baseURL,
+    actionTimeout: 20_000,
     viewport: { width: 1440, height: 1000 },
     video: { mode: 'on', size: { width: 1440, height: 1000 } },
     trace: 'off',

@@ -29,7 +29,15 @@ export function boundedRequest(url, init) {
     throw Error('demo_model_or_message_limit');
   if (body.system !== undefined && typeof body.system !== 'string')
     throw Error('demo_nontext_system');
+  if (
+    body.response_format !== undefined &&
+    (body.response_format?.type !== 'json_object' ||
+      Object.keys(body.response_format).some((k) => k !== 'type'))
+  )
+    throw Error('demo_response_format');
   for (const message of body.messages) {
+    if (!message || Object.keys(message).some((k) => !['role', 'content'].includes(k)))
+      throw Error('demo_message_fields');
     if (!['system', 'user', 'assistant'].includes(message.role)) throw Error('demo_message_role');
     if (typeof message.content === 'string') continue;
     if (

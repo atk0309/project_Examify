@@ -37,3 +37,15 @@ test('conservative standard-price bound below approved cap', () => {
   assert.ok(worstCaseUsd('anthropic') < 2.59);
   assert.ok(worstCaseUsd('openai') < 5 && worstCaseUsd('anthropic') < 5);
 });
+
+test('nested tool calls and unapproved response formats are rejected', () => {
+  assert.throws(() =>
+    boundedRequest(
+      url,
+      request({ messages: [{ role: 'assistant', content: '', tool_calls: [] }] }),
+    ),
+  );
+  assert.throws(() =>
+    boundedRequest(url, request({ response_format: { type: 'json_schema', json_schema: {} } })),
+  );
+});

@@ -12,7 +12,7 @@ globalThis.fetch = async function demoFetch(input, init) {
   const url = String(input instanceof Request ? input.url : input);
   const parsed = new URL(url);
   if (['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname))
-    return originalFetch(input, init);
+    return originalFetch(input, { ...init, redirect: 'error' });
   if (!live || !TARGETS[url]) throw Error('demo_external_request_refused');
   const bounded = boundedRequest(url, init);
   const halted = path.join(ledger, `${bounded.provider}-halted`);
@@ -30,7 +30,13 @@ globalThis.fetch = async function demoFetch(input, init) {
     }
   }
   if (!reserved) throw Error('demo_provider_call_limit');
-  const response = await originalFetch(input, { ...init, body: bounded.body, redirect: 'error' });
+  let response;
+  try {
+    response = await originalFetch(input, { ...init, body: bounded.body, redirect: 'error' });
+  } catch {
+    fs.writeFileSync(halted, 'provider_transport_failure', { mode: 0o600 });
+    throw Error('demo_provider_transport_failure');
+  }
   if (response.ok) {
     let usage;
     try {
