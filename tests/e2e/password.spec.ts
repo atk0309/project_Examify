@@ -215,6 +215,43 @@ test('parent signs in with a password and sees the child’s progress', async ({
   await expectFitsPhone(page);
 });
 
+test('parent can enter Student View and return from an exam, repeatedly and after reload', async ({
+  page,
+}) => {
+  await signIn(page, PARENT, 'Parent');
+  const enter = page.getByRole('button', { name: 'Student View', exact: true });
+  const back = page.getByRole('button', { name: 'Back to parent view', exact: true });
+  await expect(back).toHaveCount(0);
+  await enter.click();
+  await expect(back).toBeVisible();
+  await expectFitsPhone(page);
+  await startExam(page, 'maths', 'easy');
+  await expect(back).toBeVisible();
+  await back.click();
+  await expect(enter).toBeVisible();
+  await expect(back).toHaveCount(0);
+  await page.reload();
+  await expect(enter).toBeVisible();
+  await enter.click();
+  await expect(back).toBeVisible();
+  await page.reload();
+  await expect(back).toBeVisible();
+  await back.click();
+  await expect(enter).toBeVisible();
+});
+
+test('a student never sees parent-preview navigation or gains parent access', async ({ page }) => {
+  await signIn(page, STUDENT, 'Student');
+  await expect(page.getByTestId('subject-card-maths')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Student View', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Back to parent view', exact: true })).toHaveCount(
+    0,
+  );
+  await page.goto('/settings/ai');
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByTestId('subject-card-maths')).toBeVisible();
+});
+
 test('a wrong password or role shows the generic sign-in error', async ({ page }) => {
   await fillSignIn(page, STUDENT.email, 'definitely-not-the-password', 'Student');
   await expect(page.getByTestId('signin-error-invalid')).toHaveText(

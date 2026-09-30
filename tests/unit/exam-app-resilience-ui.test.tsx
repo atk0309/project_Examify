@@ -417,7 +417,7 @@ describe('ExamApp sends the waiting autosave when the exam is left', () => {
   it('when a parent exits student mode, before the switch', async () => {
     renderApp({ role: 'parent' });
     await typeOnQuestionTwo('The parent’s answer.');
-    fireEvent.click(screen.getByRole('button', { name: 'Exit student mode' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Back to parent view' }));
     await settle();
 
     expect(calls.slice(-2)).toEqual(['save geo::easy', 'studentMode false']);

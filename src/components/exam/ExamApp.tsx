@@ -1348,10 +1348,10 @@ export function ExamApp({
       <div className="app-frame">
         {studentMode && (
           <div className="student-mode-bar" role="status">
-            <span className="student-mode-tag">Playing as student</span>
+            <span className="student-mode-tag">Student View</span>
             <button className="student-mode-exit" onClick={exitStudentMode} type="button">
               {UIcon.signout}
-              <span>Exit student mode</span>
+              <span>Back to parent view</span>
             </button>
           </div>
         )}
