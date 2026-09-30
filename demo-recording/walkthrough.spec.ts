@@ -1,7 +1,6 @@
 import { expect, test, type Locator } from '@playwright/test';
 import fs from 'node:fs/promises';
 import { makeSnapshot, waitForAnswerPlan, findAnswer, chooseDemoDifficulty } from './checkpoint/public-plan.mjs';
-import { budgetSummary } from './checkpoint/export-budget.mjs';
 import { LIMITS } from './budget-policy.mjs';
 import { classifyGenerationError } from './checkpoint/generation-status.mjs';
 const live = process.env.DEMO_MODE === 'live';
@@ -139,7 +138,8 @@ test('cell biology: install, generate, review, practise, feedback, progress', as
   // Public questions only: choose an actual bounded paper that exercises marking.
   // No rubric/key reads, generation retries, or fabricated questions.
   const publicBank = JSON.parse(await fs.readFile('tests/.tmp/demo-data/content/generated/questions/demo.json', 'utf8'));
-  const remainingMarkingCalls = LIMITS.calls - budgetSummary('tests/.tmp/demo-budget').providers.anthropic.reservedRequests;
+  const consumedMarkingCalls = (await fs.readdir('tests/.tmp/demo-budget')).filter(name => /^anthropic-[0-7]$/.test(name)).length;
+  const remainingMarkingCalls = LIMITS.calls - consumedMarkingCalls;
   const demoDifficulty = chooseDemoDifficulty(publicBank, remainingMarkingCalls);
   await page.getByTestId('manage-ai-settings').click();
   await expect(page).toHaveURL(/\/settings\/ai$/);

@@ -57,6 +57,12 @@ jobs:
           cp demo-recording/fixtures/subject.json demo-recording/fixtures/notes.txt tests/.tmp/demo-data/content/subjects/demo/
       - name: Install browser
         run: pnpm exec playwright install --with-deps chromium
+      - name: Check recording test loads without provider credentials
+        run: pnpm exec playwright test --list -c demo-recording/playwright.config.ts
+      - name: Verify real app and browser startup without provider credentials
+        env:
+          DEMO_MODE: stub
+        run: pnpm exec playwright test -c demo-recording/startup.config.ts
       - name: Start recorder and reach public question checkpoint
         env:
           OPENAI_API_KEY: ${{ secrets.EXAMIFY_DEMO_OPENAI_KEY }}
