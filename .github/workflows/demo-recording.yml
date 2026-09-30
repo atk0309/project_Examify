@@ -1,0 +1,65 @@
+name: Examify demo recording (no-key rehearsal)
+on:
+  push:
+    branches: [dot/examify-recording]
+permissions:
+  contents: read
+concurrency:
+  group: examify-demo-recording
+  cancel-in-progress: false
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DEMO_MODE: stub
+      SITE_URL: http://127.0.0.1:3115
+      EXAMIFY_DATA_DIR: tests/.tmp/demo-data
+      DATABASE_URL: file:./tests/.tmp/demo.db
+      AUTH_SECRET: synthetic-demo-only-not-a-production-auth-secret
+      SETUP_BOOTSTRAP_SECRET: synthetic-demo-bootstrap
+      AUTH_MODE: password
+      ALLOW_LOCAL_OUTBOX: '1'
+      MAIL_OUTBOX_DIR: tests/.tmp/demo-outbox
+      EXAMIFY_AI_DETECT: '0'
+      FAMILIES: ''
+      HUSKY: '0'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
+        with:
+          version: 10.33.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.22.2
+      - name: Validate demo budget policy without keys or network
+        run: node --test demo-recording/budget-policy.test.mjs
+      - name: Real clean installation (no provider credentials)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p demo-recording/evidence
+          ./install.sh --yes 2>&1 | tee /tmp/examify-install.log
+          tail -18 /tmp/examify-install.log > demo-recording/evidence/install-excerpt.txt
+          printf '\nCommit: %s\nNode: %s\npnpm: %s\n' "$GITHUB_SHA" "$(node -v)" "$(pnpm -v)" >> demo-recording/evidence/install-excerpt.txt
+      - name: Copy only the committed synthetic source pack
+        run: |
+          mkdir -p tests/.tmp/demo-data/content/subjects/demo
+          cp content/subjects/demo/subject.json content/subjects/demo/notes.txt tests/.tmp/demo-data/content/subjects/demo/
+      - name: Install browser
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Record actual UI (fixture AI clearly labelled)
+        run: pnpm exec playwright test -c demo-recording/playwright.config.ts
+      - name: Save only recording and non-sensitive chapter evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: examify-demo-rehearsal
+          path: |
+            demo-recording/output/**/*.webm
+            demo-recording/evidence/chapters.json
+            demo-recording/evidence/install-excerpt.txt
+          retention-days: 2
+          if-no-files-found: error
