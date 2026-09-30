@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "runId": "36702181540",
+  "questionHash": "d80d4176495e3171c12fb8d5baee40d9d01f195a3130b0456b044c6d75f5b8b3",
+  "answers": [
+    {
+      "id": "demo-easy-1",
+      "type": "mcq",
+      "chosenText": "Chloroplasts"
+    },
+    {
+      "id": "demo-easy-2",
+      "type": "mcq",
+      "chosenText": "Plant cells have a cell wall; animal cells do not."
+    },
+    {
+      "id": "demo-easy-free-1",
+      "type": "free",
+      "response": "Chloroplasts use light energy to make sugar. Mitochondria release energy from food for the cell."
+    }
+  ]
+}
