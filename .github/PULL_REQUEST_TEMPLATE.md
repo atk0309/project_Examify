@@ -10,7 +10,7 @@
 
 ## Tests added or updated
 
-<!-- Per CLAUDE.md, every new page gets a Playwright smoke + link-crawl coverage,
+<!-- Per CONTRIBUTING.md, every new page gets a Playwright smoke + link-crawl coverage,
      every server action gets at least one happy + one failure-path test. -->
 
 - [ ]
@@ -23,7 +23,7 @@
 - [ ] `pnpm test` green
 - [ ] `pnpm test:e2e` green (or note why deferred)
 - [ ] `pnpm build` clean
-- [ ] Docs pass — `CLAUDE.md` / `README.md` / `.env.example` updated if anything that affects setup, env, or routes changed
+- [ ] Docs pass — relevant `docs/` guides / `AGENTS.md` / `.env.example` updated if anything that affects setup, env, or routes changed
 - [ ] Test expansion pass — new pages, helpers, or server actions have coverage
 - [ ] Security and privacy impact considered; no secrets or personal data included
 

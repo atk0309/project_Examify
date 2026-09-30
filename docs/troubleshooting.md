@@ -61,9 +61,10 @@ Turnstile key pairs. See [configuration](configuration.md) and `.env.example`.
 
 ## AI unavailable or written answers not marked
 
-The parent dashboard names the marking provider and its readiness. If setup is
-still open, check the choice in `/onboarding`; after Finish that page is closed
-(see [configuration](configuration.md#ai-for-question-banks-and-marking)). A CLI
+The parent dashboard names the marking provider and its readiness. The household
+admin can open **AI settings** (`/settings/ai`) to change the provider and refresh
+readiness, including after Finish. This checks configuration and CLI sign-in, not
+API-key validity or a paid provider request (see [configuration](configuration.md#change-ai-after-setup)). A CLI
 must be installed and signed in as the same OS user that runs Examify, including
 when launched by a service manager.
 PDF generation with OpenAI, Codex or a local vision endpoint requires `pdftoppm`.

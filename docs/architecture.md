@@ -1,13 +1,9 @@
-# CLAUDE.md
+# Architecture and invariants
 
-Working agreement for AI assistants (and humans) editing this repo. Read this before
-making any change — it encodes invariants that are easy to miss from the diff alone.
-
-`AGENTS.md` and `CLAUDE.md` are paired guidance documents:
-
-- `AGENTS.md` is the canonical quick-operating guide for coding agents.
-- `CLAUDE.md` remains the detailed architecture, invariants, and rationale reference.
-- If overlapping guidance changes, update both files in the same PR and keep the stricter interpretation.
+Detailed engineering reference for contributors and coding agents. Start with
+[AGENTS.md](../AGENTS.md) for workflow and checks, then read the sections relevant
+to your change. Keep each detailed invariant here rather than duplicating it in
+agent-specific instruction files. Paths in code spans are relative to the repository root.
 
 ## Project snapshot
 
@@ -70,7 +66,7 @@ Surface:
   wizard reads and writes — subjects, uploaded PDFs, BankIR, generated JSON,
   `.examify-ingest/` — is the **family layer** in the family data folder
   (`getOnboardingContentRoot()` → `getDataPaths().familyRoot`), never the
-  checkout; only API keys go to the checkout `.env`. Its emit never plans the
+  checkout; only supported configuration goes to the checkout `.env`. Its emit never plans the
   registrars, and Apply refuses (`invalid`, “refusing to write outside the
   family data folder”) any planned path outside `<familyRoot>/content/generated`,
   judged on realpaths (`plannedInsideFamilyGenerated`: that folder must resolve
@@ -164,6 +160,15 @@ Surface:
   `aiModeFromInstaller` shows `wizard-ai-installer`, which names the pick until the admin
   chooses a mode).
   `/setup/wizard` redirects here.
+- **`/settings/ai`** — ongoing household-admin AI settings, including after Finish.
+  Mode, supported model choices, local endpoint and API-key management are separate
+  from the first-run content wizard. This route never reopens `/setup` or
+  `/onboarding`, changes `onboarding_complete`, or grants content-write access.
+  API keys are status-only in snapshots; usable host-injected keys are read-only.
+  Command strings and executable paths remain host-managed. Readiness refresh checks
+  configuration and CLI sign-in; it does not make a paid provider request or validate
+  API credentials. `EXAMIFY_ANTHROPIC_MODEL` / `EXAMIFY_OPENAI_MODEL` configure
+  the corresponding cloud backend for generation and marking.
 - **`/invite/[token]`** — accept a household invite (password, magic-link, or local OTP).
   In `AUTH_MODE=password` the URL is a secret that starts a join; membership and
   `emailVerifiedAt` wait for a mailbox OTP (`completePasswordInvite`). The chosen
@@ -211,77 +216,8 @@ Surface:
   AbortSignal so provider HTTP/CMD stop, then discards the preview.
 - **`/robots.txt`** — disallow-all (this is a private, allowlisted app).
 
-There is **no blog, no MDX, no admin panel, no public marketing page** — the first screen
+There is **no blog, no MDX, no general-purpose admin panel, no public marketing page** — the first screen
 is the usable login, and the screen after it is the usable dashboard.
-
-## Stack and pinned versions
-
-Latest stable of each, exact-pinned in `package.json` (no `^`/`~`). Bumps land via the
-grouped weekly Dependabot PRs in `.github/dependabot.yml`.
-
-| Layer       | Choice                                                                                            |
-| ----------- | ------------------------------------------------------------------------------------------------- |
-| Runtime     | Node 22 LTS (`>=22.22.2 <23`, `.nvmrc`), pnpm 10                                                  |
-| Framework   | Next.js 16 (App Router, Turbopack), React 19.3, TypeScript 6 strict                               |
-| Styling     | Tailwind v4 with a CSS-first `@theme` token block, three `data-theme` moods                       |
-| DB          | SQLite in the family data folder (persistent storage), via Drizzle + better-sqlite3               |
-| Auth        | Host-picked mode (`password` / `magic-link` / `local-otp`) + iron-session, invite-only households |
-| Captcha     | Optional Cloudflare Turnstile (off when keys unset; server-verified when set)                     |
-| Email       | Resend, SMTP, or local outbox (`MAIL_TRANSPORT`); outbox gated in production                      |
-| Tests       | Vitest (unit), Playwright (e2e), Cloudflare dummy test keys                                       |
-| Lint/Format | ESLint 9.39 (Next 16 plugin set) + Prettier + Tailwind plugin                                     |
-
-**Why ESLint 9, not 10?** `eslint-plugin-react@7.x` doesn't support ESLint 10 yet, and
-`eslint-config-next@16` pulls it in transitively. Move both together later.
-
-## Commands cheat-sheet
-
-| Command                             | What it does                                                                                   |
-| ----------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `pnpm dev`                          | Next.js dev server with Turbopack                                                              |
-| `pnpm build`                        | Production build                                                                               |
-| `pnpm start`                        | Run the production build (`PORT` defaults to 3000)                                             |
-| `pnpm lint`                         | ESLint flat-config across the repo                                                             |
-| `pnpm format`                       | Prettier write                                                                                 |
-| `pnpm format:check`                 | Prettier dry-run (CI guard)                                                                    |
-| `pnpm typecheck`                    | `tsc --noEmit`                                                                                 |
-| `pnpm test`                         | Vitest unit suite                                                                              |
-| `pnpm test:e2e`                     | Playwright e2e (`pnpm build`, then seeded + fresh + password)                                  |
-| `pnpm db:generate`                  | Generate a new Drizzle migration from schema diffs                                             |
-| `pnpm db:migrate`                   | Init the data folder (refuses leftover checkout content), migrate its DB                       |
-| `pnpm db:studio`                    | Drizzle Studio against the local DB                                                            |
-| `pnpm examify-ingest`               | Generate / validate / emit BankIR (`tools/examify-ingest`); layer from the paths               |
-| `pnpm examify:data`                 | Data folder CLI `scripts/examify-data.mjs` (`paths`, `init`, `backup`, `restore`, `verify`, …) |
-| `pnpm examify:backup`               | `0600` archive: DB snapshot + family content + `.env` (`--no-env`, `--out`)                    |
-| `pnpm examify:restore`              | Restore an archive (server stopped; `--force` moves data aside, `--with-env`)                  |
-| `./install.sh`                      | Interactive self-host install (env + data folder + mail/outbox + migrate + build)              |
-| `./install.sh --upgrade`            | Backup → move checkout content → merge → install / migrate / build / verify                    |
-| `./install.sh --rollback <archive>` | Back to a pre-upgrade backup's commit, data and `.env`                                         |
-| `./install.sh --restore <archive>`  | New machine: install, restore the archive (and its `.env`), migrate, build                     |
-
-## Branch + PR rules
-
-- All development lands on a feature branch.
-- **Never push directly to `main`**. Every change opens a PR.
-- PR body lists routes touched and tests added (the `PULL_REQUEST_TEMPLATE.md` enforces this).
-- Don't merge with a red CI. Don't merge bypassing required reviews.
-- **Every PR gets a Codex review.** Opening a PR (or marking it ready) triggers one;
-  after each later push that changes code, comment `@codex review` so the fix commits
-  are reviewed too. Verify each finding and fix the real ones before merging.
-  CodeRabbit reviews each PR to `main` once, when it opens (`.coderabbit.yaml`, no
-  incremental re-reviews — it rate-limits); don't re-trigger it after fixes (Codex
-  re-reviews those). Both are advisory on top of green CI. `AGENTS.md` → "Review guidelines" is what Codex checks against.
-
-## End-of-session ritual (every session)
-
-1. **Docs pass** — update `README.md`, `CLAUDE.md`, and `.env.example` for anything that
-   changed (new env var, new route, new script, behaviour invariant).
-2. **Test expansion pass** —
-   - any new page route gets a Playwright smoke (200 + title) and is covered by the link-crawl;
-   - any new server action or route handler gets at least one happy + one failure test;
-   - any new helper in `src/lib/` gets a Vitest unit test.
-3. `pnpm lint && pnpm typecheck && pnpm test && pnpm build` (and `pnpm test:e2e` when
-   possible) — paste the green summary in the PR body.
 
 ## Architecture
 
@@ -292,6 +228,7 @@ src/
     api/onboarding/cancel-generate/ # concurrent generate cancel (not a Server Action)
     setup/              # household bootstrap (page); leftover /setup/wizard → /onboarding
     onboarding/         # admin-only content wizard (BankIR validate / dry-run / apply)
+    settings/ai/        # ongoing admin AI configuration; does not reopen content setup
     signin/             # login (page); magic-link verify (route.ts) + verify/error (page)
     page.tsx            # auth gate -> ExamApp
     error.tsx           # app-level error boundary: calm copy, retry(), full reload to /
@@ -330,7 +267,7 @@ src/
     data-folder.ts      # initDataFolder: 0700 + `.gitignore` + marker; refuses a shared folder
     env-file.ts         # the one `.env` parser + `next start` file order (readProductionEnvFiles)
     content-root.ts     # getOnboardingContentRoot() = the family data folder (test override)
-    env-store.ts        # server-only `.env` upsert/clear (ANTHROPIC_API_KEY / OPENAI_API_KEY write path)
+    env-store.ts        # server-only `.env` upsert/clear for supported AI keys/settings
     families.ts         # leftover FAMILIES JSON parser (optional one-shot import only)
     allowlist.ts        # isAllowedEmail(role,email), derived from household membership
     auth-mode.ts        # AUTH_MODE types + helpers (password / magic-link / local-otp)
@@ -808,7 +745,7 @@ project auth status` (JSON `loggedIn`; the option before the subcommand, which r
   `signed_in` / `unknown` fresh for 5 min, then served stale while one background
   check runs (past 10 min the render waits); `signed_out` fresh for 30 s, then the
   render waits for the new check, so signing in shows on the next load; `recheck`
-  (only the admin's `/onboarding` page, `getOnboardingPageSnapshot`) never takes a
+  (the admin's onboarding page or AI-settings refresh) never takes a
   cached answer and waits for a check (one already running is shared); one check per
   key at a time. A generate that fails `provider_auth` or a marking run that fails
   `cli_auth` calls `forgetAgentCliSignIn(cli)` (a check of that CLI still running is
@@ -840,7 +777,7 @@ These are non-negotiable. Don't "fix" them out.
   the installer's `EXAMIFY_AI_MODE`, through `markingBackendForAiMode`) to `scoreAttempt`, which marks every written answer of the attempt
   with `gradeAnswers(tasks, backend)` (`src/lib/grading/`, server-only): `cloud` → Anthropic
   (`gradeFreeText`, one request per answer); `cloud-openai` → OpenAI Chat Completions
-  (`gpt-4o`, live `OPENAI_API_KEY`, the same `test` stub rule), one request per answer;
+  (configured `EXAMIFY_OPENAI_MODEL`, else the backend default; live `OPENAI_API_KEY`, the same `test` stub rule), one request per answer;
   `claude-cli` / `codex-cli` → **one** locked-down CLI run for the whole attempt (the generate
   runner and its invariants above; `{"results":[{"answer":n,…}]}`, matched by number, else by
   position when no entry is numbered), `CLI_GRADING_TIMEOUT_MS` 45 s; `local-agent` →
@@ -929,7 +866,7 @@ These are non-negotiable. Don't "fix" them out.
   goes through `getOnboardingContentRoot()`); data folder = `EXAMIFY_DATA_DIR` → else the
   folder of an explicit SQLite `DATABASE_URL` outside the checkout → else `./data`.
   Inside the checkout the only runtime writes are `./data` (gitignored), `tests/.tmp/…`
-  (the suites) and the repo-root `.env` through `env-store.ts` (wizard API keys,
+  (the suites) and the repo-root `.env` through `env-store.ts` (admin-managed AI settings,
   `findRepoRoot`), besides Next's own `.next/`. Dev/test only: outside production
   `RESEND_API_KEY=test` (or `NODE_ENV=test`) keeps the outbox in `tests/.tmp/outbox`. Never resolve a runtime content path from
   `process.cwd()` / `findRepoRoot`, never rewrite registrars at runtime, and never write
@@ -1285,30 +1222,15 @@ See `.env.example` for the canonical list.
   empty-token (captcha on) coverage all run without bypassing `verifyTurnstile`
   when it is enabled.
 
-## Dependency policy
+## Contributor reference
 
-- Exact versions in `package.json`. No `^`, no `~`.
-- Bumps land via grouped Dependabot PRs weekly.
-- Manual upgrades: bump, re-run `pnpm install`, run the full test suite, commit on a
-  branch, PR.
+Use [CONTRIBUTING.md](../CONTRIBUTING.md) for development commands,
+quality gates and dependency policy. Keep runtime versions in `package.json` and
+configuration values in `.env.example`; this reference describes their invariants.
 
-## Out of scope (confirm with the user before building)
-
-- Streaks, leaderboards, or rich profiles. (Per-student attempt history **is** shipped —
-  see "Progress tracking + roles" — but gamification beyond that is not.)
-- Extra per-child settings / profiles. The parent dashboard already lists every
-  household student and compares against a selected child.
-- Comments, social features, payments.
-- An admin UI / content CMS (questions are edited in `src/lib/exam/data.ts`).
-- OAuth providers (password / magic-link / local-otp only, by design).
-- Image uploads / asset pipeline; PDF parsing (questions are added by hand).
-
-## Known platform notes
-
-- Some sandbox environments block the Playwright browser CDN (`cdn.playwright.dev`) and
-  Cloudflare's Turnstile siteverify endpoint. E2E runs cleanly in GitHub Actions — don't
-  burn time trying to make Playwright run where the CDN is blocked.
-- Next.js 16 + Turbopack is the build path; there is no MDX pipeline.
+Confirm scope before adding gamification, social features, payments, new identity
+providers or a general-purpose content CMS. The existing onboarding wizard and
+admin AI settings are supported features.
 
 ## Durable submissions, recoverable marking, and reset revocation
 

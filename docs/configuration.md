@@ -40,17 +40,27 @@ OS user that runs Examify. A CLI signed in under your own desktop account is
 not automatically available to a server service account. Set `EXAMIFY_CLAUDE_BIN`
 or `EXAMIFY_CODEX_BIN` to its full path if the app cannot find it.
 
-**After Finish, the wizard closes.** There is currently no in-app way to reopen it
-or switch the household's saved AI provider. `EXAMIFY_AI_MODE` is only a fallback
-until a provider is saved; changing it does not override that saved choice. You
-can repair the selected provider's credentials in `.env` or your service manager
-and restart Examify, or sign its CLI back in as the app's OS user. Use the
-[CLI workflow](content-authoring.md#cli-workflow) for later question-bank updates.
+### Change AI after setup
 
-While setup is open, the wizard can save API keys to the checkout `.env`. Keys injected by a service
-manager or hosting platform are host-managed: change them there. Local command
-mode builds banks only; marking falls back to an Anthropic key. Test stubs are
-for development, never a real household.
+The household admin can open **AI settings** from the parent dashboard, or visit
+`/settings/ai`, before or after finishing setup. Change the saved provider, supported
+model settings or local endpoint there, and save/rotate/clear API keys stored by
+Examify. Keys, model values and endpoint values are not displayed back; the page
+shows configured/default status. These settings do not reopen the content
+wizard; use the [CLI workflow](content-authoring.md#cli-workflow) for later bank updates.
+`EXAMIFY_AI_MODE` remains the fallback until the household saves a choice.
+
+Keys injected by a service manager or hosting platform are host-managed and read-only
+in the app: change them on the host and restart Examify. Command strings and executable
+paths are also host-managed; the settings page does not offer a command editor.
+Cloud model overrides are `EXAMIFY_ANTHROPIC_MODEL` and `EXAMIFY_OPENAI_MODEL` for
+both question generation and marking. See [`.env.example`](../.env.example) for the full model reference.
+
+**Recheck readiness** checks configuration and CLI sign-in without making a paid provider
+request. A configured API key or model is not proof that the provider will accept it.
+To verify end-to-end marking, submit a written answer with the chosen provider; this
+may incur usage charges. Local command mode builds banks only; marking uses the
+Anthropic key path. Test stubs are for development, never a real household.
 
 Written answers that cannot be marked remain pending. They do not count as
 wrong answers in the provisional score. Use Retry marking on your own results
