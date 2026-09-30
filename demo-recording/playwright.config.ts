@@ -44,6 +44,7 @@ export default defineConfig({
       RESEND_FROM: 'Demo <demo@example.com>',
       MAIL_OUTBOX_DIR: 'tests/.tmp/demo-outbox',
       DEMO_MODE: live ? 'live' : 'stub',
+      DEMO_EXPIRES_AT: process.env.DEMO_EXPIRES_AT ?? '',
       DEMO_BUDGET_DIR: path.join(root, 'tests/.tmp/demo-budget'),
       ANTHROPIC_API_KEY: live ? (process.env.ANTHROPIC_API_KEY ?? '') : 'test',
       OPENAI_API_KEY: live ? (process.env.OPENAI_API_KEY ?? '') : '',

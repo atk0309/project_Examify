@@ -35,14 +35,15 @@ jobs:
         with:
           node-version: 22.22.2
       - name: Validate demo budget policy without keys or network
-        run: node --test demo-recording/budget-*.test.mjs
+        run: node --test demo-recording/*.test.mjs
       - name: Real clean installation (no provider credentials)
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p demo-recording/evidence
           ./install.sh --yes 2>&1 | tee /tmp/examify-install.log
-          tail -18 /tmp/examify-install.log > demo-recording/evidence/install-excerpt.txt
+          printf '$ ./install.sh --yes\n' > demo-recording/evidence/install-excerpt.txt
+          grep -E 'Done in .*pnpm|Compiled successfully|Applied migrations against' /tmp/examify-install.log | sed -E 's@Applied migrations against .*@Applied migrations against [isolated demo database]@' >> demo-recording/evidence/install-excerpt.txt
           printf '\nCommit: %s\nNode: %s\npnpm: %s\n' "$GITHUB_SHA" "$(node -v)" "$(pnpm -v)" >> demo-recording/evidence/install-excerpt.txt
       - name: Copy only the committed synthetic source pack
         run: |

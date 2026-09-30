@@ -3,7 +3,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { boundedRequest, LIMITS, TARGETS } from './budget-policy.mjs';
+import { sessionDeadline, assertWindow } from './session-window.mjs';
 const live = process.env.DEMO_MODE === 'live';
+const deadline = sessionDeadline(process.env.DEMO_MODE, process.env.DEMO_EXPIRES_AT);
 const ledger = process.env.DEMO_BUDGET_DIR;
 if (!ledger || !path.isAbsolute(ledger)) throw Error('demo_budget_directory_required');
 fs.mkdirSync(ledger, { recursive: true, mode: 0o700 });
@@ -14,6 +16,7 @@ globalThis.fetch = async function demoFetch(input, init) {
   if (['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname))
     return originalFetch(input, { ...init, redirect: 'error' });
   if (!live || !TARGETS[url]) throw Error('demo_external_request_refused');
+  assertWindow(deadline);
   const bounded = boundedRequest(url, init);
   const halted = path.join(ledger, `${bounded.provider}-halted`);
   if (fs.existsSync(halted)) throw Error('demo_provider_halted');

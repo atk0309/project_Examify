@@ -10,7 +10,14 @@ function run(body, mode = 'live') {
   try {
     return JSON.parse(
       execFileSync(process.execPath, ['--input-type=module', '-e', body], {
-        env: { PATH: process.env.PATH, DEMO_MODE: mode, DEMO_BUDGET_DIR: dir },
+        env: {
+          PATH: process.env.PATH,
+          DEMO_MODE: mode,
+          DEMO_BUDGET_DIR: dir,
+          DEMO_EXPIRES_AT: new Date(Date.now() + 60 * 60 * 1000)
+            .toISOString()
+            .replace(/\.\d{3}Z$/, 'Z'),
+        },
         encoding: 'utf8',
       }),
     );

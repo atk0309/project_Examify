@@ -18,7 +18,12 @@ User enters fresh restricted provider keys directly into GitHub Environment
 `examify-demo-ephemeral`, restricted to branch `dot/examify-recording` (ideally with
 user approval required). Proposed secret names: `EXAMIFY_DEMO_OPENAI_KEY` and
 `EXAMIFY_DEMO_ANTHROPIC_KEY`. Never put key values in workflow inputs, chat, commands,
-logs, screenshots or files. The user revokes both provider keys after the run and
+logs, screenshots or files. The user also sets the environment variable `EXAMIFY_DEMO_EXPIRES_AT` to an absolute
+UTC timestamp (`YYYY-MM-DDTHH:MM:SSZ`) no later than two hours after setup.
+The runtime maps it to `DEMO_EXPIRES_AT`; live mode refuses missing, expired or
+more-than-two-hour windows, checks before every provider request, and never extends
+the timestamp on rerun. This disables the demo calls at expiry; it does not revoke
+the provider keys or delete stored GitHub secrets. The user revokes both provider keys after the run and
 removes the GitHub secrets within their 1–2 hour window. GitHub secrets do not
 implicitly expire. No agent should enter the values or change security settings.
 
@@ -46,9 +51,9 @@ https://developers.openai.com/api/docs/pricing
 https://openai.com/index/api-prompt-caching/
 https://platform.claude.com/docs/en/models/sonnet-4-6/overview
 
-The current script exercises OpenAI in live mode. A second Anthropic pass must be
-explicitly selected, retain the same session ledger, and remain within its eight
-attempts. Do not reset/retry a paid run without checking the remaining budget.
+The current script generates with OpenAI, reviews and applies the generated bank,
+then explicitly changes the household mode to Anthropic for written marking.
+Both providers share the same run directory and keep separate eight-attempt budgets. Do not reset/retry a paid run without checking the remaining budget.
 Live failures must remain visible as failures, not be replaced with fixture output.
 
 This is a known-script cost guard, not an account-wide billing cap or a sandbox

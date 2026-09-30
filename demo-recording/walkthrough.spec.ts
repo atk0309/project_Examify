@@ -8,7 +8,7 @@ test('fresh household → source pack → generate → apply → sit exam → pr
   async function chapter(name: string) {
     chapters.push({ name, elapsedSeconds: (Date.now() - start) / 1000 });
     console.log(`Chapter: ${name}`);
-    await page.waitForTimeout(9000);
+    await page.waitForTimeout(13_000);
   }
   const installLog = await fs.readFile('demo-recording/evidence/install-excerpt.txt', 'utf8');
   // Honest edited chapter: these are the real prior command results, not a
@@ -64,6 +64,18 @@ test('fresh household → source pack → generate → apply → sit exam → pr
   await page.getByTestId('wizard-to-ready').click();
   await page.getByTestId('wizard-finish').click();
   await expect(page).toHaveURL(/\/$/);
+  await page.goto('/onboarding');
+  await page.getByTestId('wizard-get-started').click();
+  await page.getByTestId('wizard-next').click();
+  await page.getByTestId('wizard-next').click();
+  await page.getByTestId('wizard-ai-cloud').click();
+  await chapter(
+    live
+      ? 'Switch to Anthropic for written-answer marking'
+      : 'REHEARSAL: select Anthropic mode with a test sentinel',
+  );
+  await page.goto('/');
+  await expect(page.getByTestId('parent-marking')).toContainText(live ? 'Anthropic' : 'test');
   await page.getByRole('button', { name: /Are you smarter than your kid/ }).click();
   await page.getByTestId('subject-card-demo').click();
   await page.getByTestId('difficulty-easy').click();
@@ -92,6 +104,7 @@ test('fresh household → source pack → generate → apply → sit exam → pr
   expect(written).toBeGreaterThan(0);
   await expect(page.getByTestId('results-score')).toBeVisible({ timeout: 60_000 });
   await expect(page.getByTestId('review-row-free').first()).toContainText(/Score: \d+\/\d+/);
+  await page.getByTestId('review-row-free').first().scrollIntoViewIfNeeded();
   await chapter(
     live ? 'Real server-side grading and review' : 'REHEARSAL: stub marking, not AI grading',
   );
