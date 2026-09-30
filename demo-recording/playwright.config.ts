@@ -11,7 +11,7 @@ export default defineConfig({
   testMatch: 'walkthrough.spec.ts',
   workers: 1,
   retries: 0,
-  timeout: 360_000,
+  timeout: process.env.DEMO_CHECKPOINT === '1' ? 900_000 : 360_000,
   expect: { timeout: 20_000 },
   reporter: 'list',
   outputDir: path.join(root, 'demo-recording/output'),

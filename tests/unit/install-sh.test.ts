@@ -349,7 +349,7 @@ describe('install.sh', () => {
       );
       expect(out).toContain(
         'Leave blank to skip: until an AI can mark them, exams leave written questions out\n' +
-          '(a bank with only written questions keeps them, and those answers count as not correct).',
+          '(a bank with only written questions keeps them, and those answers await marking, excluded from provisional scores).',
       );
       expect(out).toContain('Anthropic API key: ');
       expect(out).toContain(
@@ -1239,7 +1239,7 @@ describe('install.sh AI tools', () => {
         // "My Tools" is escaped, as bash's printf %q does.
         const quoted = `${home}/My\\ Tools/${cli}`;
         expect(result.stdout).toContain(
-          `  ${label}: signed in; not offered: .env cannot hold its path. Link it where Examify looks (ln -s ${quoted} ~/.local/bin/${cli}), then pick it in /onboarding.\n`,
+          `  ${label}: signed in; not offered: .env cannot hold its path. Link it where Examify looks (ln -s ${quoted} ~/.local/bin/${cli}), then pick it in /onboarding during setup or /settings/ai afterward.\n`,
         );
         expect(result.stdout).not.toContain(`) ${label.padEnd(13)} your`);
         // Only the API key and "decide later" are left; the key questions are the default.
@@ -1444,7 +1444,7 @@ describe('install.sh AI tools', () => {
       const blank = runAiInstall(dir, {}, BEFORE_AI);
       expect(blank.result.status).toBe(0);
       expect(blank.result.stdout).toMatch(
-        /No Claude Code, Codex or Ollama found for .+\. You can add one later and pick it in \/onboarding\./,
+        /No Claude Code, Codex or Ollama found for .+\. You can add one later and pick it in \/onboarding during setup or \/settings\/ai afterward\./,
       );
       expect(blank.result.stdout).not.toContain('What should Examify use?');
       expect(blank.result.stdout).toContain('Anthropic API key: ');

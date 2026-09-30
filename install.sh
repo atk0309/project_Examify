@@ -2443,7 +2443,7 @@ signin_note() {
 # puts it where the app looks by itself.
 unwritable_note() {
   [ -n "$3" ] && return 0
-  printf '; not offered: .env cannot hold its path. Link it where Examify looks (ln -s %q ~/.local/bin/%s), then pick it in /onboarding.' "$2" "$1"
+  printf '; not offered: .env cannot hold its path. Link it where Examify looks (ln -s %q ~/.local/bin/%s), then pick it in /onboarding during setup or /settings/ai afterward.' "$2" "$1"
 }
 
 # The models, comma-separated, at most five.
@@ -2460,7 +2460,7 @@ offer_ai_tools() {
   AI_PICK="key"
   if [ -z "$AI_CLAUDE_BIN" ] && [ -z "$AI_CODEX_BIN" ] && [ "$AI_OLLAMA_STATE" = "absent" ]; then
     echo
-    echo "No Claude Code, Codex or Ollama found for ${user}. You can add one later and pick it in /onboarding."
+    echo "No Claude Code, Codex or Ollama found for ${user}. You can add one later and pick it in /onboarding during setup or /settings/ai afterward."
     return 0
   fi
   echo
@@ -2516,7 +2516,7 @@ offer_ai_tools() {
   fi
   local i default_num=1
   echo
-  echo "What should Examify use? (You can change it any time in /onboarding.)"
+  echo "What should Examify use? (You can change it in /onboarding during setup or /settings/ai afterward.)"
   for i in "${!keys[@]}"; do
     echo "  $((i + 1))) ${labels[$i]}"
     if [ "${keys[$i]}" = "$default_key" ]; then
@@ -2608,8 +2608,8 @@ collect_ai_settings() {
   echo "Optional: ANTHROPIC_API_KEY marks free-text answers by sending each answer, its question,"
   echo "and its rubric to Anthropic. It also powers /onboarding Cloud (Anthropic) generate."
   echo "Leave blank to skip: until an AI can mark them, exams leave written questions out"
-  echo "(a bank with only written questions keeps them, and those answers count as not correct)."
-  echo "Add it later in /onboarding content setup, or in .env (then restart)."
+  echo "(a bank with only written questions keeps them, and those answers await marking, excluded from provisional scores)."
+  echo "Add it in /onboarding during setup, /settings/ai afterward, or .env (then restart)."
   prompt ANTHROPIC_API_KEY "Anthropic API key" "" secret
   # Blank keeps the `test` placeholder: the wizard shows "not configured" and
   # production grading treats it as no key (answers saved, not marked).
@@ -2642,7 +2642,7 @@ ai_mode_summary() {
     local-agent) label="Ollama / local endpoint (${EXAMIFY_LLM_MODEL:-no model set})" ;;
     local-cli) label="Local command" ;;
     skip-stub) label="Test stub" ;;
-    *) label="none yet: pick one in /onboarding" ;;
+    *) label="none yet: pick one in /onboarding or /settings/ai" ;;
   esac
   echo "     AI:                 ${label}"
   if [ -n "${AI_SIGNIN_HINT-}" ]; then

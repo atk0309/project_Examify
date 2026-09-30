@@ -274,7 +274,7 @@ export type NewExamSession = typeof examSessions.$inferInsert;
 /**
  * The bounded, client-renderable grading feedback for a free-text answer. These
  * are the ONLY grading fields ever surfaced in the UI — the rubric and the raw
- * model text are never shipped (see the render invariant in `CLAUDE.md`).
+ * model text are never shipped (see the render invariant in `docs/architecture.md`).
  */
 export type Verdict = {
   /** Marks awarded, 0..maxScore. */

@@ -1,11 +1,14 @@
 import { expect, test, type Locator } from '@playwright/test';
 import fs from 'node:fs/promises';
+import { makeSnapshot, waitForAnswerPlan, findAnswer } from './checkpoint/public-plan.mjs';
 const live = process.env.DEMO_MODE === 'live';
+const checkpoint = process.env.DEMO_CHECKPOINT === '1';
 // Recorded app interaction; no browser response mocks. Rehearsal-only fixtures
 // are installed explicitly by prepare-rehearsal.mjs before the disposable build.
 test('cell biology: install, generate, review, practise, feedback, progress', async ({ page }) => {
   const scenes: Array<{ name: string; at: number }> = [];
   const holds: Array<{ purpose: string; seconds: number; at: number }> = [];
+  const cuts: Array<{ start: number; end: number; label: string }> = [];
   const started = Date.now();
   const elapsed = () => (Date.now() - started) / 1000;
   async function scene(name: string) {
@@ -73,13 +76,6 @@ test('cell biology: install, generate, review, practise, feedback, progress', as
     .getByTestId('wizard-generate-run-demo')
     .evaluate((el) => el.scrollIntoView({ behavior: 'smooth', block: 'center' }));
   await read(3, 'Read successful generation summary');
-  // Select the marking provider while this supported settings screen is open.
-  // Once setup is finished, this app intentionally closes the wizard.
-  if (live) {
-    await click('wizard-ai-cloud');
-    await scene('Choose Anthropic for written-answer marking');
-    await read(3, 'Read the explicit marking provider selection');
-  }
   await click('wizard-generate-to-validate');
   await scene('Check the generated pack, then review before applying');
   await click('wizard-validate');
@@ -96,6 +92,48 @@ test('cell biology: install, generate, review, practise, feedback, progress', as
   await click('wizard-to-ready');
   await click('wizard-finish');
   await expect(page).toHaveURL(/\/$/);
+  await page.getByTestId('manage-ai-settings').click();
+  await expect(page).toHaveURL(/\/settings\/ai$/);
+  await scene(
+    live
+      ? 'After setup: choose Anthropic for written marking'
+      : 'After setup: change the saved provider without a paid call',
+  );
+  await page.getByTestId('ai-settings-mode').selectOption('cloud');
+  await click('ai-settings-save');
+  await expect(page.getByTestId('ai-settings-status')).toContainText('Saved provider: Anthropic');
+  await read(4, 'Read the saved provider and configuration-only readiness');
+  await page.getByRole('link', { name: 'Back to dashboard' }).click();
+  await expect(page).toHaveURL(/\/$/);
+  let publicSnapshot: ReturnType<typeof makeSnapshot> | undefined;
+  let reviewedAnswers: ReturnType<typeof findAnswer>[] | undefined;
+  if (checkpoint) {
+    publicSnapshot = makeSnapshot({
+      bank: JSON.parse(
+        await fs.readFile('tests/.tmp/demo-data/content/generated/questions/demo.json', 'utf8'),
+      ),
+      run: process.env.GITHUB_RUN_ID,
+      sourceNotes: await fs.readFile('demo-recording/fixtures/notes.txt', 'utf8'),
+    });
+    await fs.writeFile(
+      'demo-recording/evidence/public-questions.tmp',
+      JSON.stringify(publicSnapshot, null, 2),
+    );
+    await fs.rename(
+      'demo-recording/evidence/public-questions.tmp',
+      'demo-recording/evidence/public-questions.json',
+    );
+    await fs.writeFile('tests/.tmp/demo-checkpoint-ready', 'ready');
+    const pauseStart = elapsed();
+    reviewedAnswers = await waitForAnswerPlan(publicSnapshot, {
+      expiresAt: Date.parse(process.env.DEMO_EXPIRES_AT ?? ''),
+    });
+    cuts.push({
+      start: pauseStart,
+      end: elapsed(),
+      label: 'Source-grounded answer review wait shortened',
+    });
+  }
   await page.getByRole('button', { name: /Are you smarter than your kid/ }).click();
   await read(1, 'Enter this synthetic adult account’s practice mode');
   await scene('Launch an Easy mini exam from the new Cell biology pack');
@@ -113,19 +151,29 @@ test('cell biology: install, generate, review, practise, feedback, progress', as
     const question = (await page.locator('.question-text').textContent()) ?? '';
     await scene(`Question ${n}: ${question}`);
     await read(4, 'Read the actual question and choices');
+    const visibleChoices = await page.locator('.choice-label').allTextContents();
+    const reviewed =
+      publicSnapshot && reviewedAnswers
+        ? findAnswer(publicSnapshot, reviewedAnswers, { question, choices: visibleChoices })
+        : undefined;
     const free = page.getByTestId('exam-free-answer');
     if (await free.isVisible()) {
       written++;
       // A coherent answer grounded in the source; never a hash or test assertion.
       await type(
         free,
-        'Chloroplasts use light to make sugar. Mitochondria release energy from food for the cell.',
+        reviewed?.type === 'free'
+          ? reviewed.response
+          : 'Chloroplasts use light to make sugar. Mitochondria release energy from food for the cell.',
       );
       await read(2, 'Read the completed written explanation');
     } else {
-      const choice = /cell walls/i.test(question)
-        ? 'Plant cells have a cell wall; animal cells do not.'
-        : 'Chloroplasts';
+      const choice =
+        reviewed?.type === 'mcq'
+          ? reviewed.chosenText
+          : /cell walls/i.test(question)
+            ? 'Plant cells have a cell wall; animal cells do not.'
+            : 'Chloroplasts';
       await page.getByTestId('exam-choice').filter({ hasText: choice }).click();
       await read(2, 'Read the selected answer');
     }
@@ -166,6 +214,7 @@ test('cell biology: install, generate, review, practise, feedback, progress', as
         duration: elapsed(),
         scenes,
         holds,
+        cuts,
       },
       null,
       2,

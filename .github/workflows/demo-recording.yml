@@ -9,10 +9,12 @@ concurrency:
   cancel-in-progress: false
 jobs:
   record:
+    if: ${{ !contains(github.event.head_commit.message, '[demo-answer-data]') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
       DEMO_MODE: stub
+      DEMO_CHECKPOINT: '1'
       SITE_URL: http://127.0.0.1:3115
       EXAMIFY_DATA_DIR: tests/.tmp/demo-data
       DATABASE_URL: file:./tests/.tmp/demo.db
@@ -35,7 +37,7 @@ jobs:
         with:
           node-version: 22.22.2
       - name: Validate demo budget policy without keys or network
-        run: node --test demo-recording/*.test.mjs
+        run: node --test demo-recording/*.test.mjs demo-recording/checkpoint/*.test.mjs
       - name: Prepare coherent no-key educational fixtures
         run: node demo-recording/prepare-rehearsal.mjs
       - name: Real clean installation (no provider credentials)
@@ -53,8 +55,20 @@ jobs:
           cp demo-recording/fixtures/subject.json demo-recording/fixtures/notes.txt tests/.tmp/demo-data/content/subjects/demo/
       - name: Install browser
         run: pnpm exec playwright install --with-deps chromium
-      - name: Record actual UI (fixture AI clearly labelled)
-        run: pnpm exec playwright test -c demo-recording/playwright.config.ts
+      - name: Start recorder and reach public question checkpoint
+        run: bash demo-recording/checkpoint/start-recorder.sh
+      - name: Share public synthetic questions for reviewed answer data
+        uses: actions/upload-artifact@v7
+        with:
+          name: examify-public-questions
+          path: demo-recording/evidence/public-questions.json
+          retention-days: 2
+          if-no-files-found: error
+      - name: Resume the same recorder after bounded answer-data review
+        run: bash demo-recording/checkpoint/wait-recorder.sh
+      - name: Stop isolated recorder process group
+        if: always()
+        run: bash demo-recording/checkpoint/stop-recorder.sh
       - name: Save only recording and non-sensitive chapter evidence
         if: always()
         uses: actions/upload-artifact@v7

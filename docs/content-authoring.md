@@ -1,7 +1,9 @@
 # Add or generate questions
 
-For your family, start in the browser at `/onboarding`. You do not need to edit
-TypeScript or install the ingest CLI separately.
+For initial family setup, use `/onboarding`. Skipped setup can be resumed through
+**Finish content setup** on the parent dashboard. Once you choose Finish, the
+wizard cannot be reopened; use the CLI below for later content changes. You do
+not need to edit TypeScript or install the ingest CLI separately.
 
 ## Use the setup wizard
 
@@ -40,9 +42,11 @@ and logs a reason. Run `pnpm examify:data verify` to check family data.
 ## CLI workflow
 
 Run commands from the checkout. These examples use the default `./data` folder;
-substitute your configured `EXAMIFY_DATA_DIR` when it is elsewhere. First create
-a subject in the wizard and attach source files. Replace `history` below with
-its actual ID:
+substitute your configured `EXAMIFY_DATA_DIR` when it is elsewhere. Use an existing
+family subject, or create `data/content/subjects/history/` and put your notes or
+images there. For PDFs, create `data/content/source-pdfs/history/` and place them
+there. Replace `history` below with a unique subject ID; generation supplies
+default subject metadata when no `subject.json` exists:
 
 ```bash
 pnpm examify-ingest generate --provider anthropic data/content/subjects/history

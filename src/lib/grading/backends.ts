@@ -137,7 +137,7 @@ export async function gradeViaOpenAi(tasks: readonly GradeArgs[]): Promise<Grade
       gradeViaChatCompletions(task, {
         url: OPENAI_URL,
         headers: { authorization: `Bearer ${key}` },
-        model: OPENAI_MODEL,
+        model: markingHostEnv().EXAMIFY_OPENAI_MODEL?.trim() || OPENAI_MODEL,
         signal: AbortSignal.timeout(API_GRADING_TIMEOUT_MS),
         backend: 'openai',
         jsonMode: true,

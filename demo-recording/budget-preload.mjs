@@ -4,11 +4,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { boundedRequest, LIMITS, TARGETS } from './budget-policy.mjs';
 import { sessionDeadline, assertWindow } from './session-window.mjs';
+import { recordProcess } from './checkpoint/process-records.mjs';
 const live = process.env.DEMO_MODE === 'live';
 const deadline = sessionDeadline(process.env.DEMO_MODE, process.env.DEMO_EXPIRES_AT);
 const ledger = process.env.DEMO_BUDGET_DIR;
 if (!ledger || !path.isAbsolute(ledger)) throw Error('demo_budget_directory_required');
 fs.mkdirSync(ledger, { recursive: true, mode: 0o700 });
+recordProcess(path.join(ledger, `server-process-${process.pid}.json`));
 const originalFetch = globalThis.fetch;
 globalThis.fetch = async function demoFetch(input, init) {
   const url = String(input instanceof Request ? input.url : input);

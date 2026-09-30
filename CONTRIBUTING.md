@@ -2,8 +2,9 @@
 
 Thanks for your interest! Examify is intentionally small — please keep changes in that
 spirit. Architecture, invariants, and the rationale behind them live in
-[`CLAUDE.md`](CLAUDE.md) (paired with [`AGENTS.md`](AGENTS.md) for AI coding agents);
-read the relevant section before changing auth, scoring, or content code.
+[the architecture reference](docs/architecture.md); [`AGENTS.md`](AGENTS.md) is the
+shared entry point for AI coding agents.
+Read the relevant section before changing auth, scoring, or content code.
 
 By participating, you agree to follow the
 [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
@@ -81,7 +82,7 @@ which commands ran unchanged, any environment workarounds, and untested platform
 - Work on a feature branch; never push to `main`.
 - Fill in the PR template (routes touched, tests added, command output summary).
 - Run formatting, lint, types, tests, and the production build before requesting review.
-- Keep docs in sync in the same PR: `README.md`, `CLAUDE.md`/`AGENTS.md`, and
+- Keep docs in sync in the same PR: the relevant user guides, `docs/architecture.md`, `AGENTS.md`, and
   `.env.example` for anything that changes setup, env vars, routes, or invariants.
 - Don't merge with a red CI.
 

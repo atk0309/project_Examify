@@ -7,6 +7,10 @@ material and marks written answers.
 
 ## Install and try it
 
+Follow the [easy setup guide](docs/installation.md), or point your preferred coding
+agent at [the AI installation manual](docs/agent-installation.md) and let it install,
+build and check Examify for you. You stay in control of accounts, secrets and deployment.
+
 You need **Node 22.22.2–22.x**, **Git**, **Bash** and **curl**. The installer uses
 **pnpm 10.33.0** through Corepack (or an existing pnpm installation). Run it as
 the OS user that will run Examify, not with sudo. See the
@@ -34,8 +38,8 @@ or skip to the sample bank. Invite students from the parent dashboard.
 - **No mail provider?** The default local outbox saves invitation and reset codes
   on the server. Read them there; they will not arrive by email.
   [Outbox instructions](docs/installation.md#read-a-local-outbox-code)
-- **No AI yet?** Skip it and try multiple-choice questions. Configure AI later
-  in `/onboarding`
+- **No AI yet?** Skip content setup to try the sample bank. Return through
+  **Finish content setup** on the parent dashboard before completing the wizard
 
 Use HTTPS before exposing the app beyond your home network. Plain HTTP sends
 passwords and session cookies unencrypted. Keep `.env`, the outbox and backups
@@ -46,7 +50,8 @@ private. [Deployment and HTTPS](docs/operations.md#deploying-with-https)
 Pick a subject and difficulty, answer a short exam, then review your results.
 Unfinished exams autosave and can be resumed. Parents see their household's
 student progress and can take exams themselves. The app includes a small sample
-bank; your own subjects can be added in the browser without editing code.
+bank; add your own subjects in the initial setup wizard. After finishing setup,
+use **AI settings** on the admin dashboard to manage your provider, and the [CLI workflow](docs/content-authoring.md#cli-workflow) for content updates.
 
 AI generation and marking send study material or answers to the selected
 provider. Local hosting alone does not keep AI requests local.
@@ -55,6 +60,7 @@ provider. Local hosting alone does not keep AI requests local.
 ## Guides
 
 - [Install and first login](docs/installation.md)
+- [Install with your preferred AI agent](docs/agent-installation.md)
 - [Configure sign-in, mail and AI](docs/configuration.md)
 - [Deploy, update, back up and restore](docs/operations.md)
 - [Troubleshooting](docs/troubleshooting.md)
