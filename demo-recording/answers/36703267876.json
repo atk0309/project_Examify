@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "runId": "36703267876",
+  "questionHash": "135220cf5c318039519a9bf6cfac70966473f6168bfd441963eb43fd83a0dbdc",
+  "answers": [
+    {
+      "id": "demo-easy-3",
+      "type": "mcq",
+      "chosenText": "Chloroplasts"
+    },
+    {
+      "id": "demo-easy-4",
+      "type": "mcq",
+      "chosenText": "Plant cells have a supporting cell wall, unlike animal cells."
+    },
+    {
+      "id": "demo-easy-free-2",
+      "type": "free",
+      "response": "Chloroplasts use light energy to make sugar. Mitochondria release energy from food for the cell."
+    }
+  ]
+}
