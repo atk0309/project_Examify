@@ -11,7 +11,7 @@ export default defineConfig({
   timeout: 360_000,
   expect: { timeout: 20_000 },
   reporter: 'list',
-  outputDir: 'demo-recording/output',
+  outputDir: path.join(root, 'demo-recording/output'),
   use: {
     baseURL,
     viewport: { width: 1440, height: 1000 },
@@ -21,13 +21,14 @@ export default defineConfig({
     launchOptions: { slowMo: 350 },
   },
   webServer: {
+    cwd: root,
     command:
       'node --import ./demo-recording/budget-preload.mjs node_modules/next/dist/bin/next start --port 3115',
     url: `${baseURL}/api/health`,
     reuseExistingServer: false,
     timeout: 120_000,
     stdout: 'ignore',
-    stderr: 'ignore',
+    stderr: live ? 'ignore' : 'pipe',
     env: {
       NODE_ENV: 'production',
       SITE_URL: baseURL,

@@ -35,7 +35,7 @@ jobs:
         with:
           node-version: 22.22.2
       - name: Validate demo budget policy without keys or network
-        run: node --test demo-recording/budget-policy.test.mjs
+        run: node --test demo-recording/budget-*.test.mjs
       - name: Real clean installation (no provider credentials)
         shell: bash
         run: |
