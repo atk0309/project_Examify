@@ -25,6 +25,11 @@ const freeItemSchema = z.object({
 const itemSchema = z.discriminatedUnion('type', [mcqItemSchema, freeItemSchema]);
 
 const inputSchema = z.object({
+  submissionId: z
+    .string()
+    .min(16)
+    .max(64)
+    .regex(/^[A-Za-z0-9_-]+$/),
   subject: z.string().min(1),
   difficulty: z.string().min(1),
   items: z.array(itemSchema).min(1),
@@ -34,7 +39,7 @@ export type RecordAttemptInput = z.infer<typeof inputSchema>;
 
 export type RecordAttemptResult =
   | { ok: true; scorePct: number; attempt: AttemptRecord; progress: ProgressData }
-  | { ok: false; reason: 'forbidden' | 'invalid' };
+  | { ok: false; reason: 'forbidden' | 'invalid' | 'busy' };
 
 /**
  * Persist a completed mini exam. The write path is open to a `student`, or to a
@@ -56,11 +61,16 @@ export async function recordAttempt(input: RecordAttemptInput): Promise<RecordAt
   if (!parsed.success) return { ok: false, reason: 'invalid' };
 
   const result = await saveAttempt(session.userId, parsed.data);
-  if (!result.ok) return { ok: false, reason: 'invalid' };
+  if (!result.ok) return { ok: false, reason: result.reason === 'busy' ? 'busy' : 'invalid' };
 
   // The exam is finished — drop any in-progress session for this combo so it no
   // longer shows up as resumable (server-side, not reliant on the client).
-  clearExamSession(session.userId, parsed.data.subject, parsed.data.difficulty as DifficultyId);
+  clearExamSession(
+    session.userId,
+    parsed.data.subject,
+    parsed.data.difficulty as DifficultyId,
+    parsed.data.submissionId,
+  );
 
   return {
     ok: true,

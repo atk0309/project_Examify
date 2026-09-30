@@ -19,6 +19,7 @@ export type SubmitItem = SubmitMcqItem | SubmitFreeItem;
 
 /** Raw input as submitted by the client when an exam finishes. */
 export type AttemptInput = {
+  submissionId?: string;
   subject: string;
   difficulty: string;
   items: SubmitItem[];
@@ -46,15 +47,33 @@ export type ValidateResult =
 export const PASS_THRESHOLD = 0.6;
 
 /**
- * Shown for a `needs_review` free-text item. Nothing re-grades it later, so
- * the copy must not promise later marking — it counts as not correct.
+ * Shown for unresolved marking. Only an explicit retry attempts marking again.
  */
 export const NEEDS_REVIEW_COPY =
-  'We couldn’t mark this one automatically, so it counts as not correct.';
+  'We couldn’t mark this answer. It is excluded from your provisional score.';
 
 /** Whether a graded free-text score clears {@link PASS_THRESHOLD}. */
 export function isFreePass(score: number, maxScore: number): boolean {
   return maxScore > 0 && score / maxScore >= PASS_THRESHOLD;
+}
+
+/** Pending answers never count as wrong. Incomplete attempts stay out of trends. */
+export function pendingCount(items: readonly AttemptItem[]): number {
+  return items.filter((item) => item.type === 'free' && item.status === 'needs_review').length;
+}
+
+export function summarizeScore(items: readonly AttemptItem[]) {
+  const correct = items.filter((item) =>
+    item.type === 'free'
+      ? item.status === 'graded' && item.score !== null && isFreePass(item.score, item.maxScore)
+      : item.chosen !== null && item.chosen === item.answer,
+  ).length;
+  const marked = items.length - pendingCount(items);
+  return {
+    total: items.length,
+    correct,
+    scorePct: marked === 0 ? 0 : Math.round((correct / marked) * 100),
+  };
 }
 
 /**
@@ -75,6 +94,7 @@ export function normalizeAttemptItem(item: AttemptItem): NormalizedAttemptItem {
 
 /** A persisted attempt as surfaced to the progress views. */
 export type AttemptRecord = {
+  canRetryGrading?: boolean;
   id: number;
   subject: string;
   difficulty: DifficultyId;
@@ -107,7 +127,10 @@ export type ProgressData = {
  * `getScoreHistory` rather than the 50-capped `ProgressData.attempts`.
  */
 export function scoreSequence(attempts: AttemptRecord[]): number[] {
-  return attempts.map((a) => a.scorePct).reverse();
+  return attempts
+    .filter((a) => pendingCount(a.items) === 0)
+    .map((a) => a.scorePct)
+    .reverse();
 }
 
 /** Rounded mean of a score list (empty → 0). */
@@ -128,6 +151,7 @@ export function summariseAttempts(
 ): SubjectSummary[] {
   const groups = new Map<string, AttemptRecord[]>();
   for (const a of attempts) {
+    if (pendingCount(a.items) > 0) continue;
     const list = groups.get(a.subject);
     if (list) list.push(a);
     else groups.set(a.subject, [a]);

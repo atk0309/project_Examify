@@ -349,7 +349,7 @@ describe('install.sh', () => {
       );
       expect(out).toContain(
         'Leave blank to skip: until an AI can mark them, exams leave written questions out\n' +
-          '(a bank with only written questions keeps them, and those answers count as not correct).',
+          '(a bank with only written questions keeps them, and those answers await marking, excluded from provisional scores).',
       );
       expect(out).toContain('Anthropic API key: ');
       expect(out).toContain(
@@ -1239,7 +1239,7 @@ describe('install.sh AI tools', () => {
         // "My Tools" is escaped, as bash's printf %q does.
         const quoted = `${home}/My\\ Tools/${cli}`;
         expect(result.stdout).toContain(
-          `  ${label}: signed in; not offered: .env cannot hold its path. Link it where Examify looks (ln -s ${quoted} ~/.local/bin/${cli}), then pick it in /onboarding.\n`,
+          `  ${label}: signed in; not offered: .env cannot hold its path. Link it where Examify looks (ln -s ${quoted} ~/.local/bin/${cli}), then pick it in /onboarding during setup or /settings/ai afterward.\n`,
         );
         expect(result.stdout).not.toContain(`) ${label.padEnd(13)} your`);
         // Only the API key and "decide later" are left; the key questions are the default.
@@ -1444,7 +1444,7 @@ describe('install.sh AI tools', () => {
       const blank = runAiInstall(dir, {}, BEFORE_AI);
       expect(blank.result.status).toBe(0);
       expect(blank.result.stdout).toMatch(
-        /No Claude Code, Codex or Ollama found for .+\. You can add one later and pick it in \/onboarding\./,
+        /No Claude Code, Codex or Ollama found for .+\. You can add one later and pick it in \/onboarding during setup or \/settings\/ai afterward\./,
       );
       expect(blank.result.stdout).not.toContain('What should Examify use?');
       expect(blank.result.stdout).toContain('Anthropic API key: ');
@@ -2275,6 +2275,52 @@ function withFixture(options: Parameters<typeof makeFixture>[0], body: (fx: Fixt
 }
 
 describe('install.sh full install (shimmed pnpm and data CLI)', () => {
+  it('rejects an unsupported Node before writing configuration or installing', () => {
+    withFixture({ upstream: false, env: false }, (fx) => {
+      writeFile(path.join(fx.bin, 'node'), '#!/usr/bin/env bash\necho 24.0.0\n', 0o755);
+      const result = runInstaller(fx, []);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('is not supported');
+      expect(fs.existsSync(path.join(fx.work, '.env'))).toBe(false);
+      expect(calls(fx)).toEqual([]);
+    });
+  });
+
+  it('prints a usable checkout command after a piped install, including spaces in the path', () => {
+    withFixture({ upstream: false, env: false }, (fx) => {
+      const target = path.join(fx.base, 'family examify folder');
+      fs.renameSync(fx.work, target);
+      const script = fs.readFileSync(path.join(target, 'install.sh'), 'utf8');
+      const result = spawnSync('bash', ['-s', '--', '--yes'], {
+        cwd: fx.base,
+        input: script,
+        env: fixtureEnv(fx, { EXAMIFY_DIR: target }),
+        encoding: 'utf8',
+        timeout: 60_000,
+      });
+      expect(result.status, result.stderr).toBe(0);
+      const cdCommand = result.stdout.split('\n').find((line) => line.startsWith('  cd -- '));
+      expect(cdCommand).toBeDefined();
+      const cwd = execFileSync('bash', ['-c', `${cdCommand} && pwd -P`], {
+        cwd: fx.base,
+        encoding: 'utf8',
+      }).trim();
+      expect(cwd).toBe(fs.realpathSync(target));
+      expect(result.stdout).toContain('The server runs in the foreground');
+    });
+  });
+
+  it('requires a build in the completion commands when --skip-build is used', () => {
+    withFixture({ upstream: false, env: false }, (fx) => {
+      const result = runInstaller(fx, ['--skip-build']);
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain('production build was skipped');
+      expect(result.stdout).toContain('  pnpm build\n  pnpm start');
+      expect(result.stdout).not.toContain('Examify is ready.');
+      expect(summary(fx)).not.toContain('pnpm build');
+    });
+  });
+
   it('checks and initialises the data folder through the checkout CLI before installing', () => {
     withFixture({ upstream: false, env: false }, (fx) => {
       const result = runInstaller(fx, [], { SITE_URL: 'https://exam.example.com' });

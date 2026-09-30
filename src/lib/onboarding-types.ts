@@ -336,7 +336,7 @@ const MARKING_LABEL: Record<MarkingBackend, string> = {
  * them out, except a bank with only written questions, which keeps them.
  */
 const WRITTEN_LEFT_OUT =
-  'Until then, exams leave written questions out (a bank with only written questions keeps them), and any written answer counts as not correct.';
+  'Until then, exams leave written questions out (a bank with only written questions keeps them), and written answers await marking and are excluded from scores.';
 
 /** Claude Code / Codex, when it is the backend: its name and sign-in command. */
 function agentCliSignInFor(backend: MarkingBackend): { by: string; command: string } | null {
@@ -366,7 +366,7 @@ function markingFallbackNote(mode: OnboardingAiMode | null | undefined): string 
 /**
  * The AI step's marking line: who marks written answers for this mode, what is
  * sent, and what is missing. Never promises marking later: an answer that is
- * not marked counts as not correct.
+ * not marked is excluded from scores.
  */
 export function onboardingMarkingCopy(
   mode: OnboardingAiMode | null | undefined,
@@ -386,7 +386,7 @@ export function onboardingMarkingCopy(
       return `${note}Written answers are not marked until this server has ${MARKING_SETUP[backend]}. ${WRITTEN_LEFT_OUT}`;
     case 'ready':
       if (backend === 'claude-cli' || backend === 'codex-cli') {
-        return `Written answers are marked by ${label} while it is signed in as the user that runs Examify: one run marks all of an exam’s written answers, each sent with its question and rubric, and can take up to a minute. Signed out, they are not marked and count as not correct.`;
+        return `Written answers are marked by ${label} while it is signed in as the user that runs Examify: one run marks all of an exam’s written answers, each sent with its question and rubric, and can take up to a minute. Signed out, they await marking and are excluded from scores.`;
       }
       if (backend === 'local-endpoint') {
         return 'Written answers are marked by your local endpoint (EXAMIFY_LLM_MODEL), each sent with its question and rubric. A slow model can leave answers unmarked: all of an exam’s answers share a 45-second limit.';
@@ -409,7 +409,7 @@ export function parentMarkingLine(
   switch (readiness) {
     case 'ready':
       if (backend === 'claude-cli' || backend === 'codex-cli') {
-        return `Written answers are marked by ${label} while it is signed in on this server. Signed out, they count as not correct.`;
+        return `Written answers are marked by ${label} while it is signed in on this server. Signed out, they await marking and are excluded from scores.`;
       }
       return `Written answers are marked by ${label}.`;
     case 'stub':
@@ -477,7 +477,7 @@ export function examWrittenLine(
         const { by, command } = marking.signIn;
         return paper.leftOut
           ? `Written questions are left out: ${by} isn’t signed in on this server. A parent can sign it in on the server with \`${command}\`.`
-          : `${by} isn’t signed in on this server, so written answers count as not correct. A parent can sign it in on the server with \`${command}\`.`;
+          : `${by} isn’t signed in on this server, so written answers await marking and are excluded from scores. A parent can sign it in on the server with \`${command}\`.`;
       }
       return paper.leftOut
         ? 'Written questions are left out: this server can’t mark written answers yet.'
@@ -487,13 +487,13 @@ export function examWrittenLine(
 
 /** Under a written question nothing on this server can mark. */
 export const EXAM_UNMARKED_WRITTEN =
-  'This server can’t mark written answers yet, so they count as not correct.';
+  'This server can’t mark written answers yet, so they await marking and are excluded from scores.';
 
 /** The note under each written question when `marking` is `unmarked`. */
 export function examUnmarkedWrittenNote(marking: ExamMarking): string {
   if (marking.written === 'unmarked' && marking.signIn) {
     const { by, command } = marking.signIn;
-    return `${by} isn’t signed in on this server, so written answers count as not correct. A parent can sign it in on the server with \`${command}\`.`;
+    return `${by} isn’t signed in on this server, so written answers await marking and are excluded from scores. A parent can sign it in on the server with \`${command}\`.`;
   }
   return EXAM_UNMARKED_WRITTEN;
 }

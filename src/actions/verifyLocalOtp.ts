@@ -59,6 +59,7 @@ export async function verifyLocalOtp(
   session.userId = result.userId;
   session.role = result.role;
   session.email = result.email;
+  session.sessionVersion = result.sessionVersion;
   session.studentMode = false;
   await session.save();
 

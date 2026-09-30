@@ -71,3 +71,8 @@ test('GET /signin/invalidate lands on sign-in', async ({ page }) => {
   await page.goto('/signin/invalidate');
   await expect(page).toHaveURL(/\/signin$/);
 });
+
+test('AI settings redirects unauthenticated visitors to /signin', async ({ page }) => {
+  await page.goto('/settings/ai');
+  await expect(page).toHaveURL(/\/signin$/);
+});

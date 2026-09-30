@@ -64,7 +64,10 @@ export default defineConfig({
       // Deterministic free-text grading stub, no network. Production only
       // stubs with both the `test` sentinel and the explicit GRADING_STUB=1.
       ANTHROPIC_API_KEY: 'test',
+      OPENAI_API_KEY: 'test',
       GRADING_STUB: '1',
+      // The browser exercises key writes without touching a developer’s .env.
+      EXAMIFY_TEST_ENV_STORE_DIR: path.join(E2E_DATA_DIR, 'env-store'),
       // Never the developer's own Claude Code / Codex: the wizard asks a found
       // CLI whether it is signed in. No spec needs one.
       EXAMIFY_CLAUDE_BIN: path.join(process.cwd(), 'tests', '.tmp', 'no-agent-cli', 'claude'),

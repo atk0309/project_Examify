@@ -40,6 +40,7 @@ function resumableFor(
     if (questions === null || s.answers.length !== questions.length) return [];
     return [
       {
+        submissionId: s.submissionId,
         subject: s.subject,
         difficulty: s.difficulty,
         questions,
@@ -127,6 +128,7 @@ export default async function HomePage() {
           role: onboarding.role,
           onboardingComplete: onboarding.complete,
         })}
+        canManageAi={membership?.role === 'admin'}
         markingLine={markingLine}
         subjects={bank.subjects}
       />

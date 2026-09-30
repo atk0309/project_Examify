@@ -59,6 +59,10 @@ const setStudentMode = vi.fn(async (on: boolean) => {
 vi.mock('@/actions/recordAttempt', () => ({
   recordAttempt: (input: RecordAttemptInput) => recordAttempt(input),
 }));
+const retryAttemptGrading = vi.fn<(id: number) => Promise<RecordAttemptResult>>();
+vi.mock('@/actions/retryAttemptGrading', () => ({
+  retryAttemptGrading: (id: number) => retryAttemptGrading(id),
+}));
 vi.mock('@/actions/saveExamProgress', () => ({
   beginExamSession: (input: SaveExamProgressInput) => beginExamSession(input),
   saveExamProgress: (input: SaveExamProgressInput) => saveExamProgress(input),
@@ -568,7 +572,7 @@ describe('ExamApp and what this server can mark', () => {
     expect(recordAttempt.mock.calls[0]![0].items).toEqual([{ type: 'mcq', id: 'g1', chosen: 0 }]);
   });
 
-  it('keeps a paper of written questions only, saying under each that it counts as not correct', async () => {
+  it('keeps a paper of written questions only, saying under each that it is excluded from scores', async () => {
     const essay: Subject = {
       id: 'essay',
       label: 'Essay',
@@ -591,13 +595,13 @@ describe('ExamApp and what this server can mark', () => {
     });
     openDifficulty('essay');
     expect(screen.getByTestId('exam-written-line')).toHaveTextContent(
-      'This server can’t mark written answers yet, so they count as not correct.',
+      'This server can’t mark written answers yet, so they await marking and are excluded from scores.',
     );
     fireEvent.click(screen.getByTestId('start-exam'));
     await settle();
     expect(progress()).toBe('Question 1 of 2');
     expect(screen.getByTestId('exam-free-unmarked')).toHaveTextContent(
-      'This server can’t mark written answers yet, so they count as not correct.',
+      'This server can’t mark written answers yet, so they await marking and are excluded from scores.',
     );
     answer();
     clickNext();
@@ -644,7 +648,7 @@ describe('ExamApp and what this server can mark', () => {
     fireEvent.click(screen.getByTestId('resume-geo-easy'));
     await settle();
     expect(screen.getByTestId('exam-free-unmarked')).toHaveTextContent(
-      'Codex isn’t signed in on this server, so written answers count as not correct. A parent can sign it in on the server with `codex login`.',
+      'Codex isn’t signed in on this server, so written answers await marking and are excluded from scores. A parent can sign it in on the server with `codex login`.',
     );
   });
 
@@ -665,5 +669,140 @@ describe('ExamApp and what this server can mark', () => {
     await settle();
     expect(progress()).toBe('Question 2 of 2');
     expect(screen.getByTestId('exam-free-unmarked')).toBeInTheDocument();
+  });
+});
+
+describe('ExamApp submission identity', () => {
+  it('retains the UUID through parking, resuming, and a busy response retry', async () => {
+    recordAttempt.mockResolvedValueOnce({ ok: false, reason: 'busy' });
+    renderApp();
+    await startExam('geo');
+    const id = beginExamSession.mock.lastCall![0].submissionId;
+    expect(id).toMatch(/^[0-9a-f-]{36}$/);
+    answer();
+    clickNext();
+    await settle();
+    goHome();
+    await startExam('maths');
+    expect(beginExamSession.mock.lastCall![0].submissionId).not.toBe(id);
+    goHome();
+    fireEvent.click(screen.getByTestId('resume-geo-easy'));
+    answer();
+    clickNext();
+    await settle();
+    expect(recordAttempt.mock.lastCall![0].submissionId).toBe(id);
+    expect(screen.getByTestId('exam-retry')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('exam-retry'));
+    await settle();
+    expect(recordAttempt.mock.lastCall![0].submissionId).toBe(id);
+    expect(saveExamProgress.mock.lastCall![0].submissionId).toBe(id);
+  });
+
+  it('uses the persisted identity after a page reload', async () => {
+    const id = '09ffb829-5eec-4e10-b111-f9abbba0ecc6';
+    renderApp({
+      resumable: [
+        {
+          submissionId: id,
+          subject: 'geo',
+          difficulty: 'easy',
+          questions: bank.geo!.easy!,
+          answers: [0, 'A saved answer.'],
+          currentIndex: 1,
+        },
+      ],
+    });
+    fireEvent.click(screen.getByTestId('resume-geo-easy'));
+    clickNext();
+    await settle();
+    expect(recordAttempt.mock.lastCall![0].submissionId).toBe(id);
+  });
+});
+
+describe('ExamApp recovers saved pending marking', () => {
+  it('keeps saved results on a failed retry and updates the same attempt on success', async () => {
+    const pendingAttempt = {
+      id: 82,
+      subject: 'geo',
+      difficulty: 'easy' as const,
+      total: 2,
+      correct: 1,
+      scorePct: 100,
+      createdAt: 0,
+      canRetryGrading: true,
+      items: [
+        {
+          type: 'mcq' as const,
+          id: 'g1',
+          q: 'Question g1',
+          choices: ['a', 'b'],
+          chosen: 0,
+          answer: 0,
+        },
+        {
+          type: 'free' as const,
+          id: 'g2',
+          q: 'Explain g2',
+          response: 'Answer.',
+          maxScore: 2,
+          score: null,
+          status: 'needs_review' as const,
+          verdict: null,
+        },
+      ],
+    };
+    recordAttempt.mockResolvedValueOnce({
+      ok: true,
+      scorePct: 100,
+      attempt: pendingAttempt,
+      progress: { attempts: [pendingAttempt], subjects: [] },
+    });
+    const gradedAttempt = {
+      ...pendingAttempt,
+      canRetryGrading: false,
+      correct: 2,
+      items: [
+        pendingAttempt.items[0]!,
+        {
+          type: 'free' as const,
+          id: 'g2',
+          q: 'Explain g2',
+          response: 'Answer.',
+          maxScore: 2,
+          score: 2,
+          status: 'graded' as const,
+          verdict: { score: 2, verdict: 'Correct.', gotRight: [], toReview: [], spelling: [] },
+        },
+      ],
+    };
+    retryAttemptGrading
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockResolvedValueOnce({
+        ok: true,
+        scorePct: 100,
+        attempt: gradedAttempt,
+        progress: { attempts: [gradedAttempt], subjects: [] },
+      });
+    renderApp();
+    await startExam('geo');
+    answer();
+    clickNext();
+    await settle();
+    answer();
+    clickNext();
+    await settle();
+    expect(screen.getByTestId('results-score')).toHaveTextContent('1/1');
+    expect(screen.getByTestId('results-score')).toHaveTextContent('Provisional');
+    fireEvent.click(screen.getByTestId('retry-marking'));
+    await settle();
+    expect(screen.getByRole('alert')).toHaveTextContent('Your answers are saved');
+    expect(screen.getByTestId('results-score')).toHaveTextContent('1/1');
+    fireEvent.click(screen.getByTestId('retry-marking'));
+    await settle();
+    expect(retryAttemptGrading).toHaveBeenNthCalledWith(1, 82);
+    expect(retryAttemptGrading).toHaveBeenNthCalledWith(2, 82);
+    expect(recordAttempt).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('results-score')).toHaveTextContent('2/2');
+    expect(screen.queryByTestId('retry-marking')).toBeNull();
   });
 });

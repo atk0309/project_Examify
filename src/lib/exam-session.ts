@@ -1,4 +1,5 @@
 import 'server-only';
+import { randomUUID } from 'node:crypto';
 import { and, desc, eq } from 'drizzle-orm';
 import { db, schema } from './db';
 import type { DifficultyId } from './exam/data';
@@ -14,6 +15,8 @@ import type { DifficultyId } from './exam/data';
 export type SessionAnswer = number | string | null;
 
 export type ExamSessionInput = {
+  /** Stable identity shared by draft checkpoints and submission retries. */
+  submissionId?: string;
   subject: string;
   difficulty: DifficultyId;
   /** The exact ordered paper (public question ids). */
@@ -32,31 +35,50 @@ export type ResumableSession = ExamSessionInput & { startedAt: number; updatedAt
  * Re-starting the same combo replaces the prior row.
  */
 export function saveExamSession(userId: number, input: ExamSessionInput): void {
-  const now = new Date();
-  db.insert(schema.examSessions)
-    .values({
-      userId,
-      subject: input.subject,
-      difficulty: input.difficulty,
-      questionIds: input.questionIds,
-      answers: input.answers,
-      currentIndex: input.currentIndex,
-      updatedAt: now,
-    })
-    .onConflictDoUpdate({
-      target: [
-        schema.examSessions.userId,
-        schema.examSessions.subject,
-        schema.examSessions.difficulty,
-      ],
-      set: {
+  db.transaction((tx) => {
+    const now = new Date();
+    const submissionId = input.submissionId ?? randomUUID();
+    // A delayed start/autosave retry must not resurrect a paper already submitted.
+    if (
+      tx
+        .select({ id: schema.examAttempts.id })
+        .from(schema.examAttempts)
+        .where(
+          and(
+            eq(schema.examAttempts.userId, userId),
+            eq(schema.examAttempts.submissionId, submissionId),
+          ),
+        )
+        .get()
+    )
+      return;
+    tx.insert(schema.examSessions)
+      .values({
+        userId,
+        submissionId,
+        subject: input.subject,
+        difficulty: input.difficulty,
         questionIds: input.questionIds,
         answers: input.answers,
         currentIndex: input.currentIndex,
         updatedAt: now,
-      },
-    })
-    .run();
+      })
+      .onConflictDoUpdate({
+        target: [
+          schema.examSessions.userId,
+          schema.examSessions.subject,
+          schema.examSessions.difficulty,
+        ],
+        set: {
+          submissionId,
+          questionIds: input.questionIds,
+          answers: input.answers,
+          currentIndex: input.currentIndex,
+          updatedAt: now,
+        },
+      })
+      .run();
+  });
 }
 
 /**
@@ -81,6 +103,7 @@ export function updateExamSession(userId: number, input: ExamSessionInput): bool
         eq(schema.examSessions.userId, userId),
         eq(schema.examSessions.subject, input.subject),
         eq(schema.examSessions.difficulty, input.difficulty),
+        input.submissionId ? eq(schema.examSessions.submissionId, input.submissionId) : undefined,
       ),
     )
     .run();
@@ -96,6 +119,7 @@ export function getExamSessions(userId: number): ResumableSession[] {
     .orderBy(desc(schema.examSessions.updatedAt), desc(schema.examSessions.id))
     .all();
   return rows.map((row) => ({
+    submissionId: row.submissionId,
     subject: row.subject,
     difficulty: row.difficulty as DifficultyId,
     questionIds: row.questionIds,
@@ -107,13 +131,19 @@ export function getExamSessions(userId: number): ResumableSession[] {
 }
 
 /** Delete the session matching `(userId, subject, difficulty)`. Idempotent. */
-export function clearExamSession(userId: number, subject: string, difficulty: DifficultyId): void {
+export function clearExamSession(
+  userId: number,
+  subject: string,
+  difficulty: DifficultyId,
+  submissionId?: string,
+): void {
   db.delete(schema.examSessions)
     .where(
       and(
         eq(schema.examSessions.userId, userId),
         eq(schema.examSessions.subject, subject),
         eq(schema.examSessions.difficulty, difficulty),
+        submissionId ? eq(schema.examSessions.submissionId, submissionId) : undefined,
       ),
     )
     .run();

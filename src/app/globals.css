@@ -1668,6 +1668,17 @@
     padding: 0 var(--sp-4);
   }
 
+  /* Ongoing admin settings scroll as a normal document, not a wizard viewport. */
+  .ai-settings-frame {
+    padding-top: var(--sp-6);
+    padding-bottom: var(--sp-8);
+  }
+  .ai-settings-frame form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-3);
+  }
+
   /* ---- First-run setup wizard ---- */
   .app-frame-wizard {
     padding-bottom: 0;
@@ -2473,6 +2484,19 @@
     display: flex;
     flex-direction: column;
     gap: var(--sp-2);
+  }
+  .wizard-generate-row > .wizard-card {
+    flex-wrap: wrap;
+  }
+  .wizard-generate-row > .wizard-card > .wizard-card-copy {
+    flex: 1 1 10rem;
+    overflow-wrap: anywhere;
+  }
+  .wizard-generate-row > .wizard-card > .btn {
+    width: auto;
+    flex: 0 0 auto;
+    max-width: 100%;
+    white-space: normal;
   }
   .wizard-generate-run {
     display: flex;

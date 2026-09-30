@@ -137,14 +137,14 @@ describe('which AI marks written answers', () => {
     );
     // Found is not signed in: the line says marking needs the sign-in.
     expect(parentMarkingLine('claude-cli', 'ready')).toBe(
-      'Written answers are marked by Claude Code while it is signed in on this server. Signed out, they count as not correct.',
+      'Written answers are marked by Claude Code while it is signed in on this server. Signed out, they await marking and are excluded from scores.',
     );
     expect(parentMarkingLine('openai', 'ready')).toBe('Written answers are marked by OpenAI.');
     expect(parentMarkingLine('openai', 'stub')).toBe(
       'Written answers get a test full mark: the OpenAI key is a placeholder.',
     );
     expect(parentMarkingLine('codex-cli', 'not_ready')).toBe(
-      'Written answers are not marked: this server needs Codex installed and signed in as the user that runs Examify. Until then, exams leave written questions out (a bank with only written questions keeps them), and any written answer counts as not correct.',
+      'Written answers are not marked: this server needs Codex installed and signed in as the user that runs Examify. Until then, exams leave written questions out (a bank with only written questions keeps them), and written answers await marking and are excluded from scores.',
     );
   });
 
@@ -212,7 +212,7 @@ describe('which AI marks written answers', () => {
 
   it('names the sign-in command where a signed-out Claude Code / Codex leaves answers unmarked', () => {
     const tail =
-      'Until then, exams leave written questions out (a bank with only written questions keeps them), and any written answer counts as not correct.';
+      'Until then, exams leave written questions out (a bank with only written questions keeps them), and written answers await marking and are excluded from scores.';
     expect(parentMarkingLine('claude-cli', 'not_ready', true)).toBe(
       `Written answers are not marked: Claude Code is not signed in on this server. As the user that runs Examify, run \`claude auth login\`. ${tail}`,
     );
@@ -268,11 +268,11 @@ describe('which AI marks written answers', () => {
       'Written questions are left out: Codex isn’t signed in on this server. A parent can sign it in on the server with `codex login`.',
     );
     expect(examWrittenLine(signedOut, { hasWritten: true, leftOut: false })).toBe(
-      'Codex isn’t signed in on this server, so written answers count as not correct. A parent can sign it in on the server with `codex login`.',
+      'Codex isn’t signed in on this server, so written answers await marking and are excluded from scores. A parent can sign it in on the server with `codex login`.',
     );
     expect(examWrittenLine(signedOut, { hasWritten: false, leftOut: false })).toBeNull();
     expect(examUnmarkedWrittenNote(signedOut)).toBe(
-      'Codex isn’t signed in on this server, so written answers count as not correct. A parent can sign it in on the server with `codex login`.',
+      'Codex isn’t signed in on this server, so written answers await marking and are excluded from scores. A parent can sign it in on the server with `codex login`.',
     );
     expect(examUnmarkedWrittenNote({ written: 'unmarked' })).toBe(EXAM_UNMARKED_WRITTEN);
   });
@@ -317,6 +317,26 @@ describe('gradeAnswers — OpenAI', () => {
   afterEach(() => {
     if (original === undefined) delete process.env.OPENAI_API_KEY;
     else process.env.OPENAI_API_KEY = original;
+  });
+
+  it('reads a changed model for the next grading request without restarting', async () => {
+    const old = process.env.EXAMIFY_OPENAI_MODEL;
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockImplementation(async () => chatResponse(JSON.stringify(verdict(2))));
+    try {
+      process.env.EXAMIFY_OPENAI_MODEL = 'openai-custom-one';
+      await gradeAnswers(tasks.slice(0, 1), 'openai');
+      process.env.EXAMIFY_OPENAI_MODEL = 'openai-custom-two';
+      await gradeAnswers(tasks.slice(0, 1), 'openai');
+      expect(fetchSpy.mock.calls.map((call) => JSON.parse(String(call[1]?.body)).model)).toEqual([
+        'openai-custom-one',
+        'openai-custom-two',
+      ]);
+    } finally {
+      if (old === undefined) delete process.env.EXAMIFY_OPENAI_MODEL;
+      else process.env.EXAMIFY_OPENAI_MODEL = old;
+    }
   });
 
   it('marks each answer with one Chat Completions call and returns only the verdict', async () => {

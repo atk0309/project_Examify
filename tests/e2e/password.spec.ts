@@ -272,3 +272,72 @@ test('a finish that never reaches the server keeps the answers, and Try again ma
   expect(submits).toHaveLength(2);
   expect(submits[1]).toBe(submits[0]);
 });
+
+test('completed setup keeps admin AI controls, missing credentials fail safely, students are denied', async ({
+  page,
+  browser,
+}) => {
+  await signIn(page, PARENT, 'Parent');
+  await expect(page.getByTestId('finish-content-setup')).toHaveCount(0);
+  await page.getByTestId('manage-ai-settings').click();
+  await expect(page).toHaveURL(/\/settings\/ai$/);
+  await expect(page.getByRole('heading', { name: 'AI settings', exact: true })).toBeVisible();
+  await waitForHydration(page, 'ai-settings-mode');
+  // Drop a provider save before it reaches the server; retain a recoverable screen.
+  let dropped = false;
+  await page.route('**/settings/ai', async (route) => {
+    if (!dropped && route.request().method() === 'POST') {
+      dropped = true;
+      return route.abort('internetdisconnected');
+    }
+    return route.continue();
+  });
+  await page.getByTestId('ai-settings-mode').selectOption('cloud-openai');
+  await page.getByTestId('ai-settings-save').click();
+  await expect(page.getByTestId('ai-settings-error')).toContainText('Could not confirm');
+  await page.getByTestId('ai-settings-save').click();
+  await expect(page.getByTestId('ai-settings-status')).toContainText('Saved provider: OpenAI API');
+  await page.reload();
+  await expect(page.getByTestId('ai-settings-mode')).toHaveValue('cloud-openai');
+  page.on('dialog', (dialog) => dialog.accept());
+  const initialClear = page.getByTestId('ai-settings-openai-key-clear');
+  if (await initialClear.isVisible()) await initialClear.click();
+  await expect(page.getByTestId('ai-settings-status')).toContainText(
+    'Written answers are not marked',
+  );
+  // The fixture key is never used for a provider request: refresh only checks local configuration.
+  const fakeKey = 'sk-e2e-ai-settings-never-used';
+  await page.getByTestId('ai-settings-openai-key-input').fill(fakeKey);
+  await page.getByTestId('ai-settings-openai-key-save').click();
+  await expect(page.getByTestId('ai-settings-status')).toContainText('OpenAI configured');
+  await expect(page.getByTestId('ai-settings-openai-key-input')).toHaveCount(0);
+  expect(await page.content()).not.toContain(fakeKey);
+  await page.getByTestId('ai-settings-refresh').click();
+  await expect(page.getByTestId('ai-settings-message')).toContainText('No paid AI request');
+  await page.getByTestId('ai-settings-openai-key-clear').click();
+  await expect(page.getByTestId('ai-settings-status')).toContainText('OpenAI not configured');
+  await expect(page.getByTestId('ai-settings-status')).toContainText(
+    'Written answers are not marked',
+  );
+  // Completion and bootstrap gates remain closed while AI settings stay reachable.
+  await page.goto('/onboarding');
+  await expect(page).toHaveURL(/\/$/);
+  await page.goto('/setup');
+  await expect(page).not.toHaveURL(/\/setup$/);
+  await page.goto('/settings/ai');
+  await page.getByTestId('ai-settings-mode').selectOption('cloud');
+  await page.getByTestId('ai-settings-save').click();
+  await expect(page.getByTestId('ai-settings-status')).toContainText(
+    'Saved provider: Anthropic API',
+  );
+  await page.getByRole('link', { name: 'Back to dashboard' }).click();
+  await expect(page.getByTestId('manage-ai-settings')).toBeVisible();
+  const context = await browser.newContext();
+  const studentPage = await context.newPage();
+  await signIn(studentPage, STUDENT, 'Student');
+  await expect(studentPage.getByTestId('manage-ai-settings')).toHaveCount(0);
+  await studentPage.goto('/settings/ai');
+  await expect(studentPage).toHaveURL(/\/$/);
+  await expect(studentPage.getByTestId('ai-settings')).toHaveCount(0);
+  await context.close();
+});

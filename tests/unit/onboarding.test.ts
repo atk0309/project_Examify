@@ -845,9 +845,10 @@ describe('onboarding upload ceiling', () => {
 });
 
 describe('onboarding household gate', () => {
-  it('auto-starts only for the admin until skip or complete', async () => {
+  it('allows skipped setup to reopen but closes the wizard after completion', async () => {
     const { bootstrapHousehold } = await import('@/lib/households');
     const {
+      adminCanOpenOnboarding,
       adminNeedsOnboardingChip,
       adminShouldAutoStartOnboarding,
       completeOnboarding,
@@ -861,6 +862,9 @@ describe('onboarding household gate', () => {
     let info = getOnboardingForUser(host.userId);
     expect(info.role).toBe('admin');
     expect(info.complete).toBe(false);
+    expect(adminCanOpenOnboarding({ role: info.role, onboardingComplete: info.complete })).toBe(
+      true,
+    );
     expect(
       adminShouldAutoStartOnboarding({
         role: info.role,
@@ -872,6 +876,9 @@ describe('onboarding household gate', () => {
     skipOnboarding(host.householdId);
     info = getOnboardingForUser(host.userId);
     expect(info.complete).toBe(false);
+    expect(adminCanOpenOnboarding({ role: info.role, onboardingComplete: info.complete })).toBe(
+      true,
+    );
     expect(
       adminShouldAutoStartOnboarding({
         role: info.role,
@@ -886,6 +893,9 @@ describe('onboarding household gate', () => {
     completeOnboarding(host.householdId);
     info = getOnboardingForUser(host.userId);
     expect(info.complete).toBe(true);
+    expect(adminCanOpenOnboarding({ role: info.role, onboardingComplete: info.complete })).toBe(
+      false,
+    );
     expect(adminNeedsOnboardingChip({ role: info.role, onboardingComplete: info.complete })).toBe(
       false,
     );

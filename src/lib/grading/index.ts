@@ -21,8 +21,8 @@ import 'server-only';
 
    Fail-safe (I4): any failure — network error, timeout, non-2xx, unparseable
    or malformed JSON — resolves to `{ status: 'needs_review' }` rather than
-   throwing, so an attempt is never lost. Nothing re-grades it later: the item
-   is stored unmarked and counts as not correct. Each such outcome logs one
+   throwing, so an attempt is never lost. The item is stored unmarked and
+   excluded from the provisional score; explicit recovery may retry it later. Each such outcome logs one
    `[grading]` warning with a short reason code only — never the answer, the
    question, the rubric, the key, an error message (a JSON.parse message can
    quote model text), or any user identifier.
@@ -101,7 +101,7 @@ export async function gradeFreeText(args: GradeArgs): Promise<GradeResult> {
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
-        model: MODEL,
+        model: markingHostEnv().EXAMIFY_ANTHROPIC_MODEL?.trim() || MODEL,
         max_tokens: 700,
         system: systemPrompt(),
         messages: [{ role: 'user', content: userPrompt(args) }],

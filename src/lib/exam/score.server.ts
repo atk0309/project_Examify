@@ -3,7 +3,7 @@ import 'server-only';
 /* ============================================================================
    EXAMIFY — ATTEMPT VALIDATION + SCORING (server-only)
    ----------------------------------------------------------------------------
-   The score of a finished exam is computed in the browser, so when an attempt
+   A finished exam is scored only on the server; when an attempt
    is persisted we must NOT trust the client's totals.    This re-derives `correct`
    / `scorePct` from the submitted items: each item is resolved by `id` against
    the live public bank (`./live-bank.server`, disk overlay + sample) for its
@@ -17,12 +17,12 @@ import 'server-only';
    it lives here (not in `./attempts.ts`) because `attempts.ts` is in the client
    graph and may not import the answer keys.
    ========================================================================== */
-import type { AttemptItem, FreeAttemptItem } from '@/lib/db/schema';
+import type { AttemptItem, FreeAttemptItem, StoredGradingTask } from '@/lib/db/schema';
 import { gradeAnswers } from '@/lib/grading';
 import type { MarkingBackend } from '@/lib/onboarding-types';
 import { DIFFICULTIES, resolveExamPaper, type DifficultyId } from './data';
 import { loadLiveBankAndKeys } from './live-bank.server';
-import { isFreePass, type AttemptInput, type ValidateResult } from './attempts';
+import { summarizeScore, type AttemptInput, type ValidateResult } from './attempts';
 
 const DIFFICULTY_IDS = new Set<string>(DIFFICULTIES.map((d) => d.id));
 
@@ -34,10 +34,11 @@ type Slot = { item: AttemptItem; correct: boolean };
  * re-derive its score, marking any free-text items with `markingBackend` (the
  * household's; the Anthropic key path when not given). Never throws.
  */
-export async function scoreAttempt(
+export function prepareAttempt(
   input: AttemptInput,
-  options: { markingBackend?: MarkingBackend } = {},
-): Promise<ValidateResult> {
+):
+  | (Extract<ValidateResult, { ok: true }> & { gradingTasks: StoredGradingTask[] })
+  | Extract<ValidateResult, { ok: false }> {
   const { bank, keys } = loadLiveBankAndKeys();
   const subjectIds = new Set(bank.subjects.map((subject) => subject.id));
   if (!subjectIds.has(input.subject)) return { ok: false, reason: 'invalid_subject' };
@@ -106,59 +107,81 @@ export async function scoreAttempt(
     }
   }
 
-  // Mark every free-text item with the household's backend (never throws).
-  const graded = await gradeAnswers(
-    freeTasks.map((t) => ({
+  // Persist this snapshot BEFORE invoking a provider. An outage never loses answers.
+  freeTasks.forEach((t) => {
+    const item: FreeAttemptItem = {
+      type: 'free',
+      id: t.id,
+      q: t.q,
+      response: t.response,
+      maxScore: t.maxScore,
+      score: null,
+      status: 'needs_review',
+      verdict: null,
+    };
+    slots[t.index] = { item, correct: false };
+  });
+  const resolved = (slots as Slot[]).map((s) => s.item);
+  return {
+    ok: true,
+    subject: input.subject,
+    difficulty,
+    ...summarizeScore(resolved),
+    items: resolved,
+    gradingTasks: freeTasks.map((t) => ({
+      index: t.index,
       question: t.q,
       rubric: t.rubric,
       maxScore: t.maxScore,
       studentAnswer: t.response,
     })),
-    options.markingBackend ?? 'anthropic',
-  );
+  };
+}
 
-  freeTasks.forEach((t, gi) => {
-    const r = graded[gi]!;
-    let item: FreeAttemptItem;
-    let correct = false;
-    if (r.status === 'graded') {
-      correct = isFreePass(r.verdict.score, t.maxScore);
-      item = {
-        type: 'free',
-        id: t.id,
-        q: t.q,
-        response: t.response,
-        maxScore: t.maxScore,
-        score: r.verdict.score,
-        status: 'graded',
-        verdict: r.verdict,
-      };
-    } else {
-      item = {
-        type: 'free',
-        id: t.id,
-        q: t.q,
-        response: t.response,
-        maxScore: t.maxScore,
-        score: null,
-        status: 'needs_review',
-        verdict: null,
+/** Grade only unresolved items, against the original server-only rubric snapshot. */
+export async function gradePreparedItems(
+  items: AttemptItem[],
+  tasks: StoredGradingTask[],
+  markingBackend: MarkingBackend,
+): Promise<AttemptItem[]> {
+  const pending = tasks.filter((t) => {
+    const item = items[t.index];
+    return item?.type === 'free' && item.status === 'needs_review';
+  });
+  const graded = await gradeAnswers(pending, markingBackend);
+  const next = items.slice();
+  pending.forEach((task, index) => {
+    const result = graded[index];
+    const item = next[task.index];
+    if (result?.status === 'graded' && item?.type === 'free') {
+      next[task.index] = {
+        ...item,
+        status: 'graded' as const,
+        score: result.verdict.score,
+        verdict: result.verdict,
       };
     }
-    slots[t.index] = { item, correct };
   });
+  return next;
+}
 
-  const resolved = slots as Slot[];
-  const total = resolved.length;
-  const correct = resolved.reduce((n, s) => n + (s.correct ? 1 : 0), 0);
-  const scorePct = Math.round((correct / total) * 100);
+/** Non-persisting scorer retained for validation consumers and tests. */
+export async function scoreAttempt(
+  input: AttemptInput,
+  options: { markingBackend?: MarkingBackend } = {},
+): Promise<ValidateResult> {
+  const prepared = prepareAttempt(input);
+  if (!prepared.ok) return prepared;
+  const items = await gradePreparedItems(
+    prepared.items,
+    prepared.gradingTasks,
+    options.markingBackend ?? 'anthropic',
+  );
   return {
     ok: true,
-    subject: input.subject,
-    difficulty,
-    total,
-    correct,
-    scorePct,
-    items: resolved.map((s) => s.item),
+    subject: prepared.subject,
+    difficulty: prepared.difficulty,
+    ...summarizeScore(items),
+    items,
   };
 }

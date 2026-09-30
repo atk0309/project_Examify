@@ -21,6 +21,7 @@ export const users = sqliteTable(
     emailVerifiedAt: integer('email_verified_at', { mode: 'timestamp_ms' }),
     /** scrypt PHC-like string; null when this user has never set a password. */
     passwordHash: text('password_hash'),
+    sessionVersion: integer('session_version').notNull().default(0),
     createdAt: integer('created_at', { mode: 'timestamp_ms' })
       .notNull()
       .default(sql`(unixepoch() * 1000)`),
@@ -199,12 +200,29 @@ export const examAttempts = sqliteTable(
     correct: integer('correct').notNull(),
     scorePct: integer('score_pct').notNull(),
     items: text('items', { mode: 'json' }).notNull().$type<AttemptItem[]>(),
+    submissionId: text('submission_id'),
+    submissionHash: text('submission_hash'),
+    /** Server-only rubric snapshot. NEVER include in records sent to clients. */
+    gradingTasks: text('grading_tasks', { mode: 'json' }).$type<StoredGradingTask[]>(),
+    gradingLease: text('grading_lease'),
+    gradingLeaseUntil: integer('grading_lease_until'),
     createdAt: integer('created_at', { mode: 'timestamp_ms' })
       .notNull()
       .default(sql`(unixepoch() * 1000)`),
   },
-  (t) => [index('exam_attempts_user_created_idx').on(t.userId, t.createdAt)],
+  (t) => [
+    index('exam_attempts_user_created_idx').on(t.userId, t.createdAt),
+    uniqueIndex('exam_attempts_user_submission_unique').on(t.userId, t.submissionId),
+  ],
 );
+
+export type StoredGradingTask = {
+  index: number;
+  question: string;
+  rubric: string;
+  maxScore: number;
+  studentAnswer: string;
+};
 
 export type ExamAttempt = typeof examAttempts.$inferSelect;
 export type NewExamAttempt = typeof examAttempts.$inferInsert;
@@ -234,6 +252,7 @@ export const examSessions = sqliteTable(
       .references(() => users.id),
     subject: text('subject').notNull(),
     difficulty: text('difficulty', { enum: ['easy', 'medium', 'hard'] }).notNull(),
+    submissionId: text('submission_id').notNull().default(''),
     questionIds: text('question_ids', { mode: 'json' }).notNull().$type<string[]>(),
     answers: text('answers', { mode: 'json' }).notNull().$type<(number | string | null)[]>(),
     currentIndex: integer('current_index').notNull().default(0),
@@ -255,7 +274,7 @@ export type NewExamSession = typeof examSessions.$inferInsert;
 /**
  * The bounded, client-renderable grading feedback for a free-text answer. These
  * are the ONLY grading fields ever surfaced in the UI — the rubric and the raw
- * model text are never shipped (see the render invariant in `CLAUDE.md`).
+ * model text are never shipped (see the render invariant in `docs/architecture.md`).
  */
 export type Verdict = {
   /** Marks awarded, 0..maxScore. */

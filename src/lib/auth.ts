@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { getIronSession, type SessionOptions } from 'iron-session';
-import { and, eq, gte, isNull, ne } from 'drizzle-orm';
+import { and, eq, gte, isNull, ne, sql } from 'drizzle-orm';
 import { db, schema } from './db';
 import { isOtpShapedBearer, isResetShapedBearer, usesMagicLink } from './auth-mode';
 import { env, getAuthMode, sessionCookieConfig } from './env';
@@ -22,6 +22,8 @@ export type SessionData = {
   userId?: number;
   role?: SessionRole;
   email?: string;
+  /** Snapshot of users.session_version at authentication; absent legacy cookies mean zero. */
+  sessionVersion?: number;
   /**
    * Parent-only: when true, a `parent` session is "playing as a student" and
    * gets the full exam flow. Attempts still persist under the parent's own
@@ -76,7 +78,18 @@ export async function getSession() {
   const session = await getRawSession();
   if (session.userId && session.role) {
     const membership = getMembershipForUser(session.userId);
-    if (!sessionMembershipOk(session, membership)) {
+    const user = db
+      .select({ sessionVersion: schema.users.sessionVersion })
+      .from(schema.users)
+      .where(eq(schema.users.id, session.userId))
+      .get();
+    const version = session.sessionVersion === undefined ? 0 : session.sessionVersion;
+    if (
+      !sessionMembershipOk(session, membership) ||
+      !user ||
+      !Number.isSafeInteger(version) ||
+      version !== user.sessionVersion
+    ) {
       // Cookie mutation is illegal during a Server Component render
       // (same reason /signin/verify is a Route Handler). Redirect to a
       // GET handler that can persist the clear so the browser drops the
@@ -356,7 +369,8 @@ export function issuePasswordResetOtp(
 
 /**
  * Consume a password-reset code and replace `users.password_hash` in the
- * same transaction. Does not create a user, attach membership, or stamp
+ * same transaction, incrementing session_version to revoke prior sessions.
+ * Does not create a user, attach membership, or stamp
  * `emailVerifiedAt`. A correct code for someone who is no longer a member
  * is consumed and does not count as a guess. Wrong codes use a separate
  * 5-guess bucket from sign-in OTPs. While that bucket is full every code —
@@ -440,9 +454,22 @@ export function consumePasswordReset(
       }
 
       const passwordHash = hashPassword(password);
-      tx.update(schema.users).set({ passwordHash }).where(eq(schema.users.id, existing.id)).run();
+      const updated = tx
+        .update(schema.users)
+        .set({ passwordHash, sessionVersion: sql`${schema.users.sessionVersion} + 1` })
+        .where(eq(schema.users.id, existing.id))
+        .returning({ sessionVersion: schema.users.sessionVersion })
+        .get();
+      if (!updated) throw new Error('failed to reset password');
 
-      return { ok: true, userId: existing.id, role, email: existing.email, isNew: false };
+      return {
+        ok: true,
+        userId: existing.id,
+        role,
+        email: existing.email,
+        isNew: false,
+        sessionVersion: updated.sessionVersion,
+      };
     });
   } catch (error) {
     if (error instanceof ConsumeRollback) return error.result;
@@ -552,13 +579,21 @@ export function authenticatePassword(
   email: string,
   password: string,
   role: SessionRole,
-): { ok: true; userId: number; role: SessionRole; email: string } | { ok: false } {
+):
+  | { ok: true; userId: number; role: SessionRole; email: string; sessionVersion: number }
+  | { ok: false } {
   const normalised = email.trim().toLowerCase();
   const user = db.select().from(schema.users).where(eq(schema.users.email, normalised)).get();
   const passwordOk = verifyPasswordOrDummy(password, user?.passwordHash);
   if (!user || !passwordOk) return { ok: false };
   if (!isHouseholdEmailAllowed(role, normalised)) return { ok: false };
-  return { ok: true, userId: user.id, role, email: user.email };
+  return {
+    ok: true,
+    userId: user.id,
+    role,
+    email: user.email,
+    sessionVersion: user.sessionVersion,
+  };
 }
 
 /**
@@ -566,7 +601,14 @@ export function authenticatePassword(
  * `consumePasswordReset`); callers surface it as `rate_limited`.
  */
 export type ConsumeResult =
-  | { ok: true; userId: number; role: SessionRole; email: string; isNew: boolean }
+  | {
+      ok: true;
+      userId: number;
+      role: SessionRole;
+      email: string;
+      isNew: boolean;
+      sessionVersion: number;
+    }
   | {
       ok: false;
       reason: 'not-found' | 'expired' | 'used' | 'invite-invalid' | 'not-member' | 'locked';
@@ -658,6 +700,7 @@ function consumeHashedBearer(
         .get();
 
       let userId: number;
+      let sessionVersion: number;
       let isNew = false;
       if (existing) {
         const patch: { emailVerifiedAt?: Date; passwordHash?: string } = {};
@@ -667,6 +710,7 @@ function consumeHashedBearer(
           tx.update(schema.users).set(patch).where(eq(schema.users.id, existing.id)).run();
         }
         userId = existing.id;
+        sessionVersion = existing.sessionVersion;
       } else {
         const inserted = tx
           .insert(schema.users)
@@ -675,10 +719,11 @@ function consumeHashedBearer(
             emailVerifiedAt: new Date(now),
             ...(hashToStore ? { passwordHash: hashToStore } : {}),
           })
-          .returning({ id: schema.users.id })
+          .returning({ id: schema.users.id, sessionVersion: schema.users.sessionVersion })
           .get();
         if (!inserted) throw new Error('failed to create user');
         userId = inserted.id;
+        sessionVersion = inserted.sessionVersion;
         isNew = true;
       }
 
@@ -689,7 +734,7 @@ function consumeHashedBearer(
         }
       }
 
-      return { ok: true, userId, role: row.role, email: row.email, isNew };
+      return { ok: true, userId, role: row.role, email: row.email, isNew, sessionVersion };
     });
   } catch (error) {
     if (error instanceof ConsumeRollback) return error.result;

@@ -10,6 +10,12 @@ import { loadLivePublicBank } from '@/lib/exam/live-bank.server';
 // + where it is. No answer keys are involved — this is just the user's own draft.
 const inputSchema = z
   .object({
+    submissionId: z
+      .string()
+      .min(16)
+      .max(64)
+      .regex(/^[A-Za-z0-9_-]+$/)
+      .optional(),
     subject: z.string().min(1),
     difficulty: z.enum(['easy', 'medium', 'hard']),
     questionIds: z.array(z.string().min(1)).min(1).max(50),
