@@ -1,3 +1,4 @@
+import { OPENAI_BANK_IR_RESPONSE_FORMAT } from './openai-schema';
 import type { BankIR } from '../schema';
 import { buildOpenAiCompatibleUserContent } from './content';
 import {
@@ -29,18 +30,32 @@ async function callOpenAi(request: ProviderRequest, deps: ProviderDeps): Promise
         model: request.model,
         temperature: 0,
         seed: request.seed,
-        response_format: { type: 'json_object' },
+        response_format: OPENAI_BANK_IR_RESPONSE_FORMAT,
         messages: [
           { role: 'system', content: request.prompt },
           { role: 'user', content: buildOpenAiCompatibleUserContent(request) },
         ],
       }),
     });
-    return readProviderJson<{ choices?: { message?: { content?: string } }[] }>(res, 'OpenAI');
+    return readProviderJson<{
+      choices?: { finish_reason?: string; message?: { content?: unknown; refusal?: unknown } }[];
+    }>(res, 'OpenAI');
   });
-  const text = payload.choices?.[0]?.message?.content;
-  if (!text) throw new ProviderFailureError('output', 'OpenAI returned no message content');
-  return parseProviderBankIr(text);
+  const choice = Array.isArray(payload?.choices) ? payload.choices[0] : undefined;
+  if (choice?.message?.refusal != null)
+    throw new ProviderFailureError('output', 'OpenAI declined generation', {
+      outputDiagnostic: { category: 'refusal', fields: [] },
+    });
+  if (choice?.finish_reason !== 'stop')
+    throw new ProviderFailureError('output', 'OpenAI generation did not complete', {
+      outputDiagnostic: { category: 'incomplete', fields: [] },
+    });
+  const text = choice?.message?.content;
+  if (typeof text !== 'string' || !text.trim())
+    throw new ProviderFailureError('output', 'OpenAI returned no message content', {
+      outputDiagnostic: { category: 'empty', fields: [] },
+    });
+  return parseProviderBankIr(text, true);
 }
 
 export const openaiProvider: GenerateProvider = {

@@ -1,3 +1,4 @@
+import { schemaOutputDiagnostic, type OutputDiagnostic } from '../output-diagnostic';
 import { extractJsonObject } from '../json';
 import type { PageImage } from '../pages';
 import { bankIrSchema, type BankIR, type BankIrSubject, type GenerateProviderId } from '../schema';
@@ -41,16 +42,18 @@ export class ProviderFailureError extends Error {
   readonly code = 'PROVIDER_FAILURE';
   readonly kind: ProviderFailureKind;
   readonly status: number | undefined;
+  readonly outputDiagnostic: OutputDiagnostic | undefined;
 
   constructor(
     kind: ProviderFailureKind,
     message: string,
-    options: { status?: number; cause?: unknown } = {},
+    options: { status?: number; cause?: unknown; outputDiagnostic?: OutputDiagnostic } = {},
   ) {
     super(message, options.cause === undefined ? undefined : { cause: options.cause });
     this.name = 'ProviderFailureError';
     this.kind = kind;
     this.status = options.status;
+    this.outputDiagnostic = options.outputDiagnostic;
   }
 }
 
@@ -59,13 +62,22 @@ export function providerHttpError(label: string, status: number): ProviderFailur
 }
 
 /** Model text → BankIR. Anything unusable is an `output` failure (same message as before). */
-export function parseProviderBankIr(text: string): BankIR {
+export function parseProviderBankIr(text: string, strictJson = false): BankIR {
+  let raw: unknown;
   try {
-    return bankIrSchema.parse(extractJsonObject(text));
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new ProviderFailureError('output', message, { cause: error });
+    raw = strictJson ? JSON.parse(text) : extractJsonObject(text);
+  } catch {
+    throw new ProviderFailureError('output', 'provider output is not a JSON object', {
+      outputDiagnostic: { category: 'json', fields: [] },
+    });
   }
+  const parsed = bankIrSchema.safeParse(raw);
+  if (!parsed.success) {
+    throw new ProviderFailureError('output', 'Provider output does not match BankIR', {
+      outputDiagnostic: schemaOutputDiagnostic(parsed.error.issues),
+    });
+  }
+  return parsed.data;
 }
 
 /** Fail-closed cancel: generate writes no IR/cache/manifest after this. */
@@ -169,10 +181,10 @@ export async function readProviderJson<T>(res: Response, label: string): Promise
   const text = await res.text();
   try {
     return JSON.parse(text) as T;
-  } catch (error) {
-    // No parser text: it quotes the body.
+  } catch {
+    // No parser text or cause: either can quote the body.
     throw new ProviderFailureError('output', `${label} returned a body that is not JSON`, {
-      cause: error,
+      outputDiagnostic: { category: 'json', fields: [] },
     });
   }
 }

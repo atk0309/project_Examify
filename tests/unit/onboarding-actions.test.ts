@@ -1888,6 +1888,57 @@ describe('onboarding generate + upload fixes', () => {
     }
   });
 
+  it('logs only bounded field diagnostics for unusable AI output and writes no bank', async () => {
+    const root = tempRoot();
+    const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
+    setOnboardingContentRootForTests(root);
+    await signInHost();
+    seedNotesSubject(root, 'history');
+    const previous = process.env.OPENAI_API_KEY;
+    process.env.OPENAI_API_KEY = 'sk-private-diagnostic-canary';
+    const malformed = populatedIr('history');
+    Reflect.deleteProperty(malformed.difficulties.easy[0]!, 'provenance');
+    malformed.difficulties.easy[0]!.q = 'private-question-canary';
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(malformed) } }],
+          }),
+          { status: 200 },
+        ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const { generateOnboardingSubjectAction, setOnboardingAiModeAction } =
+        await import('@/actions/onboarding');
+      const mode = new FormData();
+      mode.set('aiMode', 'cloud-openai');
+      expect((await setOnboardingAiModeAction(mode)).ok).toBe(true);
+      const data = new FormData();
+      data.set('subjectId', 'history');
+      const result = await generateOnboardingSubjectAction(data);
+      expect(result).toEqual({ ok: false, reason: 'provider_output_invalid' });
+      expect(warn).toHaveBeenCalledWith('[onboarding] generate failed', {
+        reason: 'provider_output_invalid',
+        subjectId: 'history',
+        outputDiagnostic: JSON.stringify({
+          category: 'schema',
+          fields: [{ path: 'difficulties.easy.[].provenance', code: 'invalid_type' }],
+        }),
+      });
+      expect(JSON.stringify(warn.mock.calls)).not.toMatch(/private-question|sk-private|notes.txt/);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fs.existsSync(path.join(root, 'content/subjects/history/bank.ir.json'))).toBe(false);
+      expect(fs.existsSync(path.join(root, '.examify-ingest'))).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+      if (previous === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = previous;
+    }
+  });
+
   it('stops a generate-all batch when cancel lands after the first subject committed', async () => {
     const root = tempRoot();
     const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');

@@ -1227,7 +1227,9 @@ describe('examify-ingest generate', () => {
         expect(body.seed).toBe(7);
         expect(JSON.stringify(body)).not.toContain(secret);
         return new Response(
-          JSON.stringify({ choices: [{ message: { content: JSON.stringify(bank) } }] }),
+          JSON.stringify({
+            choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(bank) } }],
+          }),
           { status: 200 },
         );
       },
@@ -1278,7 +1280,9 @@ describe('examify-ingest generate', () => {
         expect(blob).toContain('BEGIN UNTRUSTED SOURCE MATERIAL');
         expect(body.messages[1]).toMatchObject({ role: 'user' });
         return new Response(
-          JSON.stringify({ choices: [{ message: { content: JSON.stringify(bank) } }] }),
+          JSON.stringify({
+            choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(bank) } }],
+          }),
           { status: 200 },
         );
       },
@@ -1301,7 +1305,9 @@ describe('examify-ingest generate', () => {
         const status = statuses.shift() ?? 200;
         return status === 200
           ? new Response(
-              JSON.stringify({ choices: [{ message: { content: JSON.stringify(bank) } }] }),
+              JSON.stringify({
+                choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(bank) } }],
+              }),
               { status },
             )
           : new Response(
@@ -1373,7 +1379,11 @@ describe('examify-ingest generate', () => {
               JSON.stringify(
                 provider === 'anthropic'
                   ? { content: [{ type: 'text', text: JSON.stringify(bank) }] }
-                  : { choices: [{ message: { content: JSON.stringify(bank) } }] },
+                  : {
+                      choices: [
+                        { finish_reason: 'stop', message: { content: JSON.stringify(bank) } },
+                      ],
+                    },
               ),
               { status: 200 },
             );
@@ -1393,7 +1403,9 @@ describe('examify-ingest generate', () => {
     const fetchModel = async (_input: unknown, init?: RequestInit) => {
       models.push((JSON.parse(String(init?.body)) as { model: string }).model);
       return new Response(
-        JSON.stringify({ choices: [{ message: { content: JSON.stringify(bank) } }] }),
+        JSON.stringify({
+          choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(bank) } }],
+        }),
         { status: 200 },
       );
     };
@@ -1459,7 +1471,11 @@ describe('examify-ingest generate', () => {
       fetch: (async () => {
         fetchCalls += 1;
         return new Response(
-          JSON.stringify({ choices: [{ message: { content: JSON.stringify(fromEndpoint) } }] }),
+          JSON.stringify({
+            choices: [
+              { finish_reason: 'stop', message: { content: JSON.stringify(fromEndpoint) } },
+            ],
+          }),
           { status: 200 },
         );
       }) as typeof fetch,

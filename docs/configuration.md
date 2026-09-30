@@ -40,6 +40,12 @@ OS user that runs Examify. A CLI signed in under your own desktop account is
 not automatically available to a server service account. Set `EXAMIFY_CLAUDE_BIN`
 or `EXAMIFY_CODEX_BIN` to its full path if the app cannot find it.
 
+OpenAI question generation requires a model that supports strict JSON-schema
+Structured Outputs on Chat Completions (the default `gpt-4o` supports it).
+Model overrides must also support the request's image inputs, temperature and seed
+when applicable. Unsupported models fail without a fallback model or automatic
+paid retry. Written-answer marking keeps its existing request format.
+
 ### Change AI after setup
 
 The household admin can open **AI settings** from the parent dashboard, or visit

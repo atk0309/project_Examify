@@ -27,7 +27,11 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function idPattern(subjectId: string, difficulty: DifficultyId, type: 'mcq' | 'free'): RegExp {
+export function idPattern(
+  subjectId: string,
+  difficulty: DifficultyId,
+  type: 'mcq' | 'free',
+): RegExp {
   const prefix = `${escapeRegExp(subjectId)}-${difficulty}`;
   return type === 'mcq' ? new RegExp(`^${prefix}-\\d+$`) : new RegExp(`^${prefix}-free-\\d+$`);
 }
