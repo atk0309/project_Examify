@@ -491,7 +491,9 @@ OpenAI generation uses strict JSON-schema Structured Outputs with a model that
 supports this Chat Completions feature (the shipped `gpt-4o` does). The model
 emits BankIR without server-owned metadata. Refusals, incomplete responses and
 invalid banks fail closed; there is no fallback request or automatic paid retry.
-Original BankIR shape and semantic ID validation still run before any write.
+The requested subject ID and each difficulty/type ID pattern are constrained in
+the schema. IDs are not rewritten. Cross-item uniqueness and original BankIR
+shape and semantic ID validation still run before any write.
 Some fine-tuned or older model overrides do not support the full schema or
 request parameters; choose a compatible model rather than disabling validation.
 Other providers retain their existing output contracts.

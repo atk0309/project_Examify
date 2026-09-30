@@ -1,4 +1,4 @@
-import { OPENAI_BANK_IR_RESPONSE_FORMAT } from './openai-schema';
+import { openAiBankIrResponseFormat } from './openai-schema';
 import type { BankIR } from '../schema';
 import { buildOpenAiCompatibleUserContent } from './content';
 import {
@@ -30,7 +30,7 @@ async function callOpenAi(request: ProviderRequest, deps: ProviderDeps): Promise
         model: request.model,
         temperature: 0,
         seed: request.seed,
-        response_format: OPENAI_BANK_IR_RESPONSE_FORMAT,
+        response_format: openAiBankIrResponseFormat(request.subject.id),
         messages: [
           { role: 'system', content: request.prompt },
           { role: 'user', content: buildOpenAiCompatibleUserContent(request) },

@@ -2,7 +2,7 @@ import { inspect } from 'node:util';
 import { describe, expect, it } from 'vitest';
 import { openaiProvider } from '../../tools/examify-ingest/src/providers/openai';
 import {
-  OPENAI_BANK_IR_RESPONSE_FORMAT,
+  openAiBankIrResponseFormat,
   strictWireSchema,
 } from '../../tools/examify-ingest/src/providers/openai-schema';
 import {
@@ -10,6 +10,8 @@ import {
   type ProviderRequest,
 } from '../../tools/examify-ingest/src/providers/types';
 import { semanticOutputDiagnostic } from '../../tools/examify-ingest/src/output-diagnostic';
+import { DIFFICULTIES } from '../../tools/examify-ingest/src/schema';
+import { splitIr } from '../../tools/examify-ingest/src/split';
 import { validateIrCollection } from '../../tools/examify-ingest/src/validate';
 
 const bank = {
@@ -91,19 +93,125 @@ function assertClosedSchema(value: unknown) {
   Object.values(node).forEach(assertClosedSchema);
 }
 
+function completeMcq() {
+  return parseProviderBankIr(JSON.stringify(bank)).difficulties.easy[0]!;
+}
+function completeFree() {
+  return parseProviderBankIr(JSON.stringify(bank)).difficulties.medium[0]!;
+}
+
 describe('OpenAI strict generation prototype, without provider calls', () => {
   it('sends a closed nested-anyOf schema derived from canonical BankIR, omitting trusted metadata', async () => {
     const got = await generate(JSON.stringify(bank));
     expect(got.calls).toBe(1);
     expect(got.error).toBeUndefined();
     expect(got.result).toEqual(bank);
-    expect(got.wire.response_format).toEqual(OPENAI_BANK_IR_RESPONSE_FORMAT);
+    expect(got.wire.response_format).toEqual(openAiBankIrResponseFormat('demo'));
     expect(JSON.stringify(got.wire)).not.toContain('fixture-never-sent');
-    const schema = OPENAI_BANK_IR_RESPONSE_FORMAT.json_schema.schema as { properties: object };
+    const schema = openAiBankIrResponseFormat('demo').json_schema.schema as { properties: object };
     expect(Object.keys(schema.properties)).toEqual(['version', 'subject', 'difficulties']);
     assertClosedSchema(schema);
     expect(JSON.stringify(schema)).toContain('anyOf');
     expect(JSON.stringify(schema).length).toBeLessThan(12000);
+  });
+  it.each(['demo', 'cell-biology-2'])(
+    'constrains all six ID variants to subject %s and preserves key mapping',
+    async (subjectId) => {
+      const format = openAiBankIrResponseFormat(subjectId);
+      const schema = format.json_schema.schema as {
+        properties: {
+          subject: { properties: { id: { enum: string[] } } };
+          difficulties: {
+            properties: Record<
+              string,
+              {
+                items: {
+                  anyOf: {
+                    properties: { id: { pattern: string }; type: { enum: string[] } };
+                  }[];
+                };
+              }
+            >;
+          };
+        };
+      };
+      expect(schema.properties.subject.properties.id.enum).toEqual([subjectId]);
+      assertClosedSchema(schema);
+      const complete = parseProviderBankIr(JSON.stringify(bank));
+      complete.subject.id = subjectId;
+      for (const difficulty of DIFFICULTIES) {
+        complete.difficulties[difficulty] = [];
+        const variants = schema.properties.difficulties.properties[difficulty]!.items.anyOf;
+        for (const type of ['mcq', 'free'] as const) {
+          const variant = variants.find((item) => item.properties.type.enum[0] === type)!;
+          const pattern = new RegExp(variant.properties.id.pattern);
+          const suffix = type === 'free' ? '-free' : '';
+          const id = `${subjectId}-${difficulty}${suffix}-1`;
+          expect(pattern.test(id)).toBe(true);
+          expect(pattern.test(`${subjectId}-${difficulty}${suffix}-42`)).toBe(true);
+          expect(pattern.test(`other-${difficulty}${suffix}-1`)).toBe(false);
+          expect(pattern.test(`${subjectId}-${difficulty}${suffix}-one`)).toBe(false);
+          expect(pattern.test(`${subjectId}-${difficulty}${suffix}-1-trailing`)).toBe(false);
+          const otherType = type === 'free' ? '' : '-free';
+          expect(pattern.test(`${subjectId}-${difficulty}${otherType}-1`)).toBe(false);
+          for (const otherDifficulty of DIFFICULTIES.filter((value) => value !== difficulty)) {
+            expect(pattern.test(`${subjectId}-${otherDifficulty}${suffix}-1`)).toBe(false);
+          }
+          complete.difficulties[difficulty].push({
+            ...structuredClone(type === 'mcq' ? completeMcq() : completeFree()),
+            id,
+          });
+        }
+      }
+      let calls = 0;
+      const result = await openaiProvider.generate(
+        { ...request, subject: complete.subject },
+        {
+          env: { OPENAI_API_KEY: 'fixture' },
+          fetch: async (_url, init) => {
+            calls++;
+            expect(JSON.parse(String(init?.body)).response_format).toEqual(format);
+            return new Response(
+              JSON.stringify({
+                choices: [
+                  {
+                    finish_reason: 'stop',
+                    message: {
+                      content: JSON.stringify(complete),
+                    },
+                  },
+                ],
+              }),
+            );
+          },
+        },
+      );
+      expect(calls).toBe(1);
+      expect(validateIrCollection([{ path: 'fixture', data: result }]).ok).toBe(true);
+      const split = splitIr(result);
+      for (const difficulty of DIFFICULTIES) {
+        for (const item of result.difficulties[difficulty]) {
+          expect(
+            split.questions[difficulty].find((question) => question.id === item.id)?.type,
+          ).toBe(item.type);
+          expect(split.keys[item.id]?.type).toBe(item.type);
+        }
+      }
+      expect(Object.keys(split.keys)).toHaveLength(6);
+      // Pattern compliance cannot prove uniqueness; keep this separate semantic gate.
+      result.difficulties.hard.push(structuredClone(result.difficulties.hard[0]!));
+      expect(validateIrCollection([{ path: 'fixture', data: result }]).ok).toBe(false);
+      expect(semanticOutputDiagnostic(result).fields).toContainEqual({
+        path: 'difficulties.hard.[].id',
+        code: 'duplicate_id',
+      });
+    },
+  );
+  it('builds independent schemas for consecutive subjects without mutating previous output', () => {
+    const first = openAiBankIrResponseFormat('first');
+    const saved = JSON.stringify(first);
+    expect(JSON.stringify(openAiBankIrResponseFormat('second'))).not.toContain('first-');
+    expect(JSON.stringify(first)).toBe(saved);
   });
   it.each(['length', 'content_filter', 'tool_calls', 'unexpected'])(
     'rejects %s even when content parses, without retrying',
