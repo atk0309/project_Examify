@@ -1,6 +1,8 @@
 import { expect, test, type Locator } from '@playwright/test';
 import fs from 'node:fs/promises';
 import { makeSnapshot, waitForAnswerPlan, findAnswer, chooseDemoDifficulty } from './checkpoint/public-plan.mjs';
+import { budgetSummary } from './checkpoint/export-budget.mjs';
+import { LIMITS } from './budget-policy.mjs';
 import { classifyGenerationError } from './checkpoint/generation-status.mjs';
 const live = process.env.DEMO_MODE === 'live';
 const checkpoint = process.env.DEMO_CHECKPOINT === '1';
@@ -137,7 +139,8 @@ test('cell biology: install, generate, review, practise, feedback, progress', as
   // Public questions only: choose an actual bounded paper that exercises marking.
   // No rubric/key reads, generation retries, or fabricated questions.
   const publicBank = JSON.parse(await fs.readFile('tests/.tmp/demo-data/content/generated/questions/demo.json', 'utf8'));
-  const demoDifficulty = chooseDemoDifficulty(publicBank);
+  const remainingMarkingCalls = LIMITS.calls - budgetSummary('tests/.tmp/demo-budget').providers.anthropic.reservedRequests;
+  const demoDifficulty = chooseDemoDifficulty(publicBank, remainingMarkingCalls);
   await page.getByTestId('manage-ai-settings').click();
   await expect(page).toHaveURL(/\/settings\/ai$/);
   await scene(
@@ -199,7 +202,7 @@ test('cell biology: install, generate, review, practise, feedback, progress', as
       label: 'Source-grounded answer review wait shortened',
     });
   }
-  await page.getByRole('button', { name: /Are you smarter than your kid/ }).click();
+  await page.getByRole('button', { name: 'Student View', exact: true }).click();
   await read(1, 'Enter this synthetic adult account’s practice mode');
   await scene(`Launch a ${demoDifficulty} mini exam from the new Cell biology pack`);
   await click('subject-card-demo');
@@ -281,6 +284,10 @@ test('cell biology: install, generate, review, practise, feedback, progress', as
   await expect(page.getByTestId('attempt-row').first()).toContainText('Cell biology');
   await scene('The completed attempt is saved in progress');
   await read(5, 'Read saved subject progress');
+  await page.getByRole('button', { name: 'Back to parent view', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Student View', exact: true })).toBeVisible();
+  await scene('Return to the parent view');
+  await read(4, 'See the parent dashboard again');
   await fs.mkdir('demo-recording/evidence', { recursive: true });
   await fs.writeFile(
     'demo-recording/evidence/chapters.json',

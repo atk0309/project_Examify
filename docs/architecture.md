@@ -22,7 +22,7 @@ Surface:
   session renders the client `ExamApp` (dashboard → difficulty → exam → results, plus
   a "Your progress" screen); a `parent` session renders `ParentDashboard` (the child's
   progress, the parent's own progress, and a parent-vs-child comparison). A parent can
-  enter **student mode** ("Are you smarter than your kid?") to get the full
+  enter **student mode** ("Student View") to get the full
   `ExamApp` themselves; their attempts persist under the parent's own account, never the
   child's.
 - **`/setup`** — first-run household bootstrap (only when no household exists).
@@ -579,8 +579,7 @@ These are non-negotiable. Don't "fix" them out.
   `verifyLocalOtp` only). After a mode switch, leftover magic-link tokens are
   ignored, not consumed.
 - Sessions store `{ userId, role, email, studentMode? }` (`role` is `student | parent`).
-  `studentMode` is parent-only: when `true`, a parent gets the full `ExamApp` (the "Are you
-  smarter than your kid?" flow). It's set by `setStudentMode`
+  `studentMode` is parent-only: when `true`, a parent gets the full `ExamApp` (the "Student View" flow). It's set by `setStudentMode`
   (`src/actions/toggleStudentMode.ts`, parent-only) and **reset to `false` on every verified
   sign-in** (`/signin/verify`), so a returning parent always lands on the dashboard. `signOut`
   (`src/actions/signOut.ts`) destroys the session and returns to `/signin`.

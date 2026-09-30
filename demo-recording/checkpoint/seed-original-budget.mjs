@@ -1,9 +1,9 @@
-// Controlled recovery after the four observed runs. These are usage counters,
+// Controlled recovery after the five observed runs. These are usage counters,
 // not credentials. Preserve its consumed request slot and explicitly renewed fixed expiry.
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-export const ORIGINAL_EXPIRY = '2026-09-30T14:00:00Z';
+export const ORIGINAL_EXPIRY = '2026-09-30T18:00:00Z';
 export function seedOriginalBudget(ledger, expiry) {
   if (expiry !== ORIGINAL_EXPIRY) throw Error('original_demo_expiry_changed');
   fs.mkdirSync(ledger, { recursive: true, mode: 0o700 });
@@ -13,6 +13,7 @@ export function seedOriginalBudget(ledger, expiry) {
     { outputTokens: 771, priorRunId: '36708662338' },
     { outputTokens: 809, priorRunId: '36713528756' },
     { inputTokens: 1703, outputTokens: 782, priorRunId: '36719205674' },
+    { inputTokens: 1707, outputTokens: 864, priorRunId: '36723888076' },
   ];
   for (const [slot, usage] of previous.entries()) {
     fs.closeSync(fs.openSync(path.join(ledger, `openai-${slot}`), 'wx', 0o600));
@@ -22,10 +23,15 @@ export function seedOriginalBudget(ledger, expiry) {
       { flag: 'wx', mode: 0o600 },
     );
   }
+  fs.closeSync(fs.openSync(path.join(ledger, 'anthropic-0'), 'wx', 0o600));
+  fs.writeFileSync(path.join(ledger, 'anthropic-0-usage.json'), JSON.stringify({
+    provider: 'anthropic', model: 'claude-sonnet-4-6', inputTokens: 303,
+    outputTokens: 54, priorRunId: '36723888076',
+  }), { flag: 'wx', mode: 0o600 });
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   seedOriginalBudget('tests/.tmp/demo-budget', process.env.DEMO_EXPIRES_AT);
   console.log(
-    'Preserved the original expiry and prior OpenAI reservation; four OpenAI slots remain.',
+    'Preserved fixed expiry and prior usage; three OpenAI and seven Anthropic slots remain.',
   );
 }

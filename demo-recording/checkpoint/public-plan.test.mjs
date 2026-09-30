@@ -222,3 +222,18 @@ test('skips oversized or ambiguous papers in favour of a safe later difficulty',
   const duplicates = [bank.easy[1], { ...bank.easy[1], id: 'different-id-same-visible-question' }];
   assert.equal(chooseDemoDifficulty({ easy: duplicates, medium: [], hard: [bank.easy[1]] }), 'hard');
 });
+
+test('paper selection respects remaining marking reservations from earlier recordings', () => {
+  const free = Array.from({ length: 8 }, (_, i) => ({ id: `free-${i}`, type: 'free', q: `Written question ${i}` }));
+  assert.equal(chooseDemoDifficulty({ easy: free, medium: [bank.easy[1]], hard: [] }, 7), 'medium');
+  assert.throws(() => chooseDemoDifficulty(bank, 0), /no_marking_budget/);
+  assert.throws(() => chooseDemoDifficulty(bank, 9), /no_marking_budget/);
+});
+
+test('checkpoint accepts fixed five-hour window but still caps review wait at ten minutes', async () => {
+  const raw = JSON.stringify(plan);
+  const args = { now: () => 1000, fetchFn: async () => new Response(raw, { status: 200 }) };
+  assert.equal((await waitForAnswerPlan(snapshot, { ...args, expiresAt: 1000 + 18000000 })).length, 2);
+  await assert.rejects(waitForAnswerPlan(snapshot, { ...args, expiresAt: 1001 + 18000000 }), /expiry_or_wait/);
+  await assert.rejects(waitForAnswerPlan(snapshot, { ...args, expiresAt: 1000 + 18000000, maxWaitMs: 600001 }), /expiry_or_wait/);
+});

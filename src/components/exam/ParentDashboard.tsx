@@ -98,7 +98,7 @@ export function ParentDashboard({
               disabled={pending}
               type="button"
             >
-              Are you smarter than your kid? {UIcon.arrow}
+              Student View {UIcon.arrow}
             </button>
             {canManageAi ? (
               <Link
@@ -163,7 +163,7 @@ export function ParentDashboard({
             <ProgressView
               data={ownProgress}
               subjects={subjects}
-              emptyHint="You haven't tried a mini exam yet — tap “Are you smarter…?” above to start."
+              emptyHint="You haven't tried a mini exam yet — tap “Student View” above to start."
             />
           </section>
 

@@ -79,3 +79,10 @@ server with a persistent family data folder; see [deployment](docs/operations.md
 Questions: [SUPPORT.md](SUPPORT.md). Contributions: [CONTRIBUTING.md](CONTRIBUTING.md).
 Report vulnerabilities privately using [SECURITY.md](SECURITY.md).
 [Code of conduct](CODE_OF_CONDUCT.md) · [MIT license](LICENSE)
+
+### Student View for parents
+
+From the parent dashboard, select **Student View** to try exams with the student
+interface. Your attempts stay on your own account. Select **Back to parent view**
+in the banner above any student-preview screen to return to the parent dashboard.
+Students do not see these parent-only controls.

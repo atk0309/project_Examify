@@ -2,10 +2,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { sessionDeadline, assertWindow } from './session-window.mjs';
 const now = Date.parse('2026-09-30T10:00:00Z');
-test('live requires strict absolute UTC expiry within two hours', () => {
-  for (const value of ['', undefined, 'in 2h', '2026-09-30T09:59:59Z', '2026-09-30T12:00:01Z'])
+test('live requires strict absolute UTC expiry within five hours', () => {
+  for (const value of ['', undefined, 'in 2h', '2026-09-30T09:59:59Z', '2026-09-30T15:00:01Z'])
     assert.throws(() => sessionDeadline('live', value, now));
-  assert.equal(sessionDeadline('live', '2026-09-30T12:00:00Z', now), now + 7200000);
+  assert.equal(sessionDeadline('live', '2026-09-30T15:00:00Z', now), now + 18000000);
 });
 test('expiry cannot restart on a subsequent workflow rerun', () => {
   const deadline = sessionDeadline('live', '2026-09-30T11:00:00Z', now);

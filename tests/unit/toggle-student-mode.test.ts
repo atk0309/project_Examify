@@ -52,15 +52,18 @@ describe('setStudentMode action', () => {
     expect(sessionHolder.current.studentMode).toBe(false);
   });
 
-  it('forbids a student and never mutates the session', async () => {
-    const { setStudentMode } = await import('@/actions/toggleStudentMode');
-    sessionHolder.current = makeSession({ userId: 2, role: 'student', email: 'e@example.com' });
+  it.each([true, false])(
+    'forbids a student setting preview to %s and never mutates the session',
+    async (on) => {
+      const { setStudentMode } = await import('@/actions/toggleStudentMode');
+      sessionHolder.current = makeSession({ userId: 2, role: 'student', email: 'e@example.com' });
 
-    const res = await setStudentMode(true);
-    expect(res).toEqual({ ok: false, reason: 'forbidden' });
-    expect(sessionHolder.current.studentMode).toBeUndefined();
-    expect(sessionHolder.current.save).not.toHaveBeenCalled();
-  });
+      const res = await setStudentMode(on);
+      expect(res).toEqual({ ok: false, reason: 'forbidden' });
+      expect(sessionHolder.current.studentMode).toBeUndefined();
+      expect(sessionHolder.current.save).not.toHaveBeenCalled();
+    },
+  );
 
   it('forbids an anonymous caller (no userId)', async () => {
     const { setStudentMode } = await import('@/actions/toggleStudentMode');

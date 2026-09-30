@@ -41,14 +41,15 @@ export function publicQuestions(bank, difficulty = 'easy') {
     return { ...question, choices };
   });
 }
-export function chooseDemoDifficulty(bank) {
+export function chooseDemoDifficulty(bank, maxWritten = 8) {
+  if (!Number.isSafeInteger(maxWritten) || maxWritten < 1 || maxWritten > 8) throw Error('demo_no_marking_budget');
   object(bank, ['easy', 'medium', 'hard'], 'checkpoint_not_public_bank');
   for (const difficulty of ['easy', 'medium', 'hard']) {
     if (!Array.isArray(bank[difficulty]) || bank[difficulty].length === 0 || bank[difficulty].length > 12) continue;
     const questions = publicQuestions(bank, difficulty);
     const written = questions.filter(q => q.type === 'free').length;
     const signatures = questions.map(q => JSON.stringify([q.type, q.q, [...(q.choices ?? [])].sort()]));
-    if (new Set(signatures).size === questions.length && written >= 1 && written <= 8) return difficulty;
+    if (new Set(signatures).size === questions.length && written >= 1 && written <= maxWritten) return difficulty;
   }
   throw Error('demo_no_bounded_written_paper');
 }
@@ -155,7 +156,7 @@ export async function waitForAnswerPlan(
   if (
     !Number.isFinite(expiresAt) ||
     expiresAt <= start ||
-    expiresAt - start > 7200000 ||
+    expiresAt - start > 18000000 ||
     !Number.isFinite(maxWaitMs) ||
     maxWaitMs <= 0 ||
     maxWaitMs > 600000 ||
