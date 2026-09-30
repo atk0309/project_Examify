@@ -20,23 +20,26 @@ public issue. Security problems must use the private process in
 
 ## Prerequisites
 
-- Node 22 LTS (`.nvmrc`)
-- pnpm 10 (`corepack enable` is the easiest way)
-- Optional: `pdftoppm` from **poppler** (`poppler-utils`) for OpenAI / PDF
-  generate (`examify-ingest generate --provider openai` and `/onboarding`)
+- Node 22.22.2–22.x (`.nvmrc`)
+- pnpm 10.33.0 (`packageManager` in `package.json`)
+- Optional: `pdftoppm` from **poppler** (`poppler-utils`) for PDF generation with OpenAI, Codex or a local vision endpoint
 
 ## Setup
 
 ```bash
-pnpm install
+pnpm install --frozen-lockfile
 cp .env.example .env   # AUTH_MODE=magic-link; or set AUTH_MODE=password
 pnpm dev               # http://localhost:3000
 ```
 
 Or `./install.sh` from a clone. In development, magic-link / OTP messages are
 written to a local outbox (`MAIL_OUTBOX_DIR` if set, otherwise
-`tests/.tmp/outbox/*.json`) (`RESEND_API_KEY=test`) and free-text grading uses a
-local stub (`ANTHROPIC_API_KEY=test`), so the whole flow works offline.
+`data/outbox/*.json`; `RESEND_API_KEY=test` selects `tests/.tmp/outbox/`) and free-text grading uses a
+local stub (`ANTHROPIC_API_KEY=test`), so no live mail or AI service is needed for that development flow.
+The bootstrap code is `SETUP_BOOTSTRAP_SECRET` in `.env`. These placeholder
+secrets are for development and are rejected in production.
+
+For an actual installation, follow the [installation guide](docs/installation.md).
 
 ## Commands
 
@@ -59,6 +62,11 @@ pnpm lint && pnpm typecheck && pnpm test && pnpm build
 pnpm format:check
 pnpm test:e2e   # where your environment permits
 ```
+
+Installer unit tests use command shims for several paths. They verify control flow
+and recovery but do not prove a clean dependency install on every OS. When changing
+the installer, also try a disposable real install through first login and record
+which commands ran unchanged, any environment workarounds, and untested platforms.
 
 ## Test expectations
 

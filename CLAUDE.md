@@ -1339,3 +1339,14 @@ See `.env.example` for the canonical list.
   redirected to `/signin/invalidate`; an absent legacy version means zero only. The
   resetting browser receives the new version, other sessions must sign in again.
   Wrong/expired/replayed codes and rolled-back resets never revoke sessions.
+
+## Installer usability and user documentation
+
+- Full fresh installs check Node and pnpm before prompting for secrets or writing
+  configuration. `--write-env-only` remains independent of those runtime checks.
+- Completion prints a shell-escaped absolute `cd` command: a piped install cannot
+  change its caller's directory. `--skip-build` explicitly requires `pnpm build`
+  before `pnpm start`; the installer never starts a service.
+- Keep the README as the short first-install entry point. User-facing setup,
+  configuration, operations, privacy and recovery live in the focused `docs/`
+  guides; `.env.example` remains the complete environment-variable reference.

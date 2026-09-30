@@ -1,7 +1,8 @@
 # Support
 
 Thanks for using Examify. Before opening an issue, search the existing issues and check
-the setup and environment guidance in [`README.md`](README.md).
+the [installation guide](docs/installation.md) and
+[troubleshooting](docs/troubleshooting.md).
 
 Use the issue form that matches your request:
 

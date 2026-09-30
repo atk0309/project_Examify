@@ -2275,6 +2275,52 @@ function withFixture(options: Parameters<typeof makeFixture>[0], body: (fx: Fixt
 }
 
 describe('install.sh full install (shimmed pnpm and data CLI)', () => {
+  it('rejects an unsupported Node before writing configuration or installing', () => {
+    withFixture({ upstream: false, env: false }, (fx) => {
+      writeFile(path.join(fx.bin, 'node'), '#!/usr/bin/env bash\necho 24.0.0\n', 0o755);
+      const result = runInstaller(fx, []);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('is not supported');
+      expect(fs.existsSync(path.join(fx.work, '.env'))).toBe(false);
+      expect(calls(fx)).toEqual([]);
+    });
+  });
+
+  it('prints a usable checkout command after a piped install, including spaces in the path', () => {
+    withFixture({ upstream: false, env: false }, (fx) => {
+      const target = path.join(fx.base, 'family examify folder');
+      fs.renameSync(fx.work, target);
+      const script = fs.readFileSync(path.join(target, 'install.sh'), 'utf8');
+      const result = spawnSync('bash', ['-s', '--', '--yes'], {
+        cwd: fx.base,
+        input: script,
+        env: fixtureEnv(fx, { EXAMIFY_DIR: target }),
+        encoding: 'utf8',
+        timeout: 60_000,
+      });
+      expect(result.status, result.stderr).toBe(0);
+      const cdCommand = result.stdout.split('\n').find((line) => line.startsWith('  cd -- '));
+      expect(cdCommand).toBeDefined();
+      const cwd = execFileSync('bash', ['-c', `${cdCommand} && pwd -P`], {
+        cwd: fx.base,
+        encoding: 'utf8',
+      }).trim();
+      expect(cwd).toBe(fs.realpathSync(target));
+      expect(result.stdout).toContain('The server runs in the foreground');
+    });
+  });
+
+  it('requires a build in the completion commands when --skip-build is used', () => {
+    withFixture({ upstream: false, env: false }, (fx) => {
+      const result = runInstaller(fx, ['--skip-build']);
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain('production build was skipped');
+      expect(result.stdout).toContain('  pnpm build\n  pnpm start');
+      expect(result.stdout).not.toContain('Examify is ready.');
+      expect(summary(fx)).not.toContain('pnpm build');
+    });
+  });
+
   it('checks and initialises the data folder through the checkout CLI before installing', () => {
     withFixture({ upstream: false, env: false }, (fx) => {
       const result = runInstaller(fx, [], { SITE_URL: 'https://exam.example.com' });

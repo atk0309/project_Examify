@@ -603,3 +603,14 @@ re-read after an async pause. `getSession()` compares it on each authenticated r
 Legacy cookies without a version mean zero, and survive only until the first reset.
 Failed, expired or replayed resets never increment it; the resetting browser gets the
 new version and other browsers must sign in again.
+
+## Installer usability and user documentation
+
+- Full fresh installs check Node and pnpm before prompting for secrets or writing
+  configuration. `--write-env-only` remains independent of those runtime checks.
+- Completion prints a shell-escaped absolute `cd` command: a piped install cannot
+  change its caller's directory. `--skip-build` explicitly requires `pnpm build`
+  before `pnpm start`; the installer never starts a service.
+- Keep the README as the short first-install entry point. User-facing setup,
+  configuration, operations, privacy and recovery live in the focused `docs/`
+  guides; `.env.example` remains the complete environment-variable reference.

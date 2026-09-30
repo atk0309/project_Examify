@@ -7,7 +7,7 @@ bank.
 
 `generate` writes `content/subjects/<id>/bank.ir.json` (under the layer root —
 see [Layers](#layers-checkout-committed-and-family-data-folder)) only. It never
-emits or applies. Human-in-the-loop is still required.
+emits or applies. Review the generated questions before applying them.
 
 **Hand-authored biology** (`content/subjects/biology/bank.ir.json`) has no
 source file. Skip generate; validate / emit only. Generate needs a source
@@ -101,7 +101,8 @@ pnpm exec examify-ingest --help
 pnpm examify-ingest --help
 ```
 
-The root `examify-ingest` script and `pnpm exec` both run the workspace bin.
+The root `examify-ingest` script runs the TypeScript entry point; `pnpm exec`
+runs the workspace bin. Both dispatch the same CLI.
 You can also run it from the package directory:
 
 ```bash

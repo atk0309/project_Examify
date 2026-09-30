@@ -1971,6 +1971,9 @@ main() {
 
   if [ "$WRITE_ENV_ONLY" != "1" ]; then
     require_data_cli
+    # Fail before asking for secrets or writing configuration on an unsupported host.
+    ensure_node
+    ensure_pnpm
   fi
   if [ -n "$RESTORE_ARCHIVE" ]; then
     if [ ! -f "$RESTORE_ARCHIVE" ]; then
@@ -2003,8 +2006,6 @@ main() {
     exit 0
   fi
 
-  ensure_node
-  ensure_pnpm
   if [ -z "$RESTORE_ARCHIVE" ]; then
     prepare_data_folder
   fi
@@ -2033,19 +2034,29 @@ main() {
   fi
 
   echo
-  echo "Examify is ready."
+  if [ "$SKIP_BUILD" = "1" ]; then
+    echo "Dependencies and database are ready; production build was skipped."
+  else
+    echo "Examify is ready."
+  fi
+  echo "Run these commands in your terminal (the installer cannot change its directory):"
+  printf '  cd -- %q\n' "$ROOT"
+  if [ "$SKIP_BUILD" = "1" ]; then
+    echo "  pnpm build"
+  fi
+  echo "  pnpm start"
+  echo "The server runs in the foreground; stop it with Ctrl+C."
   echo
   if [ -n "$RESTORE_ARCHIVE" ]; then
-    echo "Restored from ${RESTORE_ARCHIVE}. Start with: pnpm start   (or: pnpm dev)"
+    echo "Restored from ${RESTORE_ARCHIVE}."
     echo "Open the SITE_URL from the restored env files and sign in as before."
   elif [ "$KEPT_EXISTING_ENV" = "1" ]; then
-    echo "Using the existing .env. Start with: pnpm start   (or: pnpm dev)"
+    echo "Using the existing .env."
     echo "Open the SITE_URL from that file. This run's generated setup code was not written."
     echo "Family data folder: ${DISK_DATA_DIR}"
   else
-    echo "  1. Start the server:   pnpm start          (or: pnpm dev)"
-    echo "  2. Open SITE_URL:      ${SITE_URL}"
-    echo "  3. First run:          ${SITE_URL%/}/setup"
+    echo "  1. Open SITE_URL:      ${SITE_URL}"
+    echo "  2. First run:          ${SITE_URL%/}/setup"
     echo "     Setup code:         ${SETUP_BOOTSTRAP_SECRET}"
     if [ "$FOUND_EXISTING_DB" = "1" ]; then
       echo "     (An existing database was found: sign in as before; /setup only runs while it has no household.)"
