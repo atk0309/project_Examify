@@ -222,7 +222,7 @@ grouped weekly Dependabot PRs in `.github/dependabot.yml`.
 | Layer       | Choice                                                                                            |
 | ----------- | ------------------------------------------------------------------------------------------------- |
 | Runtime     | Node 22 LTS (`>=22.22.2 <23`, `.nvmrc`), pnpm 10                                                  |
-| Framework   | Next.js 16 (App Router, Turbopack), React 19.2, TypeScript 6 strict                               |
+| Framework   | Next.js 16 (App Router, Turbopack), React 19.3, TypeScript 6 strict                               |
 | Styling     | Tailwind v4 with a CSS-first `@theme` token block, three `data-theme` moods                       |
 | DB          | SQLite in the family data folder (persistent storage), via Drizzle + better-sqlite3               |
 | Auth        | Host-picked mode (`password` / `magic-link` / `local-otp`) + iron-session, invite-only households |
@@ -865,7 +865,7 @@ These are non-negotiable. Don't "fix" them out.
   wizard's marking line and setup note, and the exam (`examMarking(…, needsSignIn)` →
   `unmarked` + `signIn { by, command }`) name the tool and its sign-in command
   (`AGENT_CLI_SIGNIN_COMMAND`: `claude auth login` / `codex login`). Their ready copy still
-  says they mark while signed in and that signed out the answers count as not correct (a
+  says they mark while signed in and that unmarked answers await marking (a
   check says only that credentials exist). The "Marking…" screen says written answers can take up to a
   minute (`marking-written-note`, only when the paper has one and something marks it).
   The exam knows the same status: `page.tsx` passes `examMarkingForUser` (`examMarking`) to
@@ -874,7 +874,7 @@ These are non-negotiable. Don't "fix" them out.
   difficulty screen says what happens to its written questions (`exam-written-line`,
   `examWrittenLine`, only when the bank has some). `unmarked` (`not_ready`): `buildExam(…,
 { written: false })` draws from multiple choice only (`examPool`), so a student is never
-  asked a question that can only count as not correct; a bank with only written questions
+  asked a question whose marking is known to be unavailable; a bank with only written questions
   keeps them, each with `exam-free-unmarked` (`examUnmarkedWrittenNote`: `EXAM_UNMARKED_WRITTEN`,
   or the signed-out tool and its command), and so does a draft resumed after marking stopped.
   The parent line and the wizard's marking line say exams leave written questions out until
@@ -899,11 +899,11 @@ These are non-negotiable. Don't "fix" them out.
   model text) or a user id.
 - **A free-text item is "correct" at `PASS_THRESHOLD` (0.6).** `isFreePass(score, maxScore)`
   (`attempts.ts`, the shared constant — not an inline literal) decides the ring/tally. A
-  `needs_review` item persists `score: null, verdict: null` and counts as incorrect.
+  `needs_review` item persists `score: null, verdict: null` and is excluded from the provisional score denominator. Pending attempts stay out of averages, best/latest summaries and comparison histories; with no marked answers the UI shows "Awaiting marking".
 - **Render only the bounded verdict.** The UI shows only `Verdict` fields (`score`, `verdict`,
   `gotRight`, `toReview`, `spelling`) — never the rubric, never raw model text. `needs_review`
-  renders `NEEDS_REVIEW_COPY` (`attempts.ts`): nothing re-grades it, so the copy says it
-  counts as not correct and must never promise later marking.
+  renders `NEEDS_REVIEW_COPY` (`attempts.ts`): it is excluded from the provisional score.
+  An explicit Retry marking can recover it; never promise automatic later marking.
 - **Results are server-driven.** Because the client holds no answer keys, it can't self-score:
   on finish `ExamApp` submits, shows a "Marking…" state, and renders from the returned
   `AttemptRecord`. Two failure cases: (1) a submit that never came back (a rejected Server
@@ -1309,3 +1309,33 @@ See `.env.example` for the canonical list.
   Cloudflare's Turnstile siteverify endpoint. E2E runs cleanly in GitHub Actions — don't
   burn time trying to make Playwright run where the CDN is blocked.
 - Next.js 16 + Turbopack is the build path; there is no MDX pipeline.
+
+## Durable submissions, recoverable marking, and reset revocation
+
+- Each paper gets a client-generated `submissionId`, persisted with its draft and
+  carried through parking, reload/resume and transport retries. SQLite enforces one
+  attempt per `(user_id, submission_id)`. A stored payload hash rejects changed
+  answers under that ID. Same-payload replay returns the existing result with no AI call.
+- `prepareAttempt` validates against the live paper and keys, then `saveAttempt`
+  persists answers and separate server-only `gradingTasks` (original question, rubric,
+  max score and response) **before** invoking the provider. `AttemptRecord` explicitly
+  selects safe fields; never spread a database row into client props.
+- `retryAttemptGrading` requires the same own-user/student-mode gate as submission.
+  It updates the existing attempt, preserving its date, and grades pending items only
+  against original snapshots. Historical pending attempts without snapshots remain
+  viewable and provisional, but cannot be safely retried. The current household
+  marking backend is used so fixing configuration enables recovery.
+- A compare-and-set database lease lasts two minutes (providers have <=45s deadlines).
+  Concurrent retries return `busy`; crashed workers become retryable after expiry.
+  Every result write checks the lease token so a late worker cannot overwrite a newer
+  run. A process crash after provider acceptance can still duplicate a paid call on
+  explicit retry; this is not an exactly-once billing guarantee or background queue.
+- Draft autosave and finish deletion match submission identity as well as user/combo,
+  so a stale tab cannot alter a newer draft.
+- Password reset increments `users.session_version` atomically with token consumption
+  and password replacement. All authentication paths return that verified version;
+  cookie issuers copy it before asynchronous work. `getSession()` checks membership
+  and the current database version on every authenticated request. Old cookies are
+  redirected to `/signin/invalidate`; an absent legacy version means zero only. The
+  resetting browser receives the new version, other sessions must sign in again.
+  Wrong/expired/replayed codes and rolled-back resets never revoke sessions.

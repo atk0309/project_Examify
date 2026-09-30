@@ -64,6 +64,13 @@
       "when": 1790062787719,
       "tag": "0008_password_pending_hash",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1790757046462,
+      "tag": "0009_attempt_recovery",
+      "breakpoints": true
     }
   ]
 }

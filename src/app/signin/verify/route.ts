@@ -35,6 +35,7 @@ export async function GET(request: NextRequest): Promise<void> {
   session.userId = result.userId;
   session.role = result.role;
   session.email = result.email;
+  session.sessionVersion = result.sessionVersion;
   // Start every verified sign-in on the role's home surface. Without this, a
   // parent who had previously entered student mode would land straight back in
   // ExamApp on their next sign-in (the flag would survive in the cookie).

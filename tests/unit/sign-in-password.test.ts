@@ -108,12 +108,15 @@ async function seedAdmin(password = 'correct-horse') {
 describe('signInWithPassword', () => {
   it('establishes a session for a household member with the right password', async () => {
     await seedAdmin();
+    const { db, schema } = await import('@/lib/db');
+    db.update(schema.users).set({ sessionVersion: 3 }).run();
     const { signInWithPassword } = await import('@/actions/signInWithPassword');
     await expect(
       signInWithPassword({ status: 'idle' }, form('pat@example.com', 'correct-horse', 'parent')),
     ).rejects.toMatchObject({ url: '/' });
     expect(sessionHolder.current.userId).toBeTypeOf('number');
     expect(sessionHolder.current.role).toBe('parent');
+    expect(sessionHolder.current.sessionVersion).toBe(3);
     expect(sessionHolder.current.email).toBe('pat@example.com');
     expect(sessionHolder.current.studentMode).toBe(false);
     expect(sessionHolder.current.save).toHaveBeenCalledOnce();

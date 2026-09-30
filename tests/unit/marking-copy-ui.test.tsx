@@ -30,7 +30,7 @@ describe('parent dashboard marking line', () => {
       />,
     );
     expect(screen.getByTestId('parent-marking')).toHaveTextContent(
-      'Written answers are marked by Claude Code while it is signed in on this server. Signed out, they count as not correct.',
+      'Written answers are marked by Claude Code while it is signed in on this server. Signed out, they await marking and are excluded from scores.',
     );
 
     rerender(
@@ -47,7 +47,7 @@ describe('parent dashboard marking line', () => {
     );
     expect(screen.getByTestId('parent-marking')).not.toHaveTextContent(/later|shortly/i);
     expect(screen.getByTestId('parent-marking')).toHaveTextContent(
-      'Until then, exams leave written questions out (a bank with only written questions keeps them), and any written answer counts as not correct.',
+      'Until then, exams leave written questions out (a bank with only written questions keeps them), and written answers await marking and are excluded from scores.',
     );
 
     // Claude Code found but signed out: the line names the sign-in command.

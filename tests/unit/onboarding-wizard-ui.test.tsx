@@ -190,7 +190,7 @@ describe('OnboardingWizard majors UI', () => {
     const grading = screen.getByTestId('wizard-ai-grading');
     expect(grading).toHaveTextContent('Until you pick a mode, marking uses the Anthropic key');
     expect(grading).toHaveTextContent(
-      'Written answers are not marked until this server has an Anthropic API key. Until then, exams leave written questions out (a bank with only written questions keeps them), and any written answer counts as not correct.',
+      'Written answers are not marked until this server has an Anthropic API key. Until then, exams leave written questions out (a bank with only written questions keeps them), and written answers await marking and are excluded from scores.',
     );
 
     fireEvent.click(screen.getByTestId('wizard-ai-cloud'));
@@ -232,7 +232,7 @@ describe('OnboardingWizard majors UI', () => {
     [
       'codex-cli',
       { codexCliFound: true },
-      'Signed out, they are not marked and count as not correct.',
+      'Signed out, they await marking and are excluded from scores.',
     ],
     [
       'local-agent',
@@ -1348,7 +1348,7 @@ describe('OnboardingWizard AI modes: Claude Code, Codex and local', () => {
         `${name} is installed on this server but not signed in as the user that runs Examify. As that user, run \`${command}\`, then reload this page.`,
       );
       expect(screen.getByTestId('wizard-ai-grading')).toHaveTextContent(
-        `Written answers are not marked: ${name} is not signed in as the user that runs Examify. As that user, run \`${command}\`. Until then, exams leave written questions out (a bank with only written questions keeps them), and any written answer counts as not correct.`,
+        `Written answers are not marked: ${name} is not signed in as the user that runs Examify. As that user, run \`${command}\`. Until then, exams leave written questions out (a bank with only written questions keeps them), and written answers await marking and are excluded from scores.`,
       );
     },
   );

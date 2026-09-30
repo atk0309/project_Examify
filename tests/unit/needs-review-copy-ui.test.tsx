@@ -2,13 +2,11 @@
 
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ProgressView } from '@/components/exam/ProgressView';
 import { NEEDS_REVIEW_COPY, type AttemptRecord } from '@/lib/exam/attempts';
 
-// needs_review is permanent (nothing re-grades it) and counts as not correct,
-// so the kid-facing copy must not promise later marking. ExamApp's results row
-// renders the same NEEDS_REVIEW_COPY constant.
+// Pending answers are excluded from scores; no automatic marking is promised.
 const HONEST = NEEDS_REVIEW_COPY;
 
 afterEach(() => cleanup());
@@ -29,10 +27,10 @@ function attempt(items: AttemptRecord['items']): AttemptRecord {
 describe('needs_review copy', () => {
   it('does not promise that anything will mark the answer later', () => {
     expect(NEEDS_REVIEW_COPY).not.toMatch(/shortly|later|will mark|for review/i);
-    expect(NEEDS_REVIEW_COPY).toMatch(/counts as not correct/);
+    expect(NEEDS_REVIEW_COPY).toMatch(/excluded from your provisional score/);
   });
 
-  it('ProgressView says an unmarked answer counts as not correct', () => {
+  it('ProgressView explains an unmarked answer is excluded from the score', () => {
     render(
       <ProgressView
         emptyHint="No attempts yet."
@@ -92,5 +90,65 @@ describe('needs_review copy', () => {
     fireEvent.click(screen.getByRole('button', { expanded: false }));
     expect(screen.getByText(/Clear and correct\./)).toBeInTheDocument();
     expect(screen.queryByText(HONEST)).toBeNull();
+  });
+});
+
+const pendingItem: AttemptRecord['items'][number] = {
+  type: 'free',
+  id: 'pending',
+  q: 'Explain.',
+  response: 'Answer.',
+  maxScore: 2,
+  score: null,
+  status: 'needs_review',
+  verdict: null,
+};
+
+describe('pending attempt presentation and recovery', () => {
+  it('shows awaiting marking without 0%, and leaves a child dashboard read-only', () => {
+    const a = { ...attempt([pendingItem]), canRetryGrading: true };
+    render(<ProgressView data={{ attempts: [a], subjects: [] }} emptyHint="Empty" />);
+    expect(screen.getByText('Awaiting marking')).toBeInTheDocument();
+    expect(screen.queryByText('0%')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Retry marking' })).toBeNull();
+  });
+
+  it('uses the marked denominator and retries only a recoverable own attempt', () => {
+    const a = {
+      ...attempt([
+        {
+          type: 'mcq' as const,
+          id: 'marked',
+          q: 'Choose.',
+          choices: ['A', 'B'],
+          chosen: 0,
+          answer: 0,
+        },
+        pendingItem,
+      ]),
+      correct: 1,
+      scorePct: 100,
+      canRetryGrading: true,
+    };
+    const retry = vi.fn(async () => {});
+    render(
+      <ProgressView data={{ attempts: [a], subjects: [] }} emptyHint="Empty" onRetry={retry} />,
+    );
+    expect(screen.getByText('1/1')).toBeInTheDocument();
+    expect(screen.getByText('100% · Provisional')).toBeInTheDocument();
+    expect(screen.getByText('1 awaiting marking')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry marking' }));
+    expect(retry).toHaveBeenCalledWith(a.id);
+  });
+
+  it('does not offer recovery without the original marking snapshot', () => {
+    render(
+      <ProgressView
+        data={{ attempts: [attempt([pendingItem])], subjects: [] }}
+        emptyHint="Empty"
+        onRetry={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole('button', { name: 'Retry marking' })).toBeNull();
   });
 });

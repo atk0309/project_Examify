@@ -36,7 +36,10 @@ vi.mock('@/lib/auth', async () => {
   };
 });
 
+vi.mock('iron-session', () => ({ getIronSession: async () => sessionHolder.current }));
+
 vi.mock('next/headers', () => ({
+  cookies: async () => ({}),
   headers: async () => new Headers({ 'x-forwarded-for': '203.0.113.77' }),
 }));
 
@@ -133,6 +136,7 @@ describe('requestPasswordReset', () => {
     expect(sendEmailMock.mock.calls[0]?.[0].code).toMatch(/^\d{6}$/);
     const after = await userByEmail('pat@example.com');
     expect(after?.passwordHash).toBe(before?.passwordHash);
+    expect(after?.sessionVersion).toBe(before?.sessionVersion);
     expect(after?.emailVerifiedAt?.getTime()).toBe(before?.emailVerifiedAt?.getTime());
   });
 
@@ -180,6 +184,7 @@ describe('requestPasswordReset', () => {
       ),
     ).toEqual({ status: 'error', reason: 'invalid' });
     expect((await userByEmail('pat@example.com'))?.passwordHash).toBe(before?.passwordHash);
+    expect((await userByEmail('pat@example.com'))?.sessionVersion).toBe(before?.sessionVersion);
     for (const args of errorSpy.mock.calls) {
       expect(JSON.stringify(args)).not.toContain('pat@example.com');
     }
@@ -232,6 +237,8 @@ describe('completePasswordReset', () => {
     expect(sessionHolder.current.email).toBe('pat@example.com');
     expect(sessionHolder.current.role).toBe('parent');
     expect(sessionHolder.current.studentMode).toBe(false);
+    expect(after?.sessionVersion).toBe(1);
+    expect(sessionHolder.current.sessionVersion).toBe(1);
   });
 
   it('lifts the per-account password sign-in lock after a successful reset', async () => {
@@ -292,6 +299,7 @@ describe('completePasswordReset', () => {
       ),
     ).toEqual({ status: 'error', reason: 'invalid' });
     expect((await userByEmail('pat@example.com'))?.passwordHash).toBe(before?.passwordHash);
+    expect((await userByEmail('pat@example.com'))?.sessionVersion).toBe(before?.sessionVersion);
     const { db, schema } = await import('@/lib/db');
     expect(db.select().from(schema.magicTokens).all()[0]?.consumedAt).toBeNull();
   });
@@ -309,6 +317,7 @@ describe('completePasswordReset', () => {
       ),
     ).toEqual({ status: 'error', reason: 'invalid' });
     expect((await userByEmail('pat@example.com'))?.passwordHash).toBe(before?.passwordHash);
+    expect((await userByEmail('pat@example.com'))?.sessionVersion).toBe(before?.sessionVersion);
     expect(sessionHolder.current.save).not.toHaveBeenCalled();
   });
 
@@ -349,6 +358,7 @@ describe('completePasswordReset', () => {
       ),
     ).toEqual({ status: 'error', reason: 'rate_limited' });
     expect((await userByEmail('pat@example.com'))?.passwordHash).toBe(before?.passwordHash);
+    expect((await userByEmail('pat@example.com'))?.sessionVersion).toBe(before?.sessionVersion);
     expect(sessionHolder.current.save).not.toHaveBeenCalled();
   });
 
@@ -388,5 +398,171 @@ describe('completePasswordReset', () => {
     });
     const { db, schema } = await import('@/lib/db');
     expect(db.select().from(schema.magicTokens).all()[0]?.consumedAt).toBeNull();
+  });
+});
+
+describe('password reset session revocation', () => {
+  async function readSession() {
+    const auth = await vi.importActual<typeof import('@/lib/auth')>('@/lib/auth');
+    return auth.getSession();
+  }
+
+  it('revokes old and legacy sessions while the reset session and another user stay valid', async () => {
+    const host = await seedAdmin();
+    const { db, schema } = await import('@/lib/db');
+    const other = db.insert(schema.users).values({ email: 'other@example.com' }).returning().get()!;
+    db.insert(schema.householdMembers)
+      .values({ userId: other.id, householdId: host.householdId, role: 'student' })
+      .run();
+    const original = {
+      userId: host.userId,
+      role: 'parent' as const,
+      sessionVersion: 0,
+      save: vi.fn(async () => {}),
+    };
+    sessionHolder.current = { ...original };
+    await expect(readSession()).resolves.toMatchObject({ userId: host.userId });
+    delete sessionHolder.current.sessionVersion;
+    await expect(readSession()).resolves.toMatchObject({ userId: host.userId });
+
+    const { issuePasswordResetOtp } = await import('@/lib/auth');
+    const { completePasswordReset } = await import('@/actions/completePasswordReset');
+    const code = issuePasswordResetOtp(host.email, 'parent').code;
+    await expect(
+      completePasswordReset({ status: 'idle' }, completeForm(host.email, code, 'new-password-2')),
+    ).rejects.toMatchObject({ url: '/' });
+    const replacement = { ...sessionHolder.current };
+    expect(replacement.sessionVersion).toBe(1);
+    await expect(readSession()).resolves.toMatchObject({ userId: host.userId, sessionVersion: 1 });
+
+    sessionHolder.current = { ...original };
+    await expect(readSession()).rejects.toMatchObject({ url: '/signin/invalidate' });
+    delete sessionHolder.current.sessionVersion;
+    await expect(readSession()).rejects.toMatchObject({ url: '/signin/invalidate' });
+    sessionHolder.current = {
+      userId: other.id,
+      role: 'student',
+      sessionVersion: 0,
+      save: vi.fn(async () => {}),
+    };
+    await expect(readSession()).resolves.toMatchObject({ userId: other.id });
+    expect((await userByEmail(other.email))?.sessionVersion).toBe(0);
+  });
+
+  it('still checks membership and rejects malformed version values', async () => {
+    const host = await seedAdmin();
+    for (const version of [null, '0', -1, 0.5]) {
+      sessionHolder.current = {
+        userId: host.userId,
+        role: 'parent',
+        sessionVersion: version as unknown as number,
+        save: vi.fn(async () => {}),
+      };
+      await expect(readSession()).rejects.toMatchObject({ url: '/signin/invalidate' });
+    }
+    sessionHolder.current = {
+      userId: host.userId,
+      role: 'student',
+      sessionVersion: 0,
+      save: vi.fn(async () => {}),
+    };
+    await expect(readSession()).rejects.toMatchObject({ url: '/signin/invalidate' });
+    sessionHolder.current.role = 'parent';
+    const { db, schema } = await import('@/lib/db');
+    db.delete(schema.householdMembers).where(eq(schema.householdMembers.userId, host.userId)).run();
+    await expect(readSession()).rejects.toMatchObject({ url: '/signin/invalidate' });
+  });
+
+  it('increments once per successful reset and never for used, wrong or expired codes', async () => {
+    const host = await seedAdmin();
+    const { consumePasswordReset, issuePasswordResetOtp } = await import('@/lib/auth');
+    const first = issuePasswordResetOtp(host.email, 'parent');
+    expect(consumePasswordReset(host.email, 'parent', first.code, 'new-password-2')).toMatchObject({
+      ok: true,
+      sessionVersion: 1,
+    });
+    expect(consumePasswordReset(host.email, 'parent', first.code, 'new-password-3')).toEqual({
+      ok: false,
+      reason: 'used',
+    });
+    expect((await userByEmail(host.email))?.sessionVersion).toBe(1);
+    const second = issuePasswordResetOtp(host.email, 'parent');
+    const wrong = second.code === '000000' ? '000001' : '000000';
+    expect(consumePasswordReset(host.email, 'parent', wrong, 'new-password-3').ok).toBe(false);
+    expect((await userByEmail(host.email))?.sessionVersion).toBe(1);
+    const { db, schema } = await import('@/lib/db');
+    db.update(schema.magicTokens)
+      .set({ expiresAt: new Date(Date.now() - 1000) })
+      .where(eq(schema.magicTokens.id, second.id))
+      .run();
+    expect(consumePasswordReset(host.email, 'parent', second.code, 'new-password-3')).toEqual({
+      ok: false,
+      reason: 'expired',
+    });
+    expect((await userByEmail(host.email))?.sessionVersion).toBe(1);
+    const third = issuePasswordResetOtp(host.email, 'parent');
+    expect(consumePasswordReset(host.email, 'parent', third.code, 'new-password-3')).toMatchObject({
+      ok: true,
+      sessionVersion: 2,
+    });
+  });
+
+  it('does not revoke sessions or change the password when membership was removed', async () => {
+    const host = await seedAdmin();
+    const before = await userByEmail(host.email);
+    const { consumePasswordReset, issuePasswordResetOtp } = await import('@/lib/auth');
+    const issued = issuePasswordResetOtp(host.email, 'parent');
+    const { db, schema } = await import('@/lib/db');
+    db.delete(schema.householdMembers).where(eq(schema.householdMembers.userId, host.userId)).run();
+    expect(consumePasswordReset(host.email, 'parent', issued.code, 'new-password-2')).toEqual({
+      ok: false,
+      reason: 'not-member',
+    });
+    expect(await userByEmail(host.email)).toEqual(before);
+  });
+
+  it('rolls back the token and password if the version update fails', async () => {
+    const host = await seedAdmin();
+    const before = await userByEmail(host.email);
+    const { consumePasswordReset, issuePasswordResetOtp } = await import('@/lib/auth');
+    const issued = issuePasswordResetOtp(host.email, 'parent');
+    const sqlite = new Database(DB_PATH);
+    sqlite.exec(
+      "CREATE TRIGGER fail_session_version BEFORE UPDATE OF session_version ON users BEGIN SELECT RAISE(ABORT, 'test failure'); END",
+    );
+    try {
+      expect(() =>
+        consumePasswordReset(host.email, 'parent', issued.code, 'new-password-2'),
+      ).toThrow();
+      expect(await userByEmail(host.email)).toEqual(before);
+      const { db, schema } = await import('@/lib/db');
+      expect(
+        db.select().from(schema.magicTokens).where(eq(schema.magicTokens.id, issued.id)).get()
+          ?.consumedAt,
+      ).toBeNull();
+    } finally {
+      sqlite.exec('DROP TRIGGER fail_session_version');
+      sqlite.close();
+    }
+    expect(consumePasswordReset(host.email, 'parent', issued.code, 'new-password-2')).toMatchObject(
+      { ok: true, sessionVersion: 1 },
+    );
+  });
+
+  it('keeps an authenticated snapshot stale if a reset happens before the cookie is saved', async () => {
+    const host = await seedAdmin();
+    const { authenticatePassword, consumePasswordReset, issuePasswordResetOtp } =
+      await import('@/lib/auth');
+    const authenticated = authenticatePassword(host.email, 'old-password-1', 'parent');
+    expect(authenticated.ok).toBe(true);
+    if (!authenticated.ok) throw new Error('authentication failed');
+    const reset = issuePasswordResetOtp(host.email, 'parent');
+    expect(consumePasswordReset(host.email, 'parent', reset.code, 'new-password-2').ok).toBe(true);
+    sessionHolder.current = { ...authenticated, save: vi.fn(async () => {}) };
+    await expect(readSession()).rejects.toMatchObject({ url: '/signin/invalidate' });
+    expect(authenticatePassword(host.email, 'new-password-2', 'parent')).toMatchObject({
+      ok: true,
+      sessionVersion: 1,
+    });
   });
 });

@@ -5,7 +5,7 @@ import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionData } from '@/lib/auth';
-import type { AttemptInput } from '@/lib/exam/attempts';
+import type { RecordAttemptInput as AttemptInput } from '@/actions/recordAttempt';
 import { ANSWER_KEYS } from '@/lib/exam/answer-keys.server';
 import { QUESTIONS } from '@/lib/exam/data';
 
@@ -58,6 +58,7 @@ function mathsEasyInput(correctCount: number): AttemptInput {
   const bank = QUESTIONS.maths!.easy!;
   let mcqIndex = 0;
   return {
+    submissionId: 'submission-maths-0001',
     subject: 'maths',
     difficulty: 'easy',
     items: bank.map((q) => {
@@ -79,6 +80,7 @@ function mathsEasyInput(correctCount: number): AttemptInput {
 /** A geography/medium input that includes a free-text item (graded via the stub). */
 function geographyMediumWithFree(): AttemptInput {
   return {
+    submissionId: 'submission-geography-0001',
     subject: 'geography',
     difficulty: 'medium',
     items: QUESTIONS.geography!.medium!.map((q) =>
@@ -178,6 +180,7 @@ describe('recordAttempt action', () => {
 
     // A live draft for maths/easy, plus an unrelated one for geography/medium.
     saveExamSession(userId, {
+      submissionId: 'submission-maths-0001',
       subject: 'maths',
       difficulty: 'easy',
       questionIds: ['maths-easy-1'],
@@ -185,6 +188,7 @@ describe('recordAttempt action', () => {
       currentIndex: 0,
     });
     saveExamSession(userId, {
+      submissionId: 'submission-geography-0001',
       subject: 'geography',
       difficulty: 'medium',
       questionIds: ['geography-medium-1'],
@@ -207,6 +211,7 @@ describe('recordAttempt action', () => {
     sessionHolder.current = { userId, role: 'student', email: 'alex@example.com' };
 
     const res = await recordAttempt({
+      submissionId: 'submission-maths-0001',
       subject: 'maths',
       difficulty: 'easy',
       items: [],

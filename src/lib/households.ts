@@ -207,7 +207,7 @@ export function isHouseholdEmailAllowed(role: 'student' | 'parent', email: strin
 }
 
 export type BootstrapResult =
-  | { ok: true; userId: number; email: string; householdId: number }
+  | { ok: true; userId: number; email: string; householdId: number; sessionVersion: number }
   | { ok: false; reason: 'already_setup' | 'invalid' };
 
 /**
@@ -232,13 +232,16 @@ export function bootstrapHousehold(input: {
     if (existing) return { ok: false, reason: 'already_setup' as const };
 
     const user = getOrCreateUser(tx, email);
-    tx.update(schema.users)
+    const updatedUser = tx
+      .update(schema.users)
       .set({
         emailVerifiedAt: new Date(),
         ...(input.passwordHash ? { passwordHash: input.passwordHash } : {}),
       })
       .where(eq(schema.users.id, user.id))
-      .run();
+      .returning({ sessionVersion: schema.users.sessionVersion })
+      .get();
+    if (!updatedUser) throw new Error('failed to bootstrap user');
 
     const household = tx.insert(schema.households).values({ name }).returning().get();
     if (!household) throw new Error('failed to create household');
@@ -247,7 +250,13 @@ export function bootstrapHousehold(input: {
       .values({ householdId: household.id, userId: user.id, role: 'admin' })
       .run();
 
-    return { ok: true, userId: user.id, email, householdId: household.id };
+    return {
+      ok: true,
+      userId: user.id,
+      email,
+      householdId: household.id,
+      sessionVersion: updatedUser.sessionVersion,
+    };
   });
 }
 

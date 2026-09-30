@@ -18,6 +18,7 @@ import {
   type RecordAttemptInput,
   type RecordAttemptResult,
 } from '@/actions/recordAttempt';
+import { retryAttemptGrading } from '@/actions/retryAttemptGrading';
 import { beginExamSession, saveExamProgress } from '@/actions/saveExamProgress';
 import { discardExamSession } from '@/actions/discardExamSession';
 import { setStudentMode } from '@/actions/toggleStudentMode';
@@ -40,6 +41,7 @@ import {
   isFreePass,
   NEEDS_REVIEW_COPY,
   normalizeAttemptItem,
+  pendingCount,
   type AttemptRecord,
   type ProgressData,
 } from '@/lib/exam/attempts';
@@ -296,10 +298,16 @@ function ProgressScreen({
   progress,
   subjects,
   onHome,
+  onRetry,
+  retryingId,
+  retryError,
 }: {
   progress: ProgressData;
   subjects: readonly Subject[];
   onHome: () => void;
+  onRetry: (id: number) => Promise<void>;
+  retryingId: number | null;
+  retryError: string | null;
 }) {
   return (
     <div className="screen">
@@ -311,8 +319,11 @@ function ProgressScreen({
             How you&rsquo;re doing
           </h1>
         </div>
+        {retryError && <p role="alert">{retryError}</p>}
         <ProgressView
           data={progress}
+          onRetry={onRetry}
+          retryingId={retryingId}
           subjects={subjects}
           emptyHint="No exams yet — finish a mini exam and your scores will show up here."
         />
@@ -676,6 +687,9 @@ function ResultsScreen({
   sat,
   attempt,
   onRetry,
+  onRetryMarking,
+  retrying,
+  retryError,
   onChangeDiff,
   onHome,
 }: {
@@ -683,11 +697,22 @@ function ResultsScreen({
   sat: number;
   attempt: AttemptRecord;
   onRetry: () => void;
+  onRetryMarking: () => void;
+  retrying: boolean;
+  retryError: string | null;
   onChangeDiff: () => void;
   onHome: () => void;
 }) {
   const { correct, total, scorePct: pct } = attempt;
-  const v = verdictFor(pct);
+  const pending = pendingCount(attempt.items);
+  const marked = total - pending;
+  const v =
+    pending > 0
+      ? {
+          title: marked ? 'Provisional result' : 'Awaiting marking',
+          note: `${pending} ${pending === 1 ? 'answer awaits' : 'answers await'} marking. Your answers are saved.`,
+        }
+      : verdictFor(pct);
 
   return (
     <div className="screen" style={accentCSS(subject, sat)}>
@@ -701,10 +726,12 @@ function ResultsScreen({
           >
             <div>
               <div className="score-num">
-                {correct}
-                <span style={{ fontSize: '1.4rem', color: 'var(--text-faint)' }}>/{total}</span>
+                {marked ? correct : '—'}
+                <span style={{ fontSize: '1.4rem', color: 'var(--text-faint)' }}>/{marked}</span>
               </div>
-              <div className="score-of">{pct}% correct</div>
+              <div className="score-of">
+                {marked ? `${pct}% correct${pending ? ' · Provisional' : ''}` : 'Awaiting marking'}
+              </div>
             </div>
           </div>
           <h1 className="results-verdict">{v.title}</h1>
@@ -717,7 +744,7 @@ function ResultsScreen({
             <div className="tally-label">Correct</div>
           </div>
           <div className="tally-card">
-            <div className="tally-num err">{total - correct}</div>
+            <div className="tally-num err">{marked - correct}</div>
             <div className="tally-label">To review</div>
           </div>
         </div>
@@ -759,7 +786,21 @@ function ResultsScreen({
           })}
         </div>
 
+        {pending > 0 && !attempt.canRetryGrading && (
+          <p className="review-a">Marking cannot be retried for this older attempt.</p>
+        )}
+        {retryError && <p role="alert">{retryError}</p>}
         <div className="action-dock">
+          {pending > 0 && attempt.canRetryGrading === true && (
+            <button
+              className="btn btn-primary"
+              disabled={retrying}
+              onClick={onRetryMarking}
+              data-testid="retry-marking"
+            >
+              {retrying ? 'Marking…' : 'Retry marking'}
+            </button>
+          )}
           <button className="btn btn-primary" onClick={onRetry}>
             {UIcon.retry} Retry this exam
           </button>
@@ -786,12 +827,22 @@ type Screen =
  * `resolveExamPaper`.
  */
 export type Resumable = {
+  submissionId?: string;
   subject: string;
   difficulty: DifficultyId;
   questions: Question[];
   answers: Answer[];
   currentIndex: number;
 };
+
+/** getRandomValues also works on LAN HTTP installs, unlike randomUUID. */
+function newSubmissionId(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6]! & 0x0f) | 0x40;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
 
 const comboKey = (subject: string, difficulty: string) => `${subject}::${difficulty}`;
 
@@ -836,6 +887,10 @@ export function ExamApp({
   // survive a hop to the dashboard, drive the autosave, and seed a resume.
   const [answers, setAnswers] = useState<Answer[]>([]);
   const [current, setCurrent] = useState(0);
+  const [submissionId, setSubmissionId] = useState('');
+  const [retryingId, setRetryingId] = useState<number | null>(null);
+  const [retryError, setRetryError] = useState<string | null>(null);
+  const retryInFlight = useRef(false);
   // The subject of the exam currently mid-flight (null when none) — distinct from
   // the navigation `subject`, which changes when you browse other subject cards.
   // Anchoring the live "continue" card to THIS (not `subject`) keeps the card and
@@ -919,12 +974,14 @@ export function ExamApp({
     qs: Question[],
     ans: Answer[],
     idx: number,
+    id: string = submissionId,
   ) => {
     const key = comboKey(subj.id, diff);
     const create = action === beginExamSession || uncreated.current.has(key);
     if (create) uncreated.current.add(key);
     inBackground(async () => {
       const res = await (create ? beginExamSession : saveExamProgress)({
+        submissionId: id,
         subject: subj.id,
         difficulty: diff,
         questionIds: qs.map((q) => q.id),
@@ -943,7 +1000,14 @@ export function ExamApp({
   // incoming combo — the incoming exam supersedes it.
   const replaceLiveExam = (incoming: string) => {
     const live: Resumable | null = examSubject
-      ? { subject: examSubject.id, difficulty, questions, answers, currentIndex: current }
+      ? {
+          submissionId,
+          subject: examSubject.id,
+          difficulty,
+          questions,
+          answers,
+          currentIndex: current,
+        }
       : null;
     setParked((prev) => {
       const rest = prev.filter((p) => {
@@ -973,6 +1037,8 @@ export function ExamApp({
     flushPendingSave(); // the exam being left keeps its latest answers
     replaceLiveExam(comboKey(subject.id, diff));
     const blank: Answer[] = qs.map(() => null);
+    const id = newSubmissionId();
+    setSubmissionId(id);
     setDifficulty(diff);
     setQuestions(qs);
     setAnswers(blank);
@@ -985,8 +1051,9 @@ export function ExamApp({
       next.delete(comboKey(subject.id, diff));
       return next;
     });
+    setRetryError(null);
     setScreen('exam');
-    persist(beginExamSession, subject, diff, qs, blank, 0); // create the resumable draft up-front
+    persist(beginExamSession, subject, diff, qs, blank, 0, id); // create the resumable draft up-front
   };
 
   // Restore a saved draft straight into the exam at the question it left off.
@@ -997,6 +1064,10 @@ export function ExamApp({
     if (!subj) return;
     flushPendingSave();
     replaceLiveExam(comboKey(s.subject, s.difficulty));
+    const id = s.submissionId ?? newSubmissionId();
+    setSubmissionId(id);
+    if (!s.submissionId)
+      persist(beginExamSession, subj, s.difficulty, s.questions, s.answers, s.currentIndex, id);
     setSubject(subj);
     setDifficulty(s.difficulty);
     setQuestions(s.questions);
@@ -1061,6 +1132,11 @@ export function ExamApp({
         setScreen('examError');
         return;
       }
+      if (!res.ok && res.reason === 'busy') {
+        setExamError('unreachable');
+        setScreen('examError');
+        return;
+      }
       // Either way this paper is settled, so hide it locally too: finished (the
       // server cleared its draft), or refused and never markable as it is — a
       // resume card for it would be a dead end.
@@ -1091,7 +1167,7 @@ export function ExamApp({
       }
       return { type: 'mcq', id: q.id, chosen: typeof a === 'number' ? a : null };
     });
-    send({ subject: subject.id, difficulty, items });
+    send({ submissionId, subject: subject.id, difficulty, items });
   };
   const resend = () => {
     if (pending) send(pending);
@@ -1101,11 +1177,44 @@ export function ExamApp({
     startExam(difficulty);
   };
 
+  const retryMarking = async (attemptId: number) => {
+    if (retryInFlight.current) return;
+    retryInFlight.current = true;
+    setRetryingId(attemptId);
+    setRetryError(null);
+    try {
+      const res = await retryAttemptGrading(attemptId);
+      if (res.ok) {
+        setProgress(res.progress);
+        setScored((previous) => (previous?.id === attemptId ? res.attempt : previous));
+      } else {
+        setRetryError(
+          res.reason === 'busy'
+            ? 'Marking is already in progress. Please try again shortly.'
+            : 'This attempt could not be marked. You may need to sign in again.',
+        );
+      }
+    } catch (caught) {
+      unstable_rethrow(caught);
+      setRetryError('Couldn’t reach the server. Your answers are saved; please try again.');
+    } finally {
+      retryInFlight.current = false;
+      setRetryingId(null);
+    }
+  };
+
   // The resume cards: the live in-memory exam (if any), then the exams parked
   // this session, then the server-fetched drafts. An in-memory copy always wins
   // over the page-load snapshot of the same combo; dismissed combos are hidden.
   const liveCard: Resumable | null = examSubject
-    ? { subject: examSubject.id, difficulty, questions, answers, currentIndex: current }
+    ? {
+        submissionId,
+        subject: examSubject.id,
+        difficulty,
+        questions,
+        answers,
+        currentIndex: current,
+      }
     : null;
   const local = [...(liveCard ? [liveCard] : []), ...parked];
   const localKeys = new Set(local.map((r) => comboKey(r.subject, r.difficulty)));
@@ -1119,7 +1228,16 @@ export function ExamApp({
 
   let view;
   if (screen === 'progress') {
-    view = <ProgressScreen progress={progress} subjects={subjects} onHome={goHome} />;
+    view = (
+      <ProgressScreen
+        progress={progress}
+        subjects={subjects}
+        onHome={goHome}
+        onRetry={retryMarking}
+        retryingId={retryingId}
+        retryError={retryError}
+      />
+    );
   } else if (screen === 'dashboard' || !subject) {
     view = (
       <Dashboard
@@ -1191,6 +1309,9 @@ export function ExamApp({
         sat={sat}
         attempt={scored}
         onRetry={retry}
+        onRetryMarking={() => void retryMarking(scored.id)}
+        retrying={retryingId === scored.id}
+        retryError={retryError}
         onChangeDiff={() => setScreen('difficulty')}
         onHome={goHome}
       />

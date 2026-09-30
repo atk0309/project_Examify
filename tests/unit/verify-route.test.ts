@@ -98,6 +98,7 @@ describe('GET /signin/verify', () => {
       role: 'parent',
       email: 'p@example.com',
       isNew: false,
+      sessionVersion: 3,
     };
     const err = await callGet('http://localhost/signin/verify?token=good');
 
@@ -105,6 +106,7 @@ describe('GET /signin/verify', () => {
     expect(sessionHolder.current.userId).toBe(7);
     expect(sessionHolder.current.role).toBe('parent');
     expect(sessionHolder.current.email).toBe('p@example.com');
+    expect(sessionHolder.current.sessionVersion).toBe(3);
     // Always reset on sign-in so a returning parent lands on the dashboard.
     expect(sessionHolder.current.studentMode).toBe(false);
     expect(sessionHolder.current.save).toHaveBeenCalledOnce();
@@ -117,6 +119,7 @@ describe('GET /signin/verify', () => {
       role: 'student',
       email: 'kid@example.com',
       isNew: false,
+      sessionVersion: 3,
     };
     const err = await callGet(
       'http://localhost/signin/verify?token=otp%3Akid%40example.com%3Astudent%3A000000',
@@ -136,6 +139,7 @@ describe('GET /signin/verify', () => {
         role: 'parent',
         email: 'p@example.com',
         isNew: false,
+        sessionVersion: 3,
       };
       const err = await callGet('http://localhost/signin/verify?token=leftover-magic-token');
       expect(err.url).toBe('/signin/verify/error?reason=not-found');

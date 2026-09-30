@@ -150,3 +150,28 @@ describe('clearExamSession', () => {
     expect(sessions).toHaveLength(1);
   });
 });
+
+describe('draft submission identity', () => {
+  it('keeps the same submission ID across checkpoints and reload reads', async () => {
+    const { saveExamSession, updateExamSession, getExamSessions } =
+      await import('@/lib/exam-session');
+    const userId = await seedUser('identity@example.com');
+    const submissionId = '00000000-0000-4000-8000-000000000001';
+    saveExamSession(userId, draft({ submissionId }));
+    expect(updateExamSession(userId, draft({ submissionId, currentIndex: 2 }))).toBe(true);
+    expect(getExamSessions(userId)[0]).toMatchObject({ submissionId, currentIndex: 2 });
+  });
+
+  it('does not let stale checkpoints or completed retries modify a newer draft', async () => {
+    const { saveExamSession, updateExamSession, clearExamSession, getExamSessions } =
+      await import('@/lib/exam-session');
+    const userId = await seedUser('newer@example.com');
+    const oldId = '00000000-0000-4000-8000-000000000001';
+    const newId = '00000000-0000-4000-8000-000000000002';
+    saveExamSession(userId, draft({ submissionId: oldId }));
+    saveExamSession(userId, draft({ submissionId: newId }));
+    expect(updateExamSession(userId, draft({ submissionId: oldId, currentIndex: 2 }))).toBe(false);
+    clearExamSession(userId, 'maths', 'easy', oldId);
+    expect(getExamSessions(userId)[0]).toMatchObject({ submissionId: newId, currentIndex: 1 });
+  });
+});

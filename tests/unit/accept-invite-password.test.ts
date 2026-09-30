@@ -408,6 +408,7 @@ describe('completePasswordInvite', () => {
     });
     expect(sessionHolder.current.email).toBe('alex@example.com');
     expect(sessionHolder.current.role).toBe('student');
+    expect(sessionHolder.current.sessionVersion).toBe(0);
     expect(sessionHolder.current.save).toHaveBeenCalledOnce();
 
     const { getMembershipForEmail } = await import('@/lib/households');

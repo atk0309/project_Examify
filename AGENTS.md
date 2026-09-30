@@ -247,15 +247,15 @@ status`, only after `claude auth --help` / `codex login --help` lists `status` i
   `needs_review`; missing after clear → `needs_review`, no stub; blank is never treated as `test`;
   same usable-key rule as the Configured badge; optional in `env.ts` so a
   production restart after clear does not brick boot). Grading never throws — failures
-  fall to `needs_review`, which is final (nothing re-grades it), counts as not correct,
-  renders `NEEDS_REVIEW_COPY` (never promise later marking) and logs one `[grading]`
+  fall to `needs_review`, which is excluded from the provisional score denominator,
+  renders `NEEDS_REVIEW_COPY` (never promise automatic later marking) and logs one `[grading]`
   warning with a reason code only (plus the backend off the Anthropic path; no answer /
   question / rubric / key / user id). A free item is "correct" at `PASS_THRESHOLD` (0.6). The UI
   renders only the bounded `Verdict` fields, never the rubric. Results are
   server-driven (a "Marking…" state covers the submit round-trip). `ExamApp` gets the
   household's marking status (`examMarkingForUser`): the difficulty screen says who marks written
   answers, and when nothing here can (`not_ready`) papers leave written questions out
-  (`examPool`; a written-only bank keeps them, with a note that they count as not correct;
+  (`examPool`; a written-only bank keeps them, with a note that they await marking;
   a signed-out Claude Code / Codex is named with its sign-in command). The parent line, the
   wizard's marking line and install.sh's blank-key prompt say a bank with only written
   questions keeps them.
@@ -283,6 +283,21 @@ status`, only after `claude auth --help` / `codex login --help` lists `status` i
   The dashboard lists every household student and compares against a selected child.
   The comparison's "score by attempt number" axis uses `getScoreHistory()` (uncapped,
   oldest-first) rather than the 50-capped `getProgressForUser`.
+- **Submissions are durable and idempotent.** A client `submissionId` survives draft
+  autosaves, reload/resume and transport retries. `saveAttempt` validates and stores
+  answers plus a separate **server-only** original rubric snapshot before any AI call;
+  `(user_id, submission_id)` is unique and the payload hash refuses changed answers
+  under the same ID. Repeated submits return that row, never regrade it. Explicit
+  `retryAttemptGrading` marks only pending items on the caller's own row (student or
+  parent in student mode), using the original snapshot. A two-minute database lease
+  serializes provider calls across processes; an expired lease is recoverable and
+  stale workers cannot overwrite newer results. A crash after a provider accepted a
+  request can still require another paid call on explicit retry. No automatic queue.
+  Attempts with pending answers are labelled provisional and excluded from aggregates
+  and history; zero marked answers show "Awaiting marking", never 0%. Historical
+  pending rows without original rubrics cannot be retried safely. Rubric snapshots,
+  leases and payload hashes never enter `AttemptRecord` or browser props. Late saves
+  and finishes with an older submission ID cannot overwrite/delete a newer draft.
 - Access is invite-only. First-run `/setup` (`bootstrapHousehold`) creates the admin
   when no household exists, and only after `SETUP_BOOTSTRAP_SECRET` matches (required
   in production; captcha is not identity). `SetupForm` reads submitted FormData
@@ -529,8 +544,8 @@ Before merge, ensure these pass in CI:
   only, no email, and invalidate the unused magic-link / OTP token).
   Password mode uses a generic `invalid` for unknown email / wrong password /
   wrong role.
-- Re-check household membership on every `getSession()` load; a removed member
-  is redirected to `/signin/invalidate` so the sealed cookie is actually
+- Re-check household membership AND `users.session_version` on every `getSession()` load; a removed member
+  or a pre-reset cookie is redirected to `/signin/invalidate` so the sealed cookie is actually
   cleared (RSC cannot persist `session.destroy()`). Invite revoke sets
   `revoked_at` (never DELETE while `magic_tokens.invite_id` still references
   the row; `consumed_at` means accepted).
@@ -578,3 +593,13 @@ Include in PR body:
 - Routes touched.
 - Tests added/updated.
 - Command output summary for lint, typecheck, unit, build, and e2e (or explicit reason e2e was skipped).
+
+### Password-reset session revocation
+
+Successful password reset increments `users.session_version` in the same transaction
+as token consumption and password replacement. Every authentication result carries
+the version verified in that operation; all six cookie issuers snapshot it, never
+re-read after an async pause. `getSession()` compares it on each authenticated request.
+Legacy cookies without a version mean zero, and survive only until the first reset.
+Failed, expired or replayed resets never increment it; the resetting browser gets the
+new version and other browsers must sign in again.

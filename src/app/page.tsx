@@ -40,6 +40,7 @@ function resumableFor(
     if (questions === null || s.answers.length !== questions.length) return [];
     return [
       {
+        submissionId: s.submissionId,
         subject: s.subject,
         difficulty: s.difficulty,
         questions,

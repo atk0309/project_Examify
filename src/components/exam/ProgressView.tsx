@@ -2,9 +2,9 @@
 
 /* ============================================================================
    EXAMIFY — PROGRESS VIEW (shared)
-   Read-only roll-up of persisted attempts, used by the student's own "Your
-   progress" screen and the parent's read-only dashboard. Purely presentational
-   over a `ProgressData` snapshot — no fetching, no mutation.
+   Roll-up of persisted attempts, used by the student's own "Your progress"
+   screen and the parent's read-only dashboard. An optional retry callback is
+   supplied only for the signed-in learner's own attempts.
    ========================================================================== */
 import { useState } from 'react';
 import {
@@ -18,6 +18,7 @@ import {
   isFreePass,
   NEEDS_REVIEW_COPY,
   normalizeAttemptItem,
+  pendingCount,
   type AttemptRecord,
   type ProgressData,
 } from '@/lib/exam/attempts';
@@ -74,11 +75,17 @@ function SummaryCard({
 function AttemptRow({
   attempt,
   subjectsById,
+  onRetry,
+  retryingId,
 }: {
   attempt: AttemptRecord;
   subjectsById: Map<string, Subject>;
+  onRetry?: (id: number) => Promise<void>;
+  retryingId?: number | null;
 }) {
   const [open, setOpen] = useState(false);
+  const pending = pendingCount(attempt.items);
+  const marked = attempt.total - pending;
   const subject = subjectsById.get(attempt.subject);
   const label = subject?.label ?? attempt.subject;
   const diff = DIFFICULTY_LABEL.get(attempt.difficulty) ?? attempt.difficulty;
@@ -97,11 +104,29 @@ function AttemptRow({
           </span>
         </span>
         <span className="attempt-score">
-          {attempt.correct}/{attempt.total}
-          <span className="attempt-pct">{attempt.scorePct}%</span>
+          {marked ? `${attempt.correct}/${marked}` : 'Awaiting marking'}
+          {marked > 0 && (
+            <span className="attempt-pct">
+              {attempt.scorePct}%{pending ? ' · Provisional' : ''}
+            </span>
+          )}
+          {pending > 0 && <span className="attempt-meta">{pending} awaiting marking</span>}
         </span>
         <span className={'attempt-caret' + (open ? ' open' : '')}>{UIcon.arrow}</span>
       </button>
+      {pending > 0 && !attempt.canRetryGrading && (
+        <p className="review-a">Marking cannot be retried for this older attempt.</p>
+      )}
+      {pending > 0 && attempt.canRetryGrading === true && onRetry && (
+        <button
+          className="btn btn-quiet"
+          disabled={retryingId != null}
+          onClick={() => void onRetry(attempt.id)}
+          data-testid={`retry-marking-${attempt.id}`}
+        >
+          {retryingId === attempt.id ? 'Marking…' : 'Retry marking'}
+        </button>
+      )}
       {open && (
         <div className="review">
           {attempt.items.map((item, idx) => {
@@ -163,10 +188,15 @@ export function ProgressView({
   data,
   emptyHint,
   subjects = SUBJECTS,
+  onRetry,
+  retryingId,
 }: {
   data: ProgressData;
   emptyHint: string;
   subjects?: readonly Subject[];
+  /** Provided only for the signed-in learner’s own history, never a child dashboard. */
+  onRetry?: (id: number) => Promise<void>;
+  retryingId?: number | null;
 }) {
   const subjectsById = new Map(subjects.map((subject) => [subject.id, subject]));
   if (data.attempts.length === 0) {
@@ -195,7 +225,13 @@ export function ProgressView({
         <p className="eyebrow">Recent attempts</p>
         <div className="attempt-list">
           {data.attempts.map((a) => (
-            <AttemptRow key={a.id} attempt={a} subjectsById={subjectsById} />
+            <AttemptRow
+              key={a.id}
+              attempt={a}
+              subjectsById={subjectsById}
+              onRetry={onRetry}
+              retryingId={retryingId}
+            />
           ))}
         </div>
       </section>

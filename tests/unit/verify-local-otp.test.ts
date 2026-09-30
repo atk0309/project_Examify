@@ -112,6 +112,8 @@ async function latestCode(): Promise<string> {
 describe('local-otp auth', () => {
   it('issues a code for a member and verifies it into a session', async () => {
     await seedParent();
+    const { db, schema } = await import('@/lib/db');
+    db.update(schema.users).set({ sessionVersion: 3 }).run();
     const { requestMagicLink } = await import('@/actions/requestMagicLink');
     const { verifyLocalOtp } = await import('@/actions/verifyLocalOtp');
 
@@ -125,6 +127,7 @@ describe('local-otp auth', () => {
     ).rejects.toMatchObject({ url: '/' });
     expect(sessionHolder.current.email).toBe('pat@example.com');
     expect(sessionHolder.current.role).toBe('parent');
+    expect(sessionHolder.current.sessionVersion).toBe(3);
     expect(sessionHolder.current.save).toHaveBeenCalledOnce();
   });
 

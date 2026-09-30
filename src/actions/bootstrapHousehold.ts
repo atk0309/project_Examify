@@ -99,6 +99,7 @@ export async function bootstrapHouseholdAction(
   session.userId = result.userId;
   session.role = 'parent';
   session.email = result.email;
+  session.sessionVersion = result.sessionVersion;
   session.studentMode = false;
   await session.save();
 

@@ -81,8 +81,19 @@ describe('bootstrapHouseholdAction', () => {
     });
     expect(sessionHolder.current.userId).toBeTypeOf('number');
     expect(sessionHolder.current.role).toBe('parent');
+    expect(sessionHolder.current.sessionVersion).toBe(0);
     expect(sessionHolder.current.email).toBe('host@example.com');
     expect(sessionHolder.current.save).toHaveBeenCalledOnce();
+  });
+
+  it('snapshots an existing user version when bootstrapping', async () => {
+    const { db, schema } = await import('@/lib/db');
+    db.insert(schema.users).values({ email: 'host@example.com', sessionVersion: 3 }).run();
+    const { bootstrapHouseholdAction } = await import('@/actions/bootstrapHousehold');
+    await expect(bootstrapHouseholdAction({ status: 'idle' }, setupForm())).rejects.toMatchObject({
+      url: '/onboarding',
+    });
+    expect(sessionHolder.current.sessionVersion).toBe(3);
   });
 
   it('rejects a missing or wrong setup secret before creating a household', async () => {
