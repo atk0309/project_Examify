@@ -1,6 +1,7 @@
 import { expect, test, type Locator } from '@playwright/test';
 import fs from 'node:fs/promises';
 import { makeSnapshot, waitForAnswerPlan, findAnswer } from './checkpoint/public-plan.mjs';
+import { classifyGenerationError } from './checkpoint/generation-status.mjs';
 const live = process.env.DEMO_MODE === 'live';
 const checkpoint = process.env.DEMO_CHECKPOINT === '1';
 // Recorded app interaction; no browser response mocks. Rehearsal-only fixtures
@@ -88,8 +89,25 @@ test('cell biology: install, generate, review, practise, feedback, progress', as
   await read(2, 'Read the clearly labelled provider choice');
   const generationStarted = elapsed();
   await click('wizard-generate-demo');
-  await expect(page.getByTestId('wizard-generate-run-demo')).toBeVisible({ timeout: 190_000 });
-  await expect(page.getByTestId('wizard-error')).toHaveCount(0);
+  const generationResult = page.getByTestId('wizard-generate-run-demo');
+  const generationError = page.getByTestId('wizard-error');
+  let generationFailure = 'generation_timeout';
+  try {
+    await expect(generationResult.or(generationError)).toBeVisible({ timeout: 190_000 });
+    if (await generationError.count()) {
+      generationFailure = classifyGenerationError(await generationError.textContent());
+      if (generationFailure !== 'unclassified_failure') {
+        await generationError.scrollIntoViewIfNeeded();
+        await read(4, 'Read the application’s generation failure');
+      }
+      throw Error(generationFailure);
+    }
+  } catch {
+    await fs.mkdir('demo-recording/evidence', { recursive: true });
+    await fs.writeFile('demo-recording/evidence/generation-status.json', JSON.stringify({ stage: 'generation', status: 'failed', reason: generationFailure }));
+    await fs.writeFile('demo-recording/evidence/chapters.json', JSON.stringify({ mode: live ? 'live' : 'rehearsal', synthetic: true, completed: false, duration: elapsed(), scenes, holds, cuts }));
+    throw Error(`Demo stopped: ${generationFailure}`);
+  }
   if (live && elapsed() - generationStarted > 8)
     cuts.push({
       start: generationStarted,

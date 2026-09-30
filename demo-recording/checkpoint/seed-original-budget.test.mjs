@@ -10,10 +10,12 @@ test('replacement carries observed cost and consumes the original slot', () => {
   try {
     seedOriginalBudget(dir, ORIGINAL_EXPIRY);
     const summary = budgetSummary(dir);
-    assert.equal(summary.providers.openai.reservedRequests, 1);
+    assert.equal(summary.providers.openai.reservedRequests, 2);
     assert.equal(summary.providers.openai.requests[0].inputTokens, 1115);
     assert.equal(summary.providers.openai.requests[0].outputTokens, 809);
     assert.equal(summary.providers.openai.requests[0].priorRunId, '36707547014');
+    assert.equal(summary.providers.openai.requests[1].outputTokens, 771);
+    assert.equal(summary.providers.openai.requests[1].priorRunId, '36708662338');
     assert.equal(summary.providers.anthropic.reservedRequests, 0);
     assert.throws(() => seedOriginalBudget(dir, ORIGINAL_EXPIRY), /reset/);
   } finally {
