@@ -1,0 +1,35 @@
+{
+  "easy": [
+    {
+      "id": "demo-easy-1",
+      "type": "mcq",
+      "q": "Which structure captures light energy to make sugar in a plant cell?",
+      "choices": ["Nucleus", "Chloroplasts", "Cell membrane", "Mitochondria"],
+      "answer": 1,
+      "provenance": { "pdf": "notes.txt", "locator": "Chloroplasts paragraph" }
+    },
+    {
+      "id": "demo-easy-2",
+      "type": "mcq",
+      "q": "Which statement about cell walls is correct?",
+      "choices": [
+        "Only animal cells have a cell wall.",
+        "All cells have a cell wall.",
+        "Plant cells have a cell wall; animal cells do not.",
+        "Cell walls make sugar from light."
+      ],
+      "answer": 2,
+      "provenance": { "pdf": "notes.txt", "locator": "Cell wall paragraph" }
+    },
+    {
+      "id": "demo-easy-free-1",
+      "type": "free",
+      "q": "Explain what chloroplasts and mitochondria do in a plant cell.",
+      "rubric": "Award 2 marks: 1 for chloroplasts using light to make sugar; 1 for mitochondria releasing energy from food. Accept equivalent wording.",
+      "maxScore": 2,
+      "provenance": { "pdf": "notes.txt", "locator": "Chloroplasts and mitochondria paragraphs" }
+    }
+  ],
+  "medium": [],
+  "hard": []
+}

@@ -62,3 +62,16 @@ automatically rerun live: reconcile recorded slots/actual provider usage and obt
 a new remaining-budget approval first. No paid retry is authorized by a failed run.
 The amounts above assume standard pricing, token-limit compliance, and no other
 key usage. Validate these assumptions before enabling live.
+
+## Revised educational rehearsal
+
+The no-key runner calls `prepare-rehearsal.mjs` before building. It substitutes
+a hand-authored three-question cell-biology test provider and a transparent
+rule-based rehearsal marker into the disposable runner only. No product branch
+or production code is changed. The same original notes are used for eventual
+live generation. The live configuration refuses a fixture-patched build.
+The recording labels this as scripted generation and feedback, not an AI test.
+The scene manifest records every scene and purposeful reading pause; no blanket
+13-second idle holds. Actual questions are read and answered at a human pace.
+Live question-answer scripting still requires a separate readiness review; never
+reuse the rehearsal-only choice map for an unknown generated question.

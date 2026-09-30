@@ -36,6 +36,8 @@ jobs:
           node-version: 22.22.2
       - name: Validate demo budget policy without keys or network
         run: node --test demo-recording/*.test.mjs
+      - name: Prepare coherent no-key educational fixtures
+        run: node demo-recording/prepare-rehearsal.mjs
       - name: Real clean installation (no provider credentials)
         shell: bash
         run: |
@@ -48,7 +50,7 @@ jobs:
       - name: Copy only the committed synthetic source pack
         run: |
           mkdir -p tests/.tmp/demo-data/content/subjects/demo
-          cp content/subjects/demo/subject.json content/subjects/demo/notes.txt tests/.tmp/demo-data/content/subjects/demo/
+          cp demo-recording/fixtures/subject.json demo-recording/fixtures/notes.txt tests/.tmp/demo-data/content/subjects/demo/
       - name: Install browser
         run: pnpm exec playwright install --with-deps chromium
       - name: Record actual UI (fixture AI clearly labelled)

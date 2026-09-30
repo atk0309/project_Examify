@@ -1,0 +1,7 @@
+Cell biology: original study notes for a synthetic Examify demonstration
+
+Chloroplasts in plant cells capture light energy and use it to make sugar.
+Mitochondria release energy from food. Both plant and animal cells have mitochondria.
+Plant cells have a cell wall that supports the cell. Animal cells do not have a cell wall.
+The cell membrane controls what enters and leaves a cell.
+The nucleus contains genetic information and helps control the cell's activities.

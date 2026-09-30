@@ -1,8 +1,11 @@
 import path from 'node:path';
+import fs from 'node:fs';
 import { defineConfig } from '@playwright/test';
 const root = process.cwd();
 const baseURL = 'http://127.0.0.1:3115';
 const live = process.env.DEMO_MODE === 'live';
+if (live && fs.existsSync('.demo-fixture-active'))
+  throw Error('live_refuses_scripted_fixture_build');
 export default defineConfig({
   testDir: '.',
   testMatch: 'walkthrough.spec.ts',
@@ -19,7 +22,7 @@ export default defineConfig({
     video: { mode: 'on', size: { width: 1440, height: 1000 } },
     trace: 'off',
     screenshot: 'off',
-    launchOptions: { slowMo: 350 },
+    launchOptions: { slowMo: 0 },
   },
   webServer: {
     cwd: root,
