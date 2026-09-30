@@ -31,6 +31,12 @@ export function budgetSummary(ledger) {
             inputTokens: u.inputTokens,
             outputTokens: u.outputTokens,
           };
+        if (
+          item.usageStatus === 'observed' &&
+          typeof u.priorRunId === 'string' &&
+          /^[1-9]\d+$/.test(u.priorRunId)
+        )
+          item.priorRunId = u.priorRunId;
       } catch {
         /* Unknown usage still consumes its full reserved request allowance. */
       }
