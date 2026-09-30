@@ -86,3 +86,5 @@ export {
   type CodexCliTextRequest,
   type ProviderFailureKind,
 } from './providers';
+
+export type { OutputDiagnostic } from './output-diagnostic';

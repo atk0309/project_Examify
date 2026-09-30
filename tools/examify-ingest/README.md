@@ -475,11 +475,23 @@ Failures are typed so callers never parse messages (all exported from
   (OpenAI-compatible or Codex, PDF-only, no rasterized pages).
 
 The HTTP call and reading its body share one deadline / cancel boundary, so a
-body that stalls or drops part-way is typed like a failed request. CLI messages
-are unchanged except the HTTP fetch deadline, which now reads `provider request
-timed out after 180000ms`, and a 200 whose body is not JSON
-(`<provider> returned a body that is not JSON`). The wizard maps these to safe
+body that stalls or drops part-way is typed like a failed request. HTTP failures
+retain safe status/deadline messages. Unusable output has a generic message and
+optional `outputDiagnostic`: a fixed category plus at most six static field paths
+and codes, never rejected values, unknown property names or raw parser causes.
+The wizard logs only this sanitized diagnostic and maps failures to safe
 reason codes (`provider_auth` for 401/403, `provider_rate_limited` for 429,
 `provider_unavailable` for 5xx or unreachable, `provider_timeout`,
 `provider_output_invalid`, `provider_error`, `sample_collision`,
 `sources_unreadable`) and never shows the raw message.
+
+### OpenAI output contract
+
+OpenAI generation uses strict JSON-schema Structured Outputs with a model that
+supports this Chat Completions feature (the shipped `gpt-4o` does). The model
+emits BankIR without server-owned metadata. Refusals, incomplete responses and
+invalid banks fail closed; there is no fallback request or automatic paid retry.
+Original BankIR shape and semantic ID validation still run before any write.
+Some fine-tuned or older model overrides do not support the full schema or
+request parameters; choose a compatible model rather than disabling validation.
+Other providers retain their existing output contracts.

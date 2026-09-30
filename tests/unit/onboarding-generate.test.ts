@@ -1433,6 +1433,7 @@ describe('generateOnboardingSubject provider failures (C10)', () => {
     fetch: () => Promise<Response>;
     reason: string;
     status?: number;
+    outputDiagnostic?: { category: string; fields: { path: string; code: string }[] };
   }[] = [
     {
       name: '401',
@@ -1480,6 +1481,7 @@ describe('generateOnboardingSubject provider failures (C10)', () => {
     },
     {
       name: 'prose instead of JSON',
+      outputDiagnostic: { category: 'json', fields: [] },
       fetch: async () =>
         new Response(JSON.stringify({ content: [{ type: 'text', text: MODEL_TEXT }] }), {
           status: 200,
@@ -1488,6 +1490,15 @@ describe('generateOnboardingSubject provider failures (C10)', () => {
     },
     {
       name: 'JSON that is not BankIR',
+      outputDiagnostic: {
+        category: 'schema',
+        fields: [
+          { path: 'version', code: 'invalid_value' },
+          { path: 'subject', code: 'invalid_type' },
+          { path: 'difficulties', code: 'invalid_type' },
+          { path: 'root', code: 'unrecognized_keys' },
+        ],
+      },
       fetch: async () =>
         new Response(
           JSON.stringify({
@@ -1526,6 +1537,9 @@ describe('generateOnboardingSubject provider failures (C10)', () => {
           reason: row.reason,
           subjectId: 'history',
           ...(row.status ? { status: row.status } : {}),
+          ...(row.outputDiagnostic
+            ? { outputDiagnostic: JSON.stringify(row.outputDiagnostic) }
+            : {}),
         });
         const logged = JSON.stringify(warn.mock.calls);
         expect(logged).not.toContain(KEY);

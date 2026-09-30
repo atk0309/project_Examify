@@ -55,6 +55,8 @@ export type GenerateOnboardingError = {
   irRel?: string;
   /** Provider HTTP status, for the server log only. */
   status?: number;
+  /** Fixed category/field/code only; no raw provider values. */
+  outputDiagnostic?: ingestGenerate.OutputDiagnostic;
 };
 
 export type GenerateOnboardingSuccess = {
@@ -188,6 +190,11 @@ function logGenerateFailure(rawSubjectId: string, result: GenerateOnboardingErro
   const subjectId = normalizeSubjectId(rawSubjectId);
   console.warn('[onboarding] generate failed', {
     reason: result.reason,
+    // Serialize this bounded record so Node's default inspect depth does not
+    // collapse field details to [Object] in captured server stderr.
+    ...(result.outputDiagnostic
+      ? { outputDiagnostic: JSON.stringify(result.outputDiagnostic) }
+      : {}),
     ...(isValidSubjectId(subjectId) && subjectId.length <= SUBJECT_LABEL_MAX ? { subjectId } : {}),
     ...(result.status ? { status: result.status } : {}),
   });
@@ -285,6 +292,7 @@ function mapGenerateError(error: unknown): GenerateOnboardingError {
       reason: providerFailureReason(error),
       message,
       ...(error.status ? { status: error.status } : {}),
+      ...(error.outputDiagnostic ? { outputDiagnostic: error.outputDiagnostic } : {}),
     };
   }
   // A bare timeout / abort that is not the admin's cancel (e.g. the 180s

@@ -411,9 +411,17 @@ messages: `ProviderFailureError` (`kind` `http` / `timeout` / `unreachable` /
 `output` / `command` / `auth`, plus HTTP `status`), `SampleIdCollisionError` (`ids`),
 `UnreadableSourcesError`, `CliNotFoundError` (`cli`; a `ProviderConfigError`). The provider HTTP call and its body read sit inside
 one `withProviderSignal` boundary, so a deadline / cancel / dropped connection
-while the body is still arriving is typed too. CLI messages are unchanged except
-the fetch deadline (`provider request timed out after 180000ms`) and a 200 whose
-body is not JSON (`<provider> returned a body that is not JSON`). Cloud
+while the body is still arriving is typed too. HTTP failures retain safe status/deadline
+messages; unusable output uses a generic message with separate safe diagnostics.
+OpenAI content generation sends a strict JSON schema derived from BankIR without
+server-owned `meta`. Every object is closed, all properties are required, and item
+variants have disjoint literal tags. The adapter requires a completed non-refusal
+response and parses the entire JSON content; the original Zod and semantic ID
+validators still run before persistence. Other adapters retain their existing
+parsers. Unsupported models fail rather than silently downgrading or retrying.
+Output failures carry a bounded category and static field/code diagnostic in the
+sanitized server log, never model text, dynamic keys, raw Zod messages or parser
+causes. Browser actions still receive only the existing safe reason code. Cloud
 providers fail closed without an env key (generate also fills unset keys from
 repo `.env` / `.env.local`); `--provider test` is the CI
 fixture. OpenAI-compatible and Codex generate fail closed when the only sources are
