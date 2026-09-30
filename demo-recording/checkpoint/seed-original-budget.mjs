@@ -1,4 +1,4 @@
-// Controlled recovery after the three observed runs. These are usage counters,
+// Controlled recovery after the four observed runs. These are usage counters,
 // not credentials. Preserve its consumed request slot and explicitly renewed fixed expiry.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -12,6 +12,7 @@ export function seedOriginalBudget(ledger, expiry) {
     { outputTokens: 809, priorRunId: '36707547014' },
     { outputTokens: 771, priorRunId: '36708662338' },
     { outputTokens: 809, priorRunId: '36713528756' },
+    { inputTokens: 1703, outputTokens: 782, priorRunId: '36719205674' },
   ];
   for (const [slot, usage] of previous.entries()) {
     fs.closeSync(fs.openSync(path.join(ledger, `openai-${slot}`), 'wx', 0o600));
@@ -25,6 +26,6 @@ export function seedOriginalBudget(ledger, expiry) {
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   seedOriginalBudget('tests/.tmp/demo-budget', process.env.DEMO_EXPIRES_AT);
   console.log(
-    'Preserved the original expiry and prior OpenAI reservation; five OpenAI slots remain.',
+    'Preserved the original expiry and prior OpenAI reservation; four OpenAI slots remain.',
   );
 }

@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { bankIrSchema } from '../schema';
+import { bankIrSchema, bankItemSchema, subjectSchema, type DifficultyId } from '../schema';
+import { idPattern } from '../validate';
 
 /**
  * Derive the wire contract from BankIR rather than maintaining a second shape.
@@ -40,12 +41,44 @@ export function strictWireSchema(value: unknown): unknown {
   );
 }
 
-/** Strict schema constrains shape; the original Zod and ID validators still run afterwards. */
-export const OPENAI_BANK_IR_RESPONSE_FORMAT = {
-  type: 'json_schema',
-  json_schema: {
-    name: 'examify_bank_ir_v1',
-    strict: true,
-    schema: strictWireSchema(z.toJSONSchema(bankIrSchema.omit({ meta: true }))),
-  },
-} as const;
+/**
+ * Bind IDs to the requested subject, array difficulty and discriminated item type.
+ * Cross-item uniqueness cannot be expressed by the supported schema subset;
+ * the original semantic validator remains authoritative before any writes.
+ */
+export function openAiBankIrResponseFormat(subjectId: string) {
+  const id = subjectSchema.shape.id.parse(subjectId);
+  const items = (difficulty: DifficultyId) =>
+    z.array(
+      z.discriminatedUnion('type', [
+        bankItemSchema.options[0].extend({
+          id: z
+            .string()
+            .min(1)
+            .regex(idPattern(id, difficulty, 'mcq')),
+        }),
+        bankItemSchema.options[1].extend({
+          id: z
+            .string()
+            .min(1)
+            .regex(idPattern(id, difficulty, 'free')),
+        }),
+      ]),
+    );
+  const schema = bankIrSchema.omit({ meta: true }).extend({
+    subject: subjectSchema.extend({ id: z.literal(id) }),
+    difficulties: z.object({
+      easy: items('easy'),
+      medium: items('medium'),
+      hard: items('hard'),
+    }),
+  });
+  return {
+    type: 'json_schema',
+    json_schema: {
+      name: 'examify_bank_ir_v1',
+      strict: true,
+      schema: strictWireSchema(z.toJSONSchema(schema)),
+    },
+  } as const;
+}

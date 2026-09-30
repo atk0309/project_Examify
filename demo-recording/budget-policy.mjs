@@ -1,7 +1,7 @@
 // Demo harness only. No secrets, network, or application imports in this module.
 import { createHash } from 'node:crypto';
 // Exact reviewed product BankIR response format. Any schema/feature change fails closed.
-const BANK_IR_FORMAT_SHA256 = '7ec651d9c5dfbb30e287fb9aa29ea7104d437fde5d53451d036eb7b77fe54c09';
+const BANK_IR_FORMAT_SHA256 = 'c6bf1221c79a5378ac1d7cb2c1caf96af6f2e080415f3309edd45997390f1b90';
 export const LIMITS = Object.freeze({ calls: 8, bodyBytes: 32768, outputTokens: 8192 });
 export const TARGETS = Object.freeze({
   'https://api.openai.com/v1/chat/completions': {

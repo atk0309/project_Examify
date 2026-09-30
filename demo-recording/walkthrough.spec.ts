@@ -1,6 +1,6 @@
 import { expect, test, type Locator } from '@playwright/test';
 import fs from 'node:fs/promises';
-import { makeSnapshot, waitForAnswerPlan, findAnswer } from './checkpoint/public-plan.mjs';
+import { makeSnapshot, waitForAnswerPlan, findAnswer, chooseDemoDifficulty } from './checkpoint/public-plan.mjs';
 import { classifyGenerationError } from './checkpoint/generation-status.mjs';
 const live = process.env.DEMO_MODE === 'live';
 const checkpoint = process.env.DEMO_CHECKPOINT === '1';
@@ -27,7 +27,7 @@ test('cell biology: install, generate, review, practise, feedback, progress', as
   async function type(locator: Locator, text: string) {
     await locator.fill('');
     await locator.click();
-    await locator.pressSequentially(text, { delay: 38 });
+    await locator.pressSequentially(text, { delay: 38, timeout: 45_000 });
   }
   const installLog = await fs.readFile('demo-recording/evidence/install-excerpt.txt', 'utf8');
   await page.setContent(
@@ -134,6 +134,10 @@ test('cell biology: install, generate, review, practise, feedback, progress', as
   await click('wizard-to-ready');
   await click('wizard-finish');
   await expect(page).toHaveURL(/\/$/);
+  // Public questions only: choose an actual bounded paper that exercises marking.
+  // No rubric/key reads, generation retries, or fabricated questions.
+  const publicBank = JSON.parse(await fs.readFile('tests/.tmp/demo-data/content/generated/questions/demo.json', 'utf8'));
+  const demoDifficulty = chooseDemoDifficulty(publicBank);
   await page.getByTestId('manage-ai-settings').click();
   await expect(page).toHaveURL(/\/settings\/ai$/);
   await scene(
@@ -159,9 +163,8 @@ test('cell biology: install, generate, review, practise, feedback, progress', as
   let reviewedAnswers: ReturnType<typeof findAnswer>[] | undefined;
   if (checkpoint) {
     publicSnapshot = makeSnapshot({
-      bank: JSON.parse(
-        await fs.readFile('tests/.tmp/demo-data/content/generated/questions/demo.json', 'utf8'),
-      ),
+      bank: publicBank,
+      difficulty: demoDifficulty,
       run: process.env.GITHUB_RUN_ID,
       sourceNotes: await fs.readFile('demo-recording/fixtures/notes.txt', 'utf8'),
     });
@@ -198,9 +201,9 @@ test('cell biology: install, generate, review, practise, feedback, progress', as
   }
   await page.getByRole('button', { name: /Are you smarter than your kid/ }).click();
   await read(1, 'Enter this synthetic adult account’s practice mode');
-  await scene('Launch an Easy mini exam from the new Cell biology pack');
+  await scene(`Launch a ${demoDifficulty} mini exam from the new Cell biology pack`);
   await click('subject-card-demo');
-  await click('difficulty-easy');
+  await click(`difficulty-${demoDifficulty}`);
   await read(3, 'Read the mini-exam and written-marking description');
   await click('start-exam');
   const progress = await page.getByTestId('exam-progress').textContent();
@@ -237,7 +240,7 @@ test('cell biology: install, generate, review, practise, feedback, progress', as
           : /cell walls/i.test(question)
             ? 'Plant cells have a cell wall; animal cells do not.'
             : 'Chloroplasts';
-      await page.getByTestId('exam-choice').filter({ hasText: choice }).click();
+      await page.getByTestId('exam-choice').filter({ has: page.getByText(choice, { exact: true }) }).click();
       await read(2, 'Read the selected answer');
     }
     if (n === total) gradingStarted = elapsed();
@@ -258,9 +261,9 @@ test('cell biology: install, generate, review, practise, feedback, progress', as
   const writtenReviews = page.getByTestId('review-row-free');
   await expect(writtenReviews).toHaveCount(written);
   for (let i = 0; i < written; i++)
-    await expect(writtenReviews.nth(i)).toContainText(/Score: \d+\/\d+/);
+    await expect(writtenReviews.nth(i)).toContainText(/Score: \d+(?:\.\d+)?\/\d+(?:\.\d+)?/);
   const feedback = writtenReviews.first();
-  await expect(feedback).toContainText(/Score: \d+\/\d+/);
+  await expect(feedback).toContainText(/Score: \d+(?:\.\d+)?\/\d+(?:\.\d+)?/);
   if (!live) {
     await expect(feedback).toContainText('Scripted rehearsal feedback');
     await expect(feedback).toContainText('Chloroplasts use light to make sugar.');

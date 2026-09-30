@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { makeSnapshot, parseAnswerPlan, waitForAnswerPlan, findAnswer } from './public-plan.mjs';
+import { makeSnapshot, parseAnswerPlan, waitForAnswerPlan, findAnswer, chooseDemoDifficulty } from './public-plan.mjs';
 const bank = {
   easy: [
     {
@@ -197,4 +197,28 @@ test('oversized streamed answer plan is cancelled before parsing', async () => {
     }),
     /plan_size/,
   );
+});
+
+test('selects a public paper with written work across varying difficulty layouts', () => {
+  assert.equal(chooseDemoDifficulty(bank), 'easy');
+  const medium = { easy: [bank.easy[0]], medium: [bank.easy[1]], hard: [] };
+  assert.equal(chooseDemoDifficulty(medium), 'medium');
+  const snapshot = makeSnapshot({ bank: medium, difficulty: 'medium', run: '12345', sourceNotes: 'notes' });
+  assert.equal(snapshot.difficulty, 'medium');
+  assert.deepEqual(snapshot.questions, [bank.easy[1]]);
+  assert.equal(chooseDemoDifficulty({ easy: [], medium: [], hard: [bank.easy[1]] }), 'hard');
+});
+test('no-written and excessive marking papers fail before launch without provider calls', () => {
+  assert.throws(() => chooseDemoDifficulty({ easy: [bank.easy[0]], medium: [], hard: [] }), /no_bounded_written_paper/);
+  const many = Array.from({length: 9}, (_, i) => ({ ...bank.easy[1], id: `written-${i}` }));
+  assert.throws(() => chooseDemoDifficulty({ easy: many, medium: [], hard: [] }), /no_bounded_written_paper/);
+  assert.throws(() => chooseDemoDifficulty({ easy: [{ ...bank.easy[1], rubric: 'private' }] }), /private_or_unknown/);
+  assert.throws(() => makeSnapshot({ bank, difficulty: 'invalid', run: '12345', sourceNotes: 'notes' }), /difficulty/);
+});
+
+test('skips oversized or ambiguous papers in favour of a safe later difficulty', () => {
+  const many = Array.from({length: 21}, (_, i) => ({ ...bank.easy[1], id: `written-${i}` }));
+  assert.equal(chooseDemoDifficulty({ easy: many, medium: [bank.easy[1]], hard: [] }), 'medium');
+  const duplicates = [bank.easy[1], { ...bank.easy[1], id: 'different-id-same-visible-question' }];
+  assert.equal(chooseDemoDifficulty({ easy: duplicates, medium: [], hard: [bank.easy[1]] }), 'hard');
 });

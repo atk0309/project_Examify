@@ -18,12 +18,13 @@ function runId(value) {
   if (typeof value !== 'string' || !/^[1-9]\d{0,20}$/.test(value)) throw Error('checkpoint_run_id');
   return value;
 }
-export function publicQuestions(bank) {
+export function publicQuestions(bank, difficulty = 'easy') {
+  if (!['easy', 'medium', 'hard'].includes(difficulty)) throw Error('checkpoint_difficulty');
   object(bank, ['easy', 'medium', 'hard'], 'checkpoint_not_public_bank');
-  if (!Array.isArray(bank.easy) || bank.easy.length < 1 || bank.easy.length > 20)
+  if (!Array.isArray(bank[difficulty]) || bank[difficulty].length < 1 || bank[difficulty].length > 20)
     throw Error('checkpoint_question_count');
   const seen = new Set();
-  return bank.easy.map((q) => {
+  return bank[difficulty].map((q) => {
     object(q, ['id', 'type', 'q', 'choices'], 'checkpoint_private_or_unknown_question_field');
     const id = text(q.id, 100, 'checkpoint_question_id');
     if (seen.has(id)) throw Error('checkpoint_duplicate_question');
@@ -40,10 +41,22 @@ export function publicQuestions(bank) {
     return { ...question, choices };
   });
 }
-export function makeSnapshot({ bank, run, sourceNotes }) {
-  const questions = publicQuestions(bank);
+export function chooseDemoDifficulty(bank) {
+  object(bank, ['easy', 'medium', 'hard'], 'checkpoint_not_public_bank');
+  for (const difficulty of ['easy', 'medium', 'hard']) {
+    if (!Array.isArray(bank[difficulty]) || bank[difficulty].length === 0 || bank[difficulty].length > 12) continue;
+    const questions = publicQuestions(bank, difficulty);
+    const written = questions.filter(q => q.type === 'free').length;
+    const signatures = questions.map(q => JSON.stringify([q.type, q.q, [...(q.choices ?? [])].sort()]));
+    if (new Set(signatures).size === questions.length && written >= 1 && written <= 8) return difficulty;
+  }
+  throw Error('demo_no_bounded_written_paper');
+}
+export function makeSnapshot({ bank, run, sourceNotes, difficulty = 'easy' }) {
+  const questions = publicQuestions(bank, difficulty);
   return {
     schemaVersion: 1,
+    difficulty,
     runId: runId(run),
     questionHash: createHash('sha256').update(JSON.stringify(questions)).digest('hex'),
     sourceNotes: text(sourceNotes, 10000, 'checkpoint_notes'),
