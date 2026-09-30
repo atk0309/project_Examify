@@ -20,9 +20,10 @@ Plaintext SMTP (no STARTTLS / `SMTP_SECURE`) needs `SMTP_ALLOW_INSECURE=1`.
 
 ## AI for question banks and marking
 
-Choose an AI in `/onboarding`. You can skip AI to try the sample multiple-choice
-questions. An API subscription/key, a signed-in CLI, or a local model is only
-needed for the provider you choose. Generation always needs review before Apply.
+Choose an AI during initial setup at `/onboarding`. If you skip setup, return
+through **Finish content setup** on the parent dashboard. An API subscription/key,
+a signed-in CLI, or a local model is only needed for the provider you choose.
+Generation always needs review before Apply.
 
 | Choice         | Server requirement                                                      | PDF generation         |
 | -------------- | ----------------------------------------------------------------------- | ---------------------- |
@@ -39,7 +40,14 @@ OS user that runs Examify. A CLI signed in under your own desktop account is
 not automatically available to a server service account. Set `EXAMIFY_CLAUDE_BIN`
 or `EXAMIFY_CODEX_BIN` to its full path if the app cannot find it.
 
-The wizard can save API keys to the checkout `.env`. Keys injected by a service
+**After Finish, the wizard closes.** There is currently no in-app way to reopen it
+or switch the household's saved AI provider. `EXAMIFY_AI_MODE` is only a fallback
+until a provider is saved; changing it does not override that saved choice. You
+can repair the selected provider's credentials in `.env` or your service manager
+and restart Examify, or sign its CLI back in as the app's OS user. Use the
+[CLI workflow](content-authoring.md#cli-workflow) for later question-bank updates.
+
+While setup is open, the wizard can save API keys to the checkout `.env`. Keys injected by a service
 manager or hosting platform are host-managed: change them there. Local command
 mode builds banks only; marking falls back to an Anthropic key. Test stubs are
 for development, never a real household.

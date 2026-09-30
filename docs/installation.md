@@ -88,7 +88,10 @@ that file into a support request.
 Open the site URL, visit `/setup`, and enter the setup code. Create the first
 parent/admin account using your email address (also required for password mode).
 Then use `/onboarding` to add subjects, upload source PDFs, choose AI, review
-questions and Apply. You can skip custom content and use the sample bank.
+questions and Apply. You can skip custom content and use the sample bank; the
+parent dashboard then offers **Finish content setup** to return later. Choosing
+Finish after Apply closes the wizard. See [configuration](configuration.md#ai-for-question-banks-and-marking)
+for the current limits on changes after setup.
 
 From the parent dashboard, create an invitation for a student or another parent.
 Share the invitation privately. In password mode the invitee chooses a password,
