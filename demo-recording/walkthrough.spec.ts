@@ -21,6 +21,7 @@ test('cell biology: install, generate, review, practise, feedback, progress', as
     await read(0.9, `Transition after ${id}`);
   }
   async function type(locator: Locator, text: string) {
+    await locator.fill('');
     await locator.click();
     await locator.pressSequentially(text, { delay: 38 });
   }
@@ -68,7 +69,10 @@ test('cell biology: install, generate, review, practise, feedback, progress', as
   await click('wizard-generate-demo');
   await expect(page.getByTestId('wizard-generate-run-demo')).toBeVisible({ timeout: 190_000 });
   await expect(page.getByTestId('wizard-error')).toHaveCount(0);
-  await read(2, 'Read successful generation summary');
+  await page
+    .getByTestId('wizard-generate-run-demo')
+    .evaluate((el) => el.scrollIntoView({ behavior: 'smooth', block: 'center' }));
+  await read(3, 'Read successful generation summary');
   // Select the marking provider while this supported settings screen is open.
   // Once setup is finished, this app intentionally closes the wizard.
   if (live) {
