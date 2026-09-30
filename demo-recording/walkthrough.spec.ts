@@ -37,11 +37,28 @@ test('cell biology: install, generate, review, practise, feedback, progress', as
   }, installLog);
   await scene('Clean installation: actual command and results, time compressed');
   await read(5, 'Read the short installation excerpt');
+  const facts = live
+    ? [
+        'Chloroplasts use light to make sugar.',
+        'Mitochondria release energy from food.',
+        'Plant cells have a supporting cell wall.',
+        'The cell membrane controls what enters and leaves.',
+        'The nucleus stores genetic information.',
+      ]
+    : [
+        'Chloroplasts use light to make sugar.',
+        'Mitochondria release energy from food.',
+        'Plant cells have a cell wall; animal cells do not.',
+      ];
   await page.setContent(
-    '<main style="font:28px system-ui;padding:80px;background:#f5f1e8;color:#173c2b;height:1000px;box-sizing:border-box"><p>OUR ORIGINAL DEMO NOTES</p><h1>How plant cells work</h1><p>Chloroplasts use light to make sugar.</p><p>Mitochondria release energy from food.</p><p>Plant cells have a cell wall; animal cells do not.</p><p style="margin-top:90px;font-size:22px">These notes are the source for the practice pack.</p><p style="font-size:22px">No-key rehearsal: generation and feedback are scripted.</p></main>',
+    `<main style="font:28px system-ui;padding:80px;background:#f5f1e8;color:#173c2b;height:1000px;box-sizing:border-box"><p>OUR ORIGINAL DEMO NOTES</p><h1>How plant cells work</h1>${facts.map((fact) => `<p>${fact}</p>`).join('')}<p style="margin-top:50px;font-size:22px">These notes are the source for the practice pack.</p><p style="font-size:22px">${live ? 'Live demonstration with original synthetic study notes.' : 'No-key rehearsal: generation and feedback are scripted.'}</p></main>`,
   );
-  await scene('The source: three clear cell-biology ideas');
-  await read(8, 'Read the three original source facts');
+  await scene(
+    live
+      ? 'The source: five clear cell-biology ideas'
+      : 'The source: three clear cell-biology ideas',
+  );
+  await read(live ? 10 : 8, 'Read the original source facts');
   await page.goto('/signin');
   await expect(page).toHaveURL(/\/setup/);
   await scene('Create a synthetic household on the fresh installation');
@@ -69,9 +86,16 @@ test('cell biology: install, generate, review, practise, feedback, progress', as
       : 'Scripted generation rehearsal: no AI request is made',
   );
   await read(2, 'Read the clearly labelled provider choice');
+  const generationStarted = elapsed();
   await click('wizard-generate-demo');
   await expect(page.getByTestId('wizard-generate-run-demo')).toBeVisible({ timeout: 190_000 });
   await expect(page.getByTestId('wizard-error')).toHaveCount(0);
+  if (live && elapsed() - generationStarted > 8)
+    cuts.push({
+      start: generationStarted,
+      end: elapsed(),
+      label: 'Provider generation wait shortened',
+    });
   await page
     .getByTestId('wizard-generate-run-demo')
     .evaluate((el) => el.scrollIntoView({ behavior: 'smooth', block: 'center' }));
@@ -167,6 +191,7 @@ test('cell biology: install, generate, review, practise, feedback, progress', as
   expect(total).toBeGreaterThan(0);
   expect(total).toBeLessThanOrEqual(12);
   let written = 0;
+  let gradingStarted: number | undefined;
   for (let n = 1; n <= total; n++) {
     const question = (await page.locator('.question-text').textContent()) ?? '';
     await scene(`Question ${n}: ${question}`);
@@ -197,17 +222,26 @@ test('cell biology: install, generate, review, practise, feedback, progress', as
       await page.getByTestId('exam-choice').filter({ hasText: choice }).click();
       await read(2, 'Read the selected answer');
     }
-    await click('exam-next');
+    if (n === total) gradingStarted = elapsed();
+    await page.getByTestId('exam-next').click();
+    if (n < total)
+      await expect(page.getByTestId('exam-progress')).toHaveText(`Question ${n + 1} of ${total}`);
   }
   expect(written).toBeGreaterThan(0);
   await expect(page.getByTestId('results-score')).toBeVisible({ timeout: 60_000 });
+  if (live && gradingStarted !== undefined && elapsed() - gradingStarted > 8)
+    cuts.push({ start: gradingStarted, end: elapsed(), label: 'Provider marking wait shortened' });
   await scene(
     live
       ? 'Server-side marking returns the actual result'
       : 'Scripted rehearsal result, calculated from the answers',
   );
   await read(4, 'Read the exam score');
-  const feedback = page.getByTestId('review-row-free').first();
+  const writtenReviews = page.getByTestId('review-row-free');
+  await expect(writtenReviews).toHaveCount(written);
+  for (let i = 0; i < written; i++)
+    await expect(writtenReviews.nth(i)).toContainText(/Score: \d+\/\d+/);
+  const feedback = writtenReviews.first();
   await expect(feedback).toContainText(/Score: \d+\/\d+/);
   if (!live) {
     await expect(feedback).toContainText('Scripted rehearsal feedback');
@@ -215,7 +249,11 @@ test('cell biology: install, generate, review, practise, feedback, progress', as
     await expect(feedback).toContainText('Mitochondria release energy from food.');
   }
   await feedback.evaluate((el) => el.scrollIntoView({ behavior: 'smooth', block: 'center' }));
-  await scene('Written feedback: light makes sugar; food releases energy');
+  await scene(
+    live
+      ? 'Read the actual written-answer feedback'
+      : 'Written feedback: light makes sugar; food releases energy',
+  );
   await read(7, 'Read the written-answer feedback');
   await click('results-home');
   await click('progress-link');

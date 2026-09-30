@@ -4,6 +4,8 @@ import { defineConfig } from '@playwright/test';
 const root = process.cwd();
 const baseURL = 'http://127.0.0.1:3115';
 const live = process.env.DEMO_MODE === 'live';
+if (live && process.env.DEMO_CHECKPOINT !== '1')
+  throw Error('live_requires_answer_review_checkpoint');
 if (live && fs.existsSync('.demo-fixture-active'))
   throw Error('live_refuses_scripted_fixture_build');
 export default defineConfig({
