@@ -47,6 +47,7 @@ export const openaiProvider: GenerateProvider = {
   id: 'openai',
   defaultModel: 'gpt-4o',
   keyEnv: KEY,
+  modelEnv: 'EXAMIFY_OPENAI_MODEL',
   seedHonored: true,
   requireReady: (env) => {
     readRequiredKey(env, KEY);

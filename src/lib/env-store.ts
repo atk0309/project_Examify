@@ -5,6 +5,7 @@ import {
   chmodSync,
   existsSync,
   mkdirSync,
+  lstatSync,
   readFileSync,
   renameSync,
   unlinkSync,
@@ -13,8 +14,17 @@ import {
 import path from 'node:path';
 import { findRepoRoot } from '@/lib/repo-root';
 
-/** Keys the wizard / install twin may write. Never NEXT_PUBLIC_*. */
-export const ENV_STORE_KEYS = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY'] as const;
+/** Explicit keys the wizard/settings/install store may write. Never NEXT_PUBLIC_*. */
+export const ENV_STORE_KEYS = [
+  'ANTHROPIC_API_KEY',
+  'OPENAI_API_KEY',
+  'EXAMIFY_ANTHROPIC_MODEL',
+  'EXAMIFY_OPENAI_MODEL',
+  'EXAMIFY_LLM_BASE_URL',
+  'EXAMIFY_LLM_MODEL',
+  'EXAMIFY_CLAUDE_MODEL',
+  'EXAMIFY_CODEX_MODEL',
+] as const;
 export type EnvStoreKey = (typeof ENV_STORE_KEYS)[number];
 
 export const OPENAI_ENV_KEY = 'OPENAI_API_KEY' satisfies EnvStoreKey;
@@ -42,7 +52,26 @@ export function setInitialEnvironForTests(env: Record<string, string | undefined
 
 export function getEnvStoreRoot(): string {
   // Same walker as content I/O and examify-ingest generate — never bare cwd.
-  return envStoreRootOverride ?? findRepoRoot(process.cwd());
+  if (envStoreRootOverride !== null) return envStoreRootOverride;
+  const repo = findRepoRoot(process.cwd());
+  const fixture = process.env.EXAMIFY_TEST_ENV_STORE_DIR;
+  if (!fixture) return repo;
+  // Browser tests exercise real writes only in disposable fixtures. Never let
+  // this override silently redirect an ordinary production installation.
+  if (process.env.GRADING_STUB !== '1') throw new Error('test_env_store_disabled');
+  const root = path.resolve(repo, fixture);
+  const allowed = path.join(repo, 'tests', '.tmp');
+  if (!root.startsWith(allowed + path.sep)) throw new Error('unsafe_test_env_store');
+  let cursor = repo;
+  for (const part of path.relative(repo, root).split(path.sep)) {
+    cursor = path.join(cursor, part);
+    try {
+      if (lstatSync(cursor).isSymbolicLink()) throw new Error('unsafe_test_env_store');
+    } catch (error) {
+      if (!isEnoent(error)) throw new Error('unsafe_test_env_store');
+    }
+  }
+  return root;
 }
 
 function envStorePath(root: string, name: string): string {
@@ -155,10 +184,12 @@ function applyProcessEnv(key: EnvStoreKey, value: string | null): void {
   process.env[key] = value;
 }
 
-function normalizeSecretInput(raw: string): string | null {
+function normalizeSecretInput(raw: string, key: EnvStoreKey): string | null {
   if (raw.includes('\n') || raw.includes('\r') || raw.includes('\0')) return null;
   const trimmed = raw.trim();
-  if (!isUsableEnvSecret(trimmed) || trimmed.length > MAX_SECRET_CHARS) return null;
+  const secret = key === ANTHROPIC_ENV_KEY || key === OPENAI_ENV_KEY;
+  if (!trimmed || (secret && !isUsableEnvSecret(trimmed)) || trimmed.length > MAX_SECRET_CHARS)
+    return null;
   return trimmed;
 }
 
@@ -174,7 +205,7 @@ export function setEnvStoreSecret(
 ): EnvSecretWriteSuccess | EnvSecretWriteError {
   if (!isEnvStoreKey(key)) return { ok: false, reason: 'invalid' };
   if (envStoreSecretWriteBlocked(key, root)) return { ok: false, reason: 'host_managed' };
-  const value = normalizeSecretInput(raw);
+  const value = normalizeSecretInput(raw, key);
   if (!value) return { ok: false, reason: 'invalid' };
   try {
     upsertEnvFile(envStorePath(root, PRIMARY_ENV_FILE), key, value);
@@ -300,7 +331,8 @@ export function envStoreSecretHostManaged(
 ): boolean {
   if (execEnvironAssignsKey(resolveInitialEnviron(initialEnv), key)) return true;
   const live = env[key]?.trim() ?? '';
-  if (!isUsableEnvSecret(live)) return false;
+  const secret = key === ANTHROPIC_ENV_KEY || key === OPENAI_ENV_KEY;
+  if (secret ? !isUsableEnvSecret(live) : !live) return false;
   const stored = readStoreFileSecret(root, key)?.trim() ?? '';
   return stored !== live;
 }
@@ -358,6 +390,9 @@ export function envStoreSecretWriteBlocked(
   initialEnv?: Record<string, string | undefined>,
 ): boolean {
   if (!envStoreSecretHostManaged(key, root, env, initialEnv)) return false;
+  // Only API credentials have a replaceable test sentinel. A host model named
+  // `test` is still real host-managed configuration.
+  if (key !== ANTHROPIC_ENV_KEY && key !== OPENAI_ENV_KEY) return true;
   if (envStoreSecretInitialTest(key, initialEnv)) return false;
   const live = env[key]?.trim() ?? '';
   return live !== 'test';

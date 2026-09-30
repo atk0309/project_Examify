@@ -128,6 +128,7 @@ export default async function HomePage() {
           role: onboarding.role,
           onboardingComplete: onboarding.complete,
         })}
+        canManageAi={membership?.role === 'admin'}
         markingLine={markingLine}
         subjects={bank.subjects}
       />

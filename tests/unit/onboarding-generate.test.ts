@@ -279,10 +279,9 @@ describe('onboarding generate graph', () => {
     expect(generate).toMatch(/const MAX_CANCEL_TOKENS = 64/);
     expect(generate).toMatch(/oldest token[\s\S]*evicted \(FIFO\)/);
     expect(generate).not.toMatch(/applyEmit|planEmit|applyOnboardingEmit/);
-    const wizard = readFileSync(
-      path.join(process.cwd(), 'src/components/exam/OnboardingWizard.tsx'),
-      'utf8',
-    );
+    const wizard =
+      readFileSync(path.join(process.cwd(), 'src/components/exam/OnboardingWizard.tsx'), 'utf8') +
+      readFileSync(path.join(process.cwd(), 'src/components/exam/EnvKeyPanel.tsx'), 'utf8');
     expect(wizard).not.toMatch(/examify-ingest\/generate/);
     expect(wizard).not.toMatch(/generateSubject/);
     expect(wizard).toMatch(/case 'invalid':\n      return 'That input is not valid\.'/);
@@ -322,10 +321,9 @@ describe('onboarding generate graph', () => {
   });
 
   it('locks Anthropic key UI to cloud mode and the OpenAI #69 bars', () => {
-    const wizard = readFileSync(
-      path.join(process.cwd(), 'src/components/exam/OnboardingWizard.tsx'),
-      'utf8',
-    );
+    const wizard =
+      readFileSync(path.join(process.cwd(), 'src/components/exam/OnboardingWizard.tsx'), 'utf8') +
+      readFileSync(path.join(process.cwd(), 'src/components/exam/EnvKeyPanel.tsx'), 'utf8');
     const actions = readFileSync(path.join(process.cwd(), 'src/actions/onboarding.ts'), 'utf8');
     const store = readFileSync(path.join(process.cwd(), 'src/lib/env-store.ts'), 'utf8');
     const flags = readFileSync(path.join(process.cwd(), 'src/lib/onboarding.ts'), 'utf8');
@@ -393,10 +391,9 @@ describe('onboarding generate graph', () => {
   });
 
   it('locks Welcome skip, Back, and rail while generateBusy so Cancel stays reachable', () => {
-    const wizard = readFileSync(
-      path.join(process.cwd(), 'src/components/exam/OnboardingWizard.tsx'),
-      'utf8',
-    );
+    const wizard =
+      readFileSync(path.join(process.cwd(), 'src/components/exam/OnboardingWizard.tsx'), 'utf8') +
+      readFileSync(path.join(process.cwd(), 'src/components/exam/EnvKeyPanel.tsx'), 'utf8');
     expect(wizard).toMatch(
       /const holdWizard = generateBusy \|\| \(pending && !generateCancelAck\)/,
     );
@@ -433,10 +430,9 @@ describe('onboarding generate graph', () => {
   });
 
   it('keeps dry-run step id and testids while the rail label is Review', () => {
-    const wizard = readFileSync(
-      path.join(process.cwd(), 'src/components/exam/OnboardingWizard.tsx'),
-      'utf8',
-    );
+    const wizard =
+      readFileSync(path.join(process.cwd(), 'src/components/exam/OnboardingWizard.tsx'), 'utf8') +
+      readFileSync(path.join(process.cwd(), 'src/components/exam/EnvKeyPanel.tsx'), 'utf8');
     expect(wizard).toMatch(/\{ id: 'dry-run', label: 'Review' \}/);
     expect(wizard).toContain('data-testid="wizard-dry-run"');
     expect(wizard).toContain('data-testid="wizard-dry-run-summary"');

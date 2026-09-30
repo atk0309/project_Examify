@@ -101,7 +101,7 @@ export async function gradeFreeText(args: GradeArgs): Promise<GradeResult> {
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
-        model: MODEL,
+        model: markingHostEnv().EXAMIFY_ANTHROPIC_MODEL?.trim() || MODEL,
         max_tokens: 700,
         system: systemPrompt(),
         messages: [{ role: 'user', content: userPrompt(args) }],

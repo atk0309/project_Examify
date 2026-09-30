@@ -319,6 +319,26 @@ describe('gradeAnswers — OpenAI', () => {
     else process.env.OPENAI_API_KEY = original;
   });
 
+  it('reads a changed model for the next grading request without restarting', async () => {
+    const old = process.env.EXAMIFY_OPENAI_MODEL;
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockImplementation(async () => chatResponse(JSON.stringify(verdict(2))));
+    try {
+      process.env.EXAMIFY_OPENAI_MODEL = 'openai-custom-one';
+      await gradeAnswers(tasks.slice(0, 1), 'openai');
+      process.env.EXAMIFY_OPENAI_MODEL = 'openai-custom-two';
+      await gradeAnswers(tasks.slice(0, 1), 'openai');
+      expect(fetchSpy.mock.calls.map((call) => JSON.parse(String(call[1]?.body)).model)).toEqual([
+        'openai-custom-one',
+        'openai-custom-two',
+      ]);
+    } finally {
+      if (old === undefined) delete process.env.EXAMIFY_OPENAI_MODEL;
+      else process.env.EXAMIFY_OPENAI_MODEL = old;
+    }
+  });
+
   it('marks each answer with one Chat Completions call and returns only the verdict', async () => {
     const fetchSpy = vi
       .spyOn(globalThis, 'fetch')

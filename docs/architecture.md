@@ -1165,6 +1165,24 @@ brick boot). A missing / empty key fail-closes free-text grading
 sentinel stubs only outside production or with `GRADING_STUB=1` (test/CI only).
 See `.env.example` for the canonical list.
 
+## Ongoing AI settings
+
+`/settings/ai` and its server actions require a live parent session and household
+admin membership. Completion of onboarding does not block these controls, and
+these actions never reopen bootstrap/content setup. Provider mode remains in
+household onboarding state; model overrides and endpoint settings use the explicit
+host env-store allowlist. Commands and executable paths remain host-managed.
+Saved keys and connection values never enter client props; the snapshot contains
+only mode, readiness/configured flags and write-blocked status. Readiness refresh
+checks configuration and CLI sign-in, not paid API requests or provider acceptance.
+Cloud model overrides apply to both generation and marking; missing credentials
+still fail closed. Tests use no real keys or paid requests.
+
+Password browser tests put env-store writes under their disposable data folder via
+`EXAMIFY_TEST_ENV_STORE_DIR`; it requires `GRADING_STUB=1` and a non-symlink path
+strictly below checkout `tests/.tmp`. An invalid override fails rather than falling
+back to the real `.env`. This setting is only for automated fixtures.
+
 ## Testing rules
 
 - Every public page route gets a Playwright smoke in `tests/e2e/pages.spec.ts` and is

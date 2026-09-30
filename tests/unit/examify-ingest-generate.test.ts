@@ -1342,6 +1342,50 @@ describe('examify-ingest generate', () => {
     expect(down.formats).toHaveLength(1);
   });
 
+  it.each(['anthropic', 'openai'] as const)(
+    '%s generation honors the saved model; explicit CLI model still wins',
+    async (provider) => {
+      const bank = realBankIr('plants');
+      bank.difficulties.easy[0]!.provenance = { pdf: 'notes.txt', locator: 'p1' };
+      const models: string[] = [];
+      const run = (model?: string) => {
+        const root = examifyRepo();
+        return generateSubject({
+          repoRoot: root,
+          subject: bank.subject,
+          subjectDir: path.join(root, 'content/subjects/plants'),
+          sources: resolveSubjectSources(
+            root,
+            'plants',
+            path.join(root, 'content/subjects/plants'),
+          ),
+          provider,
+          seed: 0,
+          dryRunIr: true,
+          ...(model ? { model } : {}),
+          env:
+            provider === 'anthropic'
+              ? { ANTHROPIC_API_KEY: 'fixture-not-real', EXAMIFY_ANTHROPIC_MODEL: 'custom-cloud' }
+              : { OPENAI_API_KEY: 'fixture-not-real', EXAMIFY_OPENAI_MODEL: 'custom-cloud' },
+          fetch: (async (_input: unknown, init?: RequestInit) => {
+            models.push(JSON.parse(String(init?.body)).model);
+            return new Response(
+              JSON.stringify(
+                provider === 'anthropic'
+                  ? { content: [{ type: 'text', text: JSON.stringify(bank) }] }
+                  : { choices: [{ message: { content: JSON.stringify(bank) } }] },
+              ),
+              { status: 200 },
+            );
+          }) as typeof fetch,
+        });
+      };
+      expect((await run()).manifest.model).toBe('custom-cloud');
+      expect((await run('explicit-model')).manifest.model).toBe('explicit-model');
+      expect(models).toEqual(['custom-cloud', 'explicit-model']);
+    },
+  );
+
   it('local endpoint sends EXAMIFY_LLM_MODEL as the model; --model wins over it', async () => {
     const bank = realBankIr('plants');
     bank.difficulties.easy[0]!.provenance = { pdf: 'notes.txt', locator: 'p1' };

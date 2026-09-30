@@ -38,6 +38,7 @@ export function ParentDashboard({
   canInvite = false,
   authMode,
   needsOnboarding = false,
+  canManageAi = false,
   markingLine,
   subjects = SUBJECTS,
 }: {
@@ -49,6 +50,7 @@ export function ParentDashboard({
   canInvite?: boolean;
   authMode: AuthMode;
   needsOnboarding?: boolean;
+  canManageAi?: boolean;
   /** Who marks written answers here (`parentMarkingLine`). */
   markingLine?: string;
   subjects?: readonly Subject[];
@@ -98,6 +100,15 @@ export function ParentDashboard({
             >
               Are you smarter than your kid? {UIcon.arrow}
             </button>
+            {canManageAi ? (
+              <Link
+                href="/settings/ai"
+                className="onboarding-chip"
+                data-testid="manage-ai-settings"
+              >
+                AI settings
+              </Link>
+            ) : null}
             {needsOnboarding ? (
               <Link
                 href="/onboarding"

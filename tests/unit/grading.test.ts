@@ -275,6 +275,21 @@ describe('gradeFreeText (live API path)', () => {
     vi.restoreAllMocks();
   });
 
+  it('uses the live Anthropic model override for the next request', async () => {
+    const old = process.env.EXAMIFY_ANTHROPIC_MODEL;
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response('{}', { status: 503 }));
+    try {
+      process.env.EXAMIFY_ANTHROPIC_MODEL = 'claude-custom-one';
+      await gradeFreeText(args);
+      expect(JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body)).model).toBe('claude-custom-one');
+    } finally {
+      if (old === undefined) delete process.env.EXAMIFY_ANTHROPIC_MODEL;
+      else process.env.EXAMIFY_ANTHROPIC_MODEL = old;
+    }
+  });
+
   it('sends a bounded request and returns only the validated verdict', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
       new Response(

@@ -652,6 +652,20 @@ export async function getOnboardingSnapshot(
   };
 }
 
+/** AI-only admin view: no content paths or authoring state. Never includes saved values. */
+export async function getOnboardingAiSnapshot(householdId: number, recheckSignIn = false) {
+  const state = getHouseholdOnboarding(householdId).state;
+  const fromInstaller = state.aiMode ? null : installerAiMode();
+  const hostEnv = onboardingHostEnv();
+  const flags = aiFlags(hostEnv);
+  return {
+    aiMode: state.aiMode ?? fromInstaller,
+    aiModeFromInstaller: fromInstaller !== null,
+    ...flags,
+    ...(await agentCliSignInFlags(hostEnv, flags, ['claude', 'codex'], recheckSignIn)),
+  };
+}
+
 /** The snapshot the wizard page renders with: it always asks Claude Code / Codex again. */
 export function getOnboardingPageSnapshot(householdId: number): Promise<OnboardingSnapshot> {
   return getOnboardingSnapshot(householdId, undefined, { recheckSignIn: true });

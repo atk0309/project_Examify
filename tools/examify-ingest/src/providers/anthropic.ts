@@ -108,6 +108,7 @@ export const anthropicProvider: GenerateProvider = {
   id: 'anthropic',
   defaultModel: 'claude-sonnet-4-6',
   keyEnv: KEY,
+  modelEnv: 'EXAMIFY_ANTHROPIC_MODEL',
   seedHonored: false,
   requireReady: (env) => {
     readRequiredKey(env, KEY);

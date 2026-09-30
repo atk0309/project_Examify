@@ -339,7 +339,10 @@ test('unknown emails still show Check your inbox and send nothing', async ({ pag
   expect(after.length).toBe(before.length);
 });
 
-test('household admin can sign in again without a captcha widget', async ({ page }) => {
+test('admin signs in again, finishes setup, then manages AI without reopening setup', async ({
+  page,
+}) => {
+  test.setTimeout(60_000);
   const startedAt = Date.now();
   await page.goto('/signin');
   await page.getByRole('radio', { name: 'Parent' }).click();
@@ -370,4 +373,61 @@ test('household admin can sign in again without a captcha widget', async ({ page
   expect(match).toBeTruthy();
   await page.goto(match![1]!.replace(/&amp;/g, '&'));
   await expect(page).toHaveURL(/\/$/);
+  // Finish a real no-key content setup, then use ongoing AI settings without
+  // reopening the bootstrap/content authoring gates.
+  await page.getByTestId('finish-content-setup').click();
+  await page.getByTestId('wizard-get-started').click();
+  await page.getByLabel('Actions for History').click();
+  page.on('dialog', (dialog) => dialog.accept());
+  await page.getByTestId('wizard-delete-subject-history').click();
+  await expect(page.getByTestId('wizard-delete-subject-history')).toHaveCount(0);
+  await page.getByTestId('wizard-next').click();
+  await page.getByTestId('wizard-next').click();
+  await page.getByTestId('wizard-ai-skip-stub').click();
+  for (const width of [390, 820, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    const button = page.getByTestId('wizard-generate-demo');
+    await button.scrollIntoViewIfNeeded();
+    const boxes = await button.evaluate((el) => {
+      const button = el.getBoundingClientRect();
+      const copy = el.parentElement!.querySelector('.wizard-card-copy')!.getBoundingClientRect();
+      const card = el.parentElement!.getBoundingClientRect();
+      return {
+        overlap:
+          Math.min(button.right, copy.right) > Math.max(button.left, copy.left) &&
+          Math.min(button.bottom, copy.bottom) > Math.max(button.top, copy.top),
+        inside: button.left >= card.left && button.right <= card.right,
+        textWidth: copy.width,
+      };
+    });
+    expect(boxes.overlap, `generate button overlaps subject at ${width}px`).toBe(false);
+    expect(boxes.inside).toBe(true);
+    expect(boxes.textWidth).toBeGreaterThan(50);
+  }
+  await page.getByTestId('wizard-generate-demo').click();
+  await expect(page.getByTestId('wizard-generate-run-demo')).toBeVisible();
+  await page.getByTestId('wizard-generate-to-validate').click();
+  await page.getByTestId('wizard-validate').click();
+  await expect(page.getByTestId('wizard-validate-ok')).toBeVisible();
+  await page.getByTestId('wizard-next').click();
+  await page.getByTestId('wizard-preview').click();
+  await expect(page.getByTestId('wizard-dry-run-summary')).toBeVisible();
+  await page.getByTestId('wizard-to-apply').click();
+  await page.getByTestId('wizard-apply-confirm').click();
+  await expect(page.getByTestId('wizard-applied')).toBeVisible();
+  await page.getByTestId('wizard-to-ready').click();
+  await page.getByTestId('wizard-finish').click();
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByTestId('finish-content-setup')).toHaveCount(0);
+  await page.getByTestId('manage-ai-settings').click();
+  await page.getByTestId('ai-settings-mode').selectOption('cloud');
+  await page.getByTestId('ai-settings-save').click();
+  await expect(page.getByTestId('ai-settings-status')).toContainText(
+    'Saved provider: Anthropic API',
+  );
+  await page.reload();
+  await expect(page.getByTestId('ai-settings-mode')).toHaveValue('cloud');
+  await page.goto('/onboarding');
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByTestId('manage-ai-settings')).toBeVisible();
 });
