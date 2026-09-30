@@ -87,6 +87,7 @@ jobs:
             demo-recording/output/**/*.webm
             demo-recording/evidence/chapters.json
             demo-recording/evidence/generation-status.json
+            demo-recording/evidence/generation-diagnostic.json
             demo-recording/evidence/budget-summary.json
             demo-recording/evidence/install-excerpt.txt
           retention-days: 2

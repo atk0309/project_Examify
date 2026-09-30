@@ -1,3 +1,4 @@
+import { schemaOutputDiagnostic, semanticOutputDiagnostic } from './output-diagnostic';
 import { existsSync, readFileSync, rmdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import {
@@ -144,17 +145,15 @@ function attachMeta(
 function assertValidBank(bank: BankIR, label: string): BankIR {
   const parsed = bankIrSchema.safeParse(bank);
   if (!parsed.success) {
-    throw new ProviderFailureError(
-      'output',
-      `${label} is not valid BankIR: ${parsed.error.message}`,
-    );
+    throw new ProviderFailureError('output', `${label} is not valid BankIR`, {
+      outputDiagnostic: schemaOutputDiagnostic(parsed.error.issues),
+    });
   }
   const result = validateIrCollection([{ path: label, data: parsed.data }]);
   if (!result.ok) {
-    throw new ProviderFailureError(
-      'output',
-      `${label} failed BankIR validate: ${result.errors.map((e) => e.message).join('; ')}`,
-    );
+    throw new ProviderFailureError('output', `${label} failed BankIR validate`, {
+      outputDiagnostic: semanticOutputDiagnostic(parsed.data),
+    });
   }
   return parsed.data;
 }

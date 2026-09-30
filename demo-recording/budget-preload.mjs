@@ -1,6 +1,7 @@
 // Imported only into the disposable demo app server, after install/build.
 // It forwards genuine provider responses unchanged. Never logs headers/bodies.
 import fs from 'node:fs';
+import { captureGenerationWarning } from './checkpoint/generation-diagnostic.mjs';
 import path from 'node:path';
 import { boundedRequest, LIMITS, TARGETS } from './budget-policy.mjs';
 import { sessionDeadline, assertWindow } from './session-window.mjs';
@@ -11,6 +12,14 @@ const ledger = process.env.DEMO_BUDGET_DIR;
 if (!ledger || !path.isAbsolute(ledger)) throw Error('demo_budget_directory_required');
 fs.mkdirSync(ledger, { recursive: true, mode: 0o700 });
 recordProcess(path.join(ledger, `server-process-${process.pid}.json`));
+const originalWarn = console.warn;
+console.warn = (...args) => {
+  try { captureGenerationWarning(args, diagnostic => {
+    try { fs.writeFileSync(path.join(ledger, 'generation-diagnostic.json'), JSON.stringify(diagnostic), { mode: 0o600 }); } catch { /* Diagnostics cannot change the app result or trigger retries. */ }
+  }); } catch { /* Invalid diagnostic objects are discarded without affecting the app. */ }
+  // The live recorder discards all raw warnings and server stdout/stderr.
+  if (!live) originalWarn(...args);
+};
 const originalFetch = globalThis.fetch;
 globalThis.fetch = async function demoFetch(input, init) {
   const url = String(input instanceof Request ? input.url : input);

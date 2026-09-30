@@ -1,5 +1,6 @@
 // Export only bounded call/token evidence, never process records or request data.
 import fs from 'node:fs';
+import { safeGenerationDiagnostic } from './generation-diagnostic.mjs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 const models = { openai: 'gpt-4o', anthropic: 'claude-sonnet-4-6' };
@@ -48,6 +49,11 @@ export function budgetSummary(ledger) {
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   fs.mkdirSync('demo-recording/evidence', { recursive: true });
+  try {
+    const raw = JSON.parse(fs.readFileSync('tests/.tmp/demo-budget/generation-diagnostic.json', 'utf8'));
+    const diagnostic = safeGenerationDiagnostic(raw);
+    if (diagnostic) fs.writeFileSync('demo-recording/evidence/generation-diagnostic.json', JSON.stringify(diagnostic));
+  } catch { /* Missing or invalid diagnostic is not exported. */ }
   fs.writeFileSync(
     'demo-recording/evidence/budget-summary.json',
     JSON.stringify(budgetSummary('tests/.tmp/demo-budget'), null, 2),
