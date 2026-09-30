@@ -1087,7 +1087,11 @@ export function ExamApp({
       setExamSubject(null);
     }
     inBackground(async () => {
-      await discardExamSession({ subject: s.subject, difficulty: s.difficulty });
+      await discardExamSession({
+        submissionId: s.submissionId,
+        subject: s.subject,
+        difficulty: s.difficulty,
+      });
     });
   };
 

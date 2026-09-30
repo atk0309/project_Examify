@@ -5,6 +5,12 @@ import { getSession } from '@/lib/auth';
 import { clearExamSession } from '@/lib/exam-session';
 
 const inputSchema = z.object({
+  submissionId: z
+    .string()
+    .min(16)
+    .max(64)
+    .regex(/^[A-Za-z0-9_-]+$/)
+    .optional(),
   subject: z.string().min(1),
   difficulty: z.enum(['easy', 'medium', 'hard']),
 });
@@ -33,6 +39,11 @@ export async function discardExamSession(
   const parsed = inputSchema.safeParse(input);
   if (!parsed.success) return { ok: false, reason: 'invalid' };
 
-  clearExamSession(session.userId, parsed.data.subject, parsed.data.difficulty);
+  clearExamSession(
+    session.userId,
+    parsed.data.subject,
+    parsed.data.difficulty,
+    parsed.data.submissionId,
+  );
   return { ok: true };
 }

@@ -69,6 +69,29 @@ describe('discardExamSession action', () => {
     expect(getExamSessions(userId)).toHaveLength(0);
   });
 
+  it('an older tab cannot discard a newer draft of the same subject and difficulty', async () => {
+    const { discardExamSession } = await import('@/actions/discardExamSession');
+    const { getExamSessions } = await import('@/lib/exam-session');
+    const userId = await seedUser('stale@example.com');
+    await seedSession(userId);
+    sessionHolder.current = { userId, role: 'student', email: 'stale@example.com' };
+    const before = getExamSessions(userId);
+    expect(
+      await discardExamSession({
+        submissionId: 'older-submission-0001',
+        subject: 'maths',
+        difficulty: 'easy',
+      }),
+    ).toEqual({ ok: true });
+    expect(getExamSessions(userId)).toEqual(before);
+    await discardExamSession({
+      submissionId: before[0]!.submissionId,
+      subject: 'maths',
+      difficulty: 'easy',
+    });
+    expect(getExamSessions(userId)).toEqual([]);
+  });
+
   it('forbids a parent NOT in student mode and leaves the draft intact', async () => {
     const { discardExamSession } = await import('@/actions/discardExamSession');
     const { getExamSessions } = await import('@/lib/exam-session');
