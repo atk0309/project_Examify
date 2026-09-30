@@ -44,7 +44,7 @@ export type RecordAttemptResult =
 /**
  * Persist a completed mini exam. The write path is open to a `student`, or to a
  * `parent` who has explicitly entered student mode (`session.studentMode`) — the
- * "Are you smarter than your kid?" flow. Either way it writes only for
+ * "Student View" flow. Either way it writes only for
  * the caller's own `session.userId`: a parent's attempts accumulate under the
  * parent's id, never the student's, and a client-supplied id is never honoured.
  * The score is re-derived server-side in `saveAttempt`.
