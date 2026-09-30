@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "runId": "36734495067",
+  "questionHash": "4b170dedb712b57fda28985dd665475ee87b53ede469068e7c03394da1325c70",
+  "answers": [
+    {
+      "id": "demo-medium-1",
+      "type": "mcq",
+      "chosenText": "Chloroplasts capture light energy, mitochondria release energy"
+    },
+    {
+      "id": "demo-medium-2",
+      "type": "mcq",
+      "chosenText": "It supports the cell"
+    },
+    {
+      "id": "demo-medium-free-1",
+      "type": "free",
+      "response": "The nucleus contains genetic information and helps control the cell’s activities."
+    }
+  ]
+}
