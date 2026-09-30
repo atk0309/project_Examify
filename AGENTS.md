@@ -263,8 +263,8 @@ status`, only after `claude auth --help` / `codex login --help` lists `status` i
   (no answer came back) keeps the answers and offers "Try again", which re-sends the
   identical payload (`exam-error-unreachable` / `exam-retry`); an `ok:false` paper
   (`invalid` | `forbidden`) gets a no-retry `exam-error-refused` screen. Next redirect /
-  not-found still propagate (`unstable_rethrow`). Known limitation: a retry after a lost
-  response can record a duplicate `exam_attempts` row (no idempotency key yet).
+  not-found still propagate (`unstable_rethrow`). A lost-response retry reuses the
+  original submission ID and returns its saved attempt without grading again.
   `src/app/error.tsx` is the calm app-level backstop (retry, or full reload to `/`). Full design:
   the "Content + grading invariants" block in `CLAUDE.md` + `docs/content-authoring.md`.
 - Role split at the `/` gate (`src/app/page.tsx`): a `student` gets the exam flow

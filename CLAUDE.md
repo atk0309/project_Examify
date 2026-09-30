@@ -912,9 +912,9 @@ These are non-negotiable. Don't "fix" them out.
   (`exam-retry`) re-sends the identical payload. (2) an `ok:false` result (`invalid` |
   `forbidden`) is deterministic, so it shows `exam-error-refused` with no retry and drops that
   exam's local resume card. Next redirect / not-found errors still propagate
-  (`unstable_rethrow`). Known limitation: a retry after a lost response (the server saved the
-  attempt but the reply never arrived) records a duplicate `exam_attempts` row — there is no
-  idempotency key yet. Anything else that throws on the client lands on `src/app/error.tsx`, a
+  (`unstable_rethrow`). A lost-response retry reuses the original submission ID and
+  returns its saved attempt without grading again. Anything else that throws on the
+  client lands on `src/app/error.tsx`, a
   calm app-level boundary (retry, or a full reload to `/`). Every `ExamApp` instance can submit (the `/` gate
   only renders it for a student or a parent in student mode), so there is no `canRecord` prop.
 

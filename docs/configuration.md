@@ -47,6 +47,7 @@ for development, never a real household.
 Written answers that cannot be marked remain pending. They do not count as
 wrong answers in the provisional score. Use Retry marking on your own results
 or progress to try again after fixing the provider; completed marks stay intact.
+If a provider accepted a request before a crash, retrying may make another paid call.
 There is no background retry. Where possible, papers omit written questions
 while no marking provider is available. See [content authoring](content-authoring.md).
 
