@@ -415,7 +415,9 @@ while the body is still arriving is typed too. HTTP failures retain safe status/
 messages; unusable output uses a generic message with separate safe diagnostics.
 OpenAI content generation sends a strict JSON schema derived from BankIR without
 server-owned `meta`. Every object is closed, all properties are required, and item
-variants have disjoint literal tags. The adapter requires a completed non-refusal
+variants have disjoint literal tags. Request-specific subject ID literals and
+difficulty/type ID patterns reuse the authoritative validator rules. Cross-item
+uniqueness remains a semantic gate; IDs are never silently rewritten. The adapter requires a completed non-refusal
 response and parses the entire JSON content; the original Zod and semantic ID
 validators still run before persistence. Other adapters retain their existing
 parsers. Unsupported models fail rather than silently downgrading or retrying.

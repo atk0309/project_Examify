@@ -1239,6 +1239,92 @@ describe('examify-ingest generate', () => {
     expect(result.manifest.seedHonored).toBe(true);
   });
 
+  it.each(['valid', 'wrong difficulty', 'duplicate'] as const)(
+    'preserves generation persistence gates for multi-difficulty OpenAI IDs: %s',
+    async (variant) => {
+      const root = examifyRepo();
+      const bank = realBankIr('plants');
+      for (const difficulty of ['easy', 'medium', 'hard'] as const) {
+        bank.difficulties[difficulty] = [
+          { ...structuredClone(bank.difficulties.easy[0]!), id: `plants-${difficulty}-1` },
+          {
+            id: `plants-${difficulty}-free-1`,
+            type: 'free',
+            q: 'Explain leaves?',
+            rubric: 'Award one mark for photosynthesis.',
+            maxScore: 1,
+            provenance: { pdf: 'notes.txt', locator: 'section 1' },
+          },
+        ];
+      }
+      if (variant === 'wrong difficulty') bank.difficulties.medium[0]!.id = 'plants-easy-2';
+      if (variant === 'duplicate')
+        bank.difficulties.hard.push(structuredClone(bank.difficulties.hard[0]!));
+      let calls = 0;
+      const run = generateSubject({
+        repoRoot: root,
+        subject: bank.subject,
+        subjectDir: path.join(root, 'content/subjects/plants'),
+        sources: [
+          {
+            absPath: path.join(root, 'content/source-pdfs/plants/notes.txt'),
+            relPath: 'content/source-pdfs/plants/notes.txt',
+            sha256: 'abc',
+            bytes: Buffer.from('Chloroplasts make sugar.'),
+            kind: 'text',
+            mediaType: 'text/plain',
+          },
+        ],
+        provider: 'openai',
+        seed: 7,
+        env: { OPENAI_API_KEY: 'fixture' },
+        fetch: async () => {
+          calls++;
+          return new Response(
+            JSON.stringify({
+              choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(bank) } }],
+            }),
+          );
+        },
+      });
+      if (variant === 'valid') {
+        const result = await run;
+        const saved = JSON.parse(readFileSync(result.irPath, 'utf8')) as BankIR;
+        expect(saved.difficulties).toEqual(bank.difficulties);
+        const split = splitIr(saved);
+        expect(Object.keys(split.keys)).toHaveLength(6);
+        for (const difficulty of ['easy', 'medium', 'hard'] as const) {
+          expect(split.questions[difficulty].map((item) => item.id)).toEqual([
+            `plants-${difficulty}-1`,
+            `plants-${difficulty}-free-1`,
+          ]);
+          expect(split.keys[`plants-${difficulty}-1`]).toMatchObject({ type: 'mcq', answer: 0 });
+          expect(split.keys[`plants-${difficulty}-free-1`]).toMatchObject({
+            type: 'free',
+            maxScore: 1,
+          });
+        }
+      } else {
+        await expect(run).rejects.toMatchObject({
+          kind: 'output',
+          outputDiagnostic: {
+            category: 'semantic',
+            fields: [
+              {
+                path:
+                  variant === 'duplicate' ? 'difficulties.hard.[].id' : 'difficulties.medium.[].id',
+                code: variant === 'duplicate' ? 'duplicate_id' : 'id_pattern',
+              },
+            ],
+          },
+        });
+        expect(existsSync(path.join(root, 'content/subjects/plants/bank.ir.json'))).toBe(false);
+        expect(existsSync(path.join(root, '.examify-ingest/cache'))).toBe(false);
+      }
+      expect(calls).toBe(1);
+    },
+  );
+
   it('local HTTP path attaches fenced source text (not hashes-only)', async () => {
     const root = examifyRepo();
     const bank: BankIR = {
