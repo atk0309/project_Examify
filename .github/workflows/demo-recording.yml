@@ -69,6 +69,9 @@ jobs:
       - name: Stop isolated recorder process group
         if: always()
         run: bash demo-recording/checkpoint/stop-recorder.sh
+      - name: Export bounded provider call counters only
+        if: always()
+        run: node demo-recording/checkpoint/export-budget.mjs
       - name: Save only recording and non-sensitive chapter evidence
         if: always()
         uses: actions/upload-artifact@v7
@@ -77,6 +80,7 @@ jobs:
           path: |
             demo-recording/output/**/*.webm
             demo-recording/evidence/chapters.json
+            demo-recording/evidence/budget-summary.json
             demo-recording/evidence/install-excerpt.txt
           retention-days: 2
           if-no-files-found: error

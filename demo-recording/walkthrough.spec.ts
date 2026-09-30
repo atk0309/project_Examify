@@ -105,6 +105,14 @@ test('cell biology: install, generate, review, practise, feedback, progress', as
   await read(4, 'Read the saved provider and configuration-only readiness');
   await page.getByRole('link', { name: 'Back to dashboard' }).click();
   await expect(page).toHaveURL(/\/$/);
+  let checkpointReceipt: object | undefined;
+  const ledgerPath = 'tests/.tmp/demo-budget';
+  async function ledgerIdentity() {
+    const names = (await fs.readdir(ledgerPath))
+      .filter((name) => /^server-process-\d+\.json$/.test(name))
+      .sort();
+    return Promise.all(names.map((name) => fs.readFile(`${ledgerPath}/${name}`, 'utf8')));
+  }
   let publicSnapshot: ReturnType<typeof makeSnapshot> | undefined;
   let reviewedAnswers: ReturnType<typeof findAnswer>[] | undefined;
   if (checkpoint) {
@@ -125,9 +133,21 @@ test('cell biology: install, generate, review, practise, feedback, progress', as
     );
     await fs.writeFile('tests/.tmp/demo-checkpoint-ready', 'ready');
     const pauseStart = elapsed();
+    const ledgerBefore = await ledgerIdentity();
+    expect(ledgerBefore.length).toBeGreaterThan(0);
+    const expiryBefore = process.env.DEMO_EXPIRES_AT;
     reviewedAnswers = await waitForAnswerPlan(publicSnapshot, {
       expiresAt: Date.parse(process.env.DEMO_EXPIRES_AT ?? ''),
     });
+    expect(await ledgerIdentity()).toEqual(ledgerBefore);
+    expect(process.env.DEMO_EXPIRES_AT).toBe(expiryBefore);
+    checkpointReceipt = {
+      runId: publicSnapshot.runId,
+      questionHash: publicSnapshot.questionHash,
+      sameServerIdentities: true,
+      sameExpiry: true,
+      answerCount: reviewedAnswers.length,
+    };
     cuts.push({
       start: pauseStart,
       end: elapsed(),
@@ -215,6 +235,7 @@ test('cell biology: install, generate, review, practise, feedback, progress', as
         scenes,
         holds,
         cuts,
+        checkpointReceipt,
       },
       null,
       2,

@@ -25,10 +25,12 @@ globalThis.fetch = async function demoFetch(input, init) {
   // Atomic slots across processes. Reservation is consumed even on HTTP failure,
   // cancellation, crash, or rerun. No resetting until a new authorized session.
   let reserved = false;
+  let slot = -1;
   for (let i = 0; i < LIMITS.calls; i++) {
     try {
       fs.closeSync(fs.openSync(path.join(ledger, `${bounded.provider}-${i}`), 'wx', 0o600));
       reserved = true;
+      slot = i;
       break;
     } catch (e) {
       if (e.code !== 'EEXIST') throw Error('demo_budget_ledger_unavailable');
@@ -63,6 +65,17 @@ globalThis.fetch = async function demoFetch(input, init) {
       fs.writeFileSync(halted, 'usage_unverified', { mode: 0o600 });
       throw Error('demo_usage_unverified');
     }
+    fs.writeFileSync(
+      path.join(ledger, `${bounded.provider}-${slot}-usage.json`),
+      JSON.stringify({
+        provider: bounded.provider,
+        model: TARGETS[url].model,
+        inputTokens: incoming,
+        outputTokens: outgoing,
+        observedAt: new Date().toISOString(),
+      }),
+      { mode: 0o600 },
+    );
   } else {
     fs.writeFileSync(halted, 'provider_http_failure', { mode: 0o600 });
   }

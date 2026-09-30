@@ -70,3 +70,19 @@ test('loopback forwarding also refuses redirects', () => {
   );
   assert.deepEqual(r, { calls: 1, redirects: ['error'] });
 });
+
+test('synthetic credential canary is absent from stdout and budget/process records', () => {
+  const marker = 'SYNTHETIC_SECRET_CANARY_DO_NOT_LOG';
+  const source =
+    `process.env.OPENAI_API_KEY=${JSON.stringify(marker)};` +
+    intro +
+    `
+    init.headers={authorization:'Bearer '+process.env.OPENAI_API_KEY};
+    await fetch(url,init);
+    const fs=await import('node:fs'); const path=await import('node:path');
+    const files=fs.readdirSync(process.env.DEMO_BUDGET_DIR).map(name=>fs.readFileSync(path.join(process.env.DEMO_BUDGET_DIR,name),'utf8'));
+    console.log(JSON.stringify({calls,safe:files.every(text=>!text.includes(process.env.OPENAI_API_KEY))}));`;
+  const result = run(source);
+  assert.deepEqual(result, { calls: 1, safe: true });
+  assert.ok(!JSON.stringify(result).includes(marker));
+});
