@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { integer, sqliteTable, text, index, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import { check, integer, sqliteTable, text, index, uniqueIndex } from 'drizzle-orm/sqlite-core';
 import type { OnboardingState } from '@/lib/onboarding-types';
 
 /**
@@ -135,6 +135,27 @@ export const householdMembers = sqliteTable(
 );
 
 export type HouseholdMember = typeof householdMembers.$inferSelect;
+
+/** Explicit identity marker for a dedicated solo database; never inferred from an email. */
+export const soloProfiles = sqliteTable(
+  'solo_profiles',
+  {
+    id: integer('id').primaryKey(),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id),
+    householdId: integer('household_id')
+      .notNull()
+      .references(() => households.id),
+    launchKeyHash: text('launch_key_hash').notNull(),
+  },
+  (t) => [check('solo_profiles_singleton', sql`${t.id} = 1`)],
+);
+
+/** Redeemed nonces for the current process key; a new key safely retires older rows. */
+export const soloLaunchTokens = sqliteTable('solo_launch_tokens', {
+  tokenHash: text('token_hash').primaryKey(),
+});
 
 export type InviteRole = 'parent' | 'student';
 

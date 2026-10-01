@@ -2,7 +2,7 @@ import { redirect } from 'next/navigation';
 import { ExamApp, type Resumable } from '@/components/exam/ExamApp';
 import { ParentDashboard } from '@/components/exam/ParentDashboard';
 import { getSession } from '@/lib/auth';
-import { getAuthMode } from '@/lib/env';
+import { getAuthMode, isSoloMode } from '@/lib/env';
 import { getExamSessions } from '@/lib/exam-session';
 import {
   canInvite,
@@ -54,13 +54,14 @@ function resumableFor(
 export default async function HomePage() {
   const session = await getSession();
   if (!session.userId || !session.role) {
-    redirect('/signin');
+    redirect(isSoloMode() ? '/solo/start' : '/signin');
   }
   const bank = loadLivePublicBank();
 
   if (session.role === 'parent') {
     const onboarding = getOnboardingForUser(session.userId);
     if (
+      !isSoloMode() &&
       adminShouldAutoStartOnboarding({
         role: onboarding.role,
         onboardingComplete: onboarding.complete,
@@ -79,6 +80,8 @@ export default async function HomePage() {
         <ExamApp
           role="parent"
           studentMode
+          solo={isSoloMode()}
+          canSetUpContent={!onboarding.complete}
           initialProgress={ownProgress}
           resumable={resumableFor(session.userId, bank.questions)}
           subjects={bank.subjects}

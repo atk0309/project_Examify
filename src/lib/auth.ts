@@ -1,12 +1,14 @@
 import 'server-only';
 import crypto from 'node:crypto';
-import { cookies } from 'next/headers';
+import { cookies, headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { getIronSession, type SessionOptions } from 'iron-session';
 import { and, eq, gte, isNull, ne, sql } from 'drizzle-orm';
 import { db, schema } from './db';
 import { isOtpShapedBearer, isResetShapedBearer, usesMagicLink } from './auth-mode';
-import { env, getAuthMode, sessionCookieConfig } from './env';
+import { env, getAuthMode, isSoloMode, sessionCookieConfig } from './env';
+import { soloRequestAllowed } from './solo-security';
+import { getSoloIdentity } from './solo';
 import { hashPassword, verifyPasswordOrDummy } from './password';
 import {
   attachMembershipFromInvite,
@@ -19,6 +21,8 @@ import {
 export type SessionRole = 'student' | 'parent';
 
 export type SessionData = {
+  /** Only launcher bootstrap can create this local identity session. */
+  solo?: boolean;
   userId?: number;
   role?: SessionRole;
   email?: string;
@@ -43,7 +47,7 @@ const sessionOptions: SessionOptions = {
   cookieName: sessionCookie.name,
   cookieOptions: {
     httpOnly: true,
-    sameSite: 'lax',
+    sameSite: isSoloMode() ? 'strict' : 'lax',
     secure: sessionCookie.secure,
     path: '/',
     maxAge: 60 * 60 * 24 * 30,
@@ -71,11 +75,36 @@ export function sessionMembershipOk(
  * redirect away before save.
  */
 export async function getRawSession() {
+  if (isSoloMode() && !soloRequestAllowed(await headers(), env)) {
+    throw new Error('Local launcher access required.');
+  }
   return getIronSession<SessionData>(await cookies(), sessionOptions);
 }
 
 export async function getSession() {
   const session = await getRawSession();
+  if (isSoloMode()) {
+    const identity = session.solo === true && session.userId ? getSoloIdentity() : null;
+    if (
+      identity &&
+      session.userId === identity.userId &&
+      session.role === 'parent' &&
+      session.sessionVersion === identity.sessionVersion
+    ) {
+      session.studentMode = true;
+      return session;
+    }
+    // Rendering may not set cookies. Treat a stale/wrong-mode cookie as unsigned;
+    // a new launcher POST replaces it, without redirecting into household auth.
+    delete session.userId;
+    delete session.role;
+    delete session.email;
+    delete session.sessionVersion;
+    delete session.studentMode;
+    delete session.solo;
+    return session;
+  }
+  if (session.solo === true) redirect('/signin/invalidate');
   if (session.userId && session.role) {
     const membership = getMembershipForUser(session.userId);
     const user = db

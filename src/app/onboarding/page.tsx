@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
 import { OnboardingWizard } from '@/components/exam/OnboardingWizard';
 import { getSession } from '@/lib/auth';
-import { getAuthMode } from '@/lib/env';
+import { getAuthMode, isSoloMode } from '@/lib/env';
 import {
   canInvite,
   canRemoveMember,
@@ -60,10 +60,11 @@ export default async function OnboardingPage() {
     <div className="stage">
       <div className="app-frame app-frame-wizard">
         <OnboardingWizard
+          solo={isSoloMode()}
           snapshot={await getOnboardingPageSnapshot(info.householdId)}
           pendingInvites={pendingInvites}
           members={members}
-          canInvite={canInvite(session.userId)}
+          canInvite={!isSoloMode() && canInvite(session.userId)}
           authMode={getAuthMode()}
         />
       </div>

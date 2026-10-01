@@ -168,9 +168,7 @@ describe('OnboardingWizard majors UI', () => {
     );
     const welcome = screen.getByTestId('wizard-welcome');
     expect(welcome).toHaveTextContent('Stored on this host');
-    expect(welcome).toHaveTextContent(
-      'sent to Anthropic or OpenAI only when you generate with that provider',
-    );
+    expect(welcome).toHaveTextContent('sent to the AI provider you choose only when you generate');
     expect(welcome).toHaveTextContent('never in the public bank');
     expect(welcome).not.toHaveTextContent('stay on this host');
 
@@ -178,7 +176,7 @@ describe('OnboardingWizard majors UI', () => {
     fireEvent.click(screen.getByTestId('wizard-next'));
     expect(screen.getByTestId('wizard-files')).toBeVisible();
     expect(screen.getByText(/Study files are stored on this host/)).toHaveTextContent(
-      'They go to Anthropic or OpenAI only when you generate with that provider',
+      'They are sent to your selected AI provider only when you choose Generate',
     );
 
     fireEvent.click(screen.getByTestId('wizard-next'));
@@ -1144,14 +1142,14 @@ describe('OnboardingWizard generate fixes', () => {
     expect(screen.getByTestId('wizard-subject-id')).toHaveValue('biology');
     const hint = screen.getByTestId('wizard-subject-id-builtin-hint');
     expect(hint).toHaveTextContent('is the id of the built-in Biology subject');
-    expect(hint).toHaveTextContent('replaces it for your family after Apply');
+    expect(hint).toHaveTextContent('replaces it in this installation after Apply');
     expect(hint).toHaveTextContent('biology-2');
     expect(screen.queryByTestId('wizard-subject-id-sample-hint')).toBeNull();
     fireEvent.change(screen.getByTestId('wizard-subject-label'), { target: { value: 'History' } });
     expect(screen.queryByTestId('wizard-subject-id-builtin-hint')).toBeNull();
   });
 
-  it('says uploads stay in the family data folder', () => {
+  it('says uploads stay in the private data folder', () => {
     render(
       <OnboardingWizard
         snapshot={snapshot()}
@@ -1164,7 +1162,7 @@ describe('OnboardingWizard generate fixes', () => {
     fireEvent.click(screen.getByTestId('wizard-get-started'));
     fireEvent.click(screen.getByTestId('wizard-next'));
     const files = screen.getByTestId('wizard-files');
-    expect(files).toHaveTextContent('Uploaded PDFs stay in this server’s family data folder');
+    expect(files).toHaveTextContent('Uploaded PDFs stay in this server’s private data folder');
     expect(files).not.toHaveTextContent('under source-pdfs');
   });
 

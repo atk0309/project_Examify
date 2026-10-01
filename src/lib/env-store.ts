@@ -12,25 +12,17 @@ import {
   writeFileSync,
 } from 'node:fs';
 import path from 'node:path';
+import { PROVIDER_ENV_FILES, PROVIDER_ENV_KEYS, resolveEnvStoreRoot } from '@/lib/config-root';
 import { findRepoRoot } from '@/lib/repo-root';
 
 /** Explicit keys the wizard/settings/install store may write. Never NEXT_PUBLIC_*. */
-export const ENV_STORE_KEYS = [
-  'ANTHROPIC_API_KEY',
-  'OPENAI_API_KEY',
-  'EXAMIFY_ANTHROPIC_MODEL',
-  'EXAMIFY_OPENAI_MODEL',
-  'EXAMIFY_LLM_BASE_URL',
-  'EXAMIFY_LLM_MODEL',
-  'EXAMIFY_CLAUDE_MODEL',
-  'EXAMIFY_CODEX_MODEL',
-] as const;
+export const ENV_STORE_KEYS = PROVIDER_ENV_KEYS;
 export type EnvStoreKey = (typeof ENV_STORE_KEYS)[number];
 
 export const OPENAI_ENV_KEY = 'OPENAI_API_KEY' satisfies EnvStoreKey;
 export const ANTHROPIC_ENV_KEY = 'ANTHROPIC_API_KEY' satisfies EnvStoreKey;
 
-const ENV_FILES = ['.env', '.env.local'] as const;
+const ENV_FILES = PROVIDER_ENV_FILES;
 const PRIMARY_ENV_FILE = '.env';
 const MAX_SECRET_CHARS = 256;
 
@@ -55,7 +47,7 @@ export function getEnvStoreRoot(): string {
   if (envStoreRootOverride !== null) return envStoreRootOverride;
   const repo = findRepoRoot(process.cwd());
   const fixture = process.env.EXAMIFY_TEST_ENV_STORE_DIR;
-  if (!fixture) return repo;
+  if (!fixture) return resolveEnvStoreRoot(repo);
   // Browser tests exercise real writes only in disposable fixtures. Never let
   // this override silently redirect an ordinary production installation.
   if (process.env.GRADING_STUB !== '1') throw new Error('test_env_store_disabled');
@@ -194,7 +186,7 @@ function normalizeSecretInput(raw: string, key: EnvStoreKey): string | null {
 }
 
 /**
- * Persist an allowlisted key in the install.sh `.env` store and the current process.
+ * Persist an allowlisted key in the installation's `.env` store and current process.
  * Never logs the value. `.env.local` is updated only when it already has the key
  * so a leftover local override cannot shadow the write after restart.
  */

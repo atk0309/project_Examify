@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import type { ReactNode } from 'react';
 import { Plausible } from '@/components/analytics/Plausible';
+import { isSoloMode } from '@/lib/env';
 import { siteConfig } from '@/lib/site';
 import './globals.css';
 
@@ -35,18 +36,22 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           time (some sandboxes block it). Newsreader = display, Hanken
           Grotesk = UI/body; both are wired into the @theme tokens.
         */}
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        {/* eslint-disable-next-line @next/next/no-page-custom-font -- intentional:
+        {!isSoloMode() && (
+          <>
+            <link rel="preconnect" href="https://fonts.googleapis.com" />
+            <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+            {/* eslint-disable-next-line @next/next/no-page-custom-font -- intentional:
             a stylesheet <link> avoids a build-time Google Fonts fetch (some
             sandboxes block the CDN); the font applies app-wide via the root layout. */}
-        <link
-          rel="stylesheet"
-          href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&display=swap"
-        />
+            <link
+              rel="stylesheet"
+              href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&display=swap"
+            />
+          </>
+        )}
       </head>
       <body>
-        <Plausible />
+        {!isSoloMode() && <Plausible />}
         {children}
       </body>
     </html>

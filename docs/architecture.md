@@ -1299,3 +1299,34 @@ admin AI settings are supported features.
 - Keep the README as the short first-install entry point. User-facing setup,
   configuration, operations, privacy and recovery live in the focused `docs/`
   guides; `.env.example` remains the complete environment-variable reference.
+
+## Local personal-study mode (preview)
+
+`EXAMIFY_MODE=solo` is explicitly selected by the packaged launcher. Absence keeps
+legacy household behavior. Solo is not an authentication-off flag: the launcher
+binds a gateway and internal Next listener to loopback, validates actual socket,
+Host and Origin, and adds a per-launch `EXAMIFY_SOLO_TRANSPORT_SECRET` in the overwritten
+`x-examify-solo-transport` header. The application rejects
+requests that lack this transport proof. Browser bootstrap exchanges a one-use
+fragment capability for an ordinary signed, HTTP-only session. No launch secret
+belongs in logs, filesystem, third-party scripts or request query strings.
+
+A dedicated persisted solo-profile marker distinguishes a personal database from
+an existing family database. A fresh solo database has one synthetic admin study
+identity, using the existing own-user attempts and membership model. Solo never
+adopts a household database or bypasses its login. The profile always studies as
+itself; household invitation/bootstrap mutations remain unavailable in solo.
+
+Home skips first-run content setup only in solo and exposes sample practice
+immediately. Content setup and AI are optional secondary paths. They retain
+server authorization, generation/validation/dry-run/Apply and the server-only
+answer-key boundary. Existing family onboarding, student view and upgrades keep
+their previous behavior. Remote deployments continue to authenticate normally.
+
+Platform packages separate immutable versioned app files from stable private
+`data` and `config` directories. Configuration writes in solo use the validated
+`EXAMIFY_CONFIG_DIR`; household installations continue using their existing store.
+Saved provider settings must load after child process exec so editable file
+settings do not masquerade as host-managed injected credentials. Never package
+provider keys or user data. Package digests and runtime versions are pinned;
+Windows/Linux native SQLite bindings must be built and tested per target OS.

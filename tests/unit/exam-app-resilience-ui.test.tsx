@@ -116,6 +116,7 @@ function renderApp(
   props: {
     resumable?: Resumable[];
     role?: 'student' | 'parent';
+    solo?: boolean;
     marking?: ExamMarking;
     subjects?: Subject[];
     questionBank?: QuestionBank;
@@ -126,6 +127,8 @@ function renderApp(
     <Crashed>
       <ExamApp
         role={role}
+        solo={props.solo}
+        canSetUpContent={props.solo}
         studentMode={role === 'parent'}
         initialProgress={empty}
         subjects={props.subjects ?? subjects}
@@ -804,5 +807,31 @@ describe('ExamApp recovers saved pending marking', () => {
     expect(recordAttempt).toHaveBeenCalledTimes(1);
     expect(screen.getByTestId('results-score')).toHaveTextContent('2/2');
     expect(screen.queryByTestId('retry-marking')).toBeNull();
+  });
+});
+
+describe('personal study entry', () => {
+  it('starts a sample immediately without family navigation or sign out', async () => {
+    renderApp({ role: 'parent', solo: true, marking: { written: 'unmarked' } });
+    expect(screen.getByText('Personal study')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Sign out' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Back to parent view')).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Add your own material' })).toHaveAttribute(
+      'href',
+      '/onboarding',
+    );
+    expect(screen.getByRole('link', { name: 'Optional AI settings' })).toHaveAttribute(
+      'href',
+      '/settings/ai',
+    );
+    fireEvent.click(screen.getByTestId('solo-quick-start'));
+    await settle();
+    expect(beginExamSession).toHaveBeenCalled();
+    expect(screen.getAllByTestId('exam-choice').length).toBeGreaterThan(0);
+  });
+
+  it('does not offer a starter when no suitable paper exists', () => {
+    renderApp({ solo: true, questionBank: {} });
+    expect(screen.queryByTestId('solo-quick-start')).not.toBeInTheDocument();
   });
 });

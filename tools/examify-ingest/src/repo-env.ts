@@ -1,12 +1,16 @@
 import path from 'node:path';
+import {
+  PROVIDER_ENV_FILES,
+  PROVIDER_ENV_KEYS,
+  resolveEnvStoreRoot,
+} from '../../../src/lib/config-root';
 import { parseEnvFile, readEnvFile } from '../../../src/lib/env-file';
 
 export { parseEnvFile };
 
-const ENV_FILES = ['.env', '.env.local'] as const;
-
 /**
- * Fill unset keys from repo `.env` then `.env.local`.
+ * Fill unset keys from the installation `.env` then `.env.local`: the checkout
+ * for households, the launcher's persistent config directory for solo mode.
  * Keys already present on `env` (including empty string) are left alone.
  * On Windows, env names are case-insensitive, so every name is folded to
  * upper case (`Path` → `PATH`, `Examify_Codex_Bin` → `EXAMIFY_CODEX_BIN`) with
@@ -19,18 +23,23 @@ export function mergeRepoEnvFiles(
   platform: NodeJS.Platform = process.platform,
 ): Record<string, string | undefined> {
   const fold = platform === 'win32' ? (key: string) => key.toUpperCase() : (key: string) => key;
-  // Folded as each file is read, so `.env.local` overrides `.env` whatever
-  // either one's spelling.
-  const fromFiles: Record<string, string> = {};
-  for (const name of ENV_FILES) {
-    for (const [key, value] of Object.entries(readEnvFile(path.join(repoRoot, name)))) {
-      fromFiles[fold(key)] = value;
-    }
-  }
   const out: Record<string, string | undefined> = {};
   for (const [key, value] of Object.entries(env)) {
     const name = fold(key);
     if (value !== undefined && out[name] === undefined) out[name] = value;
+  }
+  const settingsRoot = resolveEnvStoreRoot(repoRoot, out, platform);
+  // Folded as each file is read, so `.env.local` overrides `.env` whatever
+  // either one's spelling.
+  const fromFiles: Record<string, string> = {};
+  for (const name of PROVIDER_ENV_FILES) {
+    for (const [key, value] of Object.entries(readEnvFile(path.join(settingsRoot, name)))) {
+      const name = fold(key);
+      if (out.EXAMIFY_MODE === 'solo' && !(PROVIDER_ENV_KEYS as readonly string[]).includes(name)) {
+        continue;
+      }
+      fromFiles[name] = value;
+    }
   }
   for (const [name, value] of Object.entries(fromFiles)) {
     if (out[name] === undefined) out[name] = value;

@@ -80,7 +80,7 @@ const STAGE_HELP: Record<StepId, string> = {
   welcome: '',
   subjects: 'Add the subjects you want in the practice bank. One is enough to continue.',
   files:
-    'Study files are stored on this host — PDFs you upload, plus notes.txt and other CLI sources generate already reads. They go to Anthropic or OpenAI only when you generate with that provider, and never enter the question bank.',
+    'Study files are stored on this host — PDFs you upload, plus notes.txt and other CLI sources generate already reads. They are sent to your selected AI provider only when you choose Generate, and never enter the question bank.',
   ai: 'Choose how generate talks to a model, then optionally draft BankIR from local sources (PDFs, notes.txt, and other files generate already reads).',
   validate: 'Check BankIR before anything is written to the generated bank.',
   'dry-run': 'Preview the emit plan, including planned deletes. Apply is the only write.',
@@ -153,7 +153,7 @@ function errorCopy(error: OnboardingActionError, aiMode?: OnboardingAiMode | nul
     case 'disk':
       return 'Could not write the file (disk full or not writable).';
     case 'unsafe_path':
-      return 'Nothing was written: a folder or file inside the family data folder is a link to somewhere else. Remove the link on the host, then try again.';
+      return 'Nothing was written: a folder or file inside the private data folder is a link to somewhere else. Remove the link on the host, then try again.';
     case 'empty_catalog':
       return error.message ?? EMPTY_AUTHORITATIVE_EMIT;
     case 'dry_run_required':
@@ -175,7 +175,7 @@ function errorCopy(error: OnboardingActionError, aiMode?: OnboardingAiMode | nul
     case 'missing_cli':
       return 'The AI tool for this mode was not found on this server. Nothing was written.';
     case 'empty_sources':
-      return 'No source files for that subject yet. Upload a PDF on the Files step, or add notes.txt to the subject’s folder in this server’s family data folder.';
+      return 'No source files for that subject yet. Upload a PDF on the Files step, or add notes.txt to the subject’s folder in this server’s private data folder.';
     case 'sources_unreadable':
       return 'This provider cannot read PDFs directly. Install pdftoppm (poppler-utils) on the host so PDF pages are sent as images, or add a notes.txt for this subject. Nothing was written.';
     case 'sample_collision':
@@ -262,12 +262,14 @@ function agentCliBadge(mode: OnboardingAgentCliMode, snapshot: OnboardingSnapsho
 
 export function OnboardingWizard({
   snapshot: initial,
+  solo = false,
   pendingInvites,
   members,
   canInvite,
   authMode,
 }: {
   snapshot: OnboardingSnapshot;
+  solo?: boolean;
   pendingInvites: PendingInvite[];
   members: HouseholdMemberView[];
   canInvite: boolean;
@@ -458,7 +460,7 @@ export function OnboardingWizard({
               </div>
             ) : null}
 
-            {step === 'welcome' ? <WelcomeStep /> : null}
+            {step === 'welcome' ? <WelcomeStep solo={solo} /> : null}
 
             {step === 'subjects' ? (
               <SubjectsStep
@@ -805,6 +807,7 @@ export function OnboardingWizard({
 
             {step === 'ready' ? (
               <ReadyStep
+                solo={solo}
                 snapshot={snapshot}
                 applyState={applyState}
                 canInvite={canInvite}
@@ -949,7 +952,8 @@ export function OnboardingWizard({
                     })
                   }
                 >
-                  {pending ? 'Opening…' : 'Open dashboard'} {UIcon.arrow}
+                  {pending ? 'Opening…' : solo ? 'Back to practice' : 'Open dashboard'}{' '}
+                  {UIcon.arrow}
                 </button>
               ) : null}
             </div>
@@ -972,11 +976,13 @@ export function OnboardingWizard({
   );
 }
 
-function WelcomeStep() {
+function WelcomeStep({ solo = false }: { solo?: boolean }) {
   return (
     <div className="wizard-welcome" data-testid="wizard-welcome">
-      <p className="eyebrow">First-run</p>
-      <h1 className="display-title">Set up your family’s content</h1>
+      <p className="eyebrow">{solo ? 'Optional study setup' : 'First-run'}</p>
+      <h1 className="display-title">
+        {solo ? 'Add your own study material' : 'Set up your family’s content'}
+      </h1>
       <p className="wizard-help wizard-help-lead">
         Add subjects, store study files on this host, then generate and review BankIR before
         anything is applied. The sample bank stays usable if you skip.
@@ -988,7 +994,7 @@ function WelcomeStep() {
           </span>
           <span>
             <strong>Subjects you choose</strong>
-            <span>Build a short family catalog — one subject is enough to start.</span>
+            <span>Build a short study catalog — one subject is enough to start.</span>
           </span>
         </li>
         <li>
@@ -999,8 +1005,8 @@ function WelcomeStep() {
             <strong>Local study files</strong>
             <span>
               PDFs you upload, plus notes.txt and other CLI sources generate already reads. Stored
-              on this host, sent to Anthropic or OpenAI only when you generate with that provider,
-              and never in the public bank.
+              on this host, sent to the AI provider you choose only when you generate, and never in
+              the public bank.
             </span>
           </span>
         </li>
@@ -1231,7 +1237,7 @@ function SubjectsStep({
               {builtinMatch ? (
                 <p className="login-fine" data-testid="wizard-subject-id-builtin-hint">
                   “{builtinMatch.id}” is the id of the built-in {builtinMatch.label} subject. Yours
-                  replaces it for your family after Apply. Use another id (for example{' '}
+                  replaces it in this installation after Apply. Use another id (for example{' '}
                   {builtinMatch.id}-2) to keep both.
                 </p>
               ) : null}
@@ -1318,7 +1324,7 @@ function FilesStep({
   return (
     <div className="wizard-panel" data-testid="wizard-files">
       <p className="wizard-path-hint">
-        Uploaded PDFs stay in this server’s family data folder. Generate also reads notes.txt and
+        Uploaded PDFs stay in this server’s private data folder. Generate also reads notes.txt and
         other local sources in the subject folder — never the bank.
       </p>
       <div className="wizard-files-layout">
@@ -2122,6 +2128,7 @@ function ApplyStep({
 }
 
 function ReadyStep({
+  solo = false,
   snapshot,
   applyState,
   canInvite,
@@ -2129,6 +2136,7 @@ function ReadyStep({
   members,
   authMode,
 }: {
+  solo?: boolean;
   snapshot: OnboardingSnapshot;
   applyState:
     | { status: 'idle' }
@@ -2161,7 +2169,11 @@ function ReadyStep({
           {applyState.subjectCount === 1 ? '' : 's'}.
         </p>
       ) : (
-        <p className="login-fine">You can finish content setup later from the parent dashboard.</p>
+        <p className="login-fine">
+          {solo
+            ? 'You can finish later from Add your own material on your practice page.'
+            : 'You can finish content setup later from the parent dashboard.'}
+        </p>
       )}
       {canInvite ? (
         <details className="wizard-details wizard-ready-invite">

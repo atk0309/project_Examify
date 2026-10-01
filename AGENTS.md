@@ -1,7 +1,9 @@
 # Working on Examify
 
 Applies to this repository. Examify is a small, mobile-first, self-hosted exam-practice
-app for families: Next.js, TypeScript and SQLite. Keep changes focused and portable.
+app for personal study, with optional household sharing: Next.js, TypeScript and SQLite.
+Keep changes focused and portable. Windows/Linux solo packaging is a preview;
+see docs/solo-installation.md before making installation claims.
 
 ## Start here
 
@@ -45,6 +47,9 @@ pnpm test:e2e
   `attempts.ts` stays client-safe. Validate papers and derive scores server-side.
 - **Own-user writes:** attempts and sessions belong to `session.userId`, including a
   parent in explicit student mode. Parent/child reads stay inside the same household.
+- **Solo:** local study still requires the loopback gateway, one-use launch capability
+  and signed session. Never adopt a household database, trust forwarded headers
+  for locality, expose the internal listener, or package user data/provider keys.
 - **Auth:** preserve generic anti-enumeration responses, dummy scrypt, hashed single-use
   tokens, mailbox proof for invitations, rate-limit/guess locks and reset session-version
   revocation. Reissuing a code must not reset its guess budget. Keep credential forms POST.
