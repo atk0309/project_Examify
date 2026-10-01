@@ -24,7 +24,7 @@ import {
   isAuthoritativeCatalogInput,
   hasExistingBankIr,
   loadIrFiles,
-  mergeRepoEnvFiles,
+  mergeResolvedEnvStoreFiles,
   planEmit,
   plannedInsideFamilyGenerated,
   publicQuestionIds,
@@ -200,8 +200,10 @@ export function adminShouldAutoStartOnboarding(input: {
 export function adminCanOpenOnboarding(input: {
   role: HouseholdRole | null | undefined;
   onboardingComplete: boolean;
+  /** Verified local solo profiles use this wizard for ongoing content management. */
+  solo?: boolean;
 }): boolean {
-  return isHouseholdAdmin(input.role) && !input.onboardingComplete;
+  return isHouseholdAdmin(input.role) && (input.solo === true || !input.onboardingComplete);
 }
 
 export function adminNeedsOnboardingChip(input: {
@@ -530,11 +532,11 @@ function liveSubjectSummaries(root: string): OnboardingLiveSubject[] {
 
 /**
  * The environment wizard generate runs with: this process's env, with unset
- * keys filled from the checkout `.env` / `.env.local` (the env store). Local
+ * keys filled from the installation `.env` / `.env.local` (the env store). Local
  * endpoint / command settings and the Claude Code / Codex binary are read here.
  */
 export function onboardingHostEnv(): Record<string, string | undefined> {
-  return mergeRepoEnvFiles(getEnvStoreRoot(), process.env);
+  return mergeResolvedEnvStoreFiles(getEnvStoreRoot(), process.env);
 }
 
 function aiFlags(hostEnv: Record<string, string | undefined> = onboardingHostEnv()): {
@@ -557,8 +559,8 @@ function aiFlags(hostEnv: Record<string, string | undefined> = onboardingHostEnv
   openaiGradingStubActive: boolean;
 } {
   return {
-    // Both keys: wizard + install.sh write the same repo-root `.env`
-    // (findRepoRoot) and update process.env. OPENAI_API_KEY is not in
+    // Both keys: wizard + installer use the same resolved `.env` store
+    // and update process.env. OPENAI_API_KEY is not in
     // env.ts; ANTHROPIC_API_KEY is (grader), but the configured badge
     // must follow the live store, not the boot-time env.ts snapshot.
     anthropicConfigured: envStoreSecretConfigured('ANTHROPIC_API_KEY'),

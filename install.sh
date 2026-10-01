@@ -117,7 +117,12 @@ Upgrading (the installer never starts or stops services; stop the server first):
   First upgrade of an older install:
   curl -fsSL …/install.sh | bash -s -- --upgrade
 
+Personal study (versioned package installer required; no public release yet):
+  ./install.sh --solo [--root <path>] [--archive <package.tar.gz>]
+  Opens a local browser and creates a relaunch shortcut. No household setup.
+
 Flags:
+  --solo                   run the sibling pinned personal-study installer
   --data-dir <path>        family data folder for a new .env (skips the prompt)
   --upgrade                back up, move family content out of the checkout,
                            merge upstream, then install / migrate / build / verify
@@ -1872,6 +1877,23 @@ archive_has_env() {
 }
 
 main() {
+  # Deliberately dispatch before household configuration, checkout or upgrade
+  # mutation. Never locate an executable through the caller's working directory.
+  if [ "${1-}" = "--solo" ]; then
+    shift
+    local source_file="${BASH_SOURCE[0]-}" solo_installer
+    if [ -z "$source_file" ] || [ ! -f "$source_file" ]; then
+      echo "Personal study requires the versioned Windows/Linux package installer. See docs/solo-installation.md; no moving-main download is executed." >&2
+      return 1
+    fi
+    solo_installer="$(cd -- "$(dirname -- "$source_file")" && pwd)/install-solo.sh"
+    if [ ! -f "$solo_installer" ]; then
+      echo "The matching personal-study installer is missing. Use the installer included with the verified platform package." >&2
+      return 1
+    fi
+    bash "$solo_installer" "$@"
+    return $?
+  fi
   REPO_URL="${EXAMIFY_REPO_URL:-https://github.com/atk0309/project_Examify.git}"
   PNPM_VERSION="${EXAMIFY_PNPM_VERSION:-10.33.0}"
   MIN_NODE="22.22.2"

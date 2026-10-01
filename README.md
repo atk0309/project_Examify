@@ -9,7 +9,9 @@ as a separate, more involved setup.
 
 The new **solo launcher** runs Examify on this computer only. It opens your browser
 and creates your private study profile without email, invitations or routine login.
-The sample questions need no AI account or key. Choose **Try a sample exam** to start.
+The sample has five fixed questions and deterministic scoring, with no AI.
+Choose **Try a sample exam**, then **Create your question bank** for the guided
+subject → material → AI → generate/review/Apply workflow. Return anytime to add more.
 
 This is a **preview implementation**, not a published desktop release. Platform
 packages must pass the clean-install checks before release. See the
@@ -36,8 +38,10 @@ the solo listener through a reverse proxy or share its local session.
 Pick a subject and difficulty, answer a short exam, then review your results.
 Unfinished exams autosave and can be resumed. In household mode, parents see their household's
 student progress and can take exams themselves. The app includes a small sample
-bank; add your own subjects in the initial setup wizard. After finishing setup,
-use **AI settings** on the admin dashboard to manage your provider, and the [CLI workflow](docs/content-authoring.md#cli-workflow) for content updates.
+bank. In solo mode, **Create your question bank** stays available for adding
+subjects and material, setting up optional AI, and reviewing/applying generated
+questions. In household mode, the initial wizard and later [CLI content workflow](docs/content-authoring.md#cli-workflow) retain their existing behavior.
+**AI settings** remains available for provider changes.
 
 AI generation and marking send study material or answers to the selected
 provider. Local hosting alone does not keep AI requests local.

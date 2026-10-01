@@ -22,13 +22,40 @@ export function mergeRepoEnvFiles(
   env: Record<string, string | undefined>,
   platform: NodeJS.Platform = process.platform,
 ): Record<string, string | undefined> {
+  const folded = foldEnvNames(env, platform);
+  return mergeResolvedEnvStoreFiles(
+    resolveEnvStoreRoot(repoRoot, folded, platform),
+    folded,
+    platform,
+  );
+}
+
+function foldEnvNames(
+  env: Record<string, string | undefined>,
+  platform: NodeJS.Platform,
+): Record<string, string | undefined> {
   const fold = platform === 'win32' ? (key: string) => key.toUpperCase() : (key: string) => key;
   const out: Record<string, string | undefined> = {};
   for (const [key, value] of Object.entries(env)) {
     const name = fold(key);
     if (value !== undefined && out[name] === undefined) out[name] = value;
   }
-  const settingsRoot = resolveEnvStoreRoot(repoRoot, out, platform);
+  return out;
+}
+
+/**
+ * Merge a store already resolved and validated by getEnvStoreRoot (runtime)
+ * or resolveEnvStoreRoot (CLI). The config directory is not a checkout root:
+ * resolving it a second time would reject a valid solo installation. Keeping
+ * this entry point explicit also preserves disposable runtime test overrides.
+ */
+export function mergeResolvedEnvStoreFiles(
+  settingsRoot: string,
+  env: Record<string, string | undefined>,
+  platform: NodeJS.Platform = process.platform,
+): Record<string, string | undefined> {
+  const fold = platform === 'win32' ? (key: string) => key.toUpperCase() : (key: string) => key;
+  const out = foldEnvNames(env, platform);
   // Folded as each file is read, so `.env.local` overrides `.env` whatever
   // either one's spelling.
   const fromFiles: Record<string, string> = {};

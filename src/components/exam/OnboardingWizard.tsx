@@ -2171,7 +2171,7 @@ function ReadyStep({
       ) : (
         <p className="login-fine">
           {solo
-            ? 'You can finish later from Add your own material on your practice page.'
+            ? 'Return to Create your question bank anytime to add more subjects or material.'
             : 'You can finish content setup later from the parent dashboard.'}
         </p>
       )}

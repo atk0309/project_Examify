@@ -21,7 +21,8 @@ import {
   parentMarkingLineForUser,
 } from '@/lib/onboarding';
 import { resolveExamPaper } from '@/lib/exam/data';
-import { loadLivePublicBank } from '@/lib/exam/live-bank.server';
+import { starterAvailable } from '@/lib/exam/starter.server';
+import { loadLiveBankAndKeys, loadLivePublicBank } from '@/lib/exam/live-bank.server';
 import type { HouseholdMemberView } from '@/lib/household-types';
 
 /**
@@ -56,7 +57,7 @@ export default async function HomePage() {
   if (!session.userId || !session.role) {
     redirect(isSoloMode() ? '/solo/start' : '/signin');
   }
-  const bank = loadLivePublicBank();
+  const { bank, keys } = loadLiveBankAndKeys();
 
   if (session.role === 'parent') {
     const onboarding = getOnboardingForUser(session.userId);
@@ -81,7 +82,8 @@ export default async function HomePage() {
           role="parent"
           studentMode
           solo={isSoloMode()}
-          canSetUpContent={!onboarding.complete}
+          canSetUpContent={isSoloMode() || !onboarding.complete}
+          starterAvailable={starterAvailable(bank.questions, keys)}
           initialProgress={ownProgress}
           resumable={resumableFor(session.userId, bank.questions)}
           subjects={bank.subjects}

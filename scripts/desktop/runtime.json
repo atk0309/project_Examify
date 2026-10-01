@@ -1,0 +1,13 @@
+{
+  "version": "22.22.2",
+  "platforms": {
+    "linux-x64": {
+      "file": "node-v22.22.2-linux-x64.tar.gz",
+      "sha256": "978978a635eef872fa68beae09f0aad0bbbae6757e444da80b570964a97e62a3"
+    },
+    "win32-x64": {
+      "file": "node-v22.22.2-win-x64.zip",
+      "sha256": "7c93e9d92bf68c07182b471aa187e35ee6cd08ef0f24ab060dfff605fcc1c57c"
+    }
+  }
+}

@@ -56,7 +56,9 @@ pnpm test:e2e
 - **Trust boundaries:** verify enabled captcha server-side; use centralized IP extraction
   and `SITE_URL`-derived cookie security. Production config and missing databases fail closed.
 - **Admin gates:** check authorization server-side on every mutation. Ongoing AI settings
-  require household admin access; they must never reopen first-run bootstrap/content gates.
+  require admin access; household AI settings must never reopen first-run bootstrap/content gates.
+  Only a revalidated signed solo admin may revisit its content wizard after completion;
+  preserve existing state and the explicit generate/review/Apply boundary.
 - **Durability:** persist validated submissions before AI calls. Keep submission identity,
   payload hashes, original grading snapshots and leases; retries cannot duplicate attempts
   or let old workers overwrite new results. Pending marks remain provisional.

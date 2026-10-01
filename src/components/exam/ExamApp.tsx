@@ -48,6 +48,7 @@ import {
 } from '@/lib/exam/attempts';
 import type { SessionRole } from '@/lib/auth';
 import { examUnmarkedWrittenNote, examWrittenLine, type ExamMarking } from '@/lib/onboarding-types';
+import { starterPaper, STARTER_IDS } from '@/lib/exam/starter';
 import { ProgressView } from './ProgressView';
 import { SubjectIcon, UIcon } from './icons';
 
@@ -281,10 +282,19 @@ function Dashboard({
               </button>
             )}
             <p className="subtitle">
-              The sample exam works without AI. Add your own material whenever you’re ready.
+              The sample has five fixed questions and automatic scoring, with no AI. Build your own
+              question bank next.
+            </p>
+            <p className="subtitle">
+              Choose subjects → add study material → set up optional AI → generate, review and apply
+              → practise. Return anytime to add more.
             </p>
             <nav className="solo-tools" aria-label="Study settings">
-              {canSetUpContent && <Link href="/onboarding">Add your own material</Link>}
+              {canSetUpContent && (
+                <Link className="btn btn-primary" href="/onboarding">
+                  Create your question bank
+                </Link>
+              )}
               <Link href="/settings/ai">Optional AI settings</Link>
               <details>
                 <summary>Using AI and household mode</summary>
@@ -899,6 +909,7 @@ export function ExamApp({
   studentMode = false,
   solo = false,
   canSetUpContent = false,
+  starterAvailable = false,
   initialProgress,
   resumable = [],
   subjects = SUBJECTS,
@@ -911,6 +922,7 @@ export function ExamApp({
   /** Local-only self-study surface; server authorization remains authoritative. */
   solo?: boolean;
   canSetUpContent?: boolean;
+  starterAvailable?: boolean;
   initialProgress: ProgressData;
   /** Saved in-progress exams (server-fetched) the user can resume. */
   resumable?: Resumable[];
@@ -1078,11 +1090,13 @@ export function ExamApp({
     setSubject(s);
     setScreen('difficulty');
   };
-  const startExam = (diff: DifficultyId, selected = subject) => {
+  const startExam = (diff: DifficultyId, selected = subject, fixedStarter = false) => {
     if (!selected) return;
-    const qs = buildExam(selected.id, diff, questionBank, {
-      written: marking.written !== 'unmarked',
-    });
+    const qs = fixedStarter
+      ? starterPaper(questionBank)
+      : buildExam(selected.id, diff, questionBank, {
+          written: marking.written !== 'unmarked',
+        });
     if (qs.length === 0) return;
     flushPendingSave(); // the exam being left keeps its latest answers
     replaceLiveExam(comboKey(selected.id, diff));
@@ -1229,7 +1243,14 @@ export function ExamApp({
   };
   const retry = () => {
     if (!subject) return;
-    startExam(difficulty);
+    const sameStarter =
+      solo &&
+      starterAvailable &&
+      subject.id === 'maths' &&
+      difficulty === 'easy' &&
+      questions.length === STARTER_IDS.length &&
+      questions.every((question, index) => question.id === STARTER_IDS[index]);
+    startExam(difficulty, subject, sameStarter);
   };
 
   const retryMarking = async (attemptId: number) => {
@@ -1302,14 +1323,13 @@ export function ExamApp({
         canSetUpContent={canSetUpContent}
         onQuickStart={
           solo &&
-          progress.attempts.length === 0 &&
-          resumables.length === 0 &&
-          subjects.some((s) => (questionBank[s.id]?.easy ?? []).some((q) => q.type === 'mcq'))
+          starterAvailable &&
+          starterPaper(questionBank).length === 5 &&
+          subjects.some((s) => s.id === 'maths') &&
+          resumables.length === 0
             ? () => {
-                const sample = subjects.find((s) =>
-                  (questionBank[s.id]?.easy ?? []).some((q) => q.type === 'mcq'),
-                );
-                if (sample) startExam('easy', sample);
+                const sample = subjects.find((s) => s.id === 'maths');
+                if (sample) startExam('easy', sample, true);
               }
             : undefined
         }

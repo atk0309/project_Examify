@@ -1320,8 +1320,9 @@ itself; household invitation/bootstrap mutations remain unavailable in solo.
 Home skips first-run content setup only in solo and exposes sample practice
 immediately. Content setup and AI are optional secondary paths. They retain
 server authorization, generation/validation/dry-run/Apply and the server-only
-answer-key boundary. Existing family onboarding, student view and upgrades keep
-their previous behavior. Remote deployments continue to authenticate normally.
+answer-key boundary. An authenticated, identity-checked solo admin may reopen the content wizard after
+completion to add more subjects; this never resets existing content or flags.
+Household completion gates, student view and upgrades keep their previous behavior. Remote deployments continue to authenticate normally.
 
 Platform packages separate immutable versioned app files from stable private
 `data` and `config` directories. Configuration writes in solo use the validated

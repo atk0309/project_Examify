@@ -34,7 +34,13 @@ export default async function OnboardingPage() {
   if (!session.userId || !session.role) redirect('/signin');
 
   const info = getOnboardingForUser(session.userId);
-  if (!adminCanOpenOnboarding({ role: info.role, onboardingComplete: info.complete })) {
+  if (
+    !adminCanOpenOnboarding({
+      role: info.role,
+      onboardingComplete: info.complete,
+      solo: isSoloMode(),
+    })
+  ) {
     redirect('/');
   }
   if (info.householdId == null) redirect('/');

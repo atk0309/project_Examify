@@ -13,6 +13,7 @@ import {
 import { extractClientIp } from '@/lib/ip';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { requireOnboardingAdmin } from '@/lib/onboarding-admin';
+import { isSoloMode } from '@/lib/env';
 import {
   generateOnboardingSubject,
   isOnboardingGenerateCancelToken,
@@ -418,7 +419,10 @@ export async function applyOnboardingEmitAction(formData?: FormData): Promise<
 export async function skipOnboardingAction(): Promise<OnboardingActionError | void> {
   const gate = await requireOnboardingAdmin();
   if (!gate.ok) return gate;
-  skipOnboarding(gate.householdId);
+  // Leaving ongoing solo content management must not undo historical completion.
+  if (!isSoloMode() || !getHouseholdOnboarding(gate.householdId).complete) {
+    skipOnboarding(gate.householdId);
+  }
   redirect('/');
 }
 

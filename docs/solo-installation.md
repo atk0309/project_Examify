@@ -54,17 +54,20 @@ needed; separate OS accounts alone do not fix the browser host/port limitation.
 
 ## First practice
 
-Choose **Try a sample exam** on the practice page. No account, email setup,
+Choose **Try a sample exam** on the practice page. It uses the same five fixed
+multiple-choice questions, choices and deterministic answer-key scoring, without
+AI generation or marking. No account, email setup,
 invitation, AI provider or payment is needed. Select an answer, finish the exam
 and review the result. Unfinished exams autosave; reopening through the launcher
 keeps your progress and offers your unfinished exam.
 
-**Add your own material** opens the optional content wizard. Uploading stores the
+**Create your question bank** opens the guided subject → material → AI → generate → review/Apply workflow. Uploading stores the
 file locally. Generating questions is a separate, explicit operation: review and
 Apply before generated questions become available. The built-in sample stays
-available. After finishing the wizard, ongoing content changes currently use the
-[existing content workflow](content-authoring.md); AI provider settings remain
-available from the practice page.
+available. After finishing, return to **Create your question bank** to add another subject or
+material. Existing questions and progress are retained; replacement and Apply
+still need explicit review. Household first-run completion keeps its existing
+behavior. AI provider settings remain available from the practice page.
 
 ## AI is optional
 
