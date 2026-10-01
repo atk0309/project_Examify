@@ -1608,6 +1608,28 @@ describe('generateOnboardingSubject provider failures (C10)', () => {
     expect(result.reason).toBe('sources_unreadable');
   });
 
+  it('maps oversized native PDF input to a safe reason without logging source data', async () => {
+    const ingest = await import('examify-ingest/generate');
+    const { generateOnboardingSubject } = await import('@/lib/onboarding-generate');
+    const root = tempRoot();
+    seedSubject(root);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(ingest, 'generateSubject').mockRejectedValue(
+      new ingest.SourcesTooLargeError('private-document.pdf source details'),
+    );
+    const result = await generateOnboardingSubject({
+      subjectId: 'history',
+      provider: 'openai',
+      seed: 0,
+      root,
+      force: true,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected failure');
+    expect(result.reason).toBe('sources_too_large');
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('private-document');
+  });
+
   it('does not log cancel, skip, or overwrite-confirm outcomes as failures', async () => {
     const { generateOnboardingSubject, requestOnboardingGenerateCancel } =
       await import('@/lib/onboarding-generate');

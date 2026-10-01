@@ -159,7 +159,7 @@ without that flag. Missing cloud API keys are refused before overwrite
 messaging when a real key is required; `--force` stays fail-closed. The test
 provider still runs without keys.
 
-It still rasterizes missing
+Except for OpenAI native PDF inputs, it still rasterizes missing
 PDF pages into a temp directory (`safeTempRoot`: outside every Examify
 checkout, even when `TMPDIR` points into one) when `pdftoppm` is available so the preview
 matches a persist run; it does not populate `.examify-ingest/cache/pages/`.
@@ -184,8 +184,8 @@ IR with no network and does not require the key. The app's
 for CI. `local` needs `EXAMIFY_INGEST_LOCAL_CMD` (quoted executable + args;
 stdin JSON includes full source text / `dataBase64` bytes plus page-image
 bytes — never hashes-only) or `EXAMIFY_LLM_BASE_URL`
-(OpenAI-compatible `/v1/chat/completions` with the same multimodal user
-content as `--provider openai`: fenced text + images / page images). The
+(OpenAI-compatible `/v1/chat/completions` with fenced text + images / page
+images; generic endpoints are not assumed to support native PDF files). The
 command wins when both are set; `--local-transport endpoint|command` uses
 only that one (the other's settings are dropped, as in the wizard's Local
 endpoint / Local command modes). The endpoint gets `--model`, else
@@ -472,7 +472,9 @@ Failures are typed so callers never parse messages (all exported from
 - `SampleIdCollisionError` — generated ids hit the frozen sample bank without
   `replaceSample`; `ids` lists them. No BankIR written.
 - `UnreadableSourcesError` — the provider cannot read any source
-  (OpenAI-compatible or Codex, PDF-only, no rasterized pages).
+  (generic local HTTP or Codex, PDF-only, no rasterized pages).
+- `SourcesTooLargeError` — native OpenAI PDF inputs total 50 MB or more; split
+  the subject into smaller sets. Nothing is serialized, sent or written.
 
 The HTTP call and reading its body share one deadline / cancel boundary, so a
 body that stalls or drops part-way is typed like a failed request. HTTP failures
@@ -483,7 +485,20 @@ The wizard logs only this sanitized diagnostic and maps failures to safe
 reason codes (`provider_auth` for 401/403, `provider_rate_limited` for 429,
 `provider_unavailable` for 5xx or unreachable, `provider_timeout`,
 `provider_output_invalid`, `provider_error`, `sample_collision`,
-`sources_unreadable`) and never shows the raw message.
+`sources_unreadable`, `sources_too_large`) and never shows the raw message.
+
+### OpenAI PDF inputs
+
+OpenAI receives PDFs as base64 `file` content parts in the user message, with the
+same untrusted-source captions and hashes. It requires a PDF/vision-capable model
+(the default `gpt-4o` supports this), and does not invoke `pdftoppm` or resend PDF
+page rasters. Native PDF processing includes both extracted text and page images,
+which can increase token usage and cost. Total PDF bytes for one subject must be
+less than 50 MB, checked before base64 encoding or network access; wizard uploads
+also retain the 8 MiB per-file limit. See [OpenAI's file-input guide](https://developers.openai.com/api/docs/guides/file-inputs).
+A native-PDF input profile isolates these cache keys from older raster-only or
+omitted-PDF requests. Other providers and non-PDF OpenAI requests keep their
+existing cache keys. Tests mock the transport; they do not verify a paid live call.
 
 ### OpenAI output contract
 

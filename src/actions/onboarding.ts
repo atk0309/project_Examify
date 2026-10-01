@@ -13,6 +13,7 @@ import {
 import { extractClientIp } from '@/lib/ip';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { requireOnboardingAdmin } from '@/lib/onboarding-admin';
+import { isSoloMode } from '@/lib/env';
 import {
   generateOnboardingSubject,
   isOnboardingGenerateCancelToken,
@@ -34,6 +35,7 @@ import {
   isOnboardingAiMode,
   markOnboardingApplied,
   MAX_SOURCE_PDF_BYTES,
+  MAX_SOURCE_TEXT_BYTES,
   ONBOARDING_GENERATE_SEED_DEFAULT,
   previewOnboardingEmit,
   localTransportForOnboardingAiMode,
@@ -77,6 +79,7 @@ export type OnboardingActionError = {
     | 'missing_cli'
     | 'empty_sources'
     | 'sources_unreadable'
+    | 'sources_too_large'
     | 'sample_collision'
     | 'provider_auth'
     | 'provider_rate_limited'
@@ -181,9 +184,13 @@ export async function attachOnboardingPdfAction(
   if (typeof subjectId !== 'string' || !(file instanceof File)) {
     return { ok: false, reason: 'invalid' };
   }
-  if (file.size > MAX_SOURCE_PDF_BYTES) return { ok: false, reason: 'too_large' };
+  const text = isSoloMode() && /\.(txt|md)$/i.test(file.name);
+  if (file.size > (text ? MAX_SOURCE_TEXT_BYTES : MAX_SOURCE_PDF_BYTES))
+    return { ok: false, reason: 'too_large' };
   const bytes = Buffer.from(await file.arrayBuffer());
-  const result = attachSourcePdf({ subjectId, filename: file.name, bytes });
+  const result = attachSourcePdf({ subjectId, filename: file.name, bytes }, undefined, {
+    allowText: isSoloMode(),
+  });
   if (!result.ok) return { ok: false, reason: result.reason };
   return { ok: true, snapshot: await snapshot(gate.householdId) };
 }
@@ -198,7 +205,7 @@ export async function detachOnboardingPdfAction(
   if (typeof subjectId !== 'string' || typeof filename !== 'string') {
     return { ok: false, reason: 'invalid' };
   }
-  const result = detachSourcePdf({ subjectId, filename });
+  const result = detachSourcePdf({ subjectId, filename }, undefined, { allowText: isSoloMode() });
   if (!result.ok) return { ok: false, reason: result.reason };
   return { ok: true, snapshot: await snapshot(gate.householdId) };
 }
@@ -418,7 +425,10 @@ export async function applyOnboardingEmitAction(formData?: FormData): Promise<
 export async function skipOnboardingAction(): Promise<OnboardingActionError | void> {
   const gate = await requireOnboardingAdmin();
   if (!gate.ok) return gate;
-  skipOnboarding(gate.householdId);
+  // Leaving ongoing solo content management must not undo historical completion.
+  if (!isSoloMode() || !getHouseholdOnboarding(gate.householdId).complete) {
+    skipOnboarding(gate.householdId);
+  }
   redirect('/');
 }
 

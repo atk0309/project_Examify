@@ -13,6 +13,16 @@ export class ProviderConfigError extends Error {
   }
 }
 
+/** Source attachments exceed the chosen provider's bounded input size. */
+export class SourcesTooLargeError extends Error {
+  readonly code = 'SOURCES_TOO_LARGE';
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'SourcesTooLargeError';
+  }
+}
+
 /** The AI command-line tool a provider runs (`claude`, `codex`) is not installed where we look. */
 export class CliNotFoundError extends ProviderConfigError {
   override readonly code = 'CLI_NOT_FOUND';

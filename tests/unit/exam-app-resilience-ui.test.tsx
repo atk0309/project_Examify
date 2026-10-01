@@ -79,6 +79,7 @@ vi.mock('next/navigation', async (importOriginal) => ({
   useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }),
 }));
 
+import { SAMPLE_QUESTIONS, SAMPLE_SUBJECTS } from '@/lib/exam/data';
 import { redirect } from 'next/navigation';
 import { ExamApp, type Resumable } from '@/components/exam/ExamApp';
 
@@ -116,6 +117,7 @@ function renderApp(
   props: {
     resumable?: Resumable[];
     role?: 'student' | 'parent';
+    solo?: boolean;
     marking?: ExamMarking;
     subjects?: Subject[];
     questionBank?: QuestionBank;
@@ -126,6 +128,9 @@ function renderApp(
     <Crashed>
       <ExamApp
         role={role}
+        solo={props.solo}
+        starterAvailable={props.solo}
+        canSetUpContent={props.solo}
         studentMode={role === 'parent'}
         initialProgress={empty}
         subjects={props.subjects ?? subjects}
@@ -804,5 +809,58 @@ describe('ExamApp recovers saved pending marking', () => {
     expect(recordAttempt).toHaveBeenCalledTimes(1);
     expect(screen.getByTestId('results-score')).toHaveTextContent('2/2');
     expect(screen.queryByTestId('retry-marking')).toBeNull();
+  });
+});
+
+describe('personal study entry', () => {
+  it('starts a sample immediately without family navigation or sign out', async () => {
+    recordAttempt.mockImplementation(defaultRecordAttempt);
+    renderApp({
+      role: 'parent',
+      solo: true,
+      subjects: SAMPLE_SUBJECTS,
+      questionBank: SAMPLE_QUESTIONS,
+      marking: { written: 'unmarked' },
+    });
+    expect(screen.getByText('Personal study')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Sign out' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Back to parent view')).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Create your question bank' })).toHaveAttribute(
+      'href',
+      '/onboarding',
+    );
+    expect(screen.getByRole('link', { name: 'Optional AI settings' })).toHaveAttribute(
+      'href',
+      '/settings/ai',
+    );
+    fireEvent.click(screen.getByTestId('solo-quick-start'));
+    await settle();
+    expect(beginExamSession).toHaveBeenCalled();
+    expect(screen.getAllByTestId('exam-choice').length).toBeGreaterThan(0);
+    const firstIds = beginExamSession.mock.calls.at(-1)![0].questionIds;
+    expect(firstIds).toEqual([
+      'maths-easy-1',
+      'maths-easy-2',
+      'maths-easy-3',
+      'maths-easy-4',
+      'maths-easy-5',
+    ]);
+    for (let index = 0; index < 5; index += 1) {
+      answer();
+      clickNext();
+      await settle();
+    }
+    expect(recordAttempt.mock.calls.at(-1)![0].items.every((item) => item.type === 'mcq')).toBe(
+      true,
+    );
+    vi.spyOn(Math, 'random').mockReturnValue(0); // A normal shuffled paper would change order.
+    fireEvent.click(await screen.findByRole('button', { name: 'Retry this exam' }));
+    await settle();
+    expect(beginExamSession.mock.calls.at(-1)![0].questionIds).toEqual(firstIds);
+  });
+
+  it('does not offer a starter when no suitable paper exists', () => {
+    renderApp({ solo: true, questionBank: {}, subjects: [] });
+    expect(screen.queryByTestId('solo-quick-start')).not.toBeInTheDocument();
   });
 });

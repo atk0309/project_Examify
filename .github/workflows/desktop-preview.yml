@@ -1,0 +1,78 @@
+name: Solo desktop preview
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-preview-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package-and-accept:
+    name: ${{ matrix.platform }} portable archive + clean runtime acceptance
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            platform: linux-x64
+            browsers: /tmp/examify-browser-fixture
+          - os: windows-2022
+            platform: win32-x64
+            browsers: 'C:\ExamifyBrowserFixture'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      NEXT_TELEMETRY_DISABLED: '1'
+      PLAYWRIGHT_BROWSERS_PATH: ${{ matrix.browsers }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 10.33.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.22.2
+          cache: pnpm
+      - name: Install exactly locked build dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Linux launcher security and packaging tests
+        if: runner.os == 'Linux'
+        run: node --test tests/desktop/launcher.test.mjs tests/desktop/windows-inventory.test.mjs tests/desktop/fixture-http-provider.test.mjs
+      - name: Windows launcher security and packaging tests under a standard user
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          ./scripts/desktop/acceptance-windows.ps1 -Repository $env:GITHUB_WORKSPACE -Node (Get-Command node.exe).Source -TestsOnly
+      - name: Build from clean committed source
+        run: node scripts/desktop/build.mjs
+      - name: Package native runtime with pinned Node archive verification
+        run: node scripts/desktop/package.mjs ci-${{ github.sha }}
+      - name: Install acceptance browser on Linux
+        if: runner.os == 'Linux'
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Install acceptance browser on Windows
+        if: runner.os == 'Windows'
+        run: pnpm exec playwright install chromium
+      - name: Linux installer and packaged app acceptance
+        if: runner.os == 'Linux'
+        run: node tests/desktop/acceptance.mjs build/desktop/linux-x64
+      - name: Windows Command Prompt installer and packaged app under a standard user
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          ./scripts/desktop/acceptance-windows.ps1 -Repository $env:GITHUB_WORKSPACE -Node (Get-Command node.exe).Source -Browsers $env:PLAYWRIGHT_BROWSERS_PATH
+      - name: Upload verified preview artifact (does not publish a release)
+        uses: actions/upload-artifact@v7
+        with:
+          name: examify-solo-${{ matrix.platform }}-${{ github.sha }}
+          path: build/desktop/${{ matrix.platform }}/
+          if-no-files-found: error
+          retention-days: 7

@@ -27,7 +27,7 @@ async function runGenerate(parsed: ParsedCli, io: CliIo): Promise<number> {
   const ingest = resolveCliLayer(parsed, io);
   if (!ingest) return 1;
   // IR, IR cache, page cache and run manifests live under the layer root;
-  // API keys always come from the checkout .env files.
+  // API keys come from the household checkout or solo persistent config store.
   const { root, repoRoot } = ingest;
 
   let targets;

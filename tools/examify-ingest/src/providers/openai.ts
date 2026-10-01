@@ -1,6 +1,6 @@
 import { openAiBankIrResponseFormat } from './openai-schema';
 import type { BankIR } from '../schema';
-import { buildOpenAiCompatibleUserContent } from './content';
+import { buildOpenAiUserContent } from './content';
 import {
   ProviderFailureError,
   parseProviderBankIr,
@@ -17,6 +17,7 @@ const KEY = 'OPENAI_API_KEY';
 
 async function callOpenAi(request: ProviderRequest, deps: ProviderDeps): Promise<BankIR> {
   const key = readRequiredKey(deps.env, KEY);
+  const content = buildOpenAiUserContent(request);
   const fetchFn = deps.fetch ?? fetch;
   const payload = await withProviderSignal(deps.signal, async (signal) => {
     const res = await fetchFn(OPENAI_URL, {
@@ -33,7 +34,7 @@ async function callOpenAi(request: ProviderRequest, deps: ProviderDeps): Promise
         response_format: openAiBankIrResponseFormat(request.subject.id),
         messages: [
           { role: 'system', content: request.prompt },
-          { role: 'user', content: buildOpenAiCompatibleUserContent(request) },
+          { role: 'user', content },
         ],
       }),
     });

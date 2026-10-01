@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
 import { OnboardingWizard } from '@/components/exam/OnboardingWizard';
 import { getSession } from '@/lib/auth';
-import { getAuthMode } from '@/lib/env';
+import { getAuthMode, isSoloMode } from '@/lib/env';
 import {
   canInvite,
   canRemoveMember,
@@ -13,11 +13,8 @@ import {
   listPendingInvites,
 } from '@/lib/households';
 import type { HouseholdMemberView } from '@/lib/household-types';
-import {
-  adminCanOpenOnboarding,
-  getOnboardingForUser,
-  getOnboardingPageSnapshot,
-} from '@/lib/onboarding';
+import { getOnboardingPageSnapshot } from '@/lib/onboarding';
+import { requireOnboardingAdmin } from '@/lib/onboarding-admin';
 
 export const dynamic = 'force-dynamic';
 
@@ -33,11 +30,8 @@ export default async function OnboardingPage() {
   const session = await getSession();
   if (!session.userId || !session.role) redirect('/signin');
 
-  const info = getOnboardingForUser(session.userId);
-  if (!adminCanOpenOnboarding({ role: info.role, onboardingComplete: info.complete })) {
-    redirect('/');
-  }
-  if (info.householdId == null) redirect('/');
+  const gate = await requireOnboardingAdmin();
+  if (!gate.ok) redirect('/');
 
   const membership = getMembershipForUser(session.userId);
   const pendingInvites =
@@ -60,10 +54,11 @@ export default async function OnboardingPage() {
     <div className="stage">
       <div className="app-frame app-frame-wizard">
         <OnboardingWizard
-          snapshot={await getOnboardingPageSnapshot(info.householdId)}
+          solo={isSoloMode()}
+          snapshot={await getOnboardingPageSnapshot(gate.householdId)}
           pendingInvites={pendingInvites}
           members={members}
-          canInvite={canInvite(session.userId)}
+          canInvite={!isSoloMode() && canInvite(session.userId)}
           authMode={getAuthMode()}
         />
       </div>

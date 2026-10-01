@@ -14,6 +14,7 @@ export {
   PROVIDER_TIMEOUT_MS,
   ProviderConfigError,
   ProviderFailureError,
+  SourcesTooLargeError,
   hasUsableKey,
   isAbortError,
   providerRequestSignal,

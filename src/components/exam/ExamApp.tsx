@@ -12,6 +12,7 @@
    answers and offers a retry; a paper the server refuses says so instead.
    ========================================================================== */
 import { useEffect, useRef, useState, useTransition, type CSSProperties } from 'react';
+import Link from 'next/link';
 import { unstable_rethrow, useRouter } from 'next/navigation';
 import {
   recordAttempt,
@@ -47,6 +48,7 @@ import {
 } from '@/lib/exam/attempts';
 import type { SessionRole } from '@/lib/auth';
 import { examUnmarkedWrittenNote, examWrittenLine, type ExamMarking } from '@/lib/onboarding-types';
+import { starterPaper, STARTER_IDS } from '@/lib/exam/starter';
 import { ProgressView } from './ProgressView';
 import { SubjectIcon, UIcon } from './icons';
 
@@ -219,6 +221,9 @@ function ResumeCard({
 function Dashboard({
   sat,
   roleLabel,
+  solo,
+  canSetUpContent,
+  onQuickStart,
   attemptCount,
   resumables,
   subjects,
@@ -230,6 +235,9 @@ function Dashboard({
 }: {
   sat: number;
   roleLabel: string;
+  solo: boolean;
+  canSetUpContent: boolean;
+  onQuickStart?: () => void;
   attemptCount: number;
   resumables: Resumable[];
   subjects: readonly Subject[];
@@ -245,11 +253,13 @@ function Dashboard({
         <span className="topbar-spacer" />
         <span className="topbar-label">{roleLabel}</span>
         <span className="topbar-spacer" />
-        <form action={signOut}>
-          <button className="topbar-btn" type="submit" aria-label="Sign out" title="Sign out">
-            {UIcon.signout}
-          </button>
-        </form>
+        {!solo && (
+          <form action={signOut}>
+            <button className="topbar-btn" type="submit" aria-label="Sign out" title="Sign out">
+              {UIcon.signout}
+            </button>
+          </form>
+        )}
       </header>
       <div className="hero">
         <p className="eyebrow">Exam Practice</p>
@@ -257,6 +267,51 @@ function Dashboard({
         <p className="subtitle">
           Short, focused mini exams. Take your time — every attempt makes the real thing easier.
         </p>
+        {solo && (
+          <>
+            <p className="subtitle">
+              Your practice and progress stay on this computer. No account needed.
+            </p>
+            {onQuickStart && (
+              <button
+                className="btn btn-primary"
+                onClick={onQuickStart}
+                data-testid="solo-quick-start"
+              >
+                Try a sample exam {UIcon.arrow}
+              </button>
+            )}
+            <p className="subtitle">
+              The sample has five fixed questions and automatic scoring, with no AI. Build your own
+              question bank next.
+            </p>
+            <p className="subtitle">
+              Choose subjects → add study material → set up optional AI → generate, review and apply
+              → practise. Return anytime to add more.
+            </p>
+            <nav className="solo-tools" aria-label="Study settings">
+              {canSetUpContent && (
+                <Link className="btn btn-primary" href="/onboarding">
+                  Create your question bank
+                </Link>
+              )}
+              <Link href="/settings/ai">Optional AI settings</Link>
+              <details>
+                <summary>Using AI and household mode</summary>
+                <p>
+                  Cloud AI sends selected study material or written answers to your chosen provider
+                  and may cost money. Bring your own key or supported account. A local model stays
+                  on this computer only when its endpoint and tools are local.
+                </p>
+                <p>
+                  Household mode is a separate, longer setup with accounts and invitations. Keep
+                  this solo installation private; use the household installation guide for shared
+                  access.
+                </p>
+              </details>
+            </nav>
+          </>
+        )}
         <button className="progress-link" onClick={onProgress} data-testid="progress-link">
           {UIcon.retry}
           <span>Your progress{attemptCount > 0 ? ` · ${attemptCount} done` : ''}</span>
@@ -852,6 +907,9 @@ const AUTOSAVE_DELAY = 700;
 export function ExamApp({
   role,
   studentMode = false,
+  solo = false,
+  canSetUpContent = false,
+  starterAvailable = false,
   initialProgress,
   resumable = [],
   subjects = SUBJECTS,
@@ -861,6 +919,10 @@ export function ExamApp({
   role: SessionRole;
   /** True when a parent is playing as a student — shows the exit affordance. */
   studentMode?: boolean;
+  /** Local-only self-study surface; server authorization remains authoritative. */
+  solo?: boolean;
+  canSetUpContent?: boolean;
+  starterAvailable?: boolean;
   initialProgress: ProgressData;
   /** Saved in-progress exams (server-fetched) the user can resume. */
   resumable?: Resumable[];
@@ -875,7 +937,7 @@ export function ExamApp({
 }) {
   const router = useRouter();
   const sat = 1; // balanced; the Tweaks panel is not shipped
-  const roleLabel = role === 'parent' ? 'Parent' : 'Student';
+  const roleLabel = solo ? 'Personal study' : role === 'parent' ? 'Parent' : 'Student';
 
   const [screen, setScreen] = useState<Screen>('dashboard');
   const [subject, setSubject] = useState<Subject | null>(null);
@@ -1028,32 +1090,35 @@ export function ExamApp({
     setSubject(s);
     setScreen('difficulty');
   };
-  const startExam = (diff: DifficultyId) => {
-    if (!subject) return;
-    const qs = buildExam(subject.id, diff, questionBank, {
-      written: marking.written !== 'unmarked',
-    });
+  const startExam = (diff: DifficultyId, selected = subject, fixedStarter = false) => {
+    if (!selected) return;
+    const qs = fixedStarter
+      ? starterPaper(questionBank)
+      : buildExam(selected.id, diff, questionBank, {
+          written: marking.written !== 'unmarked',
+        });
     if (qs.length === 0) return;
     flushPendingSave(); // the exam being left keeps its latest answers
-    replaceLiveExam(comboKey(subject.id, diff));
+    replaceLiveExam(comboKey(selected.id, diff));
     const blank: Answer[] = qs.map(() => null);
     const id = newSubmissionId();
     setSubmissionId(id);
+    setSubject(selected);
     setDifficulty(diff);
     setQuestions(qs);
     setAnswers(blank);
     setCurrent(0);
-    setExamSubject(subject);
+    setExamSubject(selected);
     setDismissed((prev) => {
       // Re-starting a combo makes it eligible to show again.
-      if (!prev.has(comboKey(subject.id, diff))) return prev;
+      if (!prev.has(comboKey(selected.id, diff))) return prev;
       const next = new Set(prev);
-      next.delete(comboKey(subject.id, diff));
+      next.delete(comboKey(selected.id, diff));
       return next;
     });
     setRetryError(null);
     setScreen('exam');
-    persist(beginExamSession, subject, diff, qs, blank, 0, id); // create the resumable draft up-front
+    persist(beginExamSession, selected, diff, qs, blank, 0, id); // create the resumable draft up-front
   };
 
   // Restore a saved draft straight into the exam at the question it left off.
@@ -1178,7 +1243,14 @@ export function ExamApp({
   };
   const retry = () => {
     if (!subject) return;
-    startExam(difficulty);
+    const sameStarter =
+      solo &&
+      starterAvailable &&
+      subject.id === 'maths' &&
+      difficulty === 'easy' &&
+      questions.length === STARTER_IDS.length &&
+      questions.every((question, index) => question.id === STARTER_IDS[index]);
+    startExam(difficulty, subject, sameStarter);
   };
 
   const retryMarking = async (attemptId: number) => {
@@ -1247,6 +1319,20 @@ export function ExamApp({
       <Dashboard
         sat={sat}
         roleLabel={roleLabel}
+        solo={solo}
+        canSetUpContent={canSetUpContent}
+        onQuickStart={
+          solo &&
+          starterAvailable &&
+          starterPaper(questionBank).length === 5 &&
+          subjects.some((s) => s.id === 'maths') &&
+          resumables.length === 0
+            ? () => {
+                const sample = subjects.find((s) => s.id === 'maths');
+                if (sample) startExam('easy', sample, true);
+              }
+            : undefined
+        }
         attemptCount={progress.attempts.length}
         resumables={resumables}
         subjects={subjects}
@@ -1346,7 +1432,7 @@ export function ExamApp({
   return (
     <div className="stage">
       <div className="app-frame">
-        {studentMode && (
+        {studentMode && !solo && (
           <div className="student-mode-bar" role="status">
             <span className="student-mode-tag">Student View</span>
             <button className="student-mode-exit" onClick={exitStudentMode} type="button">

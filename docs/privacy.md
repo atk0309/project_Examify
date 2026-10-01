@@ -43,3 +43,20 @@ Sent to a third party only when you turn the feature on:
 - **Fonts.** Pages load the Newsreader and Hanken Grotesk stylesheet from Google Fonts.
 - **Optional:** Cloudflare Turnstile (`TURNSTILE_ENABLED=1`) and Plausible analytics
   (`PLAUSIBLE_DOMAIN`).
+
+## Personal-study launcher
+
+In solo mode your practice profile, attempts and uploaded files live in the
+private local installation. The browser connects through a loopback-only gateway;
+there is no routine email/password login. This does not isolate you from other
+people or software with access to the same operating-system account. Cookies
+are host-scoped rather than port-scoped, so another local service on 127.0.0.1
+can receive local cookies if you visit it. Solo assumes trusted local software
+and is not a hostile-multi-user-machine isolation boundary. Solo mode
+does not load the household analytics script or remote font stylesheets.
+
+Optional cloud AI still sends selected sources or written answers to the provider
+you choose. Locally hosting Examify does not make a remote model endpoint or an
+account-backed CLI local. Generation/marking needs your explicit provider setup;
+the shipped multiple-choice practice needs none. Installation downloads contact
+the package host. Back up both local data and configuration privately.

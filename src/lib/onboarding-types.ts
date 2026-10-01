@@ -70,7 +70,7 @@ export type OnboardingAiCapabilities = {
 
 export const ONBOARDING_AI_CAPABILITIES: Record<OnboardingAiMode, OnboardingAiCapabilities> = {
   cloud: { pdfs: 'direct', signIn: 'api-key' },
-  'cloud-openai': { pdfs: 'page-images', signIn: 'api-key' },
+  'cloud-openai': { pdfs: 'direct', signIn: 'api-key' },
   'claude-cli': { pdfs: 'direct', signIn: 'cli-login' },
   'codex-cli': { pdfs: 'page-images', signIn: 'cli-login' },
   'local-agent': { pdfs: 'page-images', signIn: 'host-settings' },
@@ -148,7 +148,7 @@ export function onboardingModeErrorCopy(
   }
   if (reason === 'missing_local') {
     if (mode === 'local-agent') {
-      return 'Local endpoint needs EXAMIFY_LLM_BASE_URL and EXAMIFY_LLM_MODEL (the model’s name; for Ollama, one that `ollama list` shows) in this host’s .env.';
+      return 'Local endpoint needs EXAMIFY_LLM_BASE_URL and EXAMIFY_LLM_MODEL (the model’s name; for Ollama, one that `ollama list` shows) in AI settings (or this host’s .env).';
     }
     if (mode === 'local-cli')
       return 'Local command needs EXAMIFY_INGEST_LOCAL_CMD in this host’s .env.';
@@ -576,7 +576,7 @@ export type OnboardingSubject = {
   label: string;
   icon: string;
   hasIr: boolean;
-  /** PDF filenames under content/source-pdfs/<id>/ (Files step). */
+  /** Uploaded PDF/text-note filenames under content/source-pdfs/<id>/ (Files step). */
   sourceFiles: string[];
   /**
    * Rel-paths generate would read: source-pdfs/<id>/…, standalone
@@ -862,8 +862,11 @@ export function onboardingSourceCountLabel(
 ): string {
   const sources = subject.generateSources.length;
   if (sources > 0) return `${sources} source${sources === 1 ? '' : 's'}`;
-  const pdfs = subject.sourceFiles.length;
-  if (pdfs > 0) return `${pdfs} PDF${pdfs === 1 ? '' : 's'}`;
+  const uploads = subject.sourceFiles.length;
+  if (uploads > 0) {
+    const label = subject.sourceFiles.every((name) => /\.pdf$/i.test(name)) ? 'PDF' : 'source';
+    return `${uploads} ${label}${uploads === 1 ? '' : 's'}`;
+  }
   // Hand-authored BankIR with no CLI sources is not an empty subject.
   if (subject.hasIr) return 'Hand-authored';
   return 'No files yet';

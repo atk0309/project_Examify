@@ -11,6 +11,11 @@ const UNIT_DATA_DIR = path.join(TMP_ROOT, `unit-data-${process.pid}`);
 
 Reflect.set(process.env, 'NODE_ENV', 'test');
 Reflect.set(process.env, 'EXAMIFY_DATA_DIR', UNIT_DATA_DIR);
+// Never let a developer's solo launcher settings redirect tests to real keys.
+Reflect.deleteProperty(process.env, 'EXAMIFY_MODE');
+Reflect.deleteProperty(process.env, 'EXAMIFY_CONFIG_DIR');
+Reflect.deleteProperty(process.env, 'EXAMIFY_SOLO_LAUNCH_TOKEN');
+Reflect.deleteProperty(process.env, 'EXAMIFY_SOLO_TRANSPORT_SECRET');
 // Same for the database: never a developer's exported DATABASE_URL.
 Reflect.set(process.env, 'DATABASE_URL', `file:${UNIT_DB}`);
 if (!process.env.AUTH_SECRET)

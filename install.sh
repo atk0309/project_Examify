@@ -117,7 +117,12 @@ Upgrading (the installer never starts or stops services; stop the server first):
   First upgrade of an older install:
   curl -fsSL …/install.sh | bash -s -- --upgrade
 
+Personal study (versioned package installer required; no public release yet):
+  ./install.sh --solo [--root <path>] [--archive <package.tar.gz>]
+  Opens a local browser and creates a relaunch shortcut. No household setup.
+
 Flags:
+  --solo                   run the sibling pinned personal-study installer
   --data-dir <path>        family data folder for a new .env (skips the prompt)
   --upgrade                back up, move family content out of the checkout,
                            merge upstream, then install / migrate / build / verify
@@ -131,7 +136,7 @@ Flags:
   --yes                    same as EXAMIFY_NONINTERACTIVE=1
   --help                   print this usage (safe when $0 is bash)
 
-OpenAI / PDF generate needs pdftoppm (poppler-utils) on PATH.
+Codex / local endpoint PDF generate needs pdftoppm (poppler-utils) on PATH.
 EOF
 }
 
@@ -1872,6 +1877,23 @@ archive_has_env() {
 }
 
 main() {
+  # Deliberately dispatch before household configuration, checkout or upgrade
+  # mutation. Never locate an executable through the caller's working directory.
+  if [ "${1-}" = "--solo" ]; then
+    shift
+    local source_file="${BASH_SOURCE[0]-}" solo_installer
+    if [ -z "$source_file" ] || [ ! -f "$source_file" ]; then
+      echo "Personal study requires the versioned Windows/Linux package installer. See docs/solo-installation.md; no moving-main download is executed." >&2
+      return 1
+    fi
+    solo_installer="$(cd -- "$(dirname -- "$source_file")" && pwd)/install-solo.sh"
+    if [ ! -f "$solo_installer" ]; then
+      echo "The matching personal-study installer is missing. Use the installer included with the verified platform package." >&2
+      return 1
+    fi
+    bash "$solo_installer" "$@"
+    return $?
+  fi
   REPO_URL="${EXAMIFY_REPO_URL:-https://github.com/atk0309/project_Examify.git}"
   PNPM_VERSION="${EXAMIFY_PNPM_VERSION:-10.33.0}"
   MIN_NODE="22.22.2"
@@ -2079,7 +2101,7 @@ main() {
         echo "Kid invite OTP codes are read from that directory."
       fi
     fi
-    echo "OpenAI / PDF generate: install pdftoppm (poppler-utils) before using Cloud generate."
+    echo "Codex / local endpoint PDF generate: install pdftoppm (poppler-utils); OpenAI reads PDFs directly."
   fi
   echo "Back up the family data folder with: node scripts/examify-data.mjs backup"
 }
@@ -2616,10 +2638,10 @@ collect_ai_settings() {
   ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-test}"
   echo
   echo "Optional: OPENAI_API_KEY for /onboarding Cloud (OpenAI) generate."
-  echo "That generate sends the subject's study files (PDF pages, notes) to OpenAI."
+  echo "That generate sends the subject's study files (original PDFs, images, notes) to OpenAI."
   echo "Same .env store as the wizard. Leave blank to skip (you can set it later)."
-  echo "OpenAI generate from PDFs needs pdftoppm (poppler-utils) on PATH; without it,"
-  echo "PDF-only generate fails closed. Install: apt install poppler-utils  (or brew install poppler)"
+  echo "OpenAI reads PDFs directly with a PDF/vision-capable model (default: gpt-4o); no pdftoppm needed."
+  echo "PDF sources must total less than 50 MB per subject; PDF text and pages count toward API usage."
   prompt OPENAI_API_KEY "OpenAI API key" "" secret
   # A key typed here is the household's starting mode, unless the host chose one.
   if [ -z "${EXAMIFY_AI_MODE-}" ]; then

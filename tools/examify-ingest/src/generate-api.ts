@@ -35,7 +35,7 @@ export {
   type BankIrPresence,
   type WriteBankIrOptions,
 } from './write-atomic';
-export { mergeRepoEnvFiles, parseEnvFile } from './repo-env';
+export { mergeRepoEnvFiles, mergeResolvedEnvStoreFiles, parseEnvFile } from './repo-env';
 export { loadGeneratePrompt, findIngestPackageRoot, generatePromptPath } from './prompt';
 export { sampleBankFrozenIds } from './frozen-ids';
 export {
@@ -73,6 +73,7 @@ export {
   PROVIDER_TIMEOUT_MS,
   ProviderConfigError,
   ProviderFailureError,
+  SourcesTooLargeError,
   UNTRUSTED_SOURCE_NOTE,
   isAbortError,
   providerRequestSignal,

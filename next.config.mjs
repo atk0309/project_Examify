@@ -6,6 +6,10 @@ const projectRoot = path.dirname(fileURLToPath(import.meta.url));
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  output: 'standalone',
+  outputFileTracingIncludes: {
+    '/*': ['node_modules/better-sqlite3/**/*'],
+  },
   pageExtensions: ['ts', 'tsx'],
   poweredByHeader: false,
   serverExternalPackages: ['better-sqlite3'],

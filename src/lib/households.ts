@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import { and, eq, gte, isNull } from 'drizzle-orm';
 import { db, schema } from './db';
 import { parseFamilies } from './families';
+import { isSoloMode } from './env';
 import type { HouseholdRole, InviteRole } from './db/schema';
 import type { PendingInvite } from './household-types';
 
@@ -64,6 +65,7 @@ export function importLegacyFamiliesIfNeeded(): {
   skipped: number;
   error?: string;
 } {
+  if (isSoloMode()) return { imported: 0, skipped: 0 };
   if (legacyImportAttempted) return { imported: 0, skipped: 0 };
   legacyImportAttempted = true;
 
@@ -194,12 +196,14 @@ export function isParentLike(role: HouseholdRole): boolean {
 }
 
 export function canInvite(userId: number): boolean {
+  if (isSoloMode()) return false;
   const membership = getMembershipForUser(userId);
   return Boolean(membership && isParentLike(membership.role));
 }
 
 /** True iff `email` is a household member allowed to sign in as `role`. */
 export function isHouseholdEmailAllowed(role: 'student' | 'parent', email: string): boolean {
+  if (isSoloMode()) return false;
   const membership = getMembershipForEmail(email);
   if (!membership) return false;
   if (role === 'student') return membership.role === 'student';
@@ -220,6 +224,7 @@ export function bootstrapHousehold(input: {
   householdName: string;
   passwordHash?: string;
 }): BootstrapResult {
+  if (isSoloMode()) return { ok: false, reason: 'already_setup' };
   importLegacyFamiliesIfNeeded();
   const email = normaliseEmail(input.email);
   const name = input.householdName.trim();
@@ -270,6 +275,7 @@ export function createHouseholdInvite(input: {
   email?: string | null;
   now?: number;
 }): CreateInviteResult {
+  if (isSoloMode()) return { ok: false, reason: 'forbidden' };
   const membership = getMembershipForUser(input.actorUserId);
   if (!membership || !isParentLike(membership.role)) {
     return { ok: false, reason: 'forbidden' };
@@ -374,6 +380,7 @@ export function revokeHouseholdInvite(
 }
 
 export function lookupInvite(token: string, now = Date.now()): PublicInvite | null {
+  if (isSoloMode()) return null;
   if (!token) return null;
   const tokenHash = hashToken(token);
   const row = db
@@ -424,6 +431,7 @@ export function attachMembershipFromInvite(
   email: string,
   now = Date.now(),
 ): AttachInviteResult {
+  if (isSoloMode()) return { ok: false, reason: 'invite-invalid' };
   const invite = tx
     .select()
     .from(schema.householdInvites)

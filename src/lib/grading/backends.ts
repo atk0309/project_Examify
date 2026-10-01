@@ -51,11 +51,11 @@ export const CLI_GRADING_TIMEOUT_MS = 45_000;
 type ProviderEnv = Record<string, string | undefined>;
 
 /**
- * The env the CLIs and the local endpoint read: the host env over the repo
+ * The env the CLIs and the local endpoint read: the host env over the settings
  * `.env` files, the same merge generate and the wizard's badges use.
  */
 export function markingHostEnv(): ProviderEnv {
-  return ingest.mergeRepoEnvFiles(getEnvStoreRoot(), process.env);
+  return ingest.mergeResolvedEnvStoreFiles(getEnvStoreRoot(), process.env);
 }
 
 /** The live `OPENAI_API_KEY`, trimmed; blank is unset. */

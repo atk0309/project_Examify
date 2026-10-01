@@ -19,6 +19,7 @@ import {
   type PageImage,
 } from './pages';
 import { loadGeneratePrompt } from './prompt';
+import { assertOpenAiPdfInputSize, OPENAI_NATIVE_PDF_PROFILE } from './providers/content';
 import {
   getProvider,
   hasUsableKey,
@@ -307,12 +308,18 @@ export async function generateSubject(request: GenerateRequest): Promise<Generat
     request.model?.trim() ||
     (adapter.modelEnv ? env[adapter.modelEnv]?.trim() : '') ||
     adapter.defaultModel;
-  // Rasterize in temp (or reuse existing page cache). Durable page writes wait
+  const nativeOpenAiPdf =
+    request.provider === 'openai' && request.sources.some((source) => source.kind === 'pdf');
+  if (nativeOpenAiPdf) assertOpenAiPdfInputSize(request.sources);
+  // OpenAI reads PDF bytes directly, without invoking or reusing pdftoppm.
+  // Other providers rasterize in temp (or reuse existing page cache). Durable page writes wait
   // for the same final abort gate as IR / IR cache / manifest.
-  const pageImages = resolvePageImages(request.repoRoot, request.sources, {
-    persist: false,
-    rasterize: request.rasterize,
-  });
+  const pageImages = nativeOpenAiPdf
+    ? []
+    : resolvePageImages(request.repoRoot, request.sources, {
+        persist: false,
+        rasterize: request.rasterize,
+      });
   assertReadableProviderInput(request.provider, env, request.sources, pageImages);
   const pageImageHashes = pageImageHashesOf(pageImages);
   const cacheKey = buildCacheKey({
@@ -325,6 +332,7 @@ export async function generateSubject(request: GenerateRequest): Promise<Generat
     subject: request.subject,
     pageImageHashes,
     pageRasterProfile: PAGE_RASTER_PROFILE,
+    ...(nativeOpenAiPdf ? { inputProfile: OPENAI_NATIVE_PDF_PROFILE } : {}),
     ...(adapter.transport ? { transport: adapter.transport(env) } : {}),
   });
 
@@ -424,9 +432,9 @@ export async function generateSubject(request: GenerateRequest): Promise<Generat
 }
 
 /**
- * OpenAI-compatible chat cannot inline raw PDF bytes. Fail closed when the
+ * Generic local HTTP and Codex cannot inline raw PDF bytes. Fail closed when the
  * only sources are PDFs and no page images (or text/image) are available.
- * Anthropic inlines PDFs; local CMD sends raw bytes; `--provider test` does not read files.
+ * OpenAI/Anthropic inline PDFs; local CMD sends raw bytes; `--provider test` does not read files.
  */
 export function assertReadableProviderInput(
   provider: GenerateProviderId,
@@ -434,8 +442,9 @@ export function assertReadableProviderInput(
   sources: readonly ResolvedSource[],
   pageImages: readonly PageImage[],
 ): void {
-  // Anthropic and Claude Code read PDFs as documents.
+  // OpenAI, Anthropic and Claude Code read PDFs as documents.
   if (provider === 'test' || provider === 'anthropic' || provider === 'claude-cli') return;
+  if (provider === 'openai' && sources.some((source) => source.kind === 'pdf')) return;
   if (pageImages.length > 0) return;
   if (sources.some((source) => source.kind === 'text' || source.kind === 'image')) return;
   if (provider === 'local' && (env.EXAMIFY_INGEST_LOCAL_CMD?.trim() ?? '')) return;

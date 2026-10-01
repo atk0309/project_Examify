@@ -1,4 +1,7 @@
-# Install and first login
+# Household install and first login
+
+For private self-study on this computer, start with the [solo launcher guide](solo-installation.md).
+This guide is the optional shared/household path and remains the upgrade path for existing families.
 
 ## Before you start
 
@@ -34,9 +37,9 @@ If your Node distribution does not include Corepack, install pnpm 10.33.0 using
 native SQLite bindings: if installation must compile them, your OS also needs
 Python and C/C++ build tools. Keep the actual install error when asking for help.
 
-The installer is a Bash workflow. CI exercises it on Linux. macOS and Windows
-installation are not verified by that CI; on Windows use a Linux environment
-such as WSL rather than pasting Bash commands into PowerShell.
+This advanced household installer is a Bash workflow exercised on Linux. For
+Windows personal study, use the native Windows package described in the solo
+guide; do not paste this Bash workflow into Command Prompt.
 
 ## Install
 

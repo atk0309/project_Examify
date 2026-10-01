@@ -27,7 +27,8 @@ export function pagesCacheDir(repoRoot: string, pdfSha256: string): string {
  * every cacheKey (including no-page runs) and miss existing
  * `.examify-ingest/cache/ir` entries. `transport` is only present for a
  * provider with more than one (local: command vs endpoint), so every
- * other provider's keys are unchanged.
+ * other provider's keys are unchanged. `inputProfile` is present only when a
+ * provider's source representation changes (OpenAI native PDF inputs).
  */
 export function buildCacheKey(input: {
   promptVersion: string;
@@ -40,6 +41,7 @@ export function buildCacheKey(input: {
   pageImageHashes: readonly string[];
   pageRasterProfile: string;
   transport?: string;
+  inputProfile?: string;
 }): string {
   return sha256Bytes(
     stableJson({
@@ -53,6 +55,7 @@ export function buildCacheKey(input: {
       pageImageHashes: [...input.pageImageHashes],
       pageRasterProfile: input.pageRasterProfile,
       ...(input.transport ? { transport: input.transport } : {}),
+      ...(input.inputProfile ? { inputProfile: input.inputProfile } : {}),
     }),
   );
 }

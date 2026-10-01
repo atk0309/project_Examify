@@ -24,7 +24,7 @@ import {
   isAuthoritativeCatalogInput,
   hasExistingBankIr,
   loadIrFiles,
-  mergeRepoEnvFiles,
+  mergeResolvedEnvStoreFiles,
   planEmit,
   plannedInsideFamilyGenerated,
   publicQuestionIds,
@@ -54,6 +54,7 @@ import {
   getEnvStoreRoot,
 } from '@/lib/env-store';
 import { getMembershipForUser } from '@/lib/households';
+import { isSoloMode } from '@/lib/env';
 import { findRepoRoot } from '@/lib/repo-root';
 import {
   EMPTY_AUTHORITATIVE_EMIT,
@@ -112,6 +113,7 @@ export const SOURCE_PDFS_REL = 'content/source-pdfs';
 export const BANK_IR_FILE = 'bank.ir.json';
 export { SUBJECT_META_FILE };
 export const MAX_SOURCE_PDF_BYTES = 8 * 1024 * 1024;
+export const MAX_SOURCE_TEXT_BYTES = 1024 * 1024;
 /** Server Action multipart ceiling — above {@link MAX_SOURCE_PDF_BYTES} plus form fields. */
 export const ONBOARDING_ACTION_BODY_LIMIT_BYTES = MAX_SOURCE_PDF_BYTES + 2 * 1024 * 1024;
 export const SUBJECT_LABEL_MAX = 40;
@@ -200,8 +202,10 @@ export function adminShouldAutoStartOnboarding(input: {
 export function adminCanOpenOnboarding(input: {
   role: HouseholdRole | null | undefined;
   onboardingComplete: boolean;
+  /** Verified local solo profiles use this wizard for ongoing content management. */
+  solo?: boolean;
 }): boolean {
-  return isHouseholdAdmin(input.role) && !input.onboardingComplete;
+  return isHouseholdAdmin(input.role) && (input.solo === true || !input.onboardingComplete);
 }
 
 export function adminNeedsOnboardingChip(input: {
@@ -234,13 +238,17 @@ export type UploadNameResult =
  * dropped, dashes / `+` become `-`, `&` becomes `and`. Anything with a path
  * separator or NUL is refused (`invalid_name`), never guessed at. The result
  * always passes {@link isSafeUploadName}; an empty stem becomes `upload.pdf`.
+ * Solo uploads explicitly opt into `.txt`/`.md`, preserving that safe extension.
  */
-export function sanitizeUploadName(raw: string): UploadNameResult {
+export function sanitizeUploadName(raw: string, allowText = false): UploadNameResult {
   const name = raw.trim();
   if (!name || /[/\\\0]/.test(name)) return { ok: false, reason: 'invalid_name' };
-  if (!name.toLowerCase().endsWith('.pdf')) return { ok: false, reason: 'invalid_type' };
+  const extension = path.extname(name).toLowerCase();
+  if (!(allowText ? ['.pdf', '.txt', '.md'] : ['.pdf']).includes(extension)) {
+    return { ok: false, reason: 'invalid_type' };
+  }
   const stem = name
-    .slice(0, -'.pdf'.length)
+    .slice(0, -extension.length)
     .normalize('NFKD')
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/['‘’`"“”]/g, '')
@@ -251,12 +259,13 @@ export function sanitizeUploadName(raw: string): UploadNameResult {
     .replace(/\s+/g, ' ')
     .slice(0, UPLOAD_STEM_MAX)
     .replace(/^[\s._-]+|[\s.]+$/g, '');
-  return { ok: true, filename: `${stem || 'upload'}.pdf` };
+  return { ok: true, filename: `${stem || 'upload'}${extension}` };
 }
 
 function uploadNameCandidate(filename: string, attempt: number): string {
   if (attempt === 1) return filename;
-  return `${filename.slice(0, -'.pdf'.length)} (${attempt}).pdf`;
+  const extension = path.extname(filename);
+  return `${filename.slice(0, -extension.length)} (${attempt})${extension}`;
 }
 
 function sameFileBytes(absPath: string, bytes: Buffer): boolean {
@@ -270,6 +279,16 @@ function sameFileBytes(absPath: string, bytes: Buffer): boolean {
 /** PDF files start with the `%PDF` magic. Extension alone is not enough. */
 export function hasPdfMagic(bytes: Buffer): boolean {
   return bytes.byteLength >= 4 && bytes.subarray(0, 4).equals(Buffer.from('%PDF', 'ascii'));
+}
+
+/** Notes are nonempty UTF-8 data, never an executable or a binary disguised as text. */
+export function isUtf8StudyText(bytes: Buffer): boolean {
+  try {
+    const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    return text.trim().length > 0 && !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(text);
+  } catch {
+    return false;
+  }
 }
 
 function subjectsDir(root = getOnboardingContentRoot()): string {
@@ -301,11 +320,14 @@ function readJsonUnknown(absPath: string): unknown | null {
   }
 }
 
-function listPdfNames(subjectId: string, root: string): string[] {
+function listUploadedSourceNames(subjectId: string, root: string): string[] {
   const dir = path.join(sourcePdfsDir(root), subjectId);
   try {
     return readdirSync(dir)
-      .filter((name) => name.toLowerCase().endsWith('.pdf') && isSafeUploadName(name))
+      .filter(
+        (name) =>
+          (isSoloMode() ? /\.(pdf|txt|md)$/i : /\.pdf$/i).test(name) && isSafeUploadName(name),
+      )
       .sort();
   } catch (error) {
     if (isEnoent(error)) return [];
@@ -358,7 +380,7 @@ export function listOnboardingSubjects(root = getOnboardingContentRoot()): Onboa
       label,
       icon,
       hasIr,
-      sourceFiles: listPdfNames(id, root),
+      sourceFiles: listUploadedSourceNames(id, root),
       generateSources: listOnboardingGenerateSources(id, root),
     };
   });
@@ -530,11 +552,11 @@ function liveSubjectSummaries(root: string): OnboardingLiveSubject[] {
 
 /**
  * The environment wizard generate runs with: this process's env, with unset
- * keys filled from the checkout `.env` / `.env.local` (the env store). Local
+ * keys filled from the installation `.env` / `.env.local` (the env store). Local
  * endpoint / command settings and the Claude Code / Codex binary are read here.
  */
 export function onboardingHostEnv(): Record<string, string | undefined> {
-  return mergeRepoEnvFiles(getEnvStoreRoot(), process.env);
+  return mergeResolvedEnvStoreFiles(getEnvStoreRoot(), process.env);
 }
 
 function aiFlags(hostEnv: Record<string, string | undefined> = onboardingHostEnv()): {
@@ -557,8 +579,8 @@ function aiFlags(hostEnv: Record<string, string | undefined> = onboardingHostEnv
   openaiGradingStubActive: boolean;
 } {
   return {
-    // Both keys: wizard + install.sh write the same repo-root `.env`
-    // (findRepoRoot) and update process.env. OPENAI_API_KEY is not in
+    // Both keys: wizard + installer use the same resolved `.env` store
+    // and update process.env. OPENAI_API_KEY is not in
     // env.ts; ANTHROPIC_API_KEY is (grader), but the configured badge
     // must follow the live store, not the boot-time env.ts snapshot.
     anthropicConfigured: envStoreSecretConfigured('ANTHROPIC_API_KEY'),
@@ -890,22 +912,30 @@ export type AttachPdfResult =
     };
 
 /**
- * Store an uploaded PDF under `content/source-pdfs/<id>/` with a sanitized
+ * Store an uploaded PDF (or explicitly allowed solo text notes) under the
+ * legacy source directory `content/source-pdfs/<id>/` with a sanitized
  * basename ({@link sanitizeUploadName}). `%PDF` magic and the 8 MiB cap still
- * apply. A different file with the same stored name gets ` (2)`, ` (3)`, …
+ * apply. Text notes require strict UTF-8 and a 1 MiB cap. A different file
+ * with the same stored name gets ` (2)`, ` (3)`, …
  * (exclusive create, so nothing is clobbered); the same bytes again is a no-op.
  */
 export function attachSourcePdf(
   input: { subjectId: string; filename: string; bytes: Buffer },
   root = getOnboardingContentRoot(),
+  options: { allowText?: boolean } = {},
 ): AttachPdfResult {
   const subjectId = normalizeSubjectId(input.subjectId);
   if (!isValidSubjectId(subjectId)) return { ok: false, reason: 'invalid_id' };
   if (!existsSync(path.join(subjectsDir(root), subjectId))) return { ok: false, reason: 'missing' };
-  const name = sanitizeUploadName(input.filename);
+  const name = sanitizeUploadName(input.filename, options.allowText === true);
   if (!name.ok) return name;
-  if (input.bytes.byteLength > MAX_SOURCE_PDF_BYTES) return { ok: false, reason: 'too_large' };
-  if (!hasPdfMagic(input.bytes)) return { ok: false, reason: 'invalid_type' };
+  const text = /\.(txt|md)$/.test(name.filename);
+  if (input.bytes.byteLength > (text ? MAX_SOURCE_TEXT_BYTES : MAX_SOURCE_PDF_BYTES)) {
+    return { ok: false, reason: 'too_large' };
+  }
+  if (text ? !isUtf8StudyText(input.bytes) : !hasPdfMagic(input.bytes)) {
+    return { ok: false, reason: 'invalid_type' };
+  }
 
   const dir = path.join(sourcePdfsDir(root), subjectId);
   // The stored file itself is created with `wx`, which never follows a link.
@@ -936,12 +966,15 @@ export type DetachPdfResult =
 export function detachSourcePdf(
   input: { subjectId: string; filename: string },
   root = getOnboardingContentRoot(),
+  options: { allowText?: boolean } = {},
 ): DetachPdfResult {
   const subjectId = normalizeSubjectId(input.subjectId);
   if (!isValidSubjectId(subjectId) || !isSafeUploadName(input.filename)) {
     return { ok: false, reason: 'invalid_id' };
   }
-  if (!input.filename.toLowerCase().endsWith('.pdf')) return { ok: false, reason: 'invalid_id' };
+  if (!(options.allowText ? /\.(pdf|txt|md)$/i : /\.pdf$/i).test(input.filename)) {
+    return { ok: false, reason: 'invalid_id' };
+  }
   const target = path.join(sourcePdfsDir(root), subjectId, input.filename);
   if (!isFamilyWritePathSafe(root, target)) return { ok: false, reason: 'unsafe_path' };
   if (!existsSync(target) || !statSync(target).isFile()) return { ok: false, reason: 'missing' };

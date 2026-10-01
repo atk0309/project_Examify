@@ -1,57 +1,47 @@
 # Examify
 
-Self-hosted exam practice for families. Create a household, invite your family,
-and practise with multiple-choice and written questions. Progress, accounts and
-study files live on your server. Optional AI generates questions from your study
-material and marks written answers.
+Personal exam practice on your own computer. Start with a short sample exam,
+keep your progress locally, then optionally add study material and AI. Windows
+and Linux are the personal-study targets. Household sharing remains available
+as a separate, more involved setup.
 
-## Install and try it
+## Start with personal study
 
-Follow the [easy setup guide](docs/installation.md), or point your preferred coding
-agent at [the AI installation manual](docs/agent-installation.md) and let it install,
-build and check Examify for you. You stay in control of accounts, secrets and deployment.
+The new **solo launcher** runs Examify on this computer only. It opens your browser
+and creates your private study profile without email, invitations or routine login.
+The sample has five fixed questions and deterministic scoring, with no AI.
+Choose **Try a sample exam**, then **Create your question bank** for the guided
+subject → material → AI → generate/review/Apply workflow. Return anytime to add more.
 
-You need **Node 22.22.2–22.x**, **Git**, **Bash** and **curl**. The installer uses
-**pnpm 10.33.0** through Corepack (or an existing pnpm installation). Run it as
-the OS user that will run Examify, not with sudo. See the
-[installation guide](docs/installation.md) if you need to set these up.
+This is a **preview implementation**, not a published desktop release. Platform
+packages must pass the clean-install checks before release. See the
+[personal-study installation guide](docs/solo-installation.md) for the package
+layout, verification and current acceptance requirements. Windows x64 and Linux
+x64 packages bundle the tested Node runtime and application dependencies; they
+are designed to require no manual Git, Node, pnpm, Docker or administrator setup.
+macOS is outside this preview's scope.
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/atk0309/project_Examify/main/install.sh | bash
-cd examify
-pnpm start
-```
+## Optional household setup
 
-The installer asks for your site address, data folder, sign-in method, mail
-transport and optional AI. It creates `.env`, installs dependencies, migrates
-the database and builds the app. It does not start a background service.
-If it reuses an existing checkout or you set `EXAMIFY_DIR`, use the checkout
-path printed at the end instead of `cd examify`.
+For multiple people or access from another device, use the existing
+[household installation guide](docs/installation.md) or
+[agent installation manual](docs/agent-installation.md). That path uses accounts,
+mailbox-verified invitations and normal sign-in. It needs Node 22.22.2–22.x,
+pnpm 10.33.0, Git, Bash and curl.
 
-Open the site address you chose, enter the printed setup code at `/setup`, and
-create the first parent account. In the setup wizard, add your study material
-or skip to the sample bank. Invite students from the parent dashboard.
-
-- **Trying it on this machine?** Accept `http://localhost:3000`
-- **Using family phones or laptops?** Enter an address those devices can reach.
-  `localhost` on a phone means the phone, not your server
-- **No mail provider?** The default local outbox saves invitation and reset codes
-  on the server. Read them there; they will not arrive by email.
-  [Outbox instructions](docs/installation.md#read-a-local-outbox-code)
-- **No AI yet?** Skip content setup to try the sample bank. Return through
-  **Finish content setup** on the parent dashboard before completing the wizard
-
-Use HTTPS before exposing the app beyond your home network. Plain HTTP sends
-passwords and session cookies unencrypted. Keep `.env`, the outbox and backups
-private. [Deployment and HTTPS](docs/operations.md#deploying-with-https)
+Existing household installations keep their data and upgrade workflow. A solo
+launcher never converts or adopts an existing household database. Do not expose
+the solo listener through a reverse proxy or share its local session.
 
 ## Everyday use
 
 Pick a subject and difficulty, answer a short exam, then review your results.
-Unfinished exams autosave and can be resumed. Parents see their household's
+Unfinished exams autosave and can be resumed. In household mode, parents see their household's
 student progress and can take exams themselves. The app includes a small sample
-bank; add your own subjects in the initial setup wizard. After finishing setup,
-use **AI settings** on the admin dashboard to manage your provider, and the [CLI workflow](docs/content-authoring.md#cli-workflow) for content updates.
+bank. In solo mode, **Create your question bank** stays available for adding
+subjects and material, setting up optional AI, and reviewing/applying generated
+questions. In household mode, the initial wizard and later [CLI content workflow](docs/content-authoring.md#cli-workflow) retain their existing behavior.
+**AI settings** remains available for provider changes.
 
 AI generation and marking send study material or answers to the selected
 provider. Local hosting alone does not keep AI requests local.
@@ -59,7 +49,8 @@ provider. Local hosting alone does not keep AI requests local.
 
 ## Guides
 
-- [Install and first login](docs/installation.md)
+- [Personal study on Windows or Linux](docs/solo-installation.md)
+- [Household install and first login](docs/installation.md)
 - [Install with your preferred AI agent](docs/agent-installation.md)
 - [Configure sign-in, mail and AI](docs/configuration.md)
 - [Deploy, update, back up and restore](docs/operations.md)

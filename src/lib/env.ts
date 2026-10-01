@@ -10,6 +10,7 @@ import { isDedicatedDataFolder, SharedDataFolderError } from './data-folder';
 import { parseFamilies } from './families';
 import { ONBOARDING_AI_MODES } from './onboarding-types';
 import { findRepoRoot } from './repo-root';
+import { isSoloOrigin, soloCapabilityHash, SOLO_TOKEN_PATTERN } from './solo-security';
 
 /**
  * In production, security-critical env vars have no defaults — boot fails
@@ -129,6 +130,13 @@ function buildEnvSchema(isProd: boolean) {
   return z
     .object({
       NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
+      // No implicit switch: existing installations remain authenticated households.
+      EXAMIFY_MODE: z.preprocess(
+        (v) => emptyToUndef(v) ?? 'household',
+        z.enum(['household', 'solo']),
+      ),
+      EXAMIFY_SOLO_LAUNCH_TOKEN: z.preprocess(emptyToUndef, z.string().optional()),
+      EXAMIFY_SOLO_TRANSPORT_SECRET: z.preprocess(emptyToUndef, z.string().optional()),
 
       // Public app URL supplied at runtime. Drives absolute URLs in magic-link
       // sign-in emails and invite links, and whether the session cookie is
@@ -281,6 +289,47 @@ function buildEnvSchema(isProd: boolean) {
       ),
     })
     .superRefine((data, ctx) => {
+      if (data.EXAMIFY_MODE === 'solo') {
+        if (!isSoloOrigin(data.SITE_URL)) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['SITE_URL'],
+            message:
+              'Solo mode requires the launcher HTTP origin on 127.0.0.1 with an explicit port.',
+          });
+        }
+        for (const key of ['EXAMIFY_SOLO_LAUNCH_TOKEN', 'EXAMIFY_SOLO_TRANSPORT_SECRET'] as const) {
+          if (!SOLO_TOKEN_PATTERN.test(data[key] ?? '')) {
+            ctx.addIssue({
+              code: 'custom',
+              path: [key],
+              message:
+                'Solo mode requires a fresh launcher capability (64 lowercase hexadecimal characters).',
+            });
+          }
+        }
+        if (data.EXAMIFY_SOLO_LAUNCH_TOKEN === data.EXAMIFY_SOLO_TRANSPORT_SECRET) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['EXAMIFY_SOLO_TRANSPORT_SECRET'],
+            message: 'Launcher capabilities must be independent.',
+          });
+        }
+        if (looksLikePlaceholderSecret(data.AUTH_SECRET, PLACEHOLDER_AUTH_SECRETS)) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['AUTH_SECRET'],
+            message: 'Solo mode requires a private, persistent session secret from the launcher.',
+          });
+        }
+        if (!data.EXAMIFY_DATA_DIR) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['EXAMIFY_DATA_DIR'],
+            message: 'Solo mode requires an explicit dedicated data folder.',
+          });
+        }
+      }
       const hasSite = Boolean(data.NEXT_PUBLIC_TURNSTILE_SITE_KEY);
       const hasSecret = Boolean(data.TURNSTILE_SECRET_KEY);
       if (data.TURNSTILE_ENABLED === true) {
@@ -424,6 +473,14 @@ export function parseEnv(raw: NodeJS.ProcessEnv = process.env): Env {
   }
 
   const familiesRaw = raw.FAMILIES;
+  if (
+    parsed.data.EXAMIFY_MODE === 'solo' &&
+    familiesRaw &&
+    familiesRaw.trim() !== '' &&
+    familiesRaw.trim() !== '[]'
+  ) {
+    throw new Error('Solo mode cannot import FAMILIES; use a separate data folder.');
+  }
   if (isProd && familiesRaw && familiesRaw.trim() !== '' && familiesRaw.trim() !== '[]') {
     const families = parseFamilies(familiesRaw);
     if (!families.ok) {
@@ -440,6 +497,10 @@ export const env: Env = parseEnv();
 export const isProd = env.NODE_ENV === 'production';
 export const isTest = env.NODE_ENV === 'test';
 
+export function isSoloMode(): boolean {
+  return env.EXAMIFY_MODE === 'solo';
+}
+
 /**
  * Session cookie name + Secure flag, both derived from SITE_URL. The one
  * place iron-session's cookie options come from, so setting, re-sealing, and
@@ -451,13 +512,18 @@ export const isTest = env.NODE_ENV === 'test';
  * - `name` is SESSION_COOKIE_NAME when set, else `__Host-examify_session` on
  *   https and `examify_session` on http (`__Host-` requires Secure).
  */
-export function sessionCookieConfig(source: Pick<Env, 'SITE_URL' | 'SESSION_COOKIE_NAME'> = env): {
+export function sessionCookieConfig(
+  source: Pick<Env, 'SITE_URL' | 'SESSION_COOKIE_NAME'> &
+    Partial<Pick<Env, 'EXAMIFY_MODE' | 'AUTH_SECRET'>> = env,
+): {
   name: string;
   secure: boolean;
 } {
   const secure = isHttpsSiteUrl(source.SITE_URL);
   const name =
-    source.SESSION_COOKIE_NAME ?? (secure ? '__Host-examify_session' : 'examify_session');
+    source.EXAMIFY_MODE === 'solo'
+      ? `examify_solo_session_${soloCapabilityHash(source.AUTH_SECRET ?? env.AUTH_SECRET).slice(0, 16)}`
+      : (source.SESSION_COOKIE_NAME ?? (secure ? '__Host-examify_session' : 'examify_session'));
   return { name, secure };
 }
 
