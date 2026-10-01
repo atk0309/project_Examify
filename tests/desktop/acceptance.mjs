@@ -51,6 +51,15 @@ function install(targetRoot, sourceArchive, stdio = 'inherit') {
 }
 let appDir;
 let node;
+function refreshTarget() {
+  const marker = JSON.parse(fs.readFileSync(path.join(root, 'installation.json'), 'utf8'));
+  appDir = path.join(root, marker.release ?? `releases/${marker.version}`);
+  node = path.join(appDir, process.platform === 'win32' ? 'runtime/node.exe' : 'runtime/bin/node');
+}
+function activeState() {
+  const marker = JSON.parse(fs.readFileSync(path.join(root, 'installation.json'), 'utf8'));
+  return marker.state ? path.join(root, marker.state) : root;
+}
 try {
   const corrupt = path.join(fixture, 'corrupt.archive');
   const refusedRoot = path.join(fixture, 'Rejected download');
@@ -63,7 +72,7 @@ try {
   assert.equal(fs.existsSync(path.join(refusedRoot, 'installation.json')), false);
   install(root, archive);
   const marker = JSON.parse(fs.readFileSync(path.join(root, 'installation.json'), 'utf8'));
-  appDir = path.join(root, 'releases', marker.version);
+  appDir = path.join(root, marker.release ?? `releases/${marker.version}`);
   node = path.join(appDir, process.platform === 'win32' ? 'runtime/node.exe' : 'runtime/bin/node');
 } catch (error) {
   fs.rmSync(fixture, { recursive: true, force: true });
@@ -294,18 +303,20 @@ try {
     'tampered bytes with unchanged release manifest',
   );
   install(root, archive);
+  refreshTarget();
   assert.ok(
     fs.readFileSync(path.join(appDir, 'server.js')).equals(originalServer),
     'Verified reinstall replaces modified code despite a stale marker naming an unrelated live PID',
   );
   fs.unlinkSync(node);
   install(root, archive);
+  refreshTarget();
   assert.ok(
     fs.existsSync(node),
     'Verified reinstall repairs a partially missing release without executing its old runtime',
   );
   assert.ok(
-    fs.readFileSync(path.join(root, 'config/secrets.json')).equals(secrets),
+    fs.readFileSync(path.join(activeState(), 'config/secrets.json')).equals(secrets),
     'Repeat installation preserves private configuration',
   );
   const again = launch();
@@ -314,10 +325,10 @@ try {
   assert.equal(restarted.reused, false);
   await bootstrap(await takeUrl());
   assert.ok(
-    fs.readFileSync(path.join(root, 'config/secrets.json')).equals(secrets),
+    fs.readFileSync(path.join(activeState(), 'config/secrets.json')).equals(secrets),
     'Relaunch retains private signing secrets',
   );
-  assert.ok(fs.statSync(path.join(root, 'data/app.db')).size > 0);
+  assert.ok(fs.statSync(path.join(activeState(), 'data/app.db')).size > 0);
   console.log(
     'Stop/restart preserves the solo profile and private data. Runtime PATH contains no host Node, Git or pnpm.',
   );

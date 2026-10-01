@@ -132,6 +132,7 @@ test('private paths can be secured repeatedly by fresh ordinary-user processes',
   for (const relative of [
     'launcher.mjs',
     'desktop/operation-lock.mjs',
+    'desktop/state-store.mjs',
     'desktop/private-path.ps1',
   ]) {
     fs.copyFileSync(
@@ -415,13 +416,14 @@ test('verified reinstall repairs tampered and partial releases, rolls back failu
   }
   try {
     fs.writeFileSync(path.join(destination, 'payload.txt'), 'tampered');
-    await installRelease({ root, staged: staged(), version });
+    await installRelease({ bootstrap: () => {}, root, staged: staged(), version });
     assert.equal(fs.readFileSync(path.join(destination, 'payload.txt'), 'utf8'), 'verified');
     fs.unlinkSync(path.join(destination, 'payload.txt'));
-    await installRelease({ root, staged: staged(), version });
+    await installRelease({ bootstrap: () => {}, root, staged: staged(), version });
     assert.equal(fs.readFileSync(path.join(destination, 'payload.txt'), 'utf8'), 'verified');
     await assert.rejects(
       installRelease({
+        bootstrap: () => {},
         root,
         staged: staged(),
         version,
@@ -441,7 +443,7 @@ test('verified reinstall repairs tampered and partial releases, rolls back failu
         return rename(from, to);
       };
       await assert.rejects(
-        installRelease({ root, staged: failedStage, version }),
+        installRelease({ bootstrap: () => {}, root, staged: failedStage, version }),
         /synthetic publication failure/,
       );
     } finally {
@@ -455,7 +457,7 @@ test('verified reinstall repairs tampered and partial releases, rolls back failu
     const running = path.join(root, 'running.json');
     fs.writeFileSync(running, JSON.stringify({ pid: process.pid }), { mode: 0o600 });
     fs.writeFileSync(path.join(destination, 'payload.txt'), 'tampered');
-    await installRelease({ root, staged: staged(), version });
+    await installRelease({ bootstrap: () => {}, root, staged: staged(), version });
     assert.equal(
       fs.readFileSync(path.join(destination, 'payload.txt'), 'utf8'),
       'verified',
@@ -465,12 +467,12 @@ test('verified reinstall repairs tampered and partial releases, rolls back failu
     assert.equal(typeof releaseInstance, 'function');
     try {
       await assert.rejects(
-        installRelease({ root, staged: staged(), version }),
+        installRelease({ bootstrap: () => {}, root, staged: staged(), version }),
         /Examify is running/,
       );
       fs.unlinkSync(running);
       await assert.rejects(
-        installRelease({ root, staged: staged(), version }),
+        installRelease({ bootstrap: () => {}, root, staged: staged(), version }),
         /Examify is running/,
       );
     } finally {
@@ -720,10 +722,16 @@ function launcherFixture() {
   fs.mkdirSync(path.join(appDir, 'scripts', 'desktop'), { recursive: true });
   fs.writeFileSync(path.join(appDir, 'scripts', 'solo-preflight.mjs'), 'process.exit(0);');
   fs.writeFileSync(path.join(appDir, 'scripts', 'migrate.mjs'), 'process.exit(0);');
-  fs.copyFileSync(
-    new URL('../../scripts/desktop/settings-loader.cjs', import.meta.url),
-    path.join(appDir, 'scripts', 'desktop', 'settings-loader.cjs'),
-  );
+  for (const name of [
+    'settings-loader.cjs',
+    'worker-guard.cjs',
+    'worker-runner.mjs',
+    'private-path.ps1',
+  ])
+    fs.copyFileSync(
+      new URL(`../../scripts/desktop/${name}`, import.meta.url),
+      path.join(appDir, 'scripts', 'desktop', name),
+    );
   fs.writeFileSync(
     path.join(appDir, 'server.js'),
     `

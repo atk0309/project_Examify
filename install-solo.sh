@@ -46,7 +46,7 @@ if [ -d "$ROOT" ]; then
     fail 'The destination contains other files. Choose an empty dedicated Examify folder.'
   fi
 fi
-for ENTRY in installation.json Examify releases config data "releases/$VERSION"; do
+for ENTRY in installation.json Examify bootstrap releases config data "releases/$VERSION"; do
   [ ! -L "$ROOT/$ENTRY" ] || fail 'Existing installation paths must not be symbolic links.'
 done
 umask 077
@@ -76,13 +76,7 @@ NODE="$STAGE/app/runtime/bin/node"
 cp -- "$NODE" "$STAGE/install-node"
 chmod 700 "$STAGE/install-node"
 "$STAGE/install-node" "$STAGE/app/scripts/desktop/install-release.mjs" "$ROOT" "$STAGE/app" "$VERSION"
-cat > "$ROOT/Examify" <<'SH'
-#!/usr/bin/env bash
-set -euo pipefail
-ROOT="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
-SH
-printf 'exec "$ROOT/releases/%s/runtime/bin/node" "$ROOT/releases/%s/scripts/launcher.mjs" --root "$ROOT" "$@"\n' "$VERSION" "$VERSION" >> "$ROOT/Examify"
-chmod 700 "$ROOT/Examify"
+# The locked release coordinator installed the stable entrypoint before activation.
 if [ "$SHORTCUT" = 1 ]; then
   DESKTOP="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
   mkdir -p "$DESKTOP"

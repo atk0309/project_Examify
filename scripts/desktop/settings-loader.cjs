@@ -1,3 +1,5 @@
+// Fail closed before reading configuration, including when loaded independently.
+require('./worker-guard.cjs');
 // Load only user-selected AI settings after exec, so env-store can rotate them.
 // Never import the shell's provider credentials or runtime security settings.
 const fs = require('node:fs');
@@ -36,6 +38,3 @@ for (const name of ['.env', '.env.local']) {
 for (const [key, value] of Object.entries(saved)) {
   if (process.env[key] === undefined) process.env[key] = value;
 }
-
-// A closed/crashed launcher must not leave a detached database-owning server behind.
-if (process.connected) process.once('disconnect', () => process.exit(0));
