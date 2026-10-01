@@ -27,11 +27,25 @@ function secureWindowsPath(file) {
       path.join(here, 'desktop', 'private-path.ps1'),
       '-Path',
       file,
+      '-Diagnostics',
     ],
-    { stdio: 'ignore', windowsHide: true, timeout: 15000 },
+    { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true, timeout: 15000, maxBuffer: 1024 },
   );
-  if (result.status !== 0)
-    throw new Error('Could not secure private Examify files for this Windows user.');
+  if (result.status !== 0) {
+    const allowed = new Set(['ENTRY', 'METADATA', 'ACL_READ', 'ACL_WRITE', 'ACL_VERIFY', 'DONE']);
+    const stage =
+      String(result.stdout || '')
+        .trim()
+        .split(/\s+/)
+        .filter((value) => allowed.has(value))
+        .at(-1) || 'SPAWN';
+    throw Object.assign(
+      new Error('Could not secure private Examify files for this Windows user.'),
+      {
+        code: `EXAMIFY_ACL_${result.error?.code === 'ETIMEDOUT' ? 'TIMEOUT' : 'FAILED'}_${stage}`,
+      },
+    );
+  }
   securedWindowsPaths.add(file);
 }
 const SAFE_METHODS = new Set(['GET', 'HEAD']);

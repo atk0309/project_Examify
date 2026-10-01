@@ -104,26 +104,89 @@ test('private generated secrets survive relaunch; malformed or linked files fail
 });
 test('private paths can be secured repeatedly by fresh ordinary-user processes', async () => {
   const { spawnSync } = await import('node:child_process');
+  const { fileURLToPath, pathToFileURL } = await import('node:url');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-repeat-private-'));
   const file = path.join(dir, 'state.json');
   fs.writeFileSync(file, '{}', { mode: 0o600 });
   const launcher = new URL('../../scripts/launcher.mjs', import.meta.url).href;
-  const source = `const { privateDirectory, privateFile } = await import(process.argv[1]); privateDirectory(process.argv[2]); privateFile(process.argv[3]);`;
+  const copiedScripts = path.join(
+    dir,
+    'Deep path with spaces',
+    'releases',
+    `ci-${'a'.repeat(40)}`,
+    'scripts',
+  );
+  fs.mkdirSync(path.join(copiedScripts, 'desktop'), { recursive: true });
+  for (const relative of [
+    'launcher.mjs',
+    'desktop/operation-lock.mjs',
+    'desktop/private-path.ps1',
+  ]) {
+    fs.copyFileSync(
+      fileURLToPath(new URL(`../../scripts/${relative}`, import.meta.url)),
+      path.join(copiedScripts, relative),
+    );
+  }
+  const source = `try { const { privateDirectory, privateFile } = await import(process.argv[1]); privateDirectory(process.argv[2]); privateFile(process.argv[3]); } catch(error) { const code = /^EXAMIFY_ACL_(TIMEOUT|FAILED)_(SPAWN|ENTRY|METADATA|ACL_READ|ACL_WRITE|ACL_VERIFY|DONE)$/.test(error.code || '') ? error.code : 'UNKNOWN'; console.log(code); process.exitCode=1; }`;
+  const env = childEnvironment();
+  // Match the packaged launcher's clean-machine environment, including a PATH
+  // without host Node, Git, pnpm or PowerShell module discovery configuration.
+  for (const key of Object.keys(env)) if (key.toUpperCase() === 'PATH') delete env[key];
+  env.PATH =
+    process.platform === 'win32'
+      ? `${process.env.SystemRoot}\\system32;${process.env.SystemRoot}\\System32\\WindowsPowerShell\\v1.0`
+      : '';
   try {
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      const result = spawnSync(
-        process.execPath,
-        ['--input-type=module', '-e', source, launcher, dir, file],
+    if (process.platform === 'win32') {
+      const startup = spawnSync(
+        'powershell.exe',
+        [
+          '-NoLogo',
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          "[Console]::WriteLine('EXAMIFY_POWERSHELL_READY')",
+        ],
         {
-          stdio: 'ignore',
+          env,
+          stdio: ['ignore', 'pipe', 'ignore'],
           timeout: 15000,
+          maxBuffer: 1024,
         },
       );
-      assert.equal(
-        result.status,
-        0,
-        `Fresh process ${attempt + 1} must secure existing private directory and file`,
+      assert.ok(
+        startup.status === 0 && String(startup.stdout).trim() === 'EXAMIFY_POWERSHELL_READY',
+        'Windows PowerShell itself starts with the minimal runtime environment before any helper/module executes',
       );
+    }
+    for (const [layout, entry] of [
+      ['source', launcher],
+      ['deep-copy', pathToFileURL(path.join(copiedScripts, 'launcher.mjs')).href],
+    ]) {
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const result = spawnSync(
+          process.execPath,
+          ['--input-type=module', '-e', source, entry, dir, file],
+          {
+            stdio: ['ignore', 'pipe', 'ignore'],
+            timeout: 45000,
+            maxBuffer: 1024,
+            env,
+          },
+        );
+        const output = String(result.stdout || '').trim();
+        const diagnostic =
+          /^EXAMIFY_ACL_(TIMEOUT|FAILED)_(SPAWN|ENTRY|METADATA|ACL_READ|ACL_WRITE|ACL_VERIFY|DONE)$/.test(
+            output,
+          )
+            ? output
+            : 'UNKNOWN';
+        assert.equal(
+          result.status,
+          0,
+          `${layout} fresh process ${attempt + 1} must secure private paths with minimal runtime env: ${diagnostic}`,
+        );
+      }
     }
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });

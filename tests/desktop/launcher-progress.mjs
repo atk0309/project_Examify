@@ -11,6 +11,9 @@ const phases = new Set([
   'browser',
 ]);
 const codes = new Set(['EXAMIFY_UNSAFE_DATA', 'ENOENT', 'EACCES', 'EPERM', 'ERR_SQLITE_ERROR']);
+for (const reason of ['TIMEOUT', 'FAILED'])
+  for (const stage of ['SPAWN', 'ENTRY', 'METADATA', 'ACL_READ', 'ACL_WRITE', 'ACL_VERIFY', 'DONE'])
+    codes.add(`EXAMIFY_ACL_${reason}_${stage}`);
 
 /** Do not expose child output, exception messages, capabilities or fixture paths. */
 export function observeLauncher(child, { id, timeout = 90000, report = () => {} }) {
