@@ -8,6 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { childEnvironment } from '../../scripts/launcher.mjs';
+import { observeLauncher } from './launcher-progress.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const platform = `${process.platform}-${process.arch}`;
@@ -79,18 +80,31 @@ const env = {
   NODE_OPTIONS: '',
 };
 const children = new Set();
+const observers = new Set();
+let launchSequence = 0;
 const urls = [];
 const waiters = [];
 let child;
 function takeUrl() {
   if (urls.length) return Promise.resolve(urls.shift());
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('Browser-open callback timed out.')), 15000);
-    waiters.push((url) => {
-      clearTimeout(timer);
-      resolve(url);
-    });
+  const ready = new Promise((resolve, reject) => {
+    const waiter = {
+      finish(error, url) {
+        clearTimeout(timer);
+        const index = waiters.indexOf(waiter);
+        if (index !== -1) waiters.splice(index, 1);
+        if (error) reject(error);
+        else resolve(url);
+      },
+    };
+    const timer = setTimeout(
+      () => waiter.finish(new Error('Browser-open callback timed out.')),
+      15000,
+    );
+    waiters.push(waiter);
   });
+  void ready.catch(() => {});
+  return ready;
 }
 function launch(targetRoot = root) {
   const proc = fork(path.join(repo, 'tests/desktop/launcher-child.mjs'), [appDir, targetRoot], {
@@ -106,30 +120,15 @@ function launch(targetRoot = root) {
   proc.on('message', (message) => {
     if (message.kind === 'browser') {
       const waiter = waiters.shift();
-      if (waiter) waiter(message.url);
+      if (waiter) waiter.finish(undefined, message.url);
       else urls.push(message.url);
     }
   });
-  const ready = new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('Packaged launch timed out.')), 90000);
-    proc.on('message', (message) => {
-      if (message.kind === 'ready') {
-        clearTimeout(timer);
-        resolve(message);
-      }
-      if (message.kind === 'error') {
-        clearTimeout(timer);
-        reject(new Error(message.message));
-      }
-    });
-    proc.once('exit', (code) => {
-      children.delete(proc);
-      if (code) {
-        clearTimeout(timer);
-        reject(new Error(`Packaged launcher exited ${code}.`));
-      }
-    });
-  });
+  const observer = observeLauncher(proc, { id: ++launchSequence, report: console.log });
+  observers.add(observer);
+  proc.once('exit', () => children.delete(proc));
+  const ready = observer.ready;
+
   return { proc, ready };
 }
 async function bootstrap(url) {
@@ -318,7 +317,7 @@ try {
   );
   const original = fs.readFileSync(householdDb);
   const originalMode = fs.statSync(householdDb).mode;
-  await assert.rejects(launch(householdRoot).ready, /not a safe solo installation/);
+  await assert.rejects(launch(householdRoot).ready, { code: 'EXAMIFY_UNSAFE_DATA' });
   assert.ok(
     fs.readFileSync(householdDb).equals(original),
     'Rejected household database bytes remain unchanged',
@@ -335,17 +334,21 @@ try {
     'Corrupt downloads are rejected; repeat install preserves data; household data is refused before any mutation.',
   );
 } finally {
+  for (const observer of observers) observer.dispose();
+  for (const waiter of [...waiters]) waiter.finish(new Error('Acceptance fixture stopped.'));
   await Promise.all(
     [...children].map(
       (proc) =>
         new Promise((resolve) => {
-          if (proc.exitCode !== null) return resolve();
-          proc.once('exit', resolve);
+          if (proc.exitCode !== null || proc.signalCode !== null) return resolve();
+          const timer = setTimeout(() => proc.kill('SIGKILL'), 5000);
+          timer.unref();
+          proc.once('exit', () => {
+            clearTimeout(timer);
+            resolve();
+          });
           if (proc.connected) proc.send('stop', () => {});
           else proc.kill();
-          setTimeout(() => {
-            if (proc.exitCode === null) proc.kill('SIGKILL');
-          }, 5000).unref();
         }),
     ),
   );

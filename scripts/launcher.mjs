@@ -20,6 +20,7 @@ function secureWindowsPath(file) {
     [
       '-NoLogo',
       '-NoProfile',
+      '-NonInteractive',
       '-ExecutionPolicy',
       'Bypass',
       '-File',
@@ -27,7 +28,7 @@ function secureWindowsPath(file) {
       '-Path',
       file,
     ],
-    { stdio: 'ignore', windowsHide: true },
+    { stdio: 'ignore', windowsHide: true, timeout: 15000 },
   );
   if (result.status !== 0)
     throw new Error('Could not secure private Examify files for this Windows user.');
@@ -320,6 +321,7 @@ export async function startLauncher({
   browser = openBrowser,
   node = process.execPath,
   timeout = 60000,
+  onPhase = () => {},
 }) {
   if (!['linux', 'win32'].includes(process.platform) || process.arch !== 'x64') {
     throw new Error('This preview supports Windows x64 and Linux x64 only.');
@@ -331,12 +333,15 @@ export async function startLauncher({
   assertExistingAncestors(root);
   assertExistingAncestors(configDir);
   assertExistingAncestors(dataDir);
+  onPhase('lock');
   const releaseOperation = await acquireOperationLock({
     root,
     secureDirectory: privateDirectory,
     secureFile: privateFile,
+    onContended: () => onPhase('lock-wait'),
   });
   try {
+    onPhase('existing');
     async function reuse(running) {
       if (
         !alive(running.pid) ||
@@ -372,6 +377,7 @@ export async function startLauncher({
     previous = await readPrevious();
     const waitStarted = Date.now();
     while (previous && alive(previous.pid)) {
+      onPhase('reuse');
       if (await reuse(previous))
         return { reused: true, origin: previous.origin, stop: async () => {} };
       if (Date.now() - waitStarted >= timeout)
@@ -382,6 +388,7 @@ export async function startLauncher({
       previous = await readPrevious();
     }
     // Validate existing bytes before any data/config initialisation or permission change.
+    onPhase('preflight');
     const preflight = spawnSync(
       node,
       [path.join(appDir, 'scripts', 'solo-preflight.mjs'), path.join(dataDir, 'app.db')],
@@ -394,9 +401,13 @@ export async function startLauncher({
       },
     );
     if (preflight.status !== 0)
-      throw new Error(
-        'This folder is not a safe solo installation. Existing files were not changed; use a new dedicated folder.',
+      throw Object.assign(
+        new Error(
+          'This folder is not a safe solo installation. Existing files were not changed; use a new dedicated folder.',
+        ),
+        { code: 'EXAMIFY_UNSAFE_DATA' },
       );
+    onPhase('permissions');
     privateDirectory(root);
     const instanceId = secret();
     // The OS-backed operation lock serializes stale-marker recovery, preflight,
@@ -468,6 +479,7 @@ export async function startLauncher({
         ALLOW_LOCAL_OUTBOX: '1',
         TURNSTILE_ENABLED: '0',
       };
+      onPhase('migration');
       const migration = spawn(node, [path.join(appDir, 'scripts', 'migrate.mjs')], {
         cwd: appDir,
         env,
@@ -489,6 +501,7 @@ export async function startLauncher({
       });
       if (migrationCode !== 0)
         throw new Error('Examify could not prepare its data. Existing files have been preserved.');
+      onPhase('server');
       child = spawn(
         node,
         [
@@ -507,6 +520,7 @@ export async function startLauncher({
         spawnError = true;
       });
       const start = Date.now();
+      onPhase('health');
       while (!(await healthy(origin, instanceId))) {
         if (spawnError || child.exitCode !== null)
           throw new Error(
@@ -520,6 +534,7 @@ export async function startLauncher({
       }
       privateFile(stateFile);
       writeJson(stateFile, { pid: process.pid, instanceId, origin });
+      onPhase('browser');
       await browser(`${origin}/solo/start#${browserCapability(launchToken)}`);
       child.once('exit', () => {
         if (!stopped) {

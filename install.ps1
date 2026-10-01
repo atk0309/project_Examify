@@ -48,13 +48,17 @@ $Acl = New-Object Security.AccessControl.DirectorySecurity
 $Acl.SetAccessRuleProtection($true, $false)
 $Rule = New-Object Security.AccessControl.FileSystemAccessRule($Identity.User, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')
 $Acl.AddAccessRule($Rule)
+function Test-PrivateRootAcl($Value) {
+    $Rules = @($Value.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
+    if ($Value.GetOwner([Security.Principal.SecurityIdentifier]).Value -ne $Identity.User.Value -or -not $Value.AreAccessRulesProtected -or $Rules.Count -ne 1) { return $false }
+    $Actual = $Rules[0]
+    return ($Actual.IdentityReference.Value -eq $Identity.User.Value -and -not $Actual.IsInherited -and $Actual.AccessControlType -eq $Rule.AccessControlType -and $Actual.FileSystemRights -eq $Rule.FileSystemRights -and $Actual.InheritanceFlags -eq $Rule.InheritanceFlags -and $Actual.PropagationFlags -eq $Rule.PropagationFlags)
+}
 # DACL-only persistence supports repeated installation without audit privileges.
-$RootItem.SetAccessControl($Acl)
-$After = $RootItem.GetAccessControl($Sections)
-$Rules = @($After.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
-if ($After.GetOwner([Security.Principal.SecurityIdentifier]).Value -ne $Identity.User.Value -or -not $After.AreAccessRulesProtected -or $Rules.Count -ne 1) { throw 'Could not verify the private installation folder.' }
-$Actual = $Rules[0]
-if ($Actual.IdentityReference.Value -ne $Identity.User.Value -or $Actual.IsInherited -or $Actual.AccessControlType -ne $Rule.AccessControlType -or $Actual.FileSystemRights -ne $Rule.FileSystemRights -or $Actual.InheritanceFlags -ne $Rule.InheritanceFlags -or $Actual.PropagationFlags -ne $Rule.PropagationFlags) { throw 'Could not verify the private installation folder.' }
+if (-not (Test-PrivateRootAcl ($RootItem.GetAccessControl($Sections)))) {
+    $RootItem.SetAccessControl($Acl)
+    if (-not (Test-PrivateRootAcl ($RootItem.GetAccessControl($Sections)))) { throw 'Could not verify the private installation folder.' }
+}
 $Stage = Join-Path $InstallRoot ('.install.' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $Stage | Out-Null
 try {

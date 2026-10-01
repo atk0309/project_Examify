@@ -6,6 +6,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { EventEmitter } from 'node:events';
 import { observeChildProgress } from './child-progress.mjs';
+import { observeLauncher } from './launcher-progress.mjs';
 import {
   allowedRequest,
   childEnvironment,
@@ -421,6 +422,59 @@ test('child progress rejects early exits and errors without leaking diagnostics 
     assert.equal(child.listenerCount('message'), 0);
     assert.equal(child.listenerCount('error'), 0);
     assert.equal(child.listenerCount('exit'), 0);
+    assert.equal(child.stderr.listenerCount('data'), 0);
+  }
+});
+
+test('packaged readiness rejects zero exits, signals, disconnects and failures with bounded phases', async () => {
+  for (const mode of [
+    'ready',
+    'zero-exit',
+    'signal-exit',
+    'disconnect',
+    'error',
+    'failure',
+    'timeout',
+    'dispose',
+  ]) {
+    const child = new EventEmitter();
+    child.stderr = new EventEmitter();
+    const reports = [];
+    const observer = observeLauncher(child, {
+      id: 1,
+      timeout: 20,
+      report: (value) => reports.push(value),
+    });
+    child.emit('message', { kind: 'phase', phase: 'migration' });
+    child.emit('message', { kind: 'phase', phase: 'SYNTHETIC_PRIVATE_SENTINEL' });
+    child.stderr.emit('data', Buffer.from('SYNTHETIC_PRIVATE_SENTINEL'.repeat(1000)));
+    if (mode === 'ready') child.emit('message', { kind: 'ready', reused: false });
+    if (mode === 'zero-exit') child.emit('exit', 0, null);
+    if (mode === 'signal-exit') child.emit('exit', null, 'SIGKILL');
+    if (mode === 'disconnect') child.emit('disconnect');
+    if (mode === 'error') child.emit('error', new Error('SYNTHETIC_PRIVATE_SENTINEL'));
+    if (mode === 'failure')
+      child.emit('message', {
+        kind: 'error',
+        code: 'EXAMIFY_UNSAFE_DATA',
+        message: 'SYNTHETIC_PRIVATE_SENTINEL',
+      });
+    if (mode === 'dispose') observer.dispose();
+    if (mode === 'ready') assert.equal((await observer.ready).reused, false);
+    else
+      await assert.rejects(observer.ready, (error) => {
+        assert.match(error.message, /launcher-1 phase=migration/);
+        assert.match(error.message, /stderrBytes=4096/);
+        assert.equal(error.message.includes('SYNTHETIC'), false);
+        if (mode === 'zero-exit') assert.match(error.message, /exited before ready code=0/);
+        if (mode === 'signal-exit') assert.match(error.message, /signal=SIGKILL/);
+        if (mode === 'failure') assert.equal(error.code, 'EXAMIFY_UNSAFE_DATA');
+        return true;
+      });
+    observer.dispose();
+    assert.deepEqual(reports, ['Packaged launcher-1: migration.']);
+    for (const event of ['message', 'error', 'exit', 'disconnect'])
+      assert.equal(child.listenerCount(event), 0);
     assert.equal(child.stderr.listenerCount('data'), 0);
   }
 });

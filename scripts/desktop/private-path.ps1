@@ -17,15 +17,21 @@ try {
     }
     $Acl.SetAccessRuleProtection($true, $false)
     $Acl.AddAccessRule($Rule)
+    function Test-PrivateAcl($Value) {
+        $Rules = @($Value.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
+        if ($Value.GetOwner([Security.Principal.SecurityIdentifier]).Value -ne $Sid.Value -or -not $Value.AreAccessRulesProtected -or $Rules.Count -ne 1) { return $false }
+        $Actual = $Rules[0]
+        return ($Actual.IdentityReference.Value -eq $Sid.Value -and -not $Actual.IsInherited -and $Actual.AccessControlType -eq $Rule.AccessControlType -and $Actual.FileSystemRights -eq $Rule.FileSystemRights -and $Actual.InheritanceFlags -eq $Rule.InheritanceFlags -and $Actual.PropagationFlags -eq $Rule.PropagationFlags)
+    }
+    # Avoid propagating an unchanged inheritable DACL through the installed
+    # runtime/junction tree. This is an exact descriptor check, not a marker.
+    if (Test-PrivateAcl $Current) { exit 0 }
     # Persist only the changed DACL. Set-Acl copies the whole descriptor and its
     # fallback can request audit privileges when revisiting a protected DACL.
     # The owner was checked above and is deliberately never changed here.
     $Item.SetAccessControl($Acl)
     $After = $Item.GetAccessControl($Sections)
-    $Rules = @($After.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
-    if ($After.GetOwner([Security.Principal.SecurityIdentifier]).Value -ne $Sid.Value -or -not $After.AreAccessRulesProtected -or $Rules.Count -ne 1) { throw 'verify' }
-    $Actual = $Rules[0]
-    if ($Actual.IdentityReference.Value -ne $Sid.Value -or $Actual.IsInherited -or $Actual.AccessControlType -ne $Rule.AccessControlType -or $Actual.FileSystemRights -ne $Rule.FileSystemRights -or $Actual.InheritanceFlags -ne $Rule.InheritanceFlags -or $Actual.PropagationFlags -ne $Rule.PropagationFlags) { throw 'verify' }
+    if (-not (Test-PrivateAcl $After)) { throw 'verify' }
 } catch {
     [Console]::Error.WriteLine('Examify could not secure its private local files. Use an ordinary account and a dedicated folder owned by you.')
     exit 1
