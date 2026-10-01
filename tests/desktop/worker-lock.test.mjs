@@ -12,6 +12,11 @@ import { tryAcquireWorkerLock } from '../../scripts/desktop/operation-lock.mjs';
 
 const runner = fileURLToPath(new URL('../../scripts/desktop/worker-runner.mjs', import.meta.url));
 const guard = fileURLToPath(new URL('../../scripts/desktop/worker-guard.cjs', import.meta.url));
+const targetFixture = fileURLToPath(new URL('./fixtures/worker-target.cjs', import.meta.url));
+const supervisorFixture = fileURLToPath(
+  new URL('./fixtures/worker-supervisor.cjs', import.meta.url),
+);
+const delayedFixture = fileURLToPath(new URL('./fixtures/delayed-worker.mjs', import.meta.url));
 const options = (root) => ({ root, secureDirectory: privateDirectory, secureFile: privateFile });
 const environment = (root) => ({
   ...process.env,
@@ -23,12 +28,7 @@ function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-worker-'));
   privateDirectory(root);
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const target = path.join(root, 'target.cjs');
-  fs.writeFileSync(
-    target,
-    `require('node:fs').writeFileSync(${JSON.stringify(path.join(root, 'opened'))}, 'yes'); process.send({type:'opened'}); setInterval(()=>{}, 1000);`,
-  );
-  return { root, target };
+  return { root, target: targetFixture };
 }
 function launch(t, root, target, args = [], env = {}) {
   const child = fork(runner, [target, ...args], {
@@ -162,86 +162,118 @@ test('worker preload refuses unsafe coordination files and directories', async (
   }
 });
 
-test('killed supervisor cannot release a still-running worker lease', {}, async (t) => {
-  const { root, target } = fixture(t);
-  // Deliberately block the worker event loop after GO so IPC cleanup cannot hide
-  // the supervisor-death race. This models a synchronous migration/database call.
-  fs.writeFileSync(
-    target,
-    "process.send({type:'blocked'}); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);",
-  );
-  const supervisor = path.join(root, 'supervisor.cjs');
-  fs.writeFileSync(
-    supervisor,
-    `const c=require('node:child_process').fork(${JSON.stringify(runner)}, [${JSON.stringify(target)}], {env:{...process.env,EXAMIFY_LAUNCHER_PID:String(process.pid)},stdio:['ignore','ignore','ignore','ipc']}); c.on('message', m=>{if(m.type==='examify-worker-ready')c.send({type:'examify-worker-go'}); if(m.type==='blocked')process.send({type:'blocked',pid:c.pid});});`,
-  );
-  const parent = fork(supervisor, [], {
-    env: environment(root),
+function processExists(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    // Permission errors or other failures are not evidence of termination.
+    if (error.code !== 'ESRCH') throw error;
+    return false;
+  }
+}
+function killIfRunning(pid) {
+  try {
+    process.kill(pid, 'SIGKILL');
+  } catch (error) {
+    if (error.code !== 'ESRCH') throw error;
+  }
+}
+async function waitUntil(predicate) {
+  const deadline = Date.now() + 10000;
+  while (!predicate() && Date.now() < deadline) await sleep(20);
+  return predicate();
+}
+function supervisor(t, root, target, delayed = false) {
+  const parent = fork(supervisorFixture, [runner, target, ...(delayed ? [delayedFixture] : [])], {
+    env: { ...environment(root), EXAMIFY_TEST_WORKER_MODE: delayed ? '' : 'blocked' },
     stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
   });
   const exited = once(parent, 'exit');
-  const { pid } = await message(parent, 'blocked');
-  t.after(() => {
-    try {
-      process.kill(pid, 'SIGKILL');
-    } catch {}
+  t.after(async () => {
+    if (parent.exitCode === null && parent.signalCode === null) parent.kill('SIGKILL');
+    await exited;
   });
-  parent.kill('SIGKILL');
-  await exited;
+  return { parent, exited };
+}
+
+test('disconnect cannot release a live worker blocked in data access', async (t) => {
+  const { root, target } = fixture(t);
+  const { child, exit } = launch(t, root, target, [], { EXAMIFY_TEST_WORKER_MODE: 'blocked' });
+  await message(child, 'examify-worker-ready');
+  const blocked = message(child, 'blocked');
+  child.send({ type: 'examify-worker-go' });
+  await blocked;
+  child.disconnect();
+  assert.equal(processExists(child.pid), true);
   assert.equal(await tryAcquireWorkerLock(options(root)), null);
-  process.kill(pid, 'SIGKILL');
-  let release;
-  const deadline = Date.now() + 10000;
-  while (!(release = await tryAcquireWorkerLock(options(root))) && Date.now() < deadline)
-    await sleep(20);
+  child.kill('SIGKILL');
+  await exit;
+  const release = await tryAcquireWorkerLock(options(root));
   assert.equal(typeof release, 'function');
   release();
 });
 
+test('killed supervisor cannot release a still-running worker lease', async (t) => {
+  const { root, target } = fixture(t);
+  const { parent, exited } = supervisor(t, root, target);
+  const { pid } = await message(parent, 'blocked');
+  t.after(() => killIfRunning(pid));
+  assert.equal(await tryAcquireWorkerLock(options(root)), null);
+  parent.kill('SIGKILL');
+  await exited;
+  let release = await tryAcquireWorkerLock(options(root));
+  if (release) {
+    try {
+      // Windows job objects can terminate descendants with their supervisor.
+      // A free lease is safe only when the worker is independently proven dead.
+      assert.equal(processExists(pid), false, 'free lease requires a dead worker');
+    } finally {
+      release();
+    }
+  } else {
+    // POSIX normally leaves the blocked worker alive and its lease held.
+    killIfRunning(pid);
+    const deadline = Date.now() + 10000;
+    while (!(release = await tryAcquireWorkerLock(options(root))) && Date.now() < deadline)
+      await sleep(20);
+    assert.equal(typeof release, 'function');
+    release();
+  }
+});
+
 test('a delayed child cannot open data after its launcher died and installer obtained the lease', async (t) => {
   const { root, target } = fixture(t);
-  const delay = path.join(root, 'delayed.cjs');
   const gate = path.join(root, 'gate');
   const childExit = path.join(root, 'child-exit');
-  fs.writeFileSync(
-    delay,
-    `process.on('exit',code=>require('node:fs').writeFileSync(${JSON.stringify(childExit)},String(code)));const timer=setInterval(()=>{if(require('node:fs').existsSync(${JSON.stringify(gate)})){clearInterval(timer);process.argv=[process.argv[0],${JSON.stringify(runner)},${JSON.stringify(target)}];import(${JSON.stringify(new URL('../../scripts/desktop/worker-runner.mjs', import.meta.url).href)}).catch(()=>process.exit(1));}},20);`,
-  );
-  const supervisor = path.join(root, 'supervisor.cjs');
-  fs.writeFileSync(
-    supervisor,
-    `const c=require('node:child_process').fork(${JSON.stringify(delay)},[],{env:{...process.env,EXAMIFY_LAUNCHER_PID:String(process.pid)},stdio:['ignore','ignore','ignore','ipc']});process.send({type:'spawned',pid:c.pid});setInterval(()=>{},1000);`,
-  );
-  const parent = fork(supervisor, [], {
-    env: environment(root),
-    stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
-  });
-  const exited = once(parent, 'exit');
-  const { pid } = await message(parent, 'spawned');
-  t.after(() => {
-    try {
-      process.kill(pid, 'SIGKILL');
-    } catch {}
-  });
+  const { parent, exited } = supervisor(t, root, target, true);
+  const { pid } = await message(parent, 'waiting');
+  t.after(() => killIfRunning(pid));
+  assert.equal(fs.existsSync(path.join(root, 'opened')), false);
   parent.kill('SIGKILL');
   await exited;
   const release = await tryAcquireWorkerLock(options(root));
   assert.equal(typeof release, 'function');
-  fs.writeFileSync(gate, 'start');
-  const deadline = Date.now() + 10000;
-  while (!fs.existsSync(childExit) && Date.now() < deadline) await sleep(20);
-  release();
-  assert.equal(fs.existsSync(childExit), true, 'delayed child must terminate without GO');
+  try {
+    fs.writeFileSync(gate, 'start');
+    // A force-killed descendant cannot execute JS exit hooks. Accept this only
+    // with independent OS evidence of termination, never a missing sentinel alone.
+    assert.equal(
+      await waitUntil(() => fs.existsSync(childExit) || !processExists(pid)),
+      true,
+      'delayed child must exit or be confirmed terminated without GO',
+    );
+    if (fs.existsSync(childExit)) assert.equal(fs.readFileSync(childExit, 'utf8'), '1');
+    assert.equal(fs.existsSync(path.join(root, 'opened')), false);
+  } finally {
+    release();
+  }
   assert.equal(fs.existsSync(path.join(root, 'opened')), false);
 });
 
 test('an authorized migration can finish naturally while IPC remains connected', async (t) => {
   const { root, target } = fixture(t);
-  fs.writeFileSync(
-    target,
-    "require('node:fs').writeFileSync(process.env.EXAMIFY_INSTALL_ROOT + '/opened', 'yes');",
-  );
-  const { child, exit } = launch(t, root, target);
+  const { child, exit } = launch(t, root, target, [], { EXAMIFY_TEST_WORKER_MODE: 'natural' });
   await message(child, 'examify-worker-ready');
   child.send({ type: 'examify-worker-go' });
   assert.equal((await exit)[0], 0);

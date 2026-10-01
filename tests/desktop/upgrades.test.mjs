@@ -310,3 +310,32 @@ test('inactive release cannot open or reuse a live upgraded installation', async
     lease();
   }
 });
+
+for (const missing of ['', 'data', 'config', 'data/app.db', 'config/secrets.json']) {
+  test(`launcher gives private recovery guidance for missing selected ${missing || 'generation'}`, async (t) => {
+    const f = fixture(t);
+    f.seed();
+    await f.run();
+    await f.run('0.2.0');
+    const selected = f.read();
+    fs.rmSync(path.join(f.root, selected.state, missing), { recursive: true });
+    await assert.rejects(
+      startLauncher({
+        root: f.root,
+        appDir: path.join(f.root, selected.release),
+        browser() {
+          throw new Error('Must not open');
+        },
+      }),
+      (error) => {
+        assert.match(error.message, /active study state is missing/);
+        assert.match(error.message, /Restore the complete private backup/);
+        assert.equal(error.message.includes(f.root), false);
+        assert.equal(error.message.includes('ENOENT'), false);
+        return true;
+      },
+    );
+    assert.deepEqual(f.read(), selected);
+    assert.equal(fs.readFileSync(path.join(f.root, 'data/app.db'), 'utf8'), 'offline database');
+  });
+}

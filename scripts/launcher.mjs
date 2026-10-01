@@ -23,9 +23,12 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const secret = () => randomBytes(32).toString('hex');
 const securedWindowsPaths = new Set();
-function secureWindowsPath(file) {
-  if (process.platform !== 'win32' || securedWindowsPaths.has(file)) return;
-  const result = spawnSync(
+function secureWindowsPath(
+  file,
+  { helperDirectory = path.join(here, 'desktop'), spawn = spawnSync } = {},
+) {
+  if (securedWindowsPaths.has(file)) return;
+  const result = spawn(
     'powershell.exe',
     [
       '-NoLogo',
@@ -34,7 +37,7 @@ function secureWindowsPath(file) {
       '-ExecutionPolicy',
       'Bypass',
       '-File',
-      path.join(here, 'desktop', 'private-path.ps1'),
+      path.join(helperDirectory, 'private-path.ps1'),
       '-Path',
       file,
       '-Diagnostics',
@@ -85,7 +88,8 @@ export function assertExistingAncestors(dir) {
   }
 }
 
-export function privateDirectory(dir) {
+export function privateDirectory(dir, options = {}) {
+  const platform = options.platform ?? process.platform;
   const absolute = path.resolve(dir);
   let current = path.parse(absolute).root;
   for (const part of absolute.slice(current.length).split(path.sep).filter(Boolean)) {
@@ -109,19 +113,20 @@ export function privateDirectory(dir) {
   const stat = fs.statSync(absolute);
   if (process.getuid && stat.uid !== process.getuid())
     throw new Error('Installation belongs to another user.');
-  if (process.platform !== 'win32') fs.chmodSync(absolute, 0o700);
-  else secureWindowsPath(absolute);
+  if (platform !== 'win32') fs.chmodSync(absolute, 0o700);
+  else secureWindowsPath(absolute, options);
   return absolute;
 }
 
-export function privateFile(file) {
+export function privateFile(file, options = {}) {
+  const platform = options.platform ?? process.platform;
   const stat = fs.lstatSync(file);
   if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1)
     throw new Error('Unsafe launcher state file.');
   if (process.getuid && stat.uid !== process.getuid())
     throw new Error('Launcher state belongs to another user.');
-  if (process.platform === 'win32') secureWindowsPath(file);
-  if (process.platform !== 'win32' && stat.mode & 0o077)
+  if (platform === 'win32') secureWindowsPath(file, options);
+  if (platform !== 'win32' && stat.mode & 0o077)
     throw new Error('Launcher state must be private to its owner.');
 }
 
@@ -363,12 +368,17 @@ export async function startLauncher({
         throw new Error(
           'This application version is not active. Reopen Examify using its installed shortcut.',
         );
-      const selected = assertStateComplete(root, installation);
+      let selected;
+      try {
+        selected = assertStateComplete(root, installation);
+      } catch (error) {
+        if (error.code === 'ENOENT')
+          throw new Error(
+            'The active study state is missing. Restore the complete private backup; no fallback was opened.',
+          );
+        throw error;
+      }
       assertExistingAncestors(selected);
-      if (installation.state && !fs.existsSync(selected))
-        throw new Error(
-          'The active study state is missing. Restore the complete private backup; no fallback was opened.',
-        );
       configDir = path.join(selected, 'config');
       dataDir = path.join(selected, 'data');
       assertExistingAncestors(configDir);

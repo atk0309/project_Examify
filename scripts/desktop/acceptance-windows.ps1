@@ -34,6 +34,7 @@ try {
     $UnitTests = Join-Path $Repository 'tests/desktop/launcher.test.mjs'
     $UpgradeTests = Join-Path $Repository 'tests/desktop/upgrades.test.mjs'
     $WorkerTests = Join-Path $Repository 'tests/desktop/worker-lock.test.mjs'
+    $RelocatedTests = Join-Path $Repository 'tests/desktop/relocated-helpers.test.mjs'
     $UpgradeAcceptance = Join-Path $Repository 'tests/desktop/upgrade-acceptance.mjs'
     $InventoryTests = Join-Path $Repository 'tests/desktop/windows-inventory.test.mjs'
     $UserTemp = Join-Path $Root 'UserTemp'
@@ -55,7 +56,7 @@ try {
     `$env:TEMP = $(Quote $UserTemp)
     `$env:TMP = $(Quote $UserTemp)
     `$ErrorActionPreference = 'Continue'
-    & $(Quote $Node) --test $(Quote $UnitTests) $(Quote $InventoryTests) $(Quote $UpgradeTests) $(Quote $WorkerTests) *> $(Quote $Result)
+    & $(Quote $Node) --test $(Quote $UnitTests) $(Quote $InventoryTests) $(Quote $UpgradeTests) $(Quote $WorkerTests) $(Quote $RelocatedTests) *> $(Quote $Result)
     `$Code = `$LASTEXITCODE
     `$ErrorActionPreference = 'Stop'
     if (`$Code -eq 0 -and $RunAcceptance) {

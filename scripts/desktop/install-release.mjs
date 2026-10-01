@@ -51,6 +51,7 @@ export async function installRelease({
   probe = probeRelease,
   bootstrap = installBootstrap,
   onPhase = () => {},
+  helperOptions = {},
 }) {
   root = path.resolve(root);
   staged = path.resolve(staged);
@@ -69,18 +70,31 @@ export async function installRelease({
     release.nodeVersion !== process.versions.node
   )
     throw new Error('Wrong release/runtime.');
+  // Imported modules keep their original URLs after staging is renamed. Keep
+  // helper lookup local to this transaction, and rebase it with the app tree.
+  // Tests importing checkout code may stage only metadata, so their helpers
+  // deliberately remain beside the imported installer.
+  let helperDirectory = path.dirname(fileURLToPath(import.meta.url));
+  const helperRelative = path.relative(staged, helperDirectory);
+  const helpersAreStaged =
+    helperRelative !== '..' &&
+    !helperRelative.startsWith(`..${path.sep}`) &&
+    !path.isAbsolute(helperRelative);
+  const options = () => ({ ...helperOptions, helperDirectory });
+  const secureDirectory = (dir) => privateDirectory(dir, options());
+  const secureFile = (file) => privateFile(file, options());
   const unlock = await acquireOperationLock({
     root,
-    secureDirectory: privateDirectory,
-    secureFile: privateFile,
+    secureDirectory,
+    secureFile,
   });
   let releaseInstance;
   let releaseWorker;
   try {
     releaseInstance = await tryAcquireInstanceLock({
       root,
-      secureDirectory: privateDirectory,
-      secureFile: privateFile,
+      secureDirectory,
+      secureFile,
     });
     if (!releaseInstance)
       throw new Error(
@@ -88,18 +102,18 @@ export async function installRelease({
       );
     const runningPath = path.join(root, 'running.json');
     if (exists(runningPath)) {
-      privateFile(runningPath);
+      secureFile(runningPath);
       // Marker PIDs are diagnostic only: they can be reused after a crash.
     }
     releaseWorker = await tryAcquireWorkerLock({
       root,
-      secureDirectory: privateDirectory,
-      secureFile: privateFile,
+      secureDirectory,
+      secureFile,
     });
     if (!releaseWorker)
       throw new Error('Examify is running. A database worker is still stopping; retry shortly.');
     const marker = path.join(root, 'installation.json');
-    const previous = readInstallation(root, privateFile);
+    const previous = readInstallation(root, secureFile);
     if (previous && previous.version !== version) {
       if (previous.protocol !== 1 || release.upgradeProtocol !== 1)
         throw new Error(
@@ -110,12 +124,13 @@ export async function installRelease({
     if (!previous || previous.protocol === 1) {
       if (release.upgradeProtocol !== 1)
         throw new Error('The package does not support safe activation.');
-      const releases = privateDirectory(path.join(root, 'releases'));
+      const releases = secureDirectory(path.join(root, 'releases'));
       const releaseId = `${version}-${randomBytes(16).toString('hex')}`;
       const destination = path.join(releases, releaseId);
       await prepare(staged, { installedRoot: destination });
-      await bootstrap({ root, staged, secureDirectory: privateDirectory, secureFile: privateFile });
+      await bootstrap({ root, staged, secureDirectory, secureFile });
       fs.renameSync(staged, destination);
+      if (helpersAreStaged) helperDirectory = path.join(destination, helperRelative);
       // Application links are package-verified and may be junctions. fsync each
       // regular file without following them; the package was staged privately.
       syncRelease(destination);
@@ -125,12 +140,12 @@ export async function installRelease({
       if (previous) {
         const source = assertStateComplete(root, previous);
         assertExistingAncestors(source);
-        const entries = inventoryState(source);
+        const entries = inventoryState(source, options());
         requireSpace(root, entries);
-        const states = privateDirectory(path.join(root, 'states'));
+        const states = secureDirectory(path.join(root, 'states'));
         state = `states/${randomBytes(16).toString('hex')}`;
         candidate = path.join(root, state);
-        copyState(source, candidate, entries, privateDirectory);
+        copyState(source, candidate, entries, secureDirectory, options());
         durableJson(path.join(candidate, 'backup-source.json'), {
           installation: previous,
           files: entries,
@@ -145,19 +160,19 @@ export async function installRelease({
             process.platform === 'win32' ? 'node.exe' : 'bin/node',
           ),
         });
-        const options = {
+        const lockOptions = {
           root: candidate,
-          secureDirectory: privateDirectory,
-          secureFile: privateFile,
+          secureDirectory,
+          secureFile,
         };
-        const candidateInstance = await tryAcquireInstanceLock(options);
+        const candidateInstance = await tryAcquireInstanceLock(lockOptions);
         if (!candidateInstance) throw new Error('Upgrade verification has not stopped.');
         let candidateWorker;
         try {
-          candidateWorker = await tryAcquireWorkerLock(options);
+          candidateWorker = await tryAcquireWorkerLock(lockOptions);
           if (!candidateWorker) throw new Error('Upgrade database verification has not stopped.');
           assertStateComplete(candidate, { initialized: true });
-          inventoryState(candidate); // Revalidate migrated files and config.
+          inventoryState(candidate, options()); // Revalidate migrated files and config.
           syncTree(candidate);
           syncDirectory(states);
         } finally {
@@ -203,7 +218,7 @@ export async function installRelease({
     await prepare(staged, { installedRoot: destination });
     const temporaryMarker = path.join(root, `.installation-${randomBytes(8).toString('hex')}.json`);
     const needsMarker = !exists(marker);
-    await bootstrap({ root, staged, secureDirectory: privateDirectory, secureFile: privateFile });
+    await bootstrap({ root, staged, secureDirectory, secureFile });
     if (needsMarker)
       fs.writeFileSync(temporaryMarker, `${JSON.stringify({ app: 'examify-solo', version })}\n`, {
         mode: 0o600,

@@ -102,9 +102,16 @@ function inspect(file, directory) {
     );
   return stat;
 }
-export function inventoryState(root) {
-  if (process.platform === 'win32') {
-    const result = spawnSync(
+export function inventoryState(
+  root,
+  {
+    helperDirectory = path.dirname(fileURLToPath(import.meta.url)),
+    platform = process.platform,
+    spawn = spawnSync,
+  } = {},
+) {
+  if (platform === 'win32') {
+    const result = spawn(
       'powershell.exe',
       [
         '-NoLogo',
@@ -113,7 +120,7 @@ export function inventoryState(root) {
         '-ExecutionPolicy',
         'Bypass',
         '-File',
-        path.join(path.dirname(fileURLToPath(import.meta.url)), 'inspect-state.ps1'),
+        path.join(helperDirectory, 'inspect-state.ps1'),
         '-Path',
         root,
       ],
@@ -158,7 +165,7 @@ export function inventoryState(root) {
   }
   return entries;
 }
-export function copyState(source, destination, entries, secureDirectory) {
+export function copyState(source, destination, entries, secureDirectory, helperOptions) {
   secureDirectory(destination);
   for (const item of entries) {
     const from = path.join(source, item.path);
@@ -194,7 +201,7 @@ export function copyState(source, destination, entries, secureDirectory) {
       if (output !== undefined) fs.closeSync(output);
     }
   }
-  if (JSON.stringify(inventoryState(source)) !== JSON.stringify(entries))
+  if (JSON.stringify(inventoryState(source, helperOptions)) !== JSON.stringify(entries))
     throw new Error('Study files changed during backup.');
   syncTree(destination);
 }
