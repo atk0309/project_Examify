@@ -143,10 +143,24 @@ async function bootstrap(url) {
   return response.headers.get('set-cookie').split(';')[0];
 }
 try {
-  const first = launch();
-  child = first.proc;
-  const ready = await first.ready;
+  execFileSync(node, [path.join(appDir, 'scripts/verify-prompts.mjs')], {
+    cwd: appDir,
+    env,
+    stdio: 'pipe',
+  });
+  const concurrent = [launch(), launch()];
+  const states = await Promise.all(concurrent.map((item) => item.ready));
+  assert.equal(
+    states.filter((state) => !state.reused).length,
+    1,
+    'Concurrent first launches share one initialized server',
+  );
+  assert.equal(states[0].origin, states[1].origin);
+  const primary = states.findIndex((state) => !state.reused);
+  child = concurrent[primary].proc;
+  const ready = states[primary];
   const url = await takeUrl();
+  await takeUrl(); // A second fresh capability was opened by the simultaneous launcher.
   assert.equal(ready.reused, false);
   async function probeInternal(route) {
     return new Promise((resolve, reject) => {
@@ -248,11 +262,28 @@ try {
     console.log('Packaged browser acceptance passed.');
   }
   const secrets = fs.readFileSync(path.join(root, 'config/secrets.json'));
+  const originalServer = fs.readFileSync(path.join(appDir, 'server.js'));
+  assert.throws(() => install(root, archive, 'pipe'), 'Repair refuses to replace a live app');
+  assert.ok(fs.readFileSync(path.join(appDir, 'server.js')).equals(originalServer));
   await new Promise((resolve) => {
     child.once('exit', resolve);
     child.send('stop', () => {});
   });
+  fs.writeFileSync(
+    path.join(appDir, 'server.js'),
+    'tampered bytes with unchanged release manifest',
+  );
   install(root, archive);
+  assert.ok(
+    fs.readFileSync(path.join(appDir, 'server.js')).equals(originalServer),
+    'Verified reinstall replaces modified code even with an unchanged manifest',
+  );
+  fs.unlinkSync(node);
+  install(root, archive);
+  assert.ok(
+    fs.existsSync(node),
+    'Verified reinstall repairs a partially missing release without executing its old runtime',
+  );
   assert.ok(
     fs.readFileSync(path.join(root, 'config/secrets.json')).equals(secrets),
     'Repeat installation preserves private configuration',

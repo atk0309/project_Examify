@@ -4,8 +4,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /** Restore only validated package-directory links, after verified extraction to its final path. */
-export function restoreRuntimeLinks(root) {
+export function restoreRuntimeLinks(root, { installedRoot = root } = {}) {
   root = fs.realpathSync(root);
+  installedRoot = path.resolve(installedRoot);
   const links = JSON.parse(fs.readFileSync(path.join(root, 'runtime-links.json'), 'utf8'));
   if (!Array.isArray(links) || links.length > 10000)
     throw new Error('Invalid runtime link manifest.');
@@ -39,7 +40,9 @@ export function restoreRuntimeLinks(root) {
       if (error.code !== 'ENOENT') throw error;
       // Junctions work for ordinary Windows accounts without Developer Mode/admin.
       fs.symlinkSync(
-        process.platform === 'win32' ? target : path.relative(path.dirname(file), target),
+        process.platform === 'win32'
+          ? path.join(installedRoot, link.target)
+          : path.relative(path.dirname(file), target),
         file,
         process.platform === 'win32' ? 'junction' : 'dir',
       );

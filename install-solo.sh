@@ -72,23 +72,10 @@ mkdir "$STAGE/app"
 tar -xzf "$STAGE/package.tar.gz" -C "$STAGE/app" --no-same-owner
 NODE="$STAGE/app/runtime/bin/node"
 [ -x "$NODE" ] && [ -f "$STAGE/app/scripts/launcher.mjs" ] || fail 'The release package is incomplete.'
-# Run only the now checksum-verified bundled runtime, never a host Node installation.
-"$NODE" --input-type=module - "$ROOT" "$STAGE/app" "$VERSION" <<'JS'
-import fs from 'node:fs';
-import path from 'node:path';
-const [root, app, version] = process.argv.slice(2);
-const manifest = JSON.parse(fs.readFileSync(path.join(app, 'desktop-release.json'), 'utf8'));
-if (manifest.version !== version || manifest.platform !== 'linux-x64' || process.versions.node !== manifest.nodeVersion) throw new Error('Wrong release/runtime.');
-const marker = path.join(root, 'installation.json');
-if (fs.existsSync(marker)) {
-  const old = JSON.parse(fs.readFileSync(marker, 'utf8'));
-  if (old.app !== 'examify-solo' || old.version !== version) throw new Error('Different or unknown installation. Automatic upgrades are not enabled; preserve your data and follow the release migration instructions.');
-}
-JS
-mkdir -p "$ROOT/releases"
-if [ ! -e "$ROOT/releases/$VERSION" ]; then mv "$STAGE/app" "$ROOT/releases/$VERSION"; fi
-"$ROOT/releases/$VERSION/runtime/bin/node" "$ROOT/releases/$VERSION/scripts/desktop/restore-links.mjs" "$ROOT/releases/$VERSION"
-printf '{"app":"examify-solo","version":"%s"}\n' "$VERSION" > "$ROOT/installation.json"
+# Use a verified temporary executable outside the directory being atomically moved.
+cp -- "$NODE" "$STAGE/install-node"
+chmod 700 "$STAGE/install-node"
+"$STAGE/install-node" "$STAGE/app/scripts/desktop/install-release.mjs" "$ROOT" "$STAGE/app" "$VERSION"
 cat > "$ROOT/Examify" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail

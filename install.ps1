@@ -69,18 +69,11 @@ try {
     if ($Manifest.version -ne $Version -or $Manifest.platform -ne 'win32-x64' -or -not (Test-Path -LiteralPath $Node)) { throw 'The release package is incomplete or for a different platform.' }
     $NodeVersion = & $Node --version
     if ($LASTEXITCODE -ne 0 -or $NodeVersion -ne "v$($Manifest.nodeVersion)") { throw 'Wrong portable Node runtime.' }
-    $MarkerPath = Join-Path $InstallRoot 'installation.json'
-    if (Test-Path -LiteralPath $MarkerPath) {
-        $Old = Get-Content -Raw -LiteralPath $MarkerPath | ConvertFrom-Json
-        if ($Old.app -ne 'examify-solo' -or $Old.version -ne $Version) { throw 'Different or unknown installation. Automatic upgrades are not enabled; preserve your data and follow the release migration instructions.' }
-    }
-    $Releases = Join-Path $InstallRoot 'releases'
-    New-Item -ItemType Directory -Force -Path $Releases | Out-Null
-    $Destination = Join-Path $Releases $Version
-    if (-not (Test-Path -LiteralPath $Destination)) { Move-Item -LiteralPath $App -Destination $Destination }
-    & (Join-Path $Destination 'runtime/node.exe') (Join-Path $Destination 'scripts/desktop/restore-links.mjs') $Destination
-    if ($LASTEXITCODE -ne 0) { throw 'Could not prepare portable dependencies. Existing data was preserved.' }
-    @{ app = 'examify-solo'; version = $Version } | ConvertTo-Json | Set-Content -Encoding ASCII -LiteralPath $MarkerPath
+    # The executable doing the swap lives outside the directory being moved.
+    $InstallerNode = Join-Path $Stage 'install-node.exe'
+    Copy-Item -LiteralPath $Node -Destination $InstallerNode
+    & $InstallerNode (Join-Path $App 'scripts/desktop/install-release.mjs') $InstallRoot $App $Version
+    if ($LASTEXITCODE -ne 0) { throw 'Could not safely install this release. Existing learner data was preserved.' }
     $Launcher = Join-Path $InstallRoot 'Examify.cmd'
     @"
 @echo off

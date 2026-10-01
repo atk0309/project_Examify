@@ -45,7 +45,7 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Linux launcher security and packaging tests
         if: runner.os == 'Linux'
-        run: node --test tests/desktop/launcher.test.mjs
+        run: node --test tests/desktop/launcher.test.mjs tests/desktop/windows-inventory.test.mjs
       - name: Windows launcher security and packaging tests under a standard user
         if: runner.os == 'Windows'
         shell: powershell

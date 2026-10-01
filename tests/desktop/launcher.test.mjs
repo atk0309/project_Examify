@@ -256,12 +256,193 @@ test('portable links preserve pnpm dependency lookup without archive symlinks', 
     restoreRuntimeLinks(output);
     restoreRuntimeLinks(output); // Repeat installation is idempotent.
     assert.equal(createRequire(path.join(output, 'package.json'))('parent'), 'dependency-resolved');
+    const staged = path.join(fixture, 'staged');
+    const published = path.join(fixture, 'published');
+    copyStandaloneRuntime(input, staged);
+    restoreRuntimeLinks(staged, { installedRoot: published });
+    fs.renameSync(staged, published);
+    assert.equal(
+      createRequire(path.join(published, 'package.json'))('parent'),
+      'dependency-resolved',
+      'Prepared links remain valid after atomic publication',
+    );
     fs.writeFileSync(
       path.join(output, 'runtime-links.json'),
       JSON.stringify([{ path: 'node_modules/escape', target: '../outside' }]),
     );
     assert.throws(() => restoreRuntimeLinks(output), /Unsafe runtime link/);
   } finally {
+    fs.rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test('verified reinstall repairs tampered and partial releases, rolls back failure, and refuses live services', async () => {
+  const { installRelease } = await import('../../scripts/desktop/install-release.mjs');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-repair-'));
+  privateDirectory(root);
+  const version = 'ci-fixture';
+  const destination = path.join(root, 'releases', version);
+  fs.mkdirSync(destination, { recursive: true });
+  for (const name of ['data', 'config']) {
+    fs.mkdirSync(path.join(root, name));
+    fs.writeFileSync(path.join(root, name, 'keep.txt'), 'preserve');
+  }
+  fs.writeFileSync(
+    path.join(root, 'installation.json'),
+    JSON.stringify({ app: 'examify-solo', version }),
+    { mode: 0o600 },
+  );
+  function staged() {
+    const directory = fs.mkdtempSync(path.join(root, '.install.'));
+    const app = path.join(directory, 'app');
+    fs.mkdirSync(app);
+    fs.writeFileSync(
+      path.join(app, 'desktop-release.json'),
+      JSON.stringify({
+        version,
+        platform: `${process.platform}-${process.arch}`,
+        nodeVersion: process.versions.node,
+      }),
+    );
+    fs.writeFileSync(path.join(app, 'runtime-links.json'), '[]');
+    fs.writeFileSync(path.join(app, 'payload.txt'), 'verified');
+    return app;
+  }
+  try {
+    fs.writeFileSync(path.join(destination, 'payload.txt'), 'tampered');
+    await installRelease({ root, staged: staged(), version });
+    assert.equal(fs.readFileSync(path.join(destination, 'payload.txt'), 'utf8'), 'verified');
+    fs.unlinkSync(path.join(destination, 'payload.txt'));
+    await installRelease({ root, staged: staged(), version });
+    assert.equal(fs.readFileSync(path.join(destination, 'payload.txt'), 'utf8'), 'verified');
+    await assert.rejects(
+      installRelease({
+        root,
+        staged: staged(),
+        version,
+        prepare: () => {
+          throw new Error('synthetic preparation failure');
+        },
+      }),
+      /synthetic preparation failure/,
+    );
+    assert.equal(fs.readFileSync(path.join(destination, 'payload.txt'), 'utf8'), 'verified');
+    const failedStage = staged();
+    const rename = fs.renameSync;
+    try {
+      fs.renameSync = (from, to) => {
+        if (from === failedStage && to === destination)
+          throw new Error('synthetic publication failure');
+        return rename(from, to);
+      };
+      await assert.rejects(
+        installRelease({ root, staged: failedStage, version }),
+        /synthetic publication failure/,
+      );
+    } finally {
+      fs.renameSync = rename;
+    }
+    assert.equal(
+      fs.readFileSync(path.join(destination, 'payload.txt'), 'utf8'),
+      'verified',
+      'The previous release is rolled back if atomic publication fails',
+    );
+    const running = path.join(root, 'running.json');
+    fs.writeFileSync(running, JSON.stringify({ pid: process.pid }), { mode: 0o600 });
+    await assert.rejects(installRelease({ root, staged: staged(), version }), /Examify is running/);
+    assert.equal(fs.readFileSync(path.join(destination, 'payload.txt'), 'utf8'), 'verified');
+    for (const name of ['data', 'config'])
+      assert.equal(fs.readFileSync(path.join(root, name, 'keep.txt'), 'utf8'), 'preserve');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('root-stable cross-process lock ignores TMPDIR and releases after abrupt exit', async () => {
+  const { spawn } = await import('node:child_process');
+  const { fileURLToPath } = await import('node:url');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-lock-test-'));
+  const launcher = fileURLToPath(new URL('../../scripts/launcher.mjs', import.meta.url));
+  const lock = fileURLToPath(new URL('../../scripts/desktop/operation-lock.mjs', import.meta.url));
+  const source = `import { pathToFileURL } from 'node:url'; const { privateDirectory, privateFile } = await import(pathToFileURL(process.argv[2])); const { acquireOperationLock } = await import(pathToFileURL(process.argv[3])); const release = await acquireOperationLock({root:process.argv[1],secureDirectory:privateDirectory,secureFile:privateFile}); process.send('acquired'); process.on('message',()=>{release();process.disconnect();});`;
+  const children = [];
+  const start = () => {
+    const temporary = path.join(root, `alternate-temp-${children.length}`);
+    fs.mkdirSync(temporary);
+    const child = spawn(
+      process.execPath,
+      ['--input-type=module', '-e', source, root, launcher, lock],
+      {
+        stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+        env: { ...process.env, TMPDIR: temporary, TEMP: temporary, TMP: temporary },
+      },
+    );
+    children.push(child);
+    return {
+      child,
+      ready: new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error('Operation lock timed out.')), 15000);
+        child.once('message', () => {
+          clearTimeout(timeout);
+          resolve();
+        });
+        child.once('error', reject);
+      }),
+    };
+  };
+  try {
+    const first = start();
+    await first.ready;
+    let acquired = false;
+    const second = start();
+    void second.ready.then(() => {
+      acquired = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    assert.equal(
+      acquired,
+      false,
+      'Another process cannot enter the startup/install critical section',
+    );
+    first.child.kill('SIGKILL');
+    await second.ready;
+    second.child.send('release');
+  } finally {
+    await Promise.all(
+      children.map(
+        (child) =>
+          new Promise((resolve) => {
+            if (child.exitCode !== null || child.signalCode !== null) return resolve();
+            child.once('exit', resolve);
+            child.kill();
+          }),
+      ),
+    );
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('concurrent private-directory creation rechecks raced paths and still rejects links', () => {
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-directory-race-'));
+  const target = path.join(fixture, 'created-concurrently');
+  const linked = path.join(fixture, 'linked-concurrently');
+  const mkdir = fs.mkdirSync;
+  try {
+    fs.mkdirSync = (directory, options) => {
+      if (directory === target) {
+        mkdir(directory, options);
+        throw Object.assign(new Error('Already created'), { code: 'EEXIST' });
+      }
+      if (directory === linked) {
+        fs.symlinkSync(target, linked, process.platform === 'win32' ? 'junction' : 'dir');
+        throw Object.assign(new Error('Already created'), { code: 'EEXIST' });
+      }
+      return mkdir(directory, options);
+    };
+    assert.equal(privateDirectory(target), target);
+    assert.throws(() => privateDirectory(linked), /Unsafe installation path/);
+  } finally {
+    fs.mkdirSync = mkdir;
     fs.rmSync(fixture, { recursive: true, force: true });
   }
 });

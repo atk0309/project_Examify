@@ -26,10 +26,9 @@ export async function verifyBrowser({ origin, browserUrl, reopen }) {
 
     // Sample paper uses existing own-user persistence and local MCQ scoring.
     await page.getByTestId('solo-quick-start').click();
-    await expect(page.getByTestId('exam-progress')).toContainText('Question 1 of');
-    const progress = await page.getByTestId('exam-progress').innerText();
-    const total = Number(/of (\d+)/.exec(progress)?.[1]);
-    assert.ok(total > 0 && total <= 30, 'Sample paper must have a bounded question count');
+    // CSS uppercases innerText; assert source text and the fixture's exact size.
+    await expect(page.getByTestId('exam-progress')).toHaveText('Question 1 of 5');
+    const total = 5;
     for (let index = 1; index <= total; index += 1) {
       await expect(page.getByTestId('exam-progress')).toContainText(
         `Question ${index} of ${total}`,

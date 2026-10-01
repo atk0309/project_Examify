@@ -48,16 +48,35 @@ function command(binary, args) {
   execFileSync(binary, args, { cwd: repo, stdio: 'inherit' });
 }
 try {
-  copyStandaloneRuntime(path.join(repo, '.next/standalone'), app);
+  copyStandaloneRuntime(path.join(repo, '.next/standalone'), app, {
+    sourceNodeModules: path.join(repo, 'node_modules'),
+  });
   copy(path.join(repo, '.next/static'), path.join(app, '.next/static'));
   // Only committed sample content, never ignored study PDFs or family content.
   const trackedContent = execFileSync(
     'git',
-    ['ls-tree', '-r', '--name-only', '-z', 'HEAD', '--', 'content', 'public'],
+    [
+      'ls-tree',
+      '-r',
+      '--name-only',
+      '-z',
+      'HEAD',
+      '--',
+      'content',
+      'public',
+      'tools/examify-ingest/prompts',
+    ],
     { cwd: repo, encoding: 'utf8' },
   )
     .split('\0')
-    .filter(Boolean);
+    .filter(
+      (name) =>
+        name &&
+        (!name.startsWith('tools/') ||
+          /^tools\/examify-ingest\/prompts\/v[0-9]+\/generate-bank\.md$/.test(name)),
+    );
+  if (!trackedContent.some((name) => name.startsWith('tools/examify-ingest/prompts/')))
+    throw new Error('Committed generation prompt assets are missing.');
   for (const name of trackedContent) {
     const target = path.join(app, name);
     fs.mkdirSync(path.dirname(target), { recursive: true });
@@ -81,6 +100,8 @@ try {
     path.join(repo, 'scripts/desktop/restore-links.mjs'),
     path.join(app, 'scripts/desktop/restore-links.mjs'),
   );
+  for (const name of ['operation-lock.mjs', 'install-release.mjs'])
+    copy(path.join(repo, 'scripts/desktop', name), path.join(app, 'scripts/desktop', name));
   copy(path.join(repo, 'LICENSE'), path.join(app, 'LICENSE'));
   // tsx pins its esbuild dependency in pnpm-lock; avoid fetching a build-time tool.
   const esbuild = require(require.resolve('esbuild', { paths: [require.resolve('tsx')] }));
@@ -112,6 +133,21 @@ try {
     format: 'esm',
     target: 'node22',
     external: ['better-sqlite3'],
+  });
+  // Exercise the real runtime prompt loader without invoking any provider.
+  await esbuild.build({
+    stdin: {
+      contents:
+        "import { loadGeneratePrompt } from './tools/examify-ingest/src/prompt.ts'; const prompt = loadGeneratePrompt(process.cwd()); if (!prompt.text.trim() || !prompt.hash) throw new Error('Invalid generation prompt asset.');",
+      resolveDir: repo,
+      sourcefile: 'verify-prompts.ts',
+      loader: 'ts',
+    },
+    outfile: path.join(app, 'scripts/verify-prompts.mjs'),
+    bundle: true,
+    platform: 'node',
+    format: 'esm',
+    target: 'node22',
   });
   const archive = path.join(stage, pin.file);
   const response = await fetch(`https://nodejs.org/download/release/v${pins.version}/${pin.file}`);

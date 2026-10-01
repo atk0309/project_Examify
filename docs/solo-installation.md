@@ -30,7 +30,11 @@ not run the unsubstituted installer templates directly from a source checkout.
 Keep the launcher terminal open while practicing. Ctrl+C stops the local service;
 closing the browser alone does not. Reopening the shortcut uses the existing
 running instance and opens a fresh browser session safely. There is no automatic
-background service or silent updater in this preview.
+background service or silent updater in this preview. The installer supports a
+fresh install and repair of the same pinned version, replacing app files only
+from the newly verified archive. Stop the launcher before repairing. Automatic
+cross-version upgrades are refused until their backup/rollback flow is validated.
+Existing household upgrades still use `install.sh --upgrade`.
 
 ## What the launcher does
 
@@ -112,6 +116,10 @@ Stop the launcher cleanly, then copy both the stable `data` and `config` folders
 to a private backup location. Keep them together; `config` contains authentication
 secrets and any saved provider keys. Do not post or share the backup. Copying a
 live SQLite database without its journal is not a reliable backup.
+
+The small `.examify-operations` directory at the install root coordinates
+launch/repair operations; it is outside learner data and configuration. It is not
+part of your study backup and must not be removed while an operation is running.
 
 The existing `examify:data` backup command was designed for household checkouts;
 it does not yet include the solo launcher's separate `config/secrets.json` and

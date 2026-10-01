@@ -7,6 +7,7 @@ import http from 'node:http';
 import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { acquireOperationLock } from './desktop/operation-lock.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -70,7 +71,14 @@ export function privateDirectory(dir) {
         throw new Error('Unsafe installation path.');
     } catch (error) {
       if (error.code !== 'ENOENT') throw error;
-      fs.mkdirSync(current, { mode: 0o700 });
+      try {
+        fs.mkdirSync(current, { mode: 0o700 });
+      } catch (creationError) {
+        if (creationError.code !== 'EEXIST') throw creationError;
+        const created = fs.lstatSync(current);
+        if (created.isSymbolicLink() || !created.isDirectory())
+          throw new Error('Unsafe installation path.');
+      }
     }
   }
   const stat = fs.statSync(absolute);
@@ -81,7 +89,7 @@ export function privateDirectory(dir) {
   return absolute;
 }
 
-function privateFile(file) {
+export function privateFile(file) {
   const stat = fs.lstatSync(file);
   if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1)
     throw new Error('Unsafe launcher state file.');
@@ -323,205 +331,212 @@ export async function startLauncher({
   assertExistingAncestors(root);
   assertExistingAncestors(configDir);
   assertExistingAncestors(dataDir);
-  async function reuse(running) {
-    if (
-      !alive(running.pid) ||
-      !running.origin ||
-      !(await healthy(running.origin, running.instanceId))
-    )
-      return false;
-    const { authSecret } = readJson(path.join(configDir, 'secrets.json'));
-    const response = await fetch(`${running.origin}/__examify/reopen`, {
-      method: 'POST',
-      redirect: 'error',
-      signal: AbortSignal.timeout(5000),
-      headers: {
-        origin: running.origin,
-        'x-examify-reopen': createHmac('sha256', authSecret)
-          .update(`reopen:${running.instanceId}`)
-          .digest('hex'),
-      },
-    });
-    if (!response.ok)
-      throw new Error('Could not reopen the current Examify browser. Stop it and launch again.');
-    return true;
-  }
+  const releaseOperation = await acquireOperationLock({
+    root,
+    secureDirectory: privateDirectory,
+    secureFile: privateFile,
+  });
   try {
-    const running = readJson(stateFile);
-    if (await reuse(running)) return { reused: true, origin: running.origin, stop: async () => {} };
-  } catch (error) {
-    if (error.code !== 'ENOENT') throw error;
-  }
-  // Validate existing bytes before any data/config initialisation or permission change.
-  const preflight = spawnSync(
-    node,
-    [path.join(appDir, 'scripts', 'solo-preflight.mjs'), path.join(dataDir, 'app.db')],
-    {
-      cwd: appDir,
-      env: childEnvironment(),
-      stdio: 'ignore',
-      windowsHide: true,
-      timeout: 30000,
-    },
-  );
-  if (preflight.status !== 0)
-    throw new Error(
-      'This folder is not a safe solo installation. Existing files were not changed; use a new dedicated folder.',
-    );
-  privateDirectory(root);
-  const instanceId = secret();
-  // A same-user exclusive file serialises startup and avoids two SQLite migrations.
-  for (let attempt = 0; ; attempt += 1) {
-    try {
-      writeJson(stateFile, { pid: process.pid, instanceId }, true);
-      break;
-    } catch (error) {
-      if (error.code !== 'EEXIST') throw error;
-      const running = readJson(stateFile);
-      if (!alive(running.pid)) {
-        fs.unlinkSync(stateFile);
-        continue;
-      }
-      if (await reuse(running))
-        return { reused: true, origin: running.origin, stop: async () => {} };
-      if (attempt >= 60)
-        throw new Error(
-          'Another Examify launcher is still starting. Keep its window open or stop it before retrying.',
-        );
-      await sleep(500);
+    async function reuse(running) {
+      if (
+        !alive(running.pid) ||
+        !running.origin ||
+        !(await healthy(running.origin, running.instanceId))
+      )
+        return false;
+      const { authSecret } = readJson(path.join(configDir, 'secrets.json'));
+      const response = await fetch(`${running.origin}/__examify/reopen`, {
+        method: 'POST',
+        redirect: 'error',
+        signal: AbortSignal.timeout(5000),
+        headers: {
+          origin: running.origin,
+          'x-examify-reopen': createHmac('sha256', authSecret)
+            .update(`reopen:${running.instanceId}`)
+            .digest('hex'),
+        },
+      });
+      if (!response.ok)
+        throw new Error('Could not reopen the current Examify browser. Stop it and launch again.');
+      return true;
     }
-  }
-  let child;
-  let gateway;
-  let stopped = false;
-  let spawnError = false;
-  const stop = async () => {
-    if (stopped) return;
-    stopped = true;
-    if (gateway) {
-      gateway.server.closeAllConnections();
-      await new Promise((resolve) => gateway.server.close(resolve));
-    }
-    if (child && child.exitCode === null) {
-      child.kill();
-      await Promise.race([new Promise((resolve) => child.once('exit', resolve)), sleep(3000)]);
-      if (child.exitCode === null) child.kill('SIGKILL');
-    }
-    try {
-      if (readJson(stateFile).instanceId === instanceId) fs.unlinkSync(stateFile);
-    } catch {
-      /* Already gone. */
-    }
-  };
-  try {
-    privateDirectory(configDir);
-    privateDirectory(dataDir);
-    for (const name of ['.env', '.env.local']) {
+    let previous;
+    async function readPrevious() {
       try {
-        privateFile(path.join(configDir, name));
+        return readJson(stateFile);
       } catch (error) {
-        if (error.code !== 'ENOENT') throw error;
+        if (error.code === 'ENOENT') return undefined;
+        throw error;
       }
     }
-    const { authSecret, setupSecret } = loadSecrets(configDir);
-    const transportSecret = secret();
-    const launchToken = secret();
-    const internalPort = await unusedPort();
-    gateway = createGateway({
-      internalPort,
-      transportSecret,
-      instanceId,
-      launchToken,
-      browser,
-      reopenSecret: createHmac('sha256', authSecret).update(`reopen:${instanceId}`).digest('hex'),
-    });
-    const origin = await gateway.listen();
-    const env = {
-      ...childEnvironment(),
-      NODE_ENV: 'production',
-      NEXT_TELEMETRY_DISABLED: '1',
-      EXAMIFY_MODE: 'solo',
-      EXAMIFY_CONFIG_DIR: configDir,
-      EXAMIFY_DATA_DIR: dataDir,
-      DATABASE_URL: `file:${path.join(dataDir, 'app.db')}`,
-      AUTH_SECRET: authSecret,
-      SETUP_BOOTSTRAP_SECRET: setupSecret,
-      EXAMIFY_SOLO_LAUNCH_TOKEN: launchToken,
-      EXAMIFY_SOLO_TRANSPORT_SECRET: transportSecret,
-      HOSTNAME: '127.0.0.1',
-      PORT: String(internalPort),
-      SITE_URL: origin,
-      AUTH_MODE: 'password',
-      MAIL_TRANSPORT: 'outbox',
-      ALLOW_LOCAL_OUTBOX: '1',
-      TURNSTILE_ENABLED: '0',
-    };
-    const migration = spawn(node, [path.join(appDir, 'scripts', 'migrate.mjs')], {
-      cwd: appDir,
-      env,
-      stdio: ['ignore', 'ignore', 'pipe'],
-      windowsHide: true,
-    });
-    // Never print migration output: it can contain private paths or SQL data.
-    migration.stderr.resume();
-    const migrationCode = await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => migration.kill(), 60000);
-      migration.once('error', (error) => {
-        clearTimeout(timer);
-        reject(error);
-      });
-      migration.once('exit', (code) => {
-        clearTimeout(timer);
-        resolve(code);
-      });
-    });
-    if (migrationCode !== 0)
-      throw new Error('Examify could not prepare its data. Existing files have been preserved.');
-    child = spawn(
-      node,
-      [
-        '--require',
-        path.join(appDir, 'scripts', 'desktop', 'settings-loader.cjs'),
-        path.join(appDir, 'server.js'),
-      ],
-      {
-        cwd: appDir,
-        env,
-        stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
-        windowsHide: true,
-      },
-    );
-    child.once('error', () => {
-      spawnError = true;
-    });
-    const start = Date.now();
-    while (!(await healthy(origin, instanceId))) {
-      if (spawnError || child.exitCode !== null)
+    previous = await readPrevious();
+    const waitStarted = Date.now();
+    while (previous && alive(previous.pid)) {
+      if (await reuse(previous))
+        return { reused: true, origin: previous.origin, stop: async () => {} };
+      if (Date.now() - waitStarted >= timeout)
         throw new Error(
-          'Examify did not start. Check that this release supports your operating system.',
-        );
-      if (Date.now() - start > timeout)
-        throw new Error(
-          'Examify took too long to start. Close other Examify windows and try again.',
+          'Another Examify launcher is still starting. Wait for it to finish or stop it before retrying.',
         );
       await sleep(250);
+      previous = await readPrevious();
     }
-    privateFile(stateFile);
-    writeJson(stateFile, { pid: process.pid, instanceId, origin });
-    await browser(`${origin}/solo/start#${browserCapability(launchToken)}`);
-    child.once('exit', () => {
-      if (!stopped) {
-        console.error(
-          'Examify stopped unexpectedly. Your saved work is still in the private data folder.',
-        );
-        process.exitCode = 1;
-        void stop();
+    // Validate existing bytes before any data/config initialisation or permission change.
+    const preflight = spawnSync(
+      node,
+      [path.join(appDir, 'scripts', 'solo-preflight.mjs'), path.join(dataDir, 'app.db')],
+      {
+        cwd: appDir,
+        env: childEnvironment(),
+        stdio: 'ignore',
+        windowsHide: true,
+        timeout: 30000,
+      },
+    );
+    if (preflight.status !== 0)
+      throw new Error(
+        'This folder is not a safe solo installation. Existing files were not changed; use a new dedicated folder.',
+      );
+    privateDirectory(root);
+    const instanceId = secret();
+    // The OS-backed operation lock serializes stale-marker recovery, preflight,
+    // migration and startup. A crashed process releases it automatically.
+    if (previous) fs.unlinkSync(stateFile);
+    writeJson(stateFile, { pid: process.pid, instanceId }, true);
+    let child;
+    let gateway;
+    let stopped = false;
+    let spawnError = false;
+    const stop = async () => {
+      if (stopped) return;
+      stopped = true;
+      if (gateway) {
+        gateway.server.closeAllConnections();
+        await new Promise((resolve) => gateway.server.close(resolve));
       }
-    });
-    return { origin, internalPort, reused: false, stop, child };
-  } catch (error) {
-    await stop();
-    throw error;
+      if (child && child.exitCode === null) {
+        child.kill();
+        await Promise.race([new Promise((resolve) => child.once('exit', resolve)), sleep(3000)]);
+        if (child.exitCode === null) child.kill('SIGKILL');
+      }
+      try {
+        if (readJson(stateFile).instanceId === instanceId) fs.unlinkSync(stateFile);
+      } catch {
+        /* Already gone. */
+      }
+    };
+    try {
+      privateDirectory(configDir);
+      privateDirectory(dataDir);
+      for (const name of ['.env', '.env.local']) {
+        try {
+          privateFile(path.join(configDir, name));
+        } catch (error) {
+          if (error.code !== 'ENOENT') throw error;
+        }
+      }
+      const { authSecret, setupSecret } = loadSecrets(configDir);
+      const transportSecret = secret();
+      const launchToken = secret();
+      const internalPort = await unusedPort();
+      gateway = createGateway({
+        internalPort,
+        transportSecret,
+        instanceId,
+        launchToken,
+        browser,
+        reopenSecret: createHmac('sha256', authSecret).update(`reopen:${instanceId}`).digest('hex'),
+      });
+      const origin = await gateway.listen();
+      const env = {
+        ...childEnvironment(),
+        NODE_ENV: 'production',
+        NEXT_TELEMETRY_DISABLED: '1',
+        EXAMIFY_MODE: 'solo',
+        EXAMIFY_CONFIG_DIR: configDir,
+        EXAMIFY_DATA_DIR: dataDir,
+        DATABASE_URL: `file:${path.join(dataDir, 'app.db')}`,
+        AUTH_SECRET: authSecret,
+        SETUP_BOOTSTRAP_SECRET: setupSecret,
+        EXAMIFY_SOLO_LAUNCH_TOKEN: launchToken,
+        EXAMIFY_SOLO_TRANSPORT_SECRET: transportSecret,
+        HOSTNAME: '127.0.0.1',
+        PORT: String(internalPort),
+        SITE_URL: origin,
+        AUTH_MODE: 'password',
+        MAIL_TRANSPORT: 'outbox',
+        ALLOW_LOCAL_OUTBOX: '1',
+        TURNSTILE_ENABLED: '0',
+      };
+      const migration = spawn(node, [path.join(appDir, 'scripts', 'migrate.mjs')], {
+        cwd: appDir,
+        env,
+        stdio: ['ignore', 'ignore', 'pipe'],
+        windowsHide: true,
+      });
+      // Never print migration output: it can contain private paths or SQL data.
+      migration.stderr.resume();
+      const migrationCode = await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => migration.kill(), 60000);
+        migration.once('error', (error) => {
+          clearTimeout(timer);
+          reject(error);
+        });
+        migration.once('exit', (code) => {
+          clearTimeout(timer);
+          resolve(code);
+        });
+      });
+      if (migrationCode !== 0)
+        throw new Error('Examify could not prepare its data. Existing files have been preserved.');
+      child = spawn(
+        node,
+        [
+          '--require',
+          path.join(appDir, 'scripts', 'desktop', 'settings-loader.cjs'),
+          path.join(appDir, 'server.js'),
+        ],
+        {
+          cwd: appDir,
+          env,
+          stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+          windowsHide: true,
+        },
+      );
+      child.once('error', () => {
+        spawnError = true;
+      });
+      const start = Date.now();
+      while (!(await healthy(origin, instanceId))) {
+        if (spawnError || child.exitCode !== null)
+          throw new Error(
+            'Examify did not start. Check that this release supports your operating system.',
+          );
+        if (Date.now() - start > timeout)
+          throw new Error(
+            'Examify took too long to start. Close other Examify windows and try again.',
+          );
+        await sleep(250);
+      }
+      privateFile(stateFile);
+      writeJson(stateFile, { pid: process.pid, instanceId, origin });
+      await browser(`${origin}/solo/start#${browserCapability(launchToken)}`);
+      child.once('exit', () => {
+        if (!stopped) {
+          console.error(
+            'Examify stopped unexpectedly. Your saved work is still in the private data folder.',
+          );
+          process.exitCode = 1;
+          void stop();
+        }
+      });
+      return { origin, internalPort, reused: false, stop, child };
+    } catch (error) {
+      await stop();
+      throw error;
+    }
+  } finally {
+    releaseOperation();
   }
 }
 
