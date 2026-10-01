@@ -106,10 +106,19 @@ async function acceptance() {
     return app;
   }
   function install(staged, version, killPhase = '') {
-    const runtime = path.join(
+    const bundledRuntime = path.join(
       staged,
       process.platform === 'win32' ? 'runtime/node.exe' : 'runtime/bin/node',
     );
+    // Like the real installer, run a fresh copy outside the app that gets moved
+    // and synced. Windows locks a running executable against those operations.
+    // Each stage has a unique parent; retain its runtime until fixture cleanup
+    // so interrupted workers never cause a later install to overwrite it.
+    const runtime = path.join(
+      path.dirname(staged),
+      process.platform === 'win32' ? 'install-node.exe' : 'install-node',
+    );
+    fs.copyFileSync(bundledRuntime, runtime, fs.constants.COPYFILE_EXCL);
     execFileSync(runtime, [self, '--install-worker', root, staged, version, killPhase], {
       env,
       stdio: 'pipe',
