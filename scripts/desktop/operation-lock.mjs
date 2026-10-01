@@ -7,6 +7,7 @@ export async function acquireOperationLock({
   secureDirectory,
   secureFile,
   timeout = 120000,
+  onContended = () => {},
 }) {
   // The namespace is tied to the install root, never TEMP/TMP or shell env.
   // Keep this tiny coordination database outside learner data/config. Do not
@@ -24,6 +25,7 @@ export async function acquireOperationLock({
   const db = new DatabaseSync(file);
   db.exec('PRAGMA busy_timeout = 100');
   const started = Date.now();
+  let reportedContention = false;
   try {
     while (true) {
       try {
@@ -31,6 +33,10 @@ export async function acquireOperationLock({
         break;
       } catch (error) {
         if (error.errcode !== 5 && error.errcode !== 6) throw error;
+        if (!reportedContention) {
+          onContended();
+          reportedContention = true;
+        }
         if (Date.now() - started >= timeout)
           throw new Error(
             'Another Examify operation is still running. Wait for it to finish and try again.',

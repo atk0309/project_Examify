@@ -41,12 +41,20 @@ $Principal = New-Object Security.Principal.WindowsPrincipal($Identity)
 if ($Principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'Run this in an ordinary Command Prompt, not as Administrator.' }
 New-Item -ItemType Directory -Force -Path $InstallRoot | Out-Null
 # Private per-user ACL; no administrative privileges or global policy changes.
+$RootItem = Get-Item -LiteralPath $InstallRoot -Force
+$Sections = [Security.AccessControl.AccessControlSections]::Access -bor [Security.AccessControl.AccessControlSections]::Owner
+if ($RootItem.GetAccessControl($Sections).GetOwner([Security.Principal.SecurityIdentifier]).Value -ne $Identity.User.Value) { throw 'Choose a dedicated installation folder owned by your ordinary Windows account.' }
 $Acl = New-Object Security.AccessControl.DirectorySecurity
 $Acl.SetAccessRuleProtection($true, $false)
-$Acl.SetOwner($Identity.User)
 $Rule = New-Object Security.AccessControl.FileSystemAccessRule($Identity.User, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')
 $Acl.AddAccessRule($Rule)
-Set-Acl -LiteralPath $InstallRoot -AclObject $Acl
+# DACL-only persistence supports repeated installation without audit privileges.
+$RootItem.SetAccessControl($Acl)
+$After = $RootItem.GetAccessControl($Sections)
+$Rules = @($After.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
+if ($After.GetOwner([Security.Principal.SecurityIdentifier]).Value -ne $Identity.User.Value -or -not $After.AreAccessRulesProtected -or $Rules.Count -ne 1) { throw 'Could not verify the private installation folder.' }
+$Actual = $Rules[0]
+if ($Actual.IdentityReference.Value -ne $Identity.User.Value -or $Actual.IsInherited -or $Actual.AccessControlType -ne $Rule.AccessControlType -or $Actual.FileSystemRights -ne $Rule.FileSystemRights -or $Actual.InheritanceFlags -ne $Rule.InheritanceFlags -or $Actual.PropagationFlags -ne $Rule.PropagationFlags) { throw 'Could not verify the private installation folder.' }
 $Stage = Join-Path $InstallRoot ('.install.' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $Stage | Out-Null
 try {

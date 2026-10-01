@@ -4,6 +4,8 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
+import { EventEmitter } from 'node:events';
+import { observeChildProgress } from './child-progress.mjs';
 import {
   allowedRequest,
   childEnvironment,
@@ -95,6 +97,33 @@ test('private generated secrets survive relaunch; malformed or linked files fail
         return true;
       },
     );
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+test('private paths can be secured repeatedly by fresh ordinary-user processes', async () => {
+  const { spawnSync } = await import('node:child_process');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-repeat-private-'));
+  const file = path.join(dir, 'state.json');
+  fs.writeFileSync(file, '{}', { mode: 0o600 });
+  const launcher = new URL('../../scripts/launcher.mjs', import.meta.url).href;
+  const source = `const { privateDirectory, privateFile } = await import(process.argv[1]); privateDirectory(process.argv[2]); privateFile(process.argv[3]);`;
+  try {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const result = spawnSync(
+        process.execPath,
+        ['--input-type=module', '-e', source, launcher, dir, file],
+        {
+          stdio: 'ignore',
+          timeout: 15000,
+        },
+      );
+      assert.equal(
+        result.status,
+        0,
+        `Fresh process ${attempt + 1} must secure existing private directory and file`,
+      );
+    }
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -358,59 +387,83 @@ test('verified reinstall repairs tampered and partial releases, rolls back failu
   }
 });
 
+test('child progress rejects early exits and errors without leaking diagnostics or timers', async () => {
+  for (const mode of ['exit', 'error', 'message', 'timeout', 'dispose']) {
+    const child = new EventEmitter();
+    child.stderr = new EventEmitter();
+    const observer = observeChildProgress(child, { timeout: 20 });
+    const ready = observer.waitFor('acquired');
+    child.emit('message', { phase: 'securing-file' });
+    child.stderr.emit('data', Buffer.from('SYNTHETIC_PRIVATE_SENTINEL'.repeat(1000)));
+    if (mode === 'exit') child.emit('exit', 7, null);
+    if (mode === 'error')
+      child.emit(
+        'error',
+        Object.assign(new Error('SYNTHETIC_PRIVATE_SENTINEL'), { code: 'EACCES' }),
+      );
+    if (mode === 'message')
+      child.emit('message', {
+        failure: true,
+        phase: 'securing-file',
+        code: 'ERR_SQLITE_ERROR',
+        sqlite: 5,
+      });
+    if (mode === 'dispose') observer.dispose();
+    await assert.rejects(ready, (error) => {
+      assert.match(error.message, /phase=securing-file; stderrBytes=4096/);
+      assert.equal(error.message.includes('SYNTHETIC'), false);
+      if (mode === 'exit') assert.match(error.message, /exited code=7/);
+      if (mode === 'error') assert.match(error.message, /spawn failed code=EACCES/);
+      if (mode === 'message') assert.match(error.message, /failed code=ERR_SQLITE_ERROR sqlite=5/);
+      return true;
+    });
+    observer.dispose();
+    assert.equal(child.listenerCount('message'), 0);
+    assert.equal(child.listenerCount('error'), 0);
+    assert.equal(child.listenerCount('exit'), 0);
+    assert.equal(child.stderr.listenerCount('data'), 0);
+  }
+});
+
 test('root-stable cross-process lock ignores TMPDIR and releases after abrupt exit', async () => {
   const { spawn } = await import('node:child_process');
   const { fileURLToPath } = await import('node:url');
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-lock-test-'));
-  const launcher = fileURLToPath(new URL('../../scripts/launcher.mjs', import.meta.url));
-  const lock = fileURLToPath(new URL('../../scripts/desktop/operation-lock.mjs', import.meta.url));
-  const source = `import { pathToFileURL } from 'node:url'; const { privateDirectory, privateFile } = await import(pathToFileURL(process.argv[2])); const { acquireOperationLock } = await import(pathToFileURL(process.argv[3])); const release = await acquireOperationLock({root:process.argv[1],secureDirectory:privateDirectory,secureFile:privateFile}); process.send('acquired'); process.on('message',()=>{release();process.disconnect();});`;
+  const source = fileURLToPath(new URL('./lock-child.mjs', import.meta.url));
   const children = [];
   const start = () => {
     const temporary = path.join(root, `alternate-temp-${children.length}`);
     fs.mkdirSync(temporary);
-    const child = spawn(
-      process.execPath,
-      ['--input-type=module', '-e', source, root, launcher, lock],
-      {
-        stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
-        env: { ...process.env, TMPDIR: temporary, TEMP: temporary, TMP: temporary },
-      },
-    );
-    children.push(child);
-    return {
-      child,
-      ready: new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error('Operation lock timed out.')), 15000);
-        child.once('message', () => {
-          clearTimeout(timeout);
-          resolve();
-        });
-        child.once('error', reject);
-      }),
-    };
+    const child = spawn(process.execPath, [source, root], {
+      stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
+      env: { ...process.env, TMPDIR: temporary, TEMP: temporary, TMP: temporary },
+    });
+    const observer = observeChildProgress(child);
+    children.push({ child, observer });
+    return { child, observer };
   };
   try {
     const first = start();
-    await first.ready;
-    let acquired = false;
+    await first.observer.waitFor('acquired');
     const second = start();
-    void second.ready.then(() => {
-      acquired = true;
-    });
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    const acquired = second.observer.waitFor('acquired');
+    // Prove the second process reached SQLite contention, rather than sleeping
+    // through Windows PowerShell startup and only testing sequential acquisition.
+    await second.observer.waitFor('contended');
     assert.equal(
-      acquired,
+      second.observer.reached.has('acquired'),
       false,
       'Another process cannot enter the startup/install critical section',
     );
-    first.child.kill('SIGKILL');
-    await second.ready;
+    const killed = new Promise((resolve) => first.child.once('exit', resolve));
+    assert.equal(first.child.kill('SIGKILL'), true);
+    await killed;
+    await acquired;
     second.child.send('release');
   } finally {
     await Promise.all(
       children.map(
-        (child) =>
+        ({ child }) =>
           new Promise((resolve) => {
             if (child.exitCode !== null || child.signalCode !== null) return resolve();
             child.once('exit', resolve);
@@ -418,6 +471,7 @@ test('root-stable cross-process lock ignores TMPDIR and releases after abrupt ex
           }),
       ),
     );
+    for (const { observer } of children) observer.dispose();
     fs.rmSync(root, { recursive: true, force: true });
   }
 });

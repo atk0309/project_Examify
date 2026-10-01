@@ -30,15 +30,21 @@ describe('solo all-path proxy', () => {
       expect(proxy(request(path)).status).toBe(200);
     },
   );
-  it.each(['/signin', '/setup', '/invite/token', '/signin/verify'])(
-    'closes household entry route %s',
-    (path) => {
-      expect(proxy(request(path)).headers.get('location')).toBe(
-        'http://127.0.0.1:41234/solo/start',
-      );
-      expect(proxy(request(path, 'POST')).status).toBe(403);
-    },
-  );
+  it.each([
+    '/signin',
+    '/setup',
+    '/invite/token',
+    '/signin/verify',
+    '/%73ignin',
+    '/%73etup',
+    '/invite%2ftoken',
+  ])('closes household entry route %s', (path) => {
+    expect(proxy(request(path)).headers.get('location')).toBe('http://127.0.0.1:41234/solo/start');
+    expect(proxy(request(path, 'POST')).status).toBe(403);
+  });
+  it('rejects malformed encoded route spellings without opening a household route', () => {
+    expect(proxy(request('/%GGsignin')).status).toBe(400);
+  });
   it('does not apply local launcher policy to authenticated household installations', () => {
     env.EXAMIFY_MODE = 'household';
     expect(proxy(request('/signin', 'POST', false)).status).toBe(200);

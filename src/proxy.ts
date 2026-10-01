@@ -8,8 +8,15 @@ export function proxy(request: NextRequest) {
   if (!soloRequestAllowed(request.headers, env, request.method)) {
     return new NextResponse('Local launcher access required.', { status: 403 });
   }
+  // Apply the same household gate to percent-encoded route spellings too.
+  let pathname: string;
+  try {
+    pathname = decodeURIComponent(request.nextUrl.pathname);
+  } catch {
+    return new NextResponse('Invalid local route.', { status: 400 });
+  }
   // Solo never exposes household claiming, invitations, or ordinary sign-in.
-  if (/^\/(?:setup|signin|invite)(?:\/|$)/.test(request.nextUrl.pathname)) {
+  if (/^\/(?:setup|signin|invite)(?:\/|$)/.test(pathname)) {
     if (request.method !== 'GET' && request.method !== 'HEAD') {
       return new NextResponse('Unavailable in solo mode.', { status: 403 });
     }
