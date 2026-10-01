@@ -13,11 +13,8 @@ import {
   listPendingInvites,
 } from '@/lib/households';
 import type { HouseholdMemberView } from '@/lib/household-types';
-import {
-  adminCanOpenOnboarding,
-  getOnboardingForUser,
-  getOnboardingPageSnapshot,
-} from '@/lib/onboarding';
+import { getOnboardingPageSnapshot } from '@/lib/onboarding';
+import { requireOnboardingAdmin } from '@/lib/onboarding-admin';
 
 export const dynamic = 'force-dynamic';
 
@@ -33,17 +30,8 @@ export default async function OnboardingPage() {
   const session = await getSession();
   if (!session.userId || !session.role) redirect('/signin');
 
-  const info = getOnboardingForUser(session.userId);
-  if (
-    !adminCanOpenOnboarding({
-      role: info.role,
-      onboardingComplete: info.complete,
-      solo: isSoloMode(),
-    })
-  ) {
-    redirect('/');
-  }
-  if (info.householdId == null) redirect('/');
+  const gate = await requireOnboardingAdmin();
+  if (!gate.ok) redirect('/');
 
   const membership = getMembershipForUser(session.userId);
   const pendingInvites =
@@ -67,7 +55,7 @@ export default async function OnboardingPage() {
       <div className="app-frame app-frame-wizard">
         <OnboardingWizard
           solo={isSoloMode()}
-          snapshot={await getOnboardingPageSnapshot(info.householdId)}
+          snapshot={await getOnboardingPageSnapshot(gate.householdId)}
           pendingInvites={pendingInvites}
           members={members}
           canInvite={!isSoloMode() && canInvite(session.userId)}

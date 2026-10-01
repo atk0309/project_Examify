@@ -43,8 +43,14 @@ jobs:
           cache: pnpm
       - name: Install exactly locked build dependencies
         run: pnpm install --frozen-lockfile
-      - name: Launcher security and packaging tests
+      - name: Linux launcher security and packaging tests
+        if: runner.os == 'Linux'
         run: node --test tests/desktop/launcher.test.mjs
+      - name: Windows launcher security and packaging tests under a standard user
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          ./scripts/desktop/acceptance-windows.ps1 -Repository $env:GITHUB_WORKSPACE -Node (Get-Command node.exe).Source -TestsOnly
       - name: Build from clean committed source
         run: node scripts/desktop/build.mjs
       - name: Package native runtime with pinned Node archive verification
