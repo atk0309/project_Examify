@@ -4,7 +4,7 @@ import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { assertExistingAncestors, privateDirectory, privateFile } from '../launcher.mjs';
-import { acquireOperationLock } from './operation-lock.mjs';
+import { acquireOperationLock, tryAcquireInstanceLock } from './operation-lock.mjs';
 import { restoreRuntimeLinks } from './restore-links.mjs';
 
 function exists(file) {
@@ -21,17 +21,6 @@ function readMetadata(file) {
     return JSON.parse(fs.readFileSync(file, 'utf8'));
   } catch {
     throw new Error('Installation metadata is invalid. Existing data was preserved.');
-  }
-}
-function alive(pid) {
-  if (!Number.isSafeInteger(pid) || pid < 1)
-    throw new Error('Invalid running-service metadata. Stop Examify before repairing it.');
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    if (error.code === 'ESRCH') return false;
-    throw error;
   }
 }
 
@@ -59,14 +48,21 @@ export async function installRelease({ root, staged, version, prepare = restoreR
     secureDirectory: privateDirectory,
     secureFile: privateFile,
   });
+  let releaseInstance;
   try {
+    releaseInstance = await tryAcquireInstanceLock({
+      root,
+      secureDirectory: privateDirectory,
+      secureFile: privateFile,
+    });
+    if (!releaseInstance)
+      throw new Error(
+        'Examify is running. Stop its launcher before reinstalling or repairing the app.',
+      );
     const runningPath = path.join(root, 'running.json');
     if (exists(runningPath)) {
       privateFile(runningPath);
-      if (alive(readMetadata(runningPath).pid))
-        throw new Error(
-          'Examify is running. Stop its launcher before reinstalling or repairing the app.',
-        );
+      // Marker PIDs are diagnostic only: they can be reused after a crash.
     }
     const marker = path.join(root, 'installation.json');
     if (exists(marker)) {
@@ -111,6 +107,7 @@ export async function installRelease({ root, staged, version, prepare = restoreR
     }
     if (movedOld) fs.rmSync(backup, { recursive: true, force: true });
   } finally {
+    releaseInstance?.();
     unlock();
   }
 }

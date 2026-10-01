@@ -1342,3 +1342,12 @@ Saved provider settings must load after child process exec so editable file
 settings do not masquerade as host-managed injected credentials. Never package
 provider keys or user data. Package digests and runtime versions are pinned;
 Windows/Linux native SQLite bindings must be built and tested per target OS.
+
+Startup and repair serialize through a root-stable OS-released operation lock
+under `.examify-operations`. A separate nonblocking instance lock is held for
+the launcher's whole lifetime and released only after its server stops. Repair
+refuses a held instance lock even when `running.json` is missing or stale.
+A marker PID is diagnostic metadata, never proof of liveness: after a crash or
+PID reuse, an unheld instance lock permits safe marker recovery without a
+manual file deletion. These coordination files are outside learner data/config
+and must not be unlinked while an operation or instance is active.

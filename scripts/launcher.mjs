@@ -7,7 +7,7 @@ import http from 'node:http';
 import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { acquireOperationLock } from './desktop/operation-lock.mjs';
+import { acquireOperationLock, tryAcquireInstanceLock } from './desktop/operation-lock.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -288,16 +288,6 @@ async function unusedPort() {
   return port;
 }
 
-function alive(pid) {
-  if (!Number.isSafeInteger(pid) || pid < 1) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 async function healthy(origin, instanceId) {
   try {
     const parsed = new URL(origin);
@@ -354,15 +344,12 @@ export async function startLauncher({
     secureFile: privateFile,
     onContended: () => onPhase('lock-wait'),
   });
+  let releaseInstance;
+  let startedInstance = false;
   try {
     onPhase('existing');
     async function reuse(running) {
-      if (
-        !alive(running.pid) ||
-        !running.origin ||
-        !(await healthy(running.origin, running.instanceId))
-      )
-        return false;
+      if (!running.origin || !(await healthy(running.origin, running.instanceId))) return false;
       const { authSecret } = readJson(path.join(configDir, 'secrets.json'));
       const response = await fetch(`${running.origin}/__examify/reopen`, {
         method: 'POST',
@@ -379,7 +366,6 @@ export async function startLauncher({
         throw new Error('Could not reopen the current Examify browser. Stop it and launch again.');
       return true;
     }
-    let previous;
     async function readPrevious() {
       try {
         return readJson(stateFile);
@@ -388,18 +374,32 @@ export async function startLauncher({
         throw error;
       }
     }
-    previous = await readPrevious();
     const waitStarted = Date.now();
-    while (previous && alive(previous.pid)) {
+    while (
+      !(releaseInstance = await tryAcquireInstanceLock({
+        root,
+        secureDirectory: privateDirectory,
+        secureFile: privateFile,
+      }))
+    ) {
       onPhase('reuse');
-      if (await reuse(previous))
+      const previous = await readPrevious();
+      if (previous && (await reuse(previous)))
         return { reused: true, origin: previous.origin, stop: async () => {} };
       if (Date.now() - waitStarted >= timeout)
         throw new Error(
           'Another Examify launcher is still starting. Wait for it to finish or stop it before retrying.',
         );
       await sleep(250);
-      previous = await readPrevious();
+    }
+    // Only the lifetime lock proves a marker stale. A PID can name an unrelated
+    // process after a crash; even a healthy saved endpoint is not liveness proof.
+    let previous = false;
+    try {
+      privateFile(stateFile);
+      previous = true;
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
     }
     // Validate existing bytes before any data/config initialisation or permission change.
     onPhase('preflight');
@@ -431,24 +431,35 @@ export async function startLauncher({
     let child;
     let gateway;
     let stopped = false;
+    let stopping;
     let spawnError = false;
-    const stop = async () => {
-      if (stopped) return;
+    const stop = () => {
+      if (stopping) return stopping;
       stopped = true;
-      if (gateway) {
-        gateway.server.closeAllConnections();
-        await new Promise((resolve) => gateway.server.close(resolve));
-      }
-      if (child && child.exitCode === null) {
-        child.kill();
-        await Promise.race([new Promise((resolve) => child.once('exit', resolve)), sleep(3000)]);
-        if (child.exitCode === null) child.kill('SIGKILL');
-      }
-      try {
-        if (readJson(stateFile).instanceId === instanceId) fs.unlinkSync(stateFile);
-      } catch {
-        /* Already gone. */
-      }
+      stopping = (async () => {
+        if (gateway) {
+          gateway.server.closeAllConnections();
+          await new Promise((resolve) => gateway.server.close(resolve));
+        }
+        if (child?.pid && child.exitCode === null && child.signalCode === null) {
+          const exited = new Promise((resolve) => child.once('exit', resolve));
+          child.kill();
+          await Promise.race([exited, sleep(3000)]);
+          if (child.exitCode === null && child.signalCode === null) {
+            child.kill('SIGKILL');
+            await exited;
+          }
+        }
+        try {
+          if (readJson(stateFile).instanceId === instanceId) fs.unlinkSync(stateFile);
+        } catch {
+          /* Already gone. */
+        }
+        // Repair/startup must not proceed until the service exits and its marker
+        // is cleaned. Concurrent stop callers await this same cleanup promise.
+        releaseInstance();
+      })();
+      return stopping;
     };
     try {
       privateDirectory(configDir);
@@ -559,12 +570,14 @@ export async function startLauncher({
           void stop();
         }
       });
+      startedInstance = true;
       return { origin, internalPort, reused: false, stop, child };
     } catch (error) {
       await stop();
       throw error;
     }
   } finally {
+    if (!startedInstance) releaseInstance?.();
     releaseOperation();
   }
 }

@@ -147,6 +147,15 @@ try {
     env,
     stdio: 'pipe',
   });
+  // Simulate an earlier crash followed by PID reuse by unrelated live software.
+  // The current test process is alive, but owns no Examify instance lock.
+  const runningPath = path.join(root, 'running.json');
+  const staleMarker = JSON.stringify({
+    pid: process.pid,
+    instanceId: 'stale-fixture',
+    origin: 'http://127.0.0.1:1',
+  });
+  fs.writeFileSync(runningPath, staleMarker, { mode: 0o600 });
   const concurrent = [launch(), launch()];
   const states = await Promise.all(concurrent.map((item) => item.ready));
   assert.equal(
@@ -264,10 +273,22 @@ try {
   const originalServer = fs.readFileSync(path.join(appDir, 'server.js'));
   assert.throws(() => install(root, archive, 'pipe'), 'Repair refuses to replace a live app');
   assert.ok(fs.readFileSync(path.join(appDir, 'server.js')).equals(originalServer));
+  const runningMarker = fs.readFileSync(runningPath);
+  fs.unlinkSync(runningPath);
+  try {
+    assert.throws(
+      () => install(root, archive, 'pipe'),
+      'A held instance lock refuses live repair even without running.json',
+    );
+    assert.ok(fs.readFileSync(path.join(appDir, 'server.js')).equals(originalServer));
+  } finally {
+    fs.writeFileSync(runningPath, runningMarker, { mode: 0o600 });
+  }
   await new Promise((resolve) => {
     child.once('exit', resolve);
     child.send('stop', () => {});
   });
+  fs.writeFileSync(runningPath, staleMarker, { mode: 0o600 });
   fs.writeFileSync(
     path.join(appDir, 'server.js'),
     'tampered bytes with unchanged release manifest',
@@ -275,7 +296,7 @@ try {
   install(root, archive);
   assert.ok(
     fs.readFileSync(path.join(appDir, 'server.js')).equals(originalServer),
-    'Verified reinstall replaces modified code even with an unchanged manifest',
+    'Verified reinstall replaces modified code despite a stale marker naming an unrelated live PID',
   );
   fs.unlinkSync(node);
   install(root, archive);

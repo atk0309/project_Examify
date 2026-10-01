@@ -1,5 +1,8 @@
 import { privateDirectory, privateFile } from '../../scripts/launcher.mjs';
-import { acquireOperationLock } from '../../scripts/desktop/operation-lock.mjs';
+import {
+  acquireOperationLock,
+  tryAcquireInstanceLock,
+} from '../../scripts/desktop/operation-lock.mjs';
 
 let phase = 'starting';
 const report = (value) => {
@@ -7,7 +10,8 @@ const report = (value) => {
   process.send({ phase });
 };
 try {
-  const release = await acquireOperationLock({
+  const acquire = process.argv[3] === 'instance' ? tryAcquireInstanceLock : acquireOperationLock;
+  const release = await acquire({
     root: process.argv[2],
     secureDirectory: (directory) => {
       report('securing-directory');
@@ -22,6 +26,7 @@ try {
     },
     onContended: () => report('contended'),
   });
+  if (!release) throw new Error('Instance lock fixture is already held.');
   report('acquired');
   process.on('message', () => {
     release();

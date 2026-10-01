@@ -145,7 +145,9 @@ secrets and any saved provider keys. Do not post or share the backup. Copying a
 live SQLite database without its journal is not a reliable backup.
 
 The small `.examify-operations` directory at the install root coordinates
-launch/repair operations; it is outside learner data and configuration. It is not
+launch/repair operations and tracks the running instance with OS-released locks;
+it is outside learner data and configuration. Stale process-ID markers after a
+crash do not require manual cleanup or prevent relaunch/repair. It is not
 part of your study backup and must not be removed while an operation is running.
 
 The existing `examify:data` backup command was designed for household checkouts;

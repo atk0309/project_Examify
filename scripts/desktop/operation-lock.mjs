@@ -1,19 +1,17 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-/** OS-released transaction lock; never opens or modifies a learner database. */
-export async function acquireOperationLock({
-  root,
-  secureDirectory,
-  secureFile,
-  timeout = 120000,
-  onContended = () => {},
-}) {
+/** OS-released transaction locks; never open or modify a learner database. */
+async function acquireLock(
+  { root, secureDirectory, secureFile, timeout = 120000, onContended = () => {} },
+  name,
+  wait,
+) {
   // The namespace is tied to the install root, never TEMP/TMP or shell env.
   // Keep this tiny coordination database outside learner data/config. Do not
   // unlink it after release: another process may already be waiting on it.
   const directory = secureDirectory(path.join(path.resolve(root), '.examify-operations'));
-  const file = path.join(directory, 'lock.sqlite');
+  const file = path.join(directory, name);
   try {
     fs.closeSync(fs.openSync(file, 'wx', 0o600));
   } catch (error) {
@@ -23,7 +21,7 @@ export async function acquireOperationLock({
   // Available in the exact bundled Node 22.22.2 runtime, on both supported OSes.
   const { DatabaseSync } = await import('node:sqlite');
   const db = new DatabaseSync(file);
-  db.exec('PRAGMA busy_timeout = 100');
+  db.exec(`PRAGMA busy_timeout = ${wait ? 100 : 0}`);
   const started = Date.now();
   let reportedContention = false;
   try {
@@ -33,6 +31,10 @@ export async function acquireOperationLock({
         break;
       } catch (error) {
         if (error.errcode !== 5 && error.errcode !== 6) throw error;
+        if (!wait) {
+          db.close();
+          return null;
+        }
         if (!reportedContention) {
           onContended();
           reportedContention = true;
@@ -58,4 +60,14 @@ export async function acquireOperationLock({
       db.close();
     }
   };
+}
+
+/** Serialize launcher startup and repair, waiting for another operation to finish. */
+export function acquireOperationLock(options) {
+  return acquireLock(options, 'lock.sqlite', true);
+}
+
+/** Try once; null means a live instance still owns this install root. */
+export function tryAcquireInstanceLock(options) {
+  return acquireLock(options, 'instance.sqlite', false);
 }

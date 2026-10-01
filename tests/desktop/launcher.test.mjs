@@ -14,7 +14,19 @@ import {
   forwardHeaders,
   loadSecrets,
   privateDirectory,
+  privateFile,
+  startLauncher,
 } from '../../scripts/launcher.mjs';
+import {
+  acquireOperationLock,
+  tryAcquireInstanceLock,
+} from '../../scripts/desktop/operation-lock.mjs';
+
+const lockOptions = (root) => ({
+  root,
+  secureDirectory: privateDirectory,
+  secureFile: privateFile,
+});
 
 function request(headers = {}, method = 'GET', socket = {}) {
   return {
@@ -442,7 +454,28 @@ test('verified reinstall repairs tampered and partial releases, rolls back failu
     );
     const running = path.join(root, 'running.json');
     fs.writeFileSync(running, JSON.stringify({ pid: process.pid }), { mode: 0o600 });
-    await assert.rejects(installRelease({ root, staged: staged(), version }), /Examify is running/);
+    fs.writeFileSync(path.join(destination, 'payload.txt'), 'tampered');
+    await installRelease({ root, staged: staged(), version });
+    assert.equal(
+      fs.readFileSync(path.join(destination, 'payload.txt'), 'utf8'),
+      'verified',
+      'A stale marker naming an unrelated live process must not block repair',
+    );
+    const releaseInstance = await tryAcquireInstanceLock(lockOptions(root));
+    assert.equal(typeof releaseInstance, 'function');
+    try {
+      await assert.rejects(
+        installRelease({ root, staged: staged(), version }),
+        /Examify is running/,
+      );
+      fs.unlinkSync(running);
+      await assert.rejects(
+        installRelease({ root, staged: staged(), version }),
+        /Examify is running/,
+      );
+    } finally {
+      releaseInstance();
+    }
     assert.equal(fs.readFileSync(path.join(destination, 'payload.txt'), 'utf8'), 'verified');
     for (const name of ['data', 'config'])
       assert.equal(fs.readFileSync(path.join(root, name, 'keep.txt'), 'utf8'), 'preserve');
@@ -615,5 +648,191 @@ test('concurrent private-directory creation rechecks raced paths and still rejec
   } finally {
     fs.mkdirSync = mkdir;
     fs.rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test('instance lock is nonblocking, independent of operations and released after abrupt exit', async () => {
+  const { spawn } = await import('node:child_process');
+  const { fileURLToPath } = await import('node:url');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-instance-lock-'));
+  const child = spawn(
+    process.execPath,
+    [fileURLToPath(new URL('./lock-child.mjs', import.meta.url)), root, 'instance'],
+    {
+      stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
+      env: childEnvironment(),
+    },
+  );
+  const observer = observeChildProgress(child);
+  try {
+    await observer.waitFor('acquired');
+    assert.equal(await tryAcquireInstanceLock(lockOptions(root)), null);
+    const releaseOperation = await acquireOperationLock({ ...lockOptions(root), timeout: 0 });
+    releaseOperation();
+    const exited = new Promise((resolve) => child.once('exit', resolve));
+    assert.equal(child.kill('SIGKILL'), true);
+    await exited;
+    const releaseInstance = await tryAcquireInstanceLock(lockOptions(root));
+    assert.equal(typeof releaseInstance, 'function');
+    releaseInstance();
+    releaseInstance(); // Repeated cleanup must not touch a later holder.
+    const next = await tryAcquireInstanceLock(lockOptions(root));
+    releaseInstance();
+    assert.equal(await tryAcquireInstanceLock(lockOptions(root)), null);
+    next();
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) {
+      const exited = new Promise((resolve) => child.once('exit', resolve));
+      child.kill('SIGKILL');
+      await exited;
+    }
+    observer.dispose();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('instance lock refuses linked files and linked coordination directories', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-unsafe-lock-'));
+  const directory = privateDirectory(path.join(root, '.examify-operations'));
+  const target = path.join(root, 'unrelated');
+  fs.writeFileSync(target, 'preserve', { mode: 0o600 });
+  const file = path.join(directory, 'instance.sqlite');
+  try {
+    fs.linkSync(target, file);
+    await assert.rejects(tryAcquireInstanceLock(lockOptions(root)), /Unsafe launcher state file/);
+    assert.equal(fs.readFileSync(target, 'utf8'), 'preserve');
+    fs.unlinkSync(file);
+    fs.rmdirSync(directory);
+    const elsewhere = fs.mkdtempSync(path.join(root, 'elsewhere-'));
+    fs.symlinkSync(elsewhere, directory, process.platform === 'win32' ? 'junction' : 'dir');
+    await assert.rejects(tryAcquireInstanceLock(lockOptions(root)), /Unsafe installation path/);
+    assert.deepEqual(fs.readdirSync(elsewhere), []);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// A tiny HTTP child isolates supervisor lifetime behavior. Packaged acceptance
+// separately exercises the actual migrations, SQLite database and first login.
+function launcherFixture() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-lifetime-'));
+  const appDir = path.join(root, 'fixture-app');
+  fs.mkdirSync(path.join(appDir, 'scripts', 'desktop'), { recursive: true });
+  fs.writeFileSync(path.join(appDir, 'scripts', 'solo-preflight.mjs'), 'process.exit(0);');
+  fs.writeFileSync(path.join(appDir, 'scripts', 'migrate.mjs'), 'process.exit(0);');
+  fs.copyFileSync(
+    new URL('../../scripts/desktop/settings-loader.cjs', import.meta.url),
+    path.join(appDir, 'scripts', 'desktop', 'settings-loader.cjs'),
+  );
+  fs.writeFileSync(
+    path.join(appDir, 'server.js'),
+    `
+    const http = require('node:http');
+    const server = http.createServer((_request, response) => {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end('{"ok":true}');
+    });
+    server.listen(Number(process.env.PORT), '127.0.0.1');
+  `,
+  );
+  return { root, appDir, browser: async () => {}, timeout: 5000 };
+}
+
+test('stale live-PID markers do not block startup, and healthy instances retain lifetime ownership through stop', async () => {
+  const fixture = launcherFixture();
+  const state = path.join(fixture.root, 'running.json');
+  fs.writeFileSync(state, JSON.stringify({ pid: process.pid, instanceId: 'stale' }), {
+    mode: 0o600,
+  });
+  let runtime;
+  try {
+    runtime = await startLauncher(fixture);
+    assert.equal(runtime.reused, false);
+    assert.equal(await tryAcquireInstanceLock(lockOptions(fixture.root)), null);
+    const reopened = await startLauncher(fixture);
+    assert.equal(reopened.reused, true);
+    assert.equal(reopened.origin, runtime.origin);
+    const { DatabaseSync } = await import('node:sqlite');
+    const unlink = fs.unlinkSync;
+    let cleanup;
+    try {
+      fs.unlinkSync = (file) => {
+        if (file === state) {
+          const probe = new DatabaseSync(
+            path.join(fixture.root, '.examify-operations', 'instance.sqlite'),
+          );
+          let locked = false;
+          try {
+            probe.exec('BEGIN EXCLUSIVE');
+            probe.exec('ROLLBACK');
+          } catch (error) {
+            locked = error.errcode === 5 || error.errcode === 6;
+          } finally {
+            probe.close();
+          }
+          cleanup = {
+            childExited: runtime.child.exitCode !== null || runtime.child.signalCode !== null,
+            instanceStillLocked: locked,
+          };
+        }
+        return unlink(file);
+      };
+      const stop = runtime.stop();
+      assert.equal(runtime.stop(), stop, 'Repeated stop waits for the same cleanup');
+      await stop;
+    } finally {
+      fs.unlinkSync = unlink;
+    }
+    assert.deepEqual(cleanup, { childExited: true, instanceStillLocked: true });
+    assert.equal(fs.existsSync(state), false);
+    const release = await tryAcquireInstanceLock(lockOptions(fixture.root));
+    assert.equal(typeof release, 'function');
+    release();
+  } finally {
+    await runtime?.stop();
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('preflight and startup failure release lifetime ownership after preserving or cleaning state', async () => {
+  for (const failure of ['preflight', 'migration', 'browser']) {
+    const fixture = launcherFixture();
+    const state = path.join(fixture.root, 'running.json');
+    const stale = JSON.stringify({ pid: process.pid, instanceId: 'stale' });
+    fs.writeFileSync(state, stale, { mode: 0o600 });
+    fs.mkdirSync(path.join(fixture.root, 'data'));
+    const data = path.join(fixture.root, 'data', 'app.db');
+    fs.writeFileSync(data, 'synthetic household bytes', { mode: 0o600 });
+    if (failure === 'preflight')
+      fs.writeFileSync(
+        path.join(fixture.appDir, 'scripts', 'solo-preflight.mjs'),
+        'process.exit(1);',
+      );
+    if (failure === 'migration')
+      fs.writeFileSync(path.join(fixture.appDir, 'scripts', 'migrate.mjs'), 'process.exit(1);');
+    if (failure === 'browser')
+      fixture.browser = async () => {
+        throw new Error('synthetic browser failure');
+      };
+    try {
+      await assert.rejects(
+        startLauncher(fixture),
+        failure === 'preflight'
+          ? { code: 'EXAMIFY_UNSAFE_DATA' }
+          : failure === 'migration'
+            ? /could not prepare/
+            : /synthetic browser failure/,
+      );
+      assert.equal(fs.readFileSync(data, 'utf8'), 'synthetic household bytes');
+      if (failure === 'preflight') {
+        assert.equal(fs.readFileSync(state, 'utf8'), stale);
+        assert.equal(fs.existsSync(path.join(fixture.root, 'config')), false);
+      } else assert.equal(fs.existsSync(state), false);
+      const release = await tryAcquireInstanceLock(lockOptions(fixture.root));
+      assert.equal(typeof release, 'function');
+      release();
+    } finally {
+      fs.rmSync(fixture.root, { recursive: true, force: true });
+    }
   }
 });
