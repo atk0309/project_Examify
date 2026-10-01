@@ -73,6 +73,7 @@ export {
   PROVIDER_TIMEOUT_MS,
   ProviderConfigError,
   ProviderFailureError,
+  SourcesTooLargeError,
   UNTRUSTED_SOURCE_NOTE,
   isAbortError,
   providerRequestSignal,

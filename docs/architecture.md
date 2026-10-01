@@ -136,7 +136,10 @@ Surface:
   empty file or missing `%PDF` magic is `invalid_type`, and over 8 MiB is
   `too_large`. A different file with the same stored name becomes ` (2)`,
   ` (3)`, … via exclusive create (no clobber, never through a symlink); the
-  same bytes again is a no-op.
+  same bytes again is a no-op. In solo mode only, the same guarded upload/detach
+  actions also accept nonempty UTF-8 `.txt`/`.md` notes up to 1 MiB, refusing
+  binary/control-containing content and preserving the earlier file on name collisions.
+  Household upload actions remain PDF-only.
   Generate is gated to wizard catalog subjects (`listOnboardingSubjects`).
   Delete/rename wait on the generate lock. A post-provider catalog
   re-check (#65) refuses a write if the id is gone.
@@ -384,7 +387,7 @@ Hand-authored biology has no source file — skip generate (validate/emit only).
 A committed generate fixture is `content/subjects/demo/notes.txt`
 (`pnpm examify-ingest generate --provider test --seed 0 content/subjects/demo`).
 Generate scans notes/text (`.txt` / `.md`) and images in the subject folder
-plus PDFs under `content/source-pdfs/<id>/`; uploaded PDF magic-byte checks
+plus supported sources under `content/source-pdfs/<id>/`; uploaded PDF magic-byte checks
 stay `%PDF`. Generate never auto-applies; it writes IR + gitignored
 `.examify-ingest/` run/cache files only. A real BankIR with questions is
 not overwritten unless `--force` (`--dry-run-ir` says **would overwrite**)
@@ -426,7 +429,15 @@ sanitized server log, never model text, dynamic keys, raw Zod messages or parser
 causes. Browser actions still receive only the existing safe reason code. Cloud
 providers fail closed without an env key (generate also fills unset keys from
 repo `.env` / `.env.local`); `--provider test` is the CI
-fixture. OpenAI-compatible and Codex generate fail closed when the only sources are
+fixture. OpenAI sends native base64 PDF `file` content parts in the user message,
+with the untrusted-source caption and source hashes retained. It checks combined
+PDF bytes are below 50 MB before base64 encoding or fetch; `SourcesTooLargeError`
+maps to a static `sources_too_large` wizard reason. It does not invoke the rasterizer
+or send duplicate page images for attached PDFs. An `inputProfile` in the cache key
+isolates native-PDF requests from older raster/omitted-PDF inputs; non-PDF OpenAI
+and all other providers retain their previous cache keys. Strict output validation,
+server-owned metadata, server-only provenance, and the review/Apply boundary stay unchanged.
+Generic local HTTP and Codex generate still fail closed when the only sources are
 PDFs and no page images were rasterized (`pdftoppm` from poppler-utils).
 `--provider claude-cli` (`claude -p`, stream-json in/out, the Anthropic
 provider's content blocks, so PDFs go as documents) and `--provider codex-cli`

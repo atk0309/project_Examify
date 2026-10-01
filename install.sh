@@ -136,7 +136,7 @@ Flags:
   --yes                    same as EXAMIFY_NONINTERACTIVE=1
   --help                   print this usage (safe when $0 is bash)
 
-OpenAI / PDF generate needs pdftoppm (poppler-utils) on PATH.
+Codex / local endpoint PDF generate needs pdftoppm (poppler-utils) on PATH.
 EOF
 }
 
@@ -2101,7 +2101,7 @@ main() {
         echo "Kid invite OTP codes are read from that directory."
       fi
     fi
-    echo "OpenAI / PDF generate: install pdftoppm (poppler-utils) before using Cloud generate."
+    echo "Codex / local endpoint PDF generate: install pdftoppm (poppler-utils); OpenAI reads PDFs directly."
   fi
   echo "Back up the family data folder with: node scripts/examify-data.mjs backup"
 }
@@ -2638,10 +2638,10 @@ collect_ai_settings() {
   ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-test}"
   echo
   echo "Optional: OPENAI_API_KEY for /onboarding Cloud (OpenAI) generate."
-  echo "That generate sends the subject's study files (PDF pages, notes) to OpenAI."
+  echo "That generate sends the subject's study files (original PDFs, images, notes) to OpenAI."
   echo "Same .env store as the wizard. Leave blank to skip (you can set it later)."
-  echo "OpenAI generate from PDFs needs pdftoppm (poppler-utils) on PATH; without it,"
-  echo "PDF-only generate fails closed. Install: apt install poppler-utils  (or brew install poppler)"
+  echo "OpenAI reads PDFs directly with a PDF/vision-capable model (default: gpt-4o); no pdftoppm needed."
+  echo "PDF sources must total less than 50 MB per subject; PDF text and pages count toward API usage."
   prompt OPENAI_API_KEY "OpenAI API key" "" secret
   # A key typed here is the household's starting mode, unless the host chose one.
   if [ -z "${EXAMIFY_AI_MODE-}" ]; then

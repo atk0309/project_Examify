@@ -34,6 +34,7 @@ export type GenerateOnboardingReason =
   | 'missing_cli'
   | 'empty_sources'
   | 'sources_unreadable'
+  | 'sources_too_large'
   | 'sample_collision'
   | 'provider_auth'
   | 'provider_rate_limited'
@@ -285,6 +286,9 @@ function mapGenerateError(error: unknown): GenerateOnboardingError {
   }
   if (error instanceof ingestGenerate.UnreadableSourcesError) {
     return { ok: false, reason: 'sources_unreadable', message };
+  }
+  if (error instanceof ingestGenerate.SourcesTooLargeError) {
+    return { ok: false, reason: 'sources_too_large', message };
   }
   if (error instanceof ingestGenerate.ProviderFailureError) {
     return {

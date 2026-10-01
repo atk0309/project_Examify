@@ -23,7 +23,7 @@ public issue. Security problems must use the private process in
 
 - Node 22.22.2–22.x (`.nvmrc`)
 - pnpm 10.33.0 (`packageManager` in `package.json`)
-- Optional: `pdftoppm` from **poppler** (`poppler-utils`) for PDF generation with OpenAI, Codex or a local vision endpoint
+- Optional: `pdftoppm` from **poppler** (`poppler-utils`) for PDF generation with Codex or a local vision endpoint
 
 ## Setup
 

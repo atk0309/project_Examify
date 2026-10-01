@@ -28,7 +28,7 @@ Generation always needs review before Apply.
 | Choice         | Server requirement                                                      | PDF generation         |
 | -------------- | ----------------------------------------------------------------------- | ---------------------- |
 | Anthropic      | `ANTHROPIC_API_KEY`                                                     | Native PDF input       |
-| OpenAI         | `OPENAI_API_KEY`                                                        | `pdftoppm`             |
+| OpenAI         | `OPENAI_API_KEY`                                                        | Native PDF input       |
 | Claude Code    | Installed and signed in as the app user                                 | Native PDF input       |
 | Codex          | Installed and signed in as the app user                                 | `pdftoppm`             |
 | Local endpoint | `EXAMIFY_LLM_BASE_URL`, `EXAMIFY_LLM_MODEL`; vision model for PDF pages | `pdftoppm`             |
@@ -42,9 +42,13 @@ or `EXAMIFY_CODEX_BIN` to its full path if the app cannot find it.
 
 OpenAI question generation requires a model that supports strict JSON-schema
 Structured Outputs on Chat Completions (the default `gpt-4o` supports it).
-Model overrides must also support the request's image inputs, temperature and seed
-when applicable. Unsupported models fail without a fallback model or automatic
-paid retry. Written-answer marking keeps its existing request format.
+OpenAI receives the original PDFs directly, with no Poppler dependency. PDF files
+for one subject must total less than 50 MB; the wizard's 8 MiB per-file upload limit
+also applies. Native PDF processing includes extracted text and page images, so
+large documents can increase token usage and cost. Model overrides must also
+support the request's PDF/image inputs, temperature and seed when applicable.
+See [OpenAI's file-input guide](https://developers.openai.com/api/docs/guides/file-inputs).
+Unsupported models fail without a fallback model or automatic paid retry. Written-answer marking keeps its existing request format.
 
 ### Change AI after setup
 

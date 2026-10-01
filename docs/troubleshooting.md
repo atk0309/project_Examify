@@ -67,7 +67,9 @@ readiness, including after Finish. This checks configuration and CLI sign-in, no
 API-key validity or a paid provider request (see [configuration](configuration.md#change-ai-after-setup)). A CLI
 must be installed and signed in as the same OS user that runs Examify, including
 when launched by a service manager.
-PDF generation with OpenAI, Codex or a local vision endpoint requires `pdftoppm`.
+PDF generation with Codex or a local vision endpoint requires `pdftoppm`. OpenAI
+sends PDFs directly to a PDF-capable model; keep their combined size under 50 MB
+per subject (and each wizard upload under 8 MiB).
 Check the provider's error and account availability; changing an API key in a host
 service manager requires restarting the service. Do not turn on `GRADING_STUB=1`
 on a real install: it awards full marks without evaluating answers.

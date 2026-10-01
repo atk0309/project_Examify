@@ -73,6 +73,14 @@ material. Existing questions and progress are retained; replacement and Apply
 still need explicit review. Household first-run completion keeps its existing
 behavior. AI provider settings remain available from the practice page.
 
+The material step accepts PDFs up to 8 MB, or UTF-8 `.txt`/`.md` notes up to
+1 MB. Notes must contain readable text; binary files and empty notes are refused.
+Files are stored privately using safe names. Uploading a different file with the
+same name retains the earlier file and adds a numbered copy. After selecting
+**Local endpoint**, use **Configure endpoint URL and model** to enter both values
+in AI settings, then return to the question-bank wizard. Your subjects and
+uploaded material are retained while you configure the provider.
+
 ## AI is optional
 
 The sample multiple-choice practice works without AI. Written-answer AI marking
@@ -82,6 +90,22 @@ account and check that provider's charges. A “local” endpoint is only local 
 actually run it on this computer. Remote endpoints and account-backed command
 line tools may still send data to a cloud provider. Examify never silently switches
 providers. See [privacy](privacy.md) and [configuration](configuration.md).
+
+### PDF support and external tools
+
+- **Anthropic API** and **Claude Code** send PDFs directly to their provider
+- **OpenAI API** sends PDFs directly to a PDF-capable model (the default is
+  `gpt-4o`); the combined PDF input for one subject must be below 50 MB
+- **Local endpoint** and **Codex** need the external `pdftoppm` tool for PDF-only
+  material. It is not bundled with this preview. UTF-8 text notes avoid that
+  dependency; a real local model still needs to be installed and running
+- Local command execution is host-configured in household installations. The
+  solo launcher's private provider settings do not accept executable commands
+
+The offline acceptance provider used by tests is not a bundled model or a
+production fallback. The tests select an actual loopback HTTP endpoint through
+AI settings, upload text notes, and exercise generation, review, Apply and study.
+They do not demonstrate real-model question quality or install `pdftoppm`.
 
 The solo UI does not load the household analytics or remote font resources.
 Installing/downloading the application itself requires internet access.
@@ -107,6 +131,9 @@ On clean Windows and Linux machines, verify the actual distributed package:
 6. Retain private data and configuration across relaunch and version replacement
 7. Refuse an existing household database without changing its contents
 8. Run the household and existing migration suites to guard upgrades
+9. Create a subject, upload study notes, select/configure a local endpoint,
+   generate, review and Apply, then complete an exam from that bank. Repeat for
+   a second subject after completion, retaining both banks and earlier progress
 
 No paid AI calls or real credentials are needed for this acceptance checklist.
 

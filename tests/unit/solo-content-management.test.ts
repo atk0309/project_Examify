@@ -37,6 +37,8 @@ import {
 import { setEnvStoreRootForTests } from '@/lib/env-store';
 import {
   addOnboardingSubjectAction,
+  attachOnboardingPdfAction,
+  detachOnboardingPdfAction,
   applyOnboardingEmitAction,
   finishOnboardingAction,
   previewOnboardingEmitAction,
@@ -113,6 +115,22 @@ function authorFixture(id: string) {
 }
 
 describe('ongoing solo content management', () => {
+  it('allows text-note upload/removal only through the authenticated solo-owner gate', async () => {
+    expect((await addOnboardingSubjectAction(subjectForm('history'))).ok).toBe(true);
+    const data = new FormData();
+    data.set('subjectId', 'history');
+    data.set('file', new File(['Local study notes.'], 'notes.txt', { type: 'text/plain' }));
+    expect((await attachOnboardingPdfAction(data)).ok).toBe(true);
+    expect(fs.readFileSync(path.join(root, 'content/source-pdfs/history/notes.txt'), 'utf8')).toBe(
+      'Local study notes.',
+    );
+    const remove = new FormData();
+    remove.set('subjectId', 'history');
+    remove.set('filename', 'notes.txt');
+    expect((await detachOnboardingPdfAction(remove)).ok).toBe(true);
+    session.value.solo = false;
+    expect(await attachOnboardingPdfAction(data)).toEqual({ ok: false, reason: 'forbidden' });
+  });
   it('completes, reopens, adds another subject and completes again without resetting or losing work', async () => {
     const ai = new FormData();
     // Set an available mode without executing any provider.

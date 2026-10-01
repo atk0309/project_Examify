@@ -1914,7 +1914,7 @@ describe('examify-ingest generate helpers', () => {
     expect(PROVIDER_TIMEOUT_MS).toBe(180_000);
   });
 
-  it('refuses OpenAI-compatible PDF-only runs without page images', () => {
+  it('requires rasterized PDFs only for generic local HTTP and Codex', () => {
     const pdf = {
       absPath: '/tmp/guide.pdf',
       relPath: 'content/source-pdfs/plants/guide.pdf',
@@ -1923,7 +1923,10 @@ describe('examify-ingest generate helpers', () => {
       kind: 'pdf' as const,
       mediaType: 'application/pdf',
     };
-    expect(() => assertReadableProviderInput('openai', {}, [pdf], [])).toThrow(/cannot read PDF/);
+    expect(() => assertReadableProviderInput('openai', {}, [pdf], [])).not.toThrow();
+    expect(() => assertReadableProviderInput('codex-cli', {}, [pdf], [])).toThrow(
+      /cannot read PDF/,
+    );
     expect(() =>
       assertReadableProviderInput(
         'local',
@@ -1979,7 +1982,7 @@ describe('examify-ingest generate helpers', () => {
     });
   });
 
-  it('generateSubject refuses openai PDF-only input without rasters', async () => {
+  it('generateSubject still refuses local HTTP PDF-only input without rasters', async () => {
     const root = examifyRepo();
     const subjectDir = path.join(root, 'content/subjects/pdfonly');
     mkdirSync(subjectDir, { recursive: true });
@@ -1992,9 +1995,10 @@ describe('examify-ingest generate helpers', () => {
         subject: { id: 'pdfonly', label: 'PDF Only', icon: 'biology', l: 0.5, c: 0.1, h: 140 },
         subjectDir,
         sources: resolveSubjectSources(root, 'pdfonly', subjectDir),
-        provider: 'openai',
+        provider: 'local',
         seed: 0,
-        env: { OPENAI_API_KEY: 'sk-openai-not-used' },
+        env: { EXAMIFY_LLM_BASE_URL: 'http://127.0.0.1:9' },
+        rasterize: () => false,
         fetch: async () => {
           throw new Error('network should not run when PDFs are unreadable');
         },
@@ -2738,7 +2742,7 @@ describe('examify-ingest generate typed failures', () => {
     expect(existsSync(path.join(mathsDir, 'bank.ir.json'))).toBe(false);
   });
 
-  it('types PDF-only input an OpenAI-compatible provider cannot read', () => {
+  it('types PDF-only input a generic local HTTP provider cannot read', () => {
     const pdf = {
       absPath: '/tmp/guide.pdf',
       relPath: 'content/source-pdfs/plants/guide.pdf',
@@ -2749,7 +2753,7 @@ describe('examify-ingest generate typed failures', () => {
     };
     let error: unknown;
     try {
-      assertReadableProviderInput('openai', {}, [pdf], []);
+      assertReadableProviderInput('local', {}, [pdf], []);
     } catch (caught) {
       error = caught;
     }

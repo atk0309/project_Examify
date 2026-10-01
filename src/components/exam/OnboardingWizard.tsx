@@ -1,6 +1,7 @@
 'use client';
 
 import { useRef, useState, useTransition } from 'react';
+import Link from 'next/link';
 import {
   addOnboardingSubjectAction,
   applyOnboardingEmitAction,
@@ -141,7 +142,9 @@ function errorCopy(error: OnboardingActionError, aiMode?: OnboardingAiMode | nul
     case 'invalid_id':
       return 'Subject id must be kebab-case (a-z, digits, hyphens) and unique.';
     case 'invalid_type':
-      return 'That file is not a PDF. Only PDF files can be uploaded.';
+      return 'That study file is unsupported or its contents are invalid.';
+    case 'sources_too_large':
+      return 'These PDFs total 50 MB or more. Split them into smaller subjects before generating. Nothing was written.';
     case 'invalid_name':
       return 'That file name cannot be used. Rename the file and upload it again.';
     case 'duplicate':
@@ -149,7 +152,7 @@ function errorCopy(error: OnboardingActionError, aiMode?: OnboardingAiMode | nul
     case 'missing':
       return 'That subject or file is no longer here.';
     case 'too_large':
-      return 'That file is too large (8 MB max).';
+      return 'That file is too large. PDFs allow up to 8 MB; text notes allow up to 1 MB.';
     case 'disk':
       return 'Could not write the file (disk full or not writable).';
     case 'unsafe_path':
@@ -495,6 +498,7 @@ export function OnboardingWizard({
 
             {step === 'files' ? (
               <FilesStep
+                solo={solo}
                 snapshot={snapshot}
                 pending={holdWizard}
                 onAttach={(data) =>
@@ -1298,11 +1302,13 @@ function resolveIcon(raw: string): SubjectIconOption {
 }
 
 function FilesStep({
+  solo,
   snapshot,
   pending,
   onAttach,
   onDetach,
 }: {
+  solo: boolean;
   snapshot: OnboardingSnapshot;
   pending: boolean;
   onAttach: (data: FormData) => void;
@@ -1324,8 +1330,11 @@ function FilesStep({
   return (
     <div className="wizard-panel" data-testid="wizard-files">
       <p className="wizard-path-hint">
-        Uploaded PDFs stay in this server’s private data folder. Generate also reads notes.txt and
-        other local sources in the subject folder — never the bank.
+        {solo
+          ? 'Upload a PDF (up to 8 MB) or UTF-8 .txt/.md notes (up to 1 MB). Files stay in this computer’s private data folder.'
+          : 'Uploaded PDFs stay in this server’s private data folder.'}{' '}
+        Generate also reads notes.txt and other local sources in the subject folder — never the
+        bank.
       </p>
       <div className="wizard-files-layout">
         {snapshot.subjects.length > 1 ? (
@@ -1349,6 +1358,7 @@ function FilesStep({
           </div>
         ) : null}
         <SubjectDropzone
+          solo={solo}
           subject={focused}
           pending={pending}
           onAttach={onAttach}
@@ -1360,11 +1370,13 @@ function FilesStep({
 }
 
 function SubjectDropzone({
+  solo,
   subject,
   pending,
   onAttach,
   onDetach,
 }: {
+  solo: boolean;
   subject: OnboardingSubject;
   pending: boolean;
   onAttach: (data: FormData) => void;
@@ -1376,14 +1388,15 @@ function SubjectDropzone({
 
   const sendFile = (file: File | undefined) => {
     if (!file) return;
-    if (!file.name.toLowerCase().endsWith('.pdf')) {
+    if (!(solo ? /\.(pdf|txt|md)$/i : /\.pdf$/i).test(file.name)) {
       setStatus('fail');
       setFailReason('type');
       return;
     }
-    if (file.size > 8 * 1024 * 1024) {
+    const text = /\.(txt|md)$/i.test(file.name);
+    if (file.size > (text ? 1 : 8) * 1024 * 1024) {
       setStatus('fail');
-      setFailReason('size');
+      setFailReason(text ? 'text_size' : 'size');
       return;
     }
     const data = new FormData();
@@ -1458,14 +1471,22 @@ function SubjectDropzone({
         <input
           className="sr-only"
           type="file"
-          accept="application/pdf,.pdf"
+          accept={
+            solo ? 'application/pdf,.pdf,text/plain,.txt,text/markdown,.md' : 'application/pdf,.pdf'
+          }
           data-testid={`wizard-file-${subject.id}`}
           onChange={(event) => {
             sendFile(event.currentTarget.files?.[0]);
             event.currentTarget.value = '';
           }}
         />
-        {subject.sourceFiles.length === 0 ? 'Drop a PDF here, or choose a file' : 'Add another PDF'}
+        {subject.sourceFiles.length === 0
+          ? solo
+            ? 'Drop study notes or a PDF here, or choose a file'
+            : 'Drop a PDF here, or choose a file'
+          : solo
+            ? 'Add another study file'
+            : 'Add another PDF'}
       </label>
       {status === 'uploading' || pending ? (
         <p className="login-fine" data-testid={`wizard-upload-progress-${subject.id}`}>
@@ -1474,9 +1495,13 @@ function SubjectDropzone({
       ) : null}
       {status === 'fail' ? (
         <p className="login-error" data-testid={`wizard-upload-fail-${subject.id}`}>
-          {failReason === 'size'
-            ? 'That file is too large (8 MB max).'
-            : 'Only PDF files can be uploaded.'}
+          {failReason === 'text_size'
+            ? 'Those notes are too large (1 MB max).'
+            : failReason === 'size'
+              ? 'That file is too large (8 MB max).'
+              : solo
+                ? 'Choose a PDF or UTF-8 .txt/.md notes.'
+                : 'Only PDF files can be uploaded.'}
         </p>
       ) : null}
     </section>
@@ -1606,7 +1631,10 @@ function AiStep({
       {snapshot.aiMode === 'local-agent' &&
       !(snapshot.localHttpConfigured && snapshot.localModelConfigured) ? (
         <p className="wizard-callout" data-testid="wizard-local-setup">
-          {onboardingModeErrorCopy('missing_local', 'local-agent')}
+          {onboardingModeErrorCopy('missing_local', 'local-agent')}{' '}
+          <Link href="/settings/ai" data-testid="wizard-configure-local">
+            Configure endpoint URL and model
+          </Link>
         </p>
       ) : null}
 

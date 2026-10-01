@@ -353,9 +353,11 @@ describe('install.sh', () => {
       );
       expect(out).toContain('Anthropic API key: ');
       expect(out).toContain(
-        "That generate sends the subject's study files (PDF pages, notes) to OpenAI.",
+        "That generate sends the subject's study files (original PDFs, images, notes) to OpenAI.",
       );
       expect(out).toContain('OpenAI API key: ');
+      expect(out).toContain('PDF/vision-capable model (default: gpt-4o); no pdftoppm needed');
+      expect(out).toContain('PDF sources must total less than 50 MB per subject');
       expect(out).not.toContain('test sentinel');
       // A blank Anthropic answer keeps the placeholder (production treats it as no key).
       const written = fs.readFileSync(path.join(dir, '.env'), 'utf8');
