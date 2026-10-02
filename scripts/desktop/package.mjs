@@ -130,7 +130,7 @@ try {
   const esbuild = require(require.resolve('esbuild', { paths: [require.resolve('tsx')] }));
   const bundledInputs = [];
   const bundle = async (options) => {
-    const result = await esbuild.build({ ...options, metafile: true });
+    const result = await esbuild.build({ ...options, absWorkingDir: repo, metafile: true });
     bundledInputs.push(
       ...Object.keys(result.metafile.inputs).map((name) => path.resolve(repo, name)),
     );

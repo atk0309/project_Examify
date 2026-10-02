@@ -18,6 +18,59 @@ export function standaloneConfig(app) {
     throw new Error('Cannot verify the serialized standalone configuration.');
   return JSON.parse(matches[0][1]);
 }
+function verifyLicenseInventory(app, licenses, files) {
+  // The inventory walk has already rejected links and non-regular files. Membership
+  // binds every recorded path to a contained file, without a second filesystem walker.
+  const regularFiles = new Set(files);
+  const manifests = new Set();
+  if (!Array.isArray(licenses.packages) || !Array.isArray(licenses.compiledComponents))
+    throw new Error('Missing runtime license inventory records.');
+  for (const record of [...licenses.packages, ...licenses.compiledComponents]) {
+    if (!Array.isArray(record.evidence)) throw new Error('Missing retained license evidence.');
+    for (const evidence of record.evidence) {
+      if (
+        !regularFiles.has(evidence.path) ||
+        !/^[a-f0-9]{64}$/.test(evidence.sha256) ||
+        digest(path.join(app, evidence.path)) !== evidence.sha256
+      )
+        throw new Error('Retained license evidence is missing or changed.');
+    }
+  }
+  for (const record of licenses.packages) {
+    if (
+      !Array.isArray(record.shippedPaths) ||
+      !Array.isArray(record.bundledInputs) ||
+      (!record.shippedPaths.length && !record.bundledInputs.length)
+    )
+      throw new Error('Runtime package has no shipped or bundled provenance.');
+    // Embedded helper dependencies have no runtime package directory. Their retained
+    // upstream manifest still identifies the source; do not invent a shipped path.
+    const retained = record.evidence.find(
+      (entry) => entry.kind === 'manifest' && entry.source === 'package.json',
+    );
+    if (!retained) throw new Error('Runtime package lacks its retained manifest.');
+    for (const file of [
+      retained.path,
+      ...record.shippedPaths.map((base) => `${base}/package.json`),
+    ]) {
+      if (!regularFiles.has(file)) throw new Error('Shipped runtime package manifest is missing.');
+      const manifest = JSON.parse(fs.readFileSync(path.join(app, file), 'utf8'));
+      if (manifest.name !== record.name || manifest.version !== record.version)
+        throw new Error('Actual runtime package identity differs from license inventory.');
+    }
+    for (const base of record.shippedPaths) {
+      const file = `${base}/package.json`;
+      if (manifests.has(file)) throw new Error('Duplicate shipped runtime package manifest.');
+      manifests.add(file);
+    }
+  }
+  for (const file of files)
+    if (
+      /(?:^|\/)node_modules\/(?:@[^/]+\/)?[^@/.][^/]*\/package\.json$/.test(file) &&
+      !manifests.has(file)
+    )
+      throw new Error('Shipped runtime package is missing from license inventory.');
+}
 export function createRuntimePolicy(app, identity, licenses) {
   if (standaloneConfig(app).images?.unoptimized !== true)
     throw new Error(
@@ -32,6 +85,7 @@ export function createRuntimePolicy(app, identity, licenses) {
     links.some((link) => excludedPath(link.path) || excludedPath(link.target))
   )
     throw new Error('Portable runtime links still reference excluded image packages.');
+  verifyLicenseInventory(app, licenses, files);
   const packages = licenses.packages.map(({ name, version }) => ({ name, version }));
   if (packages.some((pkg) => excludedName(pkg.name)))
     throw new Error('Native image package remains in the license inventory.');

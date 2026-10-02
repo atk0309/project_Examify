@@ -19,8 +19,12 @@ Packaging must verify the serialized standalone server really has optimization
 disabled, and inspect actual files, runtime links and package/native inventories.
 The distribution gate independently extracts the completed archive and repeats
 those checks, comparing internal identity/policy to its hashed sidecars. It also
-checks exact supplemental notice bytes. CI cannot upload the app archive if this
-gate or native acceptance fails. There is no environment/input bypass.
+checks every retained evidence file against its recorded hash, compares shipped
+package manifests with the inventory, and checks exact supplemental notice bytes.
+Embedded-only helper dependencies are identified by their retained source manifest,
+not an invented runtime directory. CI packages from outside the repository to test
+bundle-input path resolution. CI cannot upload the app archive if this gate or native
+acceptance fails. There is no environment/input bypass.
 
 The former libvips source/replacement gate is inapplicable only when the archive
 inspection proves those unused native image packages are absent. Reintroducing

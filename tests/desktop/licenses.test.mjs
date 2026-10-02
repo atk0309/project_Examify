@@ -126,11 +126,8 @@ test('missing notices are explicitly unresolved, never fabricated from SPDX meta
   assert.match(inventory.scope, /Not a complete SBOM or a legal compliance certification/);
 });
 
-test('native library evidence retains libvips attribution and SQLite source notice', (t) => {
+test('native library evidence retains the SQLite source notice', (t) => {
   const f = fixture(t);
-  const vips = f.pkg('@img/sharp-libvips-linux-x64', { license: 'LGPL-3.0-or-later' });
-  write(path.join(vips.source, 'README.md'), 'Upstream native licensing table');
-  write(path.join(vips.source, 'versions.json'), JSON.stringify({ vips: '8.18.6' }));
   const sqlite = f.pkg('better-sqlite3');
   write(path.join(sqlite.source, 'LICENSE'), 'MIT upstream notice');
   write(path.join(sqlite.source, 'deps/sqlite3/sqlite3.h'), '/* SQLite public domain header */\n');
@@ -140,20 +137,7 @@ test('native library evidence retains libvips attribution and SQLite source noti
     sqliteRecord.evidence.some((file) => file.kind === 'native-source-notice'),
     true,
   );
-  const vipsRecord = inventory.packages.find((pkg) => pkg.name.startsWith('@img/'));
-  assert.deepEqual(
-    vipsRecord.evidence
-      .filter((file) => file.kind === 'native-attribution')
-      .map((file) => file.source),
-    ['README.md', 'versions.json'],
-  );
-  assert.equal(inventory.reviewRequired, true);
-  assert.equal(
-    inventory.warnings.some((warning) =>
-      /corresponding source\/license obligations/.test(warning.reason),
-    ),
-    true,
-  );
+  assert.equal(inventory.reviewRequired, false);
 });
 
 test('mismatched source identity fails before emitting a partial notice set', (t) => {

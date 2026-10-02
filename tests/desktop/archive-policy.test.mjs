@@ -68,8 +68,34 @@ function fixture(t) {
       { name: 'better-sqlite3', version: '13.0.3' },
       { name: '@next/env', version: '16.3.6' },
     ],
+    compiledComponents: [],
     warnings: [],
   };
+  for (const record of licenses.packages) {
+    const base = `node_modules/.pnpm/${record.name.replace('/', '+')}@${record.version}/node_modules/${record.name}`;
+    const manifest = JSON.stringify({ name: record.name, version: record.version });
+    const retained = `licenses/${record.name.replace('/', '-')}/package.json`;
+    put(`${base}/package.json`, manifest);
+    put(retained, manifest);
+    record.shippedPaths = [base];
+    record.bundledInputs = [];
+    record.evidence = [
+      {
+        kind: 'manifest',
+        source: 'package.json',
+        path: retained,
+        sha256: digest(path.join(app, retained)),
+      },
+    ];
+    const notice = `licenses/${record.name.replace('/', '-')}/LICENSE`;
+    put(notice, 'retained license fixture');
+    record.evidence.push({
+      kind: 'notice',
+      source: 'LICENSE',
+      path: notice,
+      sha256: digest(path.join(app, notice)),
+    });
+  }
   put('server.js', 'const nextConfig = {"images":{"unoptimized":true}}\n');
   put('runtime-links.json', '[]');
   put('LICENSE', 'Application fixture license');
@@ -141,7 +167,19 @@ function fixture(t) {
     );
     refreshDistribution();
   }
-  return { root, app, out, archive, identity, policy, put, pack, appendZip, refreshDistribution };
+  return {
+    root,
+    app,
+    out,
+    archive,
+    identity,
+    policy,
+    licenses,
+    put,
+    pack,
+    appendZip,
+    refreshDistribution,
+  };
 }
 
 test(
@@ -263,4 +301,32 @@ for (const [label, member, attributes] of [
       assert.throws(() => assertRedistributionReady(f.out, platform), /Unsafe archive member/);
     },
   );
+}
+
+for (const change of [
+  'delete notice',
+  'alter notice',
+  'alter manifest name',
+  'alter manifest version',
+]) {
+  test(`refreshed outer pins cannot hide ${change}`, { skip: !supported }, (t) => {
+    const f = fixture(t);
+    const record = f.licenses.packages[0];
+    const notice = record.evidence.find((entry) => entry.kind === 'notice').path;
+    if (change === 'delete notice') fs.unlinkSync(path.join(f.app, notice));
+    else if (change === 'alter notice') f.put(notice, 'changed notice');
+    else
+      f.put(
+        `${record.shippedPaths[0]}/package.json`,
+        json({
+          name: change.endsWith('name') ? 'different' : record.name,
+          version: change.endsWith('version') ? '99.0.0' : record.version,
+        }),
+      );
+    f.pack();
+    assert.throws(
+      () => assertRedistributionReady(f.out, platform),
+      /license evidence is missing or changed|Actual runtime package identity/,
+    );
+  });
 }

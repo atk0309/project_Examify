@@ -9,6 +9,7 @@ import {
   createRuntimePolicy,
   validateRuntimePolicy,
 } from '../../scripts/desktop/distribution-policy.mjs';
+import { digest } from '../../scripts/desktop/distribution.mjs';
 import { loadSupplementalNotices } from '../../scripts/desktop/supplemental-licenses.mjs';
 const repo = path.resolve(import.meta.dirname, '../..');
 const identity = { version: '0.1.0', platform: 'linux-x64', sourceCommit: 'a'.repeat(40) };
@@ -25,8 +26,34 @@ function fixture(t) {
       { name: 'better-sqlite3', version: '13.0.3' },
       { name: '@next/env', version: '16.3.6' },
     ],
+    compiledComponents: [],
     warnings: [],
   };
+  for (const record of licenses.packages) {
+    const base = `node_modules/.pnpm/${record.name.replace('/', '+')}@${record.version}/node_modules/${record.name}`;
+    const manifest = JSON.stringify({ name: record.name, version: record.version });
+    const retained = `licenses/${record.name.replace('/', '-')}/package.json`;
+    put(`${base}/package.json`, manifest);
+    put(retained, manifest);
+    record.shippedPaths = [base];
+    record.bundledInputs = [];
+    record.evidence = [
+      {
+        kind: 'manifest',
+        source: 'package.json',
+        path: retained,
+        sha256: digest(path.join(app, retained)),
+      },
+    ];
+    const notice = `licenses/${record.name.replace('/', '-')}/LICENSE`;
+    put(notice, 'retained license fixture');
+    record.evidence.push({
+      kind: 'notice',
+      source: 'LICENSE',
+      path: notice,
+      sha256: digest(path.join(app, notice)),
+    });
+  }
   put('server.js', 'const nextConfig = {"images":{"unoptimized":true}}\n');
   put('runtime-links.json', '[]');
   put('LICENSE', 'application fixture');
@@ -125,4 +152,61 @@ test('default and hosted configuration are unchanged; portable tracing covers se
         .some((pattern) => picomatch(pattern, { dot: true })(file)),
       file,
     );
+});
+
+test('embedded helper packages retain verified identity without invented runtime paths', (t) => {
+  const { app, put, licenses } = fixture(t);
+  const record = {
+    name: 'embedded-helper',
+    version: '1.0.0',
+    shippedPaths: [],
+    bundledInputs: ['index.js'],
+    evidence: [],
+  };
+  const retained = 'licenses/embedded-helper/package.json';
+  put(retained, JSON.stringify({ name: record.name, version: record.version }));
+  record.evidence.push({
+    kind: 'manifest',
+    source: 'package.json',
+    path: retained,
+    sha256: digest(path.join(app, retained)),
+  });
+  licenses.packages.push(record);
+  assert.doesNotThrow(() => createRuntimePolicy(app, identity, licenses));
+  record.bundledInputs = [];
+  assert.throws(
+    () => createRuntimePolicy(app, identity, licenses),
+    /no shipped or bundled provenance/,
+  );
+});
+
+test('compiled evidence paths must identify contained regular files with matching hashes', (t) => {
+  const { app, put, licenses } = fixture(t);
+  const file = 'licenses/compiled/LICENSE';
+  put(file, 'compiled notice');
+  const evidence = { path: file, sha256: digest(path.join(app, file)) };
+  licenses.compiledComponents.push({ evidence: [evidence] });
+  assert.doesNotThrow(() => createRuntimePolicy(app, identity, licenses));
+  for (const invalid of ['../LICENSE', '/LICENSE', 'licenses/compiled', 'licenses/missing']) {
+    evidence.path = invalid;
+    assert.throws(() => createRuntimePolicy(app, identity, licenses), /license evidence/);
+  }
+  evidence.path = file;
+  put(file, 'altered compiled notice');
+  assert.throws(() => createRuntimePolicy(app, identity, licenses), /license evidence/);
+});
+
+test('actual shipped manifests cannot be omitted from the inventory or duplicated', (t) => {
+  const { app, put, licenses } = fixture(t);
+  put(
+    'node_modules/undeclared/package.json',
+    JSON.stringify({ name: 'undeclared', version: '1.0.0' }),
+  );
+  assert.throws(
+    () => createRuntimePolicy(app, identity, licenses),
+    /missing from license inventory/,
+  );
+  fs.rmSync(path.join(app, 'node_modules/undeclared'), { recursive: true });
+  licenses.packages.push(licenses.packages[0]);
+  assert.throws(() => createRuntimePolicy(app, identity, licenses), /Duplicate shipped/);
 });

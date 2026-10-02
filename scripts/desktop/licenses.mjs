@@ -223,17 +223,6 @@ export function retainRuntimeLicenses(app, { sourceNodeModules, bundledInputs = 
       retain(record, 'package.json', 'manifest');
     }
     collectNotices(record);
-    // The native package ships its dependency attribution table and exact versions in
-    // these files, but does not supply the corresponding complete license texts.
-    if (/^@img\/sharp-libvips-/.test(record.name)) {
-      for (const file of ['README.md', 'versions.json'])
-        if (fs.existsSync(path.join(record.root, file))) retain(record, file, 'native-attribution');
-      warnings.push({
-        package: record.sourcePackage,
-        reason:
-          'Native libvips dependencies require review of the retained attribution table, versions and corresponding source/license obligations.',
-      });
-    }
     if (record.name === 'better-sqlite3') {
       const header = 'deps/sqlite3/sqlite3.h';
       if (fs.existsSync(path.join(record.root, header)))

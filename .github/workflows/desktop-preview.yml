@@ -64,10 +64,10 @@ jobs:
           node --test tests/desktop/distribution.test.mjs tests/desktop/licenses.test.mjs tests/desktop/supplemental-licenses.test.mjs tests/desktop/portable-policy.test.mjs tests/desktop/archive-policy.test.mjs
       - name: Build from clean committed source
         run: node scripts/desktop/build.mjs
-      - name: Package native runtime with pinned Node archive verification
+      - name: Package native runtime from outside the repository (pinned Node verification)
         env:
           RC_VERSION: ${{ inputs.release_version }}
-        run: node -e "require('node:child_process').execFileSync(process.execPath,['scripts/desktop/package.mjs',process.env.RC_VERSION || 'ci-' + process.env.GITHUB_SHA],{stdio:'inherit'})"
+        run: node -e "require('node:child_process').execFileSync(process.execPath,[require('node:path').join(process.env.GITHUB_WORKSPACE,'scripts/desktop/package.mjs'),process.env.RC_VERSION || 'ci-' + process.env.GITHUB_SHA],{cwd:require('node:os').tmpdir(),stdio:'inherit'})"
       - name: Independently inspect the actual archive and required notice bytes
         run: node scripts/desktop/distribution-policy.mjs check build/desktop/${{ matrix.platform }} ${{ matrix.platform }}
       - name: Install acceptance browser on Linux
