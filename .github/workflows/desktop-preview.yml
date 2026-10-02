@@ -4,6 +4,11 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      release_version:
+        description: 'Optional intended stable numeric version; prepares an unpublished candidate'
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -51,16 +56,29 @@ jobs:
         shell: powershell
         run: |
           ./scripts/desktop/acceptance-windows.ps1 -Repository $env:GITHUB_WORKSPACE -Node (Get-Command node.exe).Source -TestsOnly
+      - name: Validate requested version and packaging policies
+        env:
+          RC_VERSION: ${{ inputs.release_version }}
+        run: |
+          node -e "if(process.env.RC_VERSION && !/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.test(process.env.RC_VERSION)) process.exit(1)"
+          node --test tests/desktop/distribution.test.mjs tests/desktop/licenses.test.mjs tests/desktop/supplemental-licenses.test.mjs tests/desktop/portable-policy.test.mjs tests/desktop/archive-policy.test.mjs
       - name: Build from clean committed source
         run: node scripts/desktop/build.mjs
       - name: Package native runtime with pinned Node archive verification
-        run: node scripts/desktop/package.mjs ci-${{ github.sha }}
+        env:
+          RC_VERSION: ${{ inputs.release_version }}
+        run: node -e "require('node:child_process').execFileSync(process.execPath,['scripts/desktop/package.mjs',process.env.RC_VERSION || 'ci-' + process.env.GITHUB_SHA],{stdio:'inherit'})"
+      - name: Independently inspect the actual archive and required notice bytes
+        run: node scripts/desktop/distribution-policy.mjs check build/desktop/${{ matrix.platform }} ${{ matrix.platform }}
       - name: Install acceptance browser on Linux
         if: runner.os == 'Linux'
         run: pnpm exec playwright install --with-deps chromium
       - name: Install acceptance browser on Windows
         if: runner.os == 'Windows'
         run: pnpm exec playwright install chromium
+      - name: Linux download-arrangement acceptance
+        if: runner.os == 'Linux'
+        run: node tests/desktop/distribution-acceptance.mjs build/desktop/linux-x64
       - name: Linux installer and packaged app acceptance
         if: runner.os == 'Linux'
         run: node tests/desktop/acceptance.mjs build/desktop/linux-x64
@@ -78,4 +96,33 @@ jobs:
           name: examify-solo-${{ matrix.platform }}-${{ github.sha }}
           path: build/desktop/${{ matrix.platform }}/
           if-no-files-found: error
-          retention-days: 7
+          retention-days: ${{ inputs.release_version && 90 || 7 }}
+
+  assemble-candidate:
+    name: Assemble unpublished matched candidate
+    if: github.event_name == 'workflow_dispatch' && inputs.release_version != ''
+    needs: package-and-accept
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.22.2
+      - uses: actions/download-artifact@v8
+        with:
+          name: examify-solo-linux-x64-${{ github.sha }}
+          path: build/desktop/linux-x64
+      - uses: actions/download-artifact@v8
+        with:
+          name: examify-solo-win32-x64-${{ github.sha }}
+          path: build/desktop/win32-x64
+      - name: Assemble exact tested platform assets (never publish or tag)
+        run: node scripts/desktop/distribution.mjs assemble build/desktop build/release-candidate
+      - uses: actions/upload-artifact@v7
+        with:
+          name: examify-candidate-${{ inputs.release_version }}-${{ github.sha }}
+          path: build/release-candidate/
+          if-no-files-found: error
+          retention-days: 90

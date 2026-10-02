@@ -36,6 +36,7 @@ try {
     $WorkerTests = Join-Path $Repository 'tests/desktop/worker-lock.test.mjs'
     $RelocatedTests = Join-Path $Repository 'tests/desktop/relocated-helpers.test.mjs'
     $UpgradeAcceptance = Join-Path $Repository 'tests/desktop/upgrade-acceptance.mjs'
+    $DistributionAcceptance = Join-Path $Repository 'tests/desktop/distribution-acceptance.mjs'
     $InventoryTests = Join-Path $Repository 'tests/desktop/windows-inventory.test.mjs'
     $UserTemp = Join-Path $Root 'UserTemp'
     $RunAcceptance = if ($TestsOnly) { '$false' } else { '$true' }
@@ -59,6 +60,12 @@ try {
     & $(Quote $Node) --test $(Quote $UnitTests) $(Quote $InventoryTests) $(Quote $UpgradeTests) $(Quote $WorkerTests) $(Quote $RelocatedTests) *> $(Quote $Result)
     `$Code = `$LASTEXITCODE
     `$ErrorActionPreference = 'Stop'
+    if (`$Code -eq 0 -and $RunAcceptance) {
+        `$ErrorActionPreference = 'Continue'
+        & $(Quote $Node) $(Quote $DistributionAcceptance) $(Quote $Artifact) *>> $(Quote $Result)
+        `$Code = `$LASTEXITCODE
+        `$ErrorActionPreference = 'Stop'
+    }
     if (`$Code -eq 0 -and $RunAcceptance) {
         `$ErrorActionPreference = 'Continue'
         & $(Quote $Node) $(Quote $Accept) $(Quote $Artifact) *>> $(Quote $Result)

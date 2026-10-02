@@ -73,7 +73,11 @@ export function copyRuntimeTree(
 }
 
 /** Preserve pnpm's module graph without putting symlinks in the download archive. */
-export function copyStandaloneRuntime(standalone, destination, { sourceNodeModules } = {}) {
+export function copyStandaloneRuntime(
+  standalone,
+  destination,
+  { sourceNodeModules, omitPortableImageLinks = false } = {},
+) {
   fs.mkdirSync(destination, { recursive: true });
   const root = fs.realpathSync(standalone);
   const modules = sourceNodeModules ? fs.realpathSync(sourceNodeModules) : null;
@@ -124,6 +128,14 @@ export function copyStandaloneRuntime(standalone, destination, { sourceNodeModul
     const relative = relativeRuntimePath(root, source);
     if (forbiddenEntry(relative)) throw new Error(`Forbidden release entry: ${relative}`);
     const stat = fs.lstatSync(source);
+    // Next retains dependency-graph links even when their optional package files
+    // were explicitly excluded from tracing. Drop only these declared links;
+    // real image package contents still fail closed instead of being concealed.
+    if (omitPortableImageLinks && /(?:^|\/)node_modules\/(?:sharp|@img\/[^/]+)$/.test(relative)) {
+      if (!stat.isSymbolicLink())
+        throw new Error('Image package files remain despite portable tracing exclusions.');
+      return;
+    }
     if (stat.isSymbolicLink()) {
       const real = fs.realpathSync(source);
       let resolved = relativeRuntimePath(root, real);

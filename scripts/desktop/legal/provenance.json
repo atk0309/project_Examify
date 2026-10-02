@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "scope": "Exact-version upstream notice evidence for embedded dotenv dependencies. Original bytes are preserved. This is not a complete SBOM or legal compliance certification.",
+  "retrievedOn": "2026-10-02",
+  "documents": [
+    {
+      "file": "dotenv-16.3.1-LICENSE",
+      "sourceUrl": "https://raw.githubusercontent.com/motdotla/dotenv/v16.3.1/LICENSE",
+      "sha256": "74b629b24865e1e83c5277ee84590b7937644d6fd959d0c7bdce758676cd2ced",
+      "size": 1294,
+      "associations": [
+        {
+          "package": "@next/env",
+          "version": "16.3.6",
+          "component": "dotenv",
+          "componentVersion": "16.3.1"
+        }
+      ],
+      "description": "Original BSD-2-Clause license and copyright for dotenv 16.3.1 embedded in @next/env. Bytes match the previously verified upstream retrieval."
+    },
+    {
+      "file": "dotenv-expand-10.0.0-LICENSE",
+      "sourceUrl": "https://raw.githubusercontent.com/motdotla/dotenv-expand/v10.0.0/LICENSE",
+      "sha256": "3726b9470c3a6b54e1ebcc1d802d37089b5a5fc97273b52b2cee578a4421ec45",
+      "size": 1295,
+      "associations": [
+        {
+          "package": "@next/env",
+          "version": "16.3.6",
+          "component": "dotenv-expand",
+          "componentVersion": "10.0.0"
+        }
+      ],
+      "description": "Original BSD-2-Clause license and copyright for dotenv-expand 10.0.0 embedded in @next/env. Bytes match the previously verified upstream retrieval."
+    }
+  ],
+  "unresolved": []
+}

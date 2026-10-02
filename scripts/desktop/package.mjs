@@ -7,6 +7,9 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertReleaseInventory, copyStandaloneRuntime, copyRuntimeTree } from './inventory.mjs';
+import { writeDistribution, policyName, committedLockfileSha256 } from './distribution.mjs';
+import { retainRuntimeLicenses } from './licenses.mjs';
+import { createRuntimePolicy, standaloneConfig } from './distribution-policy.mjs';
 
 const require = createRequire(import.meta.url);
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -27,7 +30,11 @@ if (!localPreview) {
   const provenance = JSON.parse(
     fs.readFileSync(path.join(repo, '.next/desktop-build.json'), 'utf8'),
   );
-  if (provenance.commit !== sourceCommit || provenance.clean !== true)
+  if (
+    provenance.commit !== sourceCommit ||
+    provenance.clean !== true ||
+    provenance.imageOptimization !== 'disabled'
+  )
     throw new Error('Run scripts/desktop/build.mjs for this exact source commit first.');
 }
 if (!pin) throw new Error(`No portable release is supported for ${platform}.`);
@@ -36,6 +43,10 @@ if (process.versions.node !== pins.version)
 if (!fs.existsSync(path.join(repo, '.next/standalone/server.js')))
   throw new Error('Run the native production build first.');
 const destination = path.join(repo, 'build', 'desktop', platform);
+if (fs.existsSync(destination) && fs.readdirSync(destination).length)
+  throw new Error(
+    'Package output already exists; preserve the previous candidate and use a clean output directory.',
+  );
 fs.mkdirSync(destination, { recursive: true });
 const stage = fs.mkdtempSync(path.join(destination, 'stage-'));
 const app = path.join(stage, 'app');
@@ -48,8 +59,11 @@ function command(binary, args) {
   execFileSync(binary, args, { cwd: repo, stdio: 'inherit' });
 }
 try {
+  if (standaloneConfig(path.join(repo, '.next/standalone')).images?.unoptimized !== true)
+    throw new Error('Only verified portable builds may omit optional image links.');
   copyStandaloneRuntime(path.join(repo, '.next/standalone'), app, {
     sourceNodeModules: path.join(repo, 'node_modules'),
+    omitPortableImageLinks: true,
   });
   copy(path.join(repo, '.next/static'), path.join(app, '.next/static'));
   // Only committed sample content, never ignored study PDFs or family content.
@@ -114,7 +128,14 @@ try {
   copy(path.join(repo, 'LICENSE'), path.join(app, 'LICENSE'));
   // tsx pins its esbuild dependency in pnpm-lock; avoid fetching a build-time tool.
   const esbuild = require(require.resolve('esbuild', { paths: [require.resolve('tsx')] }));
-  await esbuild.build({
+  const bundledInputs = [];
+  const bundle = async (options) => {
+    const result = await esbuild.build({ ...options, metafile: true });
+    bundledInputs.push(
+      ...Object.keys(result.metafile.inputs).map((name) => path.resolve(repo, name)),
+    );
+  };
+  await bundle({
     entryPoints: [path.join(repo, 'src/lib/db/migrate.ts')],
     outfile: path.join(app, 'scripts/migrate.mjs'),
     bundle: true,
@@ -134,7 +155,7 @@ try {
       },
     ],
   });
-  await esbuild.build({
+  await bundle({
     entryPoints: [path.join(repo, 'src/lib/solo-preflight.ts')],
     outfile: path.join(app, 'scripts/solo-preflight.mjs'),
     bundle: true,
@@ -144,7 +165,7 @@ try {
     external: ['better-sqlite3'],
   });
   // Exercise the real runtime prompt loader without invoking any provider.
-  await esbuild.build({
+  await bundle({
     stdin: {
       contents:
         "import { loadGeneratePrompt } from './tools/examify-ingest/src/prompt.ts'; const prompt = loadGeneratePrompt(process.cwd()); if (!prompt.text.trim() || !prompt.hash) throw new Error('Invalid generation prompt asset.');",
@@ -187,24 +208,34 @@ try {
   copy(path.join(nodeRoot, runtimeExe), path.join(app, 'runtime', runtimeExe));
   copy(path.join(nodeRoot, 'LICENSE'), path.join(app, 'runtime/LICENSE'));
   if (process.platform !== 'win32') fs.chmodSync(path.join(app, 'runtime', runtimeExe), 0o755);
+  const identity = {
+    version,
+    platform,
+    upgradeProtocol: 1,
+    nodeVersion: pins.version,
+    nodeArchiveSha256: pin.sha256,
+    sourceCommit,
+    localPreview,
+    imageOptimization: 'disabled',
+    lockfileSha256: committedLockfileSha256(repo),
+    sourceDirty: Boolean(
+      execFileSync('git', ['status', '--porcelain'], { cwd: repo, encoding: 'utf8' }).trim(),
+    ),
+  };
   fs.writeFileSync(
     path.join(app, 'desktop-release.json'),
-    `${JSON.stringify(
-      {
-        version,
-        platform,
-        nodeVersion: pins.version,
-        upgradeProtocol: 1,
-        nodeArchiveSha256: pin.sha256,
-        sourceCommit,
-        localPreview,
-        sourceDirty: Boolean(
-          execFileSync('git', ['status', '--porcelain'], { cwd: repo, encoding: 'utf8' }).trim(),
-        ),
-      },
-      null,
-      2,
-    )}\n`,
+    `${JSON.stringify(identity, null, 2)}\n`,
+  );
+  const licenses = retainRuntimeLicenses(app, {
+    sourceNodeModules: path.join(repo, 'node_modules'),
+    bundledInputs,
+  });
+  for (const warning of licenses.warnings)
+    console.warn(`License review note: ${warning.package}: ${warning.reason}`);
+  const policy = createRuntimePolicy(app, identity, licenses);
+  fs.writeFileSync(
+    path.join(app, 'desktop-runtime-policy.json'),
+    `${JSON.stringify(policy, null, 2)}\n`,
   );
   const inventory = assertReleaseInventory(app);
   fs.writeFileSync(
@@ -243,6 +274,19 @@ try {
       .replaceAll('__EXAMIFY_INSTALL_PS_SHA256__', sha256(path.join(destination, installer)));
     fs.writeFileSync(path.join(destination, 'install.cmd'), cmd);
   }
+  fs.rmSync(stage, { recursive: true, force: true });
+  if (
+    !localPreview &&
+    (execFileSync('git', ['status', '--porcelain'], { cwd: repo, encoding: 'utf8' }).trim() ||
+      execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim() !==
+        sourceCommit)
+  )
+    throw new Error('Source changed during packaging.');
+  fs.writeFileSync(
+    path.join(destination, policyName(platform)),
+    `${JSON.stringify(policy, null, 2)}\n`,
+  );
+  writeDistribution(destination, identity);
   console.log(`Packaged ${file}; installer pins SHA-256 ${digest}`);
 } finally {
   fs.rmSync(stage, { recursive: true, force: true });

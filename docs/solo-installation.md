@@ -206,3 +206,17 @@ The `.examify-operations` databases are coordination files, outside study state.
 Do not remove them while an operation is active. Stale process markers after a
 crash do not require manual deletion. The household `examify:data` backup command
 does not capture this complete solo layout; use the full-folder backup above.
+
+## Portable image behavior and release evidence
+
+Portable Windows/Linux builds omit Next's unused automatic image optimizer and
+its Sharp/libvips dependencies. Existing practice, raw PDF/text uploads and AI
+source processing retain their separate paths; optional PDF rasterization still
+uses external `pdftoppm`. Portable installs do not offer automatic image resizing,
+compression or format conversion. Hosted/default builds are unchanged.
+
+Portable artifacts remain previews until the [release gate](release-candidate.md)
+is completed. CI runner coverage does not establish minimum consumer OS/browser
+support. Actual shortcut/browser opening and download-warning checks are still
+required. Installers are unsigned; checksums do not independently prove publisher
+identity. Never disable system security to run an installer.

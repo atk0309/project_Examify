@@ -123,6 +123,11 @@ export async function verifyBrowser({ origin, browserUrl, reopen }) {
     await expect(page).toHaveURL(`${origin}/`);
     await expect(page.getByRole('heading', { name: 'Pick a subject to practise.' })).toBeVisible();
     assert.equal(new URL(page.url()).hash, '');
+    assert.equal(
+      (await context.request.get(`${origin}/_next/image?url=%2Ffavicon.ico&w=64&q=75`)).status(),
+      404,
+      'Authenticated portable image optimization is disabled',
+    );
     await expect(page.getByRole('button', { name: 'Sign out' })).toHaveCount(0);
     await expect(page.getByRole('link', { name: 'Create your question bank' })).toBeVisible();
 

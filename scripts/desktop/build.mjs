@@ -15,11 +15,11 @@ fs.rmSync(path.join(root, '.next'), { recursive: true, force: true });
 execFileSync(process.execPath, [require.resolve('next/dist/bin/next'), 'build'], {
   cwd: root,
   stdio: 'inherit',
-  env: { ...process.env, NEXT_TELEMETRY_DISABLED: '1' },
+  env: { ...process.env, NEXT_TELEMETRY_DISABLED: '1', EXAMIFY_PORTABLE_BUILD: '1' },
 });
 if (git('status', '--porcelain') || git('rev-parse', 'HEAD') !== commit)
   throw new Error('Source changed during the build.');
 fs.writeFileSync(
   path.join(root, '.next/desktop-build.json'),
-  JSON.stringify({ commit, clean: true }),
+  JSON.stringify({ commit, clean: true, imageOptimization: 'disabled' }),
 );

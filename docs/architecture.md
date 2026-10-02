@@ -1381,3 +1381,16 @@ SHA-256 pins authenticate bytes relative to the trusted installer distribution;
 they are not a publisher-signature system. Windows directory durability cannot
 be established using these ordinary Node APIs; process-crash acceptance must
 not be reported as physical-power-loss proof.
+
+### Portable-only image optimization exclusion
+
+`scripts/desktop/build.mjs` selects `EXAMIFY_PORTABLE_BUILD=1` only for its build
+subprocess. The default hosted configuration remains unchanged. Portable builds
+serialize `images.unoptimized=true` and exclude Sharp/@img from route and
+`next-server` traces. Packaging verifies actual serialized config, package paths,
+module links and native binaries; a post-archive gate independently extracts and
+rechecks them before CI can upload binaries. A metadata label alone is insufficient.
+The current application uses neither Sharp nor Next Image. PDF/text upload storage
+and provider/optional pdftoppm source processing are independent. Reintroducing an
+image/native dependency requires explicit portable behavior and notice/source
+review; do not weaken the gate to make a package build pass.

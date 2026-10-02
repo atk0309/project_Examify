@@ -1,12 +1,28 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+const portable = process.env.EXAMIFY_PORTABLE_BUILD === '1';
 const projectRoot = path.dirname(fileURLToPath(import.meta.url));
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
   output: 'standalone',
+  // The desktop builder alone selects this mode. Hosted/default builds keep
+  // Next's normal image optimizer and tracing behavior.
+  ...(portable
+    ? {
+        images: { unoptimized: true },
+        outputFileTracingExcludes: {
+          '**/*': [
+            'node_modules/sharp/**/*',
+            'node_modules/@img/**/*',
+            'node_modules/.pnpm/sharp@*/**/*',
+            'node_modules/.pnpm/@img+*/**/*',
+          ],
+        },
+      }
+    : {}),
   outputFileTracingIncludes: {
     '/*': ['node_modules/better-sqlite3/**/*'],
   },

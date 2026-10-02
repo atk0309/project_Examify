@@ -7,3 +7,5 @@ test-results
 pnpm-lock.yaml
 src/lib/db/migrations
 content/generated/**/*.json
+# Preserve exact upstream license bytes; provenance hashes verify them.
+scripts/desktop/legal/**

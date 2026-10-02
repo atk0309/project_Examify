@@ -9,11 +9,13 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { childEnvironment } from '../../scripts/launcher.mjs';
 import { observeLauncher } from './launcher-progress.mjs';
+import { verifyDistribution, policyName, digest } from '../../scripts/desktop/distribution.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const platform = `${process.platform}-${process.arch}`;
 const artifacts = path.resolve(process.argv[2] || path.join(repo, 'build/desktop', platform));
 const httpOnly = process.argv.includes('--http-only');
+const distribution = verifyDistribution(artifacts, platform);
 const asset = fs
   .readdirSync(artifacts)
   .find((name) => name.endsWith(platform === 'win32-x64' ? '.zip' : '.tar.gz'));
@@ -74,6 +76,26 @@ try {
   const marker = JSON.parse(fs.readFileSync(path.join(root, 'installation.json'), 'utf8'));
   appDir = path.join(root, marker.release ?? `releases/${marker.version}`);
   node = path.join(appDir, process.platform === 'win32' ? 'runtime/node.exe' : 'runtime/bin/node');
+  const installed = JSON.parse(fs.readFileSync(path.join(appDir, 'desktop-release.json'), 'utf8'));
+  for (const field of [
+    'version',
+    'platform',
+    'sourceCommit',
+    'lockfileSha256',
+    'nodeVersion',
+    'nodeArchiveSha256',
+    'upgradeProtocol',
+    'sourceDirty',
+    'localPreview',
+    'imageOptimization',
+  ])
+    assert.equal(installed[field], distribution[field], `Installed ${field} matches distribution`);
+  const policy = JSON.parse(fs.readFileSync(path.join(artifacts, policyName(platform)), 'utf8'));
+  assert.deepEqual(
+    JSON.parse(fs.readFileSync(path.join(appDir, 'desktop-runtime-policy.json'), 'utf8')),
+    policy,
+  );
+  assert.equal(digest(path.join(appDir, 'server.js')), policy.standaloneServerSha256);
 } catch (error) {
   fs.rmSync(fixture, { recursive: true, force: true });
   throw error;
@@ -224,6 +246,15 @@ try {
   };
   if (httpOnly) {
     const cookie = await bootstrap(url);
+    assert.equal(
+      (
+        await fetch(`${ready.origin}/_next/image?url=%2Ffavicon.ico&w=64&q=75`, {
+          headers: { cookie },
+        })
+      ).status,
+      404,
+      'Portable optimizer is disabled, not a missing-module server error',
+    );
     const home = await fetch(ready.origin, { headers: { cookie } });
     assert.equal(home.status, 200, 'Solo Home renders successfully');
     const html = await home.text();
