@@ -823,6 +823,9 @@ describe('personal study entry', () => {
       marking: { written: 'unmarked' },
     });
     expect(screen.getByText('Personal study')).toBeInTheDocument();
+    expect(screen.getByText('Closing and reopening Examify')).toBeInTheDocument();
+    expect(screen.getByText(/press Ctrl\+C in the launcher window/)).toBeInTheDocument();
+    expect(screen.getByText(/choose an AI provider to generate questions/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Sign out' })).not.toBeInTheDocument();
     expect(screen.queryByText('Back to parent view')).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Create your question bank' })).toHaveAttribute(

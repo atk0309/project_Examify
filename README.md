@@ -7,19 +7,19 @@ as a separate, more involved setup.
 
 ## Start with personal study
 
-The new **solo launcher** runs Examify on this computer only. It opens your browser
-and creates your private study profile without email, invitations or routine login.
-The sample has five fixed questions and deterministic scoring, with no AI.
-Choose **Try a sample exam**, then **Create your question bank** for the guided
-subject → material → AI → generate/review/Apply workflow. Return anytime to add more.
+The solo launcher opens Examify in your browser without email or routine login.
+Choose **Try a sample exam** for five fixed questions and scoring that needs no AI.
+Reopen Examify to resume unfinished practice or see saved results. When you are
+ready, **Create your question bank** guides you through adding material, choosing
+AI, generating questions and reviewing them before Apply.
 
-This is a **preview implementation**, not a published desktop release. Platform
-packages must pass the clean-install checks before release. See the
-[personal-study installation guide](docs/solo-installation.md) for the package
-layout, verification and current acceptance requirements. Windows x64 and Linux
-x64 packages bundle the tested Node runtime and application dependencies; they
-are designed to require no manual Git, Node, pnpm, Docker or administrator setup.
-macOS is outside this preview's scope.
+**There is no published desktop release yet.** Windows x64 and Linux x64 preview
+packages bundle Node and dependencies; no Git, pnpm, Docker or administrator setup
+is needed. Actual consumer OS/browser support still needs verification. macOS and
+ARM are outside this preview.
+
+[Get the preview and try your first exam](docs/solo-installation.md) ·
+[Back up, upgrade or remove it](docs/solo-maintenance.md)
 
 ## Optional household setup
 
@@ -53,7 +53,8 @@ provider. Local hosting alone does not keep AI requests local.
 - [Household install and first login](docs/installation.md)
 - [Install with your preferred AI agent](docs/agent-installation.md)
 - [Configure sign-in, mail and AI](docs/configuration.md)
-- [Deploy, update, back up and restore](docs/operations.md)
+- [Solo backup, recovery and uninstall](docs/solo-maintenance.md)
+- [Household deployment, updates and backups](docs/operations.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [Add or generate questions](docs/content-authoring.md)
 - [Ingest CLI reference](tools/examify-ingest/README.md)

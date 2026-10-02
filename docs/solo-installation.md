@@ -1,222 +1,143 @@
 # Personal study on Windows and Linux
 
-## Preview status
+Examify runs on your computer and opens in your browser. Start with five fixed
+sample questions: no account, email, AI provider or payment is needed.
 
-This branch introduces the solo launcher and platform packaging. No release is
-published by the packaging workflow. Do not treat a successful unit test, a mock
-installer run or a Linux build as proof that Windows installation works. Release
-readiness requires the real packaged acceptance job on each supported OS.
+## Get the preview
 
-Initial targets are Windows x64 and Linux x64. macOS and ARM packages are not
-part of this change. Download only an explicitly versioned Examify package and
-its matching installer from an authorized release or preview artifact. The
-installer must verify its pinned archive digest before unpacking or execution.
-There is no `latest` or moving-main executable download in this flow.
+**There is no published desktop release yet.** Windows x64 and Linux x64 packages
+are available only as expiring preview artifacts from successful
+[Solo desktop preview runs](https://github.com/atk0309/project_Examify/actions/workflows/desktop-preview.yml).
+Open a successful run for the commit you intend to test and download its
+`examify-solo-win32-x64-COMMIT` or `examify-solo-linux-x64-COMMIT` artifact. GitHub
+may require you to sign in. If the artifact has expired, ask the maintainer for a
+verified replacement; do not use a guessed release URL.
 
-## Use a verified preview package
+Extract the downloaded artifact into an ordinary folder. Keep its installer,
+archive and checksum files together. Do not unpack the inner application archive
+or run the installer templates from the source-code ZIP. The installer checks the
+matching archive's pinned checksum before running it.
 
-Once the platform CI job produces a passing artifact, extract that artifact into
-an ordinary folder. Keep the version-pinned installer and archive together. Do
-not run the unsubstituted installer templates directly from a source checkout.
+These packages bundle Node and application dependencies. You do not need Git,
+pnpm, Docker or a compiler. Use your ordinary account, without Administrator or
+sudo. Choose local storage, not a network drive or cloud-synced folder.
 
-- **Windows:** open Command Prompt in that folder and run `install.cmd`. Run as
-  your ordinary account, not Administrator. The private default install location
-  is `%LOCALAPPDATA%\Examify`; use the resulting Examify shortcut to reopen it
-- **Linux:** run `bash install-solo.sh --archive ./examify-VERSION-linux-x64.tar.gz`
-  with the actual matching archive name. The default is
-  `${XDG_DATA_HOME:-$HOME/.local/share}/examify`. The installer creates a desktop
-  application entry and a relaunch script; it does not require sudo
+Windows needs PowerShell 5.1 or later. Linux needs Bash, tar, sha256sum and a
+desktop with `xdg-open` and a default browser. No minimum consumer Windows/Linux
+or browser version has been verified yet: Windows Server 2022 and Ubuntu 22.04 CI
+runs are automated checks, not a consumer support claim. macOS and ARM are not
+supported by this preview.
 
-Keep the launcher terminal open while practicing. Ctrl+C stops the local service;
-closing the browser alone does not. Reopening the shortcut uses the existing
-running instance and opens a fresh browser session safely. There is no automatic
-background service or silent updater in this preview. The installer supports fresh installs and same-version repairs. Upgrade-capable
-packages also support an explicit upgrade to a higher stable numeric version
-(for example, `0.1.0` to `0.2.0`) using that version’s verified installer. Stop
-the launcher first. The original preview format cannot be upgraded in place;
-keep that installation and use a separate empty folder. A same-version preview
-repair does not convert it into an upgrade-capable installation.
-Existing household upgrades still use `install.sh --upgrade`.
+Installers are unsigned. A checksum checks bytes, not who published them. Stop
+if your browser or OS blocks the download or shows a security warning; do not
+disable protection. See [download help](troubleshooting.md#download-is-blocked-or-the-checksum-does-not-match).
 
-## What the launcher does
+## Install and open
 
-- Uses the bundled, pinned Node runtime and prebuilt dependencies, including the
-  native SQLite binding for that OS; no manual Git, Node, pnpm or compiler setup
-- Stores your data and settings separately from replaceable application versions
-- Starts a loopback-only local service and opens the browser with a one-use local
-  launch capability, exchanged for a private session
-- Provides a relaunch shortcut. Keep the launcher running during practice; stop it
-  normally before backing up, copying or removing an installation
+### Windows
 
-The local URL is only for this computer. Do not share the launch URL, proxy it to
-the internet, bind it to a LAN address or use it as a shared school/family server.
-This mode assumes a trusted personal computer. Other people using the same OS
-account can access its files and running app. Browser cookies are scoped to a
-host, not a TCP port: another local service on 127.0.0.1 can receive local cookies
-if you browse to it. Solo is not a security boundary against hostile software or
-other untrusted local services/users on the machine. Use the authenticated
-household deployment behind HTTPS when stronger shared-machine isolation is
-needed; separate OS accounts alone do not fix the browser host/port limitation.
+1. Open the extracted folder. It should contain `install.cmd`, `install.ps1` and
+   `examify-VERSION-win32-x64.zip`, all from the same artifact
+2. Open an ordinary Command Prompt in that folder and run:
 
-## First practice
+   ```cmd
+   install.cmd
+   ```
 
-Choose **Try a sample exam** on the practice page. It uses the same five fixed
-multiple-choice questions, choices and deterministic answer-key scoring, without
-AI generation or marking. No account, email setup,
-invitation, AI provider or payment is needed. Select an answer, finish the exam
-and review the result. Unfinished exams autosave; reopening through the launcher
-keeps your progress and offers your unfinished exam.
+3. Keep the terminal open. Examify starts and opens your default browser
 
-**Create your question bank** opens the guided subject → material → AI → generate → review/Apply workflow. Uploading stores the
-file locally. Generating questions is a separate, explicit operation: review and
-Apply before generated questions become available. The built-in sample stays
-available. After finishing, return to **Create your question bank** to add another subject or
-material. Existing questions and progress are retained; replacement and Apply
-still need explicit review. Household first-run completion keeps its existing
-behavior. AI provider settings remain available from the practice page.
+The default location is `%LOCALAPPDATA%\Examify`. The installer adds **Examify**
+to the Start menu. It uses the archive beside the installer; no release download
+is needed when all three files are present.
 
-The material step accepts PDFs up to 8 MB, or UTF-8 `.txt`/`.md` notes up to
-1 MB. Notes must contain readable text; binary files and empty notes are refused.
-Files are stored privately using safe names. Uploading a different file with the
-same name retains the earlier file and adds a numbered copy. After selecting
-**Local endpoint**, use **Configure endpoint URL and model** to enter both values
-in AI settings, then return to the question-bank wizard. Your subjects and
-uploaded material are retained while you configure the provider.
+### Linux
 
-## AI is optional
+Open a terminal in the extracted folder. Run this with the **actual archive
+filename** from that folder in place of `examify-VERSION-linux-x64.tar.gz`:
 
-The sample multiple-choice practice works without AI. Written-answer AI marking
-and question generation require a provider you choose. Cloud providers receive
-selected source material or written answers; bring your own API key or supported
-account and check that provider's charges. A “local” endpoint is only local if you
-actually run it on this computer. Remote endpoints and account-backed command
-line tools may still send data to a cloud provider. Examify never silently switches
-providers. See [privacy](privacy.md) and [configuration](configuration.md).
+```bash
+bash install-solo.sh --archive ./examify-VERSION-linux-x64.tar.gz
+```
 
-### PDF support and external tools
+Keep the terminal open. Examify starts and opens your default browser. The
+installer adds **Examify** to your applications menu. The default location is
+`${XDG_DATA_HOME:-$HOME/.local/share}/examify`. Supplying `--archive` avoids a
+release download, so this also works offline after you have downloaded the files.
 
-- **Anthropic API** and **Claude Code** send PDFs directly to their provider
-- **OpenAI API** sends PDFs directly to a PDF-capable model (the default is
-  `gpt-4o`); the combined PDF input for one subject must be below 50 MB
-- **Local endpoint** and **Codex** need the external `pdftoppm` tool for PDF-only
-  material. It is not bundled with this preview. UTF-8 text notes avoid that
-  dependency; a real local model still needs to be installed and running
-- Local command execution is host-configured in household installations. The
-  solo launcher's private provider settings do not accept executable commands
+## Try your first exam
 
-The offline acceptance provider used by tests is not a bundled model or a
-production fallback. The tests select an actual loopback HTTP endpoint through
-AI settings, upload text notes, and exercise generation, review, Apply and study.
-They do not demonstrate real-model question quality or install `pdftoppm`.
+1. Select **Try a sample exam** on the practice page
+2. Answer the five questions using **Next question**, select **Finish exam**,
+   then review your result
+3. Select **Back to subjects**, start another sample, answer a question and
+   return with the home icon (**Back to subjects**). Your unfinished exam is saved so you can resume it
 
-The solo UI does not load the household analytics or remote font resources.
-Installing/downloading the application itself requires internet access.
+The sample always uses the same questions and deterministic scoring. It does
+not generate questions or send answers to AI.
 
-## Existing families and shared access
+## Stop and come back
 
-Keep using [household installation and upgrades](installation.md). Solo mode
-refuses to adopt an existing household database and does not migrate household
-accounts into an unauthenticated shared app. Keep the data folders separate.
-Household mode continues to require sign-in and mailbox proof for invitations.
+Press **Ctrl+C in the launcher terminal** to stop Examify. Closing the browser
+alone leaves it running. Open **Examify** from Start or your applications menu to
+return; you can resume an unfinished exam and see saved results. Reopening while
+it is running opens a fresh browser session in that same instance.
 
-## Before a release is ready
+If the shortcut is missing, open the installation folder and run `Examify.cmd`
+on Windows or `./Examify` in a Linux terminal. Use that root entrypoint, not a
+file inside `releases/`. Bookmarked launch links are single-use; reopen through
+Examify instead. [Browser or startup problems](troubleshooting.md#personal-study-windowslinux-package).
 
-On clean Windows and Linux machines, verify the actual distributed package:
+## Make your own question bank
 
-1. Install as an ordinary user without Git, Node or pnpm on PATH; paths containing
-   spaces must work. Verify archive digest rejection before executable startup
-2. Launch, open the browser, redeem the capability, and start a sample exam
-3. Submit and persist a result, close/relaunch, and resume unfinished work
-4. Reject forged Host, cross-origin requests, reused tokens and access to the
-   internal Next server without the gateway secret
-5. Confirm no household setup/mail/account screens block first practice
-6. Retain private data and configuration across relaunch and version replacement
-7. Refuse an existing household database without changing its contents
-8. Run the household and existing migration suites to guard upgrades
-9. Create a subject, upload study notes, select/configure a local endpoint,
-   generate, review and Apply, then complete an exam from that bank. Repeat for
-   a second subject after completion, retaining both banks and earlier progress
+Choose **Create your question bank** from the practice page:
 
-No paid AI calls or real credentials are needed for this acceptance checklist.
+1. Add a subject with a unique ID and a name you recognise
+2. Upload a PDF (up to 8 MiB) or UTF-8 `.txt`/`.md` notes (up to 1 MiB).
+   Uploading only stores the file locally; it does not start generation
+3. Choose and configure an AI provider. For **Local endpoint**, select
+   **Configure endpoint URL and model**, save both in AI settings, then return
+4. Select **Generate questions**. When it finishes, choose **Validate** to open
+   the next screen, then **Validate** again to check the draft format. Select
+   **Next** for Review, then **Review plan** and inspect additions/replacements/deletions.
+   Select **Looks good**, then **Confirm apply** to make the bank available
+5. Select **Next**, then **Back to practice** and choose your subject
 
-## Upgrade safely
+Return to **Create your question bank** to add more subjects or material. Your
+existing banks and progress remain. Replacing questions needs explicit review;
+the built-in sample stays available unless you explicitly replace it. **Optional AI settings** lets you change providers.
+Review shows planned file changes, not a question editor; Validate does not check
+answer accuracy. AI output can be wrong. [Question-bank help](content-authoring.md)
+explains private draft inspection before using generated questions for study.
 
-Run the new version-pinned installer against the same installation folder, with
-Examify stopped. There is no automatic download or silent downgrade. CI preview
-labels and prereleases are not ordered as upgrade versions. The first public
-upgrade-capable package must have a version never used by a legacy preview.
+### Choose AI only when you need it
 
-An upgrade or upgrade-capable same-version repair:
+Generation and written-answer marking use the provider you choose. Cloud APIs
+and account-backed tools may send material or answers to a cloud service and may
+cost money. A local endpoint needs a model already running; a remote endpoint is
+not private to your computer. Examify never silently switches providers.
+[What leaves your computer](privacy.md).
 
-1. Acquires OS-released installation, launcher and database-worker locks. PID
-   numbers alone are never evidence that an installation is stopped
-2. Preserves the entire previous data/config generation, including SQLite WAL,
-   material, question banks, results, provider settings and authentication secrets
-3. Makes a private, hash-checked candidate copy and requires free space for twice
-   the copied bytes plus a 128 MiB migration reserve, after package extraction
-4. Migrates and starts the actual new application against the candidate, without
-   opening a browser. It stops all verification workers before activation
-5. Replaces one installation pointer, selecting the complete matching app and
-   study-state generation together. The ordinary shortcut resolves that pointer
+For a first bank, text notes avoid extra PDF tooling. Anthropic/Claude Code and
+OpenAI can send PDFs directly to their provider; OpenAI needs a PDF-capable model
+and less than 50 MB combined PDF input per subject. Codex and local vision
+endpoints need the separate `pdftoppm` tool for PDF-only material. It is not
+bundled. Local command execution is host-configured in household installations;
+the solo settings do not accept executable commands. Tests use an offline
+provider fixture, not a bundled model or evidence of real-model quality.
 
-Migration, startup or preactivation interruption leaves the previous pair
-selected. Orphan candidate folders may remain; they are never automatically
-adopted or deleted. Re-running the verified installer prepares a fresh candidate.
-After activation, no automatic rollback occurs: newer work might already exist.
-Directly running an inactive supported version refuses to open study data.
+## Keep your work private and safe
 
-Use a local filesystem owned by your ordinary OS account. Network shares,
-cloud-synced installation folders, links/junctions, hard-linked study files and
-shared/foreign-owned state are unsupported. Keep adequate disk space; the reserve
-is a safety check, not a bound on every future migration’s requirements. If a
-fresh install is interrupted before it creates its installation marker, use a
-new empty folder. A damaged immutable bootstrap fails closed and needs recovery
-into a separate folder; repair does not overwrite its running Node executable.
+[Back up, upgrade, recover or remove Examify](solo-maintenance.md). Back up the
+whole installation folder while Examify is stopped; copying only root `data/`
+can miss current work after an upgrade. Backups contain secrets and provider keys.
 
-The automated checks cover process interruption. They do not simulate physical
-power failure or failing storage. In particular, Windows ordinary-user Node APIs
-do not provide a proven durable directory-commit guarantee; keep an independent
-backup before upgrading. This feature does not claim guaranteed recovery from
-sudden power loss on Windows.
+The local service is for this computer only. Do not share its launch URL, expose
+it through a proxy or use it as a school/family server. It assumes a trusted
+personal computer: people using your OS account can access its files, and other
+local services on `127.0.0.1` can receive host-scoped cookies. Separate OS accounts
+do not fix that browser host/port limitation. For shared access, use the
+[authenticated household setup](installation.md) behind HTTPS, with separate
+data. Solo never adopts an existing household database.
 
-## Back up or recover a solo installation
-
-Stop Examify and copy the **whole installation folder** to a private location.
-This retains the installation pointer, matching application/runtime, all state
-generations, configuration and recovery metadata. After an upgrade, `data` and
-`config` at the root can be an older snapshot: copying only those folders can
-miss current work. Keep backup copies private; they include authentication
-secrets and saved provider keys. Never publish or share them.
-
-To recover, retain the damaged installation unchanged, restore the complete
-known-good backup into a separate private folder, and launch its `Examify` or
-`Examify.cmd` entrypoint. Do not overlay old app files onto a newer database or
-manually change just the version field. Recovery to a pre-upgrade backup loses
-changes made after that snapshot; preserve the newer installation for possible
-recovery of that work. Never run two copies against the same data directory.
-
-The retained previous generation and its matching release provide a recovery
-source, not a second automatically active installation. The previous pointer is
-recorded in `installation.json`, and candidate `backup-source.json` records the
-source snapshot’s hashes. Advanced selective recovery requires keeping that
-matched pair together in a separate folder; there is no one-click rollback or
-automatic old-generation cleanup in this release.
-
-The `.examify-operations` databases are coordination files, outside study state.
-Do not remove them while an operation is active. Stale process markers after a
-crash do not require manual deletion. The household `examify:data` backup command
-does not capture this complete solo layout; use the full-folder backup above.
-
-## Portable image behavior and release evidence
-
-Portable Windows/Linux builds omit Next's unused automatic image optimizer and
-its Sharp/libvips dependencies. Existing practice, raw PDF/text uploads and AI
-source processing retain their separate paths; optional PDF rasterization still
-uses external `pdftoppm`. Portable installs do not offer automatic image resizing,
-compression or format conversion. Hosted/default builds are unchanged.
-
-Portable artifacts remain previews until the [release gate](release-candidate.md)
-is completed. CI runner coverage does not establish minimum consumer OS/browser
-support. Actual shortcut/browser opening and download-warning checks are still
-required. Installers are unsigned; checksums do not independently prove publisher
-identity. Never disable system security to run an installer.
+The [release checklist](release-candidate.md) tracks checks still needed before
+public downloads, including real shortcut/browser opening and security warnings.
