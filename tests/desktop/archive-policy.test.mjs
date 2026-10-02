@@ -130,7 +130,8 @@ function fixture(t) {
         '-NoProfile',
         '-NonInteractive',
         '-Command',
-        `$ErrorActionPreference='Stop'; Add-Type -AssemblyName System.IO.Compression.FileSystem; ` +
+        `$ErrorActionPreference='Stop'; Add-Type -AssemblyName System.IO.Compression; ` +
+          `Add-Type -AssemblyName System.IO.Compression.FileSystem; ` +
           `$zip=[IO.Compression.ZipFile]::Open(${quote(archive)},[IO.Compression.ZipArchiveMode]::Update); ` +
           `try { $entry=$zip.CreateEntry(${quote(name)}); $entry.ExternalAttributes=[int]${attributes}; ` +
           `$writer=New-Object IO.StreamWriter($entry.Open()); try { $writer.Write('inert fixture'); } ` +
