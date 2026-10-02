@@ -1,8 +1,79 @@
 # Troubleshooting
 
-Start in the Examify checkout, as the user that runs the server. Keep the error
-message, Node version and command you ran. Never include `.env`, outbox messages,
-backup archives, student answers or study files in a public report.
+## Personal study (Windows/Linux package)
+
+Start with the launcher window. You do not need Node, pnpm or a source checkout
+to troubleshoot a packaged installation. Keep your installation folder intact.
+[Install and reopen](solo-installation.md) · [Backup and recovery](solo-maintenance.md)
+
+### Download is blocked or the checksum does not match
+
+Preview artifacts expire. A missing artifact or release-download error does not
+mean your computer needs developer tools. Download a complete matching artifact
+from a successful run, extract it, and keep its installer and archive together.
+On Linux, pass the archive filename with `--archive`; on Windows, keep
+`install.cmd`, `install.ps1` and the ZIP together.
+
+For a checksum mismatch, download that same complete artifact again. Do not edit
+the checksum, mix files from different runs or unpack and launch unchecked files.
+If it still fails, report the artifact/run and safe error text. Installers are
+unsigned; stop at browser, SmartScreen or organizational-policy warnings. Do not
+disable security software or change system execution policy to get past them.
+
+### The browser did not open, or a saved link no longer works
+
+Choose a default browser in your OS settings. Linux also needs `xdg-open`.
+Keep the launcher window open and open the **Examify** shortcut again. It creates
+a fresh one-use browser session; a bookmark or copied launch link cannot do that.
+If reopening fails, stop the launcher with Ctrl+C and launch again. Do not post
+launch URLs or cookies in a support request.
+
+If the shortcut is missing, open the installation folder and run `Examify.cmd`
+(Windows) or `./Examify` from a terminal (Linux). The installer prints this path.
+
+### Examify will not start, or says it is still running
+
+Use the launcher window's error, not a guessed `localhost:3000` address. Solo
+chooses available local ports each time it starts; it does not need a public port
+or firewall exception. Stop any Examify launcher you already opened, then retry.
+Do not kill unrelated Node programs, delete lock files or expose the service to
+your network. After a crash, relaunch normally; stale process markers do not need
+manual deletion.
+
+For missing/damaged files, keep the installation and make a private backup before
+repair. A verified same-version installer can repair application files, but a
+damaged bootstrap needs [recovery into a separate folder](solo-maintenance.md#back-up-or-recover-a-solo-installation).
+Do not delete the database to make startup succeed. A household-data refusal means
+you must choose a separate solo folder, not remove the household marker.
+
+### My progress or question bank seems missing
+
+Reopen the same installation through its root launcher. A second installation
+folder has separate data. After an upgrade, current data can live under `states/`;
+the root `data/` may be an older snapshot. Do not move those folders around.
+Generation alone does not add questions to practice: review and **Apply** first.
+For unfinished practice, select the saved subject under **Continue where you left off**. [Restore a complete backup](solo-maintenance.md#back-up-or-recover-a-solo-installation)
+if needed, preserving the newer installation and noting that later work will not
+be in an older backup.
+
+### What to include in a support request
+
+- Package version (the `version` value in `installation.json`) and the preview
+  run link or source commit, if known. Do not attach the whole installation
+- Windows edition/build or Linux distribution/version, x64 architecture, and
+  browser name/version
+- What you selected or ran, what you expected, and what happened instead
+- The short error code or message, with personal paths/usernames removed
+
+Never attach `.env`, `config/`, cookies, launch/invite URLs, backups, databases,
+provider keys, answers or uploaded material. Inspect screenshots for private
+content before sharing. Do not post raw logs without checking them. Use
+[private security reporting](../SECURITY.md) for suspected vulnerabilities.
+
+## Household or source installations
+
+The commands below are for a source checkout, as the OS user running the server.
+Packaged solo users should use the steps above instead.
 
 ## `pnpm start` cannot find package.json
 
@@ -61,8 +132,8 @@ Turnstile key pairs. See [configuration](configuration.md) and `.env.example`.
 
 ## AI unavailable or written answers not marked
 
-The parent dashboard names the marking provider and its readiness. The household
-admin can open **AI settings** (`/settings/ai`) to change the provider and refresh
+In solo mode, open **AI settings** from practice. In household mode, the parent
+dashboard names the provider and its readiness, and the admin can open **AI settings** (`/settings/ai`) to change the provider and refresh
 readiness, including after Finish. This checks configuration and CLI sign-in, not
 API-key validity or a paid provider request (see [configuration](configuration.md#change-ai-after-setup)). A CLI
 must be installed and signed in as the same OS user that runs Examify, including

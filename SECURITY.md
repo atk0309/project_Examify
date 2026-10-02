@@ -5,16 +5,28 @@ practice data, so security reports are taken seriously.
 
 ## Supported versions
 
-Only the latest `main` is supported. There are no maintained release branches.
+There is no published desktop release yet. Security fixes target the latest
+`main` and its Windows/Linux x64 previews. There are no maintained release branches.
+Report the affected package version and source commit or preview run when known.
 
 ## Reporting a vulnerability
 
 Please report vulnerabilities **privately** via GitHub Security Advisories: open the
-repository's **Security** tab and choose **"Report a vulnerability"**. Please do not
+repository's **Security** tab and choose **"Report a vulnerability"**
+([private report form](https://github.com/atk0309/project_Examify/security/advisories/new)). Please do not
 open a public issue or PR for a security problem.
 
 Include what you can: affected route/action, reproduction steps, and impact. You should
 get an initial response within a week.
+
+## Solo packages
+
+Keep the installation, backups, saved provider keys, browser cookies and one-use
+launch URLs private. Solo is loopback-only and assumes a trusted computer; it is
+not a shared-server sign-in replacement. Use the [solo guide](docs/solo-installation.md#keep-your-work-private-and-safe)
+for its local-service limits and [full-folder backup instructions](docs/solo-maintenance.md).
+The source-checkout commands and family-data layout below are for household
+installations, not a recipe for copying solo state generations.
 
 ## Scope notes for self-hosters
 

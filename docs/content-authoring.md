@@ -1,29 +1,40 @@
 # Add or generate questions
 
-For initial family setup, use `/onboarding`. Skipped setup can be resumed through
-**Finish content setup** on the parent dashboard. Once you choose Finish, the
-wizard cannot be reopened; use the CLI below for later content changes. You do
-not need to edit TypeScript or install the ingest CLI separately.
-
 ## Use the setup wizard
 
-1. Add a subject with a unique ID and a name your family recognises
-2. Upload the subject's PDFs. Notes/text and images can also be placed in its
-   family-data subject folder using the CLI workflow below
-3. Choose an AI provider and Generate. Check [provider prerequisites](configuration.md#ai-for-question-banks-and-marking)
-4. Review the generated questions, answers and source references. Correct
-   mistakes before using them with students
-5. Open Review to inspect the changes, then Apply. Generate alone does not
-   publish questions. Apply makes family questions available without a rebuild
+**Solo:** choose **Create your question bank** on the practice page. You can return
+after Finish to add more subjects or material. **Household:** use `/onboarding`
+for initial setup, or **Finish content setup** on the parent dashboard if you
+skipped it. After household setup is finished, use the CLI below for later changes.
+
+1. Add a subject with a unique ID and a name you recognise
+2. Upload PDFs (up to 8 MiB each). Solo also accepts UTF-8 `.txt`/`.md` notes
+   (up to 1 MiB each); household text sources use the CLI workflow below.
+   Uploading stores them locally; it does not start generation
+3. Choose an AI provider and Generate. Check [provider prerequisites](configuration.md#ai-for-question-banks-and-marking).
+   For a local endpoint, save its URL and model in AI settings before returning
+4. Validate the draft format. This checks whether Examify can use the draft,
+   not whether its answers are correct
+5. Open Review to inspect the planned file changes, then Apply. Generate alone does not make
+   questions available for practice. Apply does not need an app rebuild
 
 Cancel leaves the current subject's previous question-bank file unchanged.
 If generating several subjects, those already completed remain saved. Replacing
 existing questions requires confirmation. Reusing a built-in subject ID replaces
-that entire subject; choose a new ID if you want to keep both.
+that entire subject; choose a new ID to keep both. The sample remains unless you
+explicitly choose to replace it.
 
-AI output is a draft. Check accuracy, difficulty and marking rubrics against the
-source material, especially diagrams, tables and scanned pages. Keep source PDFs
-private unless you have permission to redistribute them.
+The wizard's Review screen shows counts and file changes, not an editor for every
+question and answer. For an accuracy check before Apply, inspect the private
+`content/subjects/SUBJECT_ID/bank.ir.json` in the active data folder with a local
+text editor. It contains questions, answers, rubrics and source references; never
+share it in a public issue. Check those against your material, especially scanned
+pages and diagrams. If you change a draft, Validate and Review again before Apply.
+[Solo data locations](solo-maintenance.md#find-your-files) ·
+[Household data locations](operations.md).
+
+Keep uploaded material private unless you have permission to share it. Generating
+questions can send it to your chosen AI provider; see [privacy](privacy.md).
 
 ## Where questions live
 
@@ -41,7 +52,8 @@ and logs a reason. Run `pnpm examify:data verify` to check family data.
 
 ## CLI workflow
 
-Run commands from the checkout. These examples use the default `./data` folder;
+These commands are for household/source installations, not the portable solo package.
+Run them from the checkout. These examples use the default `./data` folder;
 substitute your configured `EXAMIFY_DATA_DIR` when it is elsewhere. Use an existing
 family subject, or create `data/content/subjects/history/` and put your notes or
 images there. For PDFs, create `data/content/source-pdfs/history/` and place them

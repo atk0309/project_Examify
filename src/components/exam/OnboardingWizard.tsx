@@ -81,12 +81,14 @@ const STAGE_HELP: Record<StepId, string> = {
   welcome: '',
   subjects: 'Add the subjects you want in the practice bank. One is enough to continue.',
   files:
-    'Study files are stored on this host — PDFs you upload, plus notes.txt and other CLI sources generate already reads. They are sent to your selected AI provider only when you choose Generate, and never enter the question bank.',
-  ai: 'Choose how generate talks to a model, then optionally draft BankIR from local sources (PDFs, notes.txt, and other files generate already reads).',
-  validate: 'Check BankIR before anything is written to the generated bank.',
-  'dry-run': 'Preview the emit plan, including planned deletes. Apply is the only write.',
-  apply: 'Confirm the reviewed plan. An empty catalog is refused.',
-  ready: 'The sample bank stays available either way.',
+    'Your study files are saved here. They go to your chosen AI provider only when you select Generate; the original files are not included in the practice bank.',
+  ai: 'Choose an AI provider to turn your study material into draft questions. Generation requires a configured provider.',
+  validate:
+    'Check that the draft can be used. This checks its format, not whether the answers are correct.',
+  'dry-run':
+    'Review which question-bank files will change, including any deletions. Only Apply changes the practice bank.',
+  apply: 'Confirm the changes you reviewed. Your practice bank cannot be left empty.',
+  ready: 'The sample stays available unless you explicitly replace its questions.',
 };
 
 const AI_COPY: Record<OnboardingAiMode, { title: string; body: string }> = {
@@ -988,8 +990,9 @@ function WelcomeStep({ solo = false }: { solo?: boolean }) {
         {solo ? 'Add your own study material' : 'Set up your family’s content'}
       </h1>
       <p className="wizard-help wizard-help-lead">
-        Add subjects, store study files on this host, then generate and review BankIR before
-        anything is applied. The sample bank stays usable if you skip.
+        Add a subject, upload study material, then use your chosen AI provider to draft questions.
+        Review the planned changes before Apply adds them to your practice bank. You can skip setup
+        and use the sample unless you have replaced it.
       </p>
       <ul className="wizard-benefits">
         <li>
@@ -1008,9 +1011,9 @@ function WelcomeStep({ solo = false }: { solo?: boolean }) {
           <span>
             <strong>Local study files</strong>
             <span>
-              PDFs you upload, plus notes.txt and other CLI sources generate already reads. Stored
-              on this host, sent to the AI provider you choose only when you generate, and never in
-              the public bank.
+              Upload your material here. It stays on the computer running Examify until you choose
+              Generate, which sends it to your selected AI provider. The original files are not
+              included in the practice bank.
             </span>
           </span>
         </li>
@@ -1020,7 +1023,9 @@ function WelcomeStep({ solo = false }: { solo?: boolean }) {
           </span>
           <span>
             <strong>Generate, then review</strong>
-            <span>Draft BankIR, validate, and preview the plan before apply.</span>
+            <span>
+              Generate draft questions, check their format, then review changes before Apply.
+            </span>
           </span>
         </li>
       </ul>
@@ -1193,7 +1198,7 @@ function SubjectsStep({
           >
             <div className="field">
               <label className="field-label" htmlFor="wizard-subject-label">
-                Label
+                Subject name
               </label>
               <input
                 id="wizard-subject-label"
@@ -1831,7 +1836,7 @@ function GeneratePanel({
                     data-testid={`wizard-generate-${subject.id}`}
                     onClick={() => onGenerate([subject.id])}
                   >
-                    {active ? 'Generating…' : 'Generate BankIR'}
+                    {active ? 'Generating…' : 'Generate questions'}
                   </button>
                 </div>
                 {subject.hasIr ? (
@@ -2004,7 +2009,8 @@ function ValidateStep({
       </button>
       {validated ? (
         <p className="wizard-callout" data-testid="wizard-validate-ok">
-          BankIR is valid. Continue to review.
+          The draft format is valid. Continue to review the changes; this does not verify answer
+          accuracy.
         </p>
       ) : null}
     </div>

@@ -286,8 +286,8 @@ function Dashboard({
               question bank next.
             </p>
             <p className="subtitle">
-              Choose subjects → add study material → set up optional AI → generate, review and apply
-              → practise. Return anytime to add more.
+              To make your own bank, add a subject and study material, then choose an AI provider to
+              generate questions. Review the changes before Apply. Return anytime to add more.
             </p>
             <nav className="solo-tools" aria-label="Study settings">
               {canSetUpContent && (
@@ -296,6 +296,14 @@ function Dashboard({
                 </Link>
               )}
               <Link href="/settings/ai">Optional AI settings</Link>
+              <details>
+                <summary>Closing and reopening Examify</summary>
+                <p>
+                  Keep the launcher window open while practising. Close the browser when you like;
+                  press Ctrl+C in the launcher window to stop Examify. Reopen through the Examify
+                  shortcut to resume saved work, rather than bookmarking the one-use launch link.
+                </p>
+              </details>
               <details>
                 <summary>Using AI and household mode</summary>
                 <p>

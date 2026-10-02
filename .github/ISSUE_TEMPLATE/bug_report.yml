@@ -37,6 +37,7 @@ body:
     attributes:
       label: Affected role
       options:
+        - Solo personal study
         - Student
         - Parent
         - Self-hoster or administrator
@@ -48,8 +49,8 @@ body:
     id: environment
     attributes:
       label: Environment
-      description: Include browser, operating system, Node version, and hosting details that matter.
-      placeholder: Chromium 126, Ubuntu 24.04, Node 22...
+      description: Include browser and OS versions, and whether you use the solo package or a household/source install. Node version is only needed for source installs.
+      placeholder: Browser version, OS edition/version, solo preview or source install...
     validations:
       required: true
 
@@ -83,4 +84,4 @@ body:
     id: logs
     attributes:
       label: Sanitized logs or screenshots
-      description: Remove secrets, email addresses, tokens, and family data before attaching anything.
+      description: Remove keys, cookies, launch URLs, personal paths, answers and study material. Do not attach databases, config folders or backups.

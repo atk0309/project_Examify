@@ -167,16 +167,18 @@ describe('OnboardingWizard majors UI', () => {
       />,
     );
     const welcome = screen.getByTestId('wizard-welcome');
-    expect(welcome).toHaveTextContent('Stored on this host');
-    expect(welcome).toHaveTextContent('sent to the AI provider you choose only when you generate');
-    expect(welcome).toHaveTextContent('never in the public bank');
+    expect(welcome).toHaveTextContent('stays on the computer running Examify');
+    expect(welcome).toHaveTextContent(
+      'until you choose Generate, which sends it to your selected AI provider',
+    );
+    expect(welcome).toHaveTextContent('The original files are not included in the practice bank');
     expect(welcome).not.toHaveTextContent('stay on this host');
 
     fireEvent.click(screen.getByTestId('wizard-get-started'));
     fireEvent.click(screen.getByTestId('wizard-next'));
     expect(screen.getByTestId('wizard-files')).toBeVisible();
-    expect(screen.getByText(/Study files are stored on this host/)).toHaveTextContent(
-      'They are sent to your selected AI provider only when you choose Generate',
+    expect(screen.getByText(/Your study files are saved here/)).toHaveTextContent(
+      'They go to your chosen AI provider only when you select Generate',
     );
 
     fireEvent.click(screen.getByTestId('wizard-next'));

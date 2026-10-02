@@ -90,6 +90,29 @@ ordinary-user consumer tests without development tools installed:
   tool/source identity and findings; a failed Dependabot update alone is not a
   vulnerability, and package-manager audit is not complete binary analysis
 
+## First-run help and accessibility check
+
+Use the [personal-study guide](solo-installation.md) as written, with the exact
+candidate artifact. Record pass/fail and safe error codes for each OS/browser:
+
+- Complete the sample, stop the launcher, reopen and find the saved result.
+  Repeat with an unfinished sample and confirm the answer and question position
+- Create a bank, Apply, stop/reopen and check the new bank, earlier results and
+  provider configuration. Add a second subject without replacing the first
+- Use only the keyboard through sample, results and authoring. Check visible
+  focus, file selection, AI choices, Back/Skip and confirmation dialogs
+- At 200% browser zoom, check readable text and reachable controls on practice,
+  results and every authoring step, including long filenames and validation errors
+- Check that a screen reader announces step changes, errors and completion
+- Follow backup/restore and removal instructions using disposable data. Verify
+  that removing a shortcut does not remove data, and recovery uses a full copy
+- Verify the private vulnerability-report form is available to a signed-in
+  reporter before public release; a link in SECURITY.md is not that verification
+
+Do not infer these results from unit tests, substituted browser callbacks or CI
+runner names. Fix launch-blocking accessibility failures and record the remaining
+limits; this is a bounded first-run check, not an accessibility certification.
+
 Artifacts remain unsigned. Checksums establish consistency with the chosen
 installer; an attacker replacing both installer and archive can replace hashes.
 Before publication, the maintainer must approve unsigned distribution or a
