@@ -1,0 +1,3 @@
+
+# Exact upstream license bytes are pinned in provenance.json.
+scripts/desktop/legal/** -text

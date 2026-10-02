@@ -206,3 +206,52 @@ test('forbidden traced entries fail before their bytes are copied', (t) => {
     );
   }
 });
+
+test('portable copying omits only declared image links left after trace exclusion', (t) => {
+  const f = fixture(t);
+  for (const name of ['sharp', '@img/sharp-linux-x64'])
+    directoryLink(
+      path.join(f.sourceNodeModules, 'missing', name),
+      path.join(f.standalone, 'node_modules', name),
+    );
+  assert.throws(() => f.copy(), /ENOENT/);
+  copyStandaloneRuntime(f.standalone, f.destination, {
+    sourceNodeModules: f.sourceNodeModules,
+    omitPortableImageLinks: true,
+  });
+  assert.deepEqual(
+    JSON.parse(fs.readFileSync(path.join(f.destination, 'runtime-links.json'), 'utf8')),
+    [],
+  );
+  assert.equal(
+    assertReleaseInventory(f.destination).some((file) => file.includes('sharp')),
+    false,
+  );
+});
+test('portable link cleanup never conceals actual image package contents', (t) => {
+  const f = fixture(t);
+  f.pkg('sharp');
+  assert.throws(
+    () =>
+      copyStandaloneRuntime(f.standalone, f.destination, {
+        sourceNodeModules: f.sourceNodeModules,
+        omitPortableImageLinks: true,
+      }),
+    /Image package files remain/,
+  );
+});
+test('portable link cleanup does not relax unrelated module-link checks', (t) => {
+  const f = fixture(t);
+  directoryLink(
+    path.join(f.sourceNodeModules, 'missing'),
+    path.join(f.standalone, 'node_modules/unrelated'),
+  );
+  assert.throws(
+    () =>
+      copyStandaloneRuntime(f.standalone, f.destination, {
+        sourceNodeModules: f.sourceNodeModules,
+        omitPortableImageLinks: true,
+      }),
+    /ENOENT/,
+  );
+});
