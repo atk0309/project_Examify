@@ -71,3 +71,8 @@ export function acquireOperationLock(options) {
 export function tryAcquireInstanceLock(options) {
   return acquireLock(options, 'instance.sqlite', false);
 }
+
+/** Independent child lifetime lease, including migrations and orphaned servers. */
+export function tryAcquireWorkerLock(options) {
+  return acquireLock(options, 'worker.sqlite', false);
+}

@@ -100,7 +100,16 @@ try {
     path.join(repo, 'scripts/desktop/restore-links.mjs'),
     path.join(app, 'scripts/desktop/restore-links.mjs'),
   );
-  for (const name of ['operation-lock.mjs', 'install-release.mjs'])
+  for (const name of [
+    'operation-lock.mjs',
+    'dispatch.mjs',
+    'install-release.mjs',
+    'state-store.mjs',
+    'inspect-state.ps1',
+    'upgrade-probe.mjs',
+    'worker-guard.cjs',
+    'worker-runner.mjs',
+  ])
     copy(path.join(repo, 'scripts/desktop', name), path.join(app, 'scripts/desktop', name));
   copy(path.join(repo, 'LICENSE'), path.join(app, 'LICENSE'));
   // tsx pins its esbuild dependency in pnpm-lock; avoid fetching a build-time tool.
@@ -185,6 +194,7 @@ try {
         version,
         platform,
         nodeVersion: pins.version,
+        upgradeProtocol: 1,
         nodeArchiveSha256: pin.sha256,
         sourceCommit,
         localPreview,

@@ -26,7 +26,7 @@ jobs:
             platform: win32-x64
             browsers: 'C:\ExamifyBrowserFixture'
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       NEXT_TELEMETRY_DISABLED: '1'
       PLAYWRIGHT_BROWSERS_PATH: ${{ matrix.browsers }}
@@ -45,7 +45,7 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Linux launcher security and packaging tests
         if: runner.os == 'Linux'
-        run: node --test tests/desktop/launcher.test.mjs tests/desktop/windows-inventory.test.mjs tests/desktop/fixture-http-provider.test.mjs
+        run: node --test tests/desktop/launcher.test.mjs tests/desktop/windows-inventory.test.mjs tests/desktop/fixture-http-provider.test.mjs tests/desktop/upgrades.test.mjs tests/desktop/worker-lock.test.mjs tests/desktop/relocated-helpers.test.mjs
       - name: Windows launcher security and packaging tests under a standard user
         if: runner.os == 'Windows'
         shell: powershell
@@ -64,6 +64,9 @@ jobs:
       - name: Linux installer and packaged app acceptance
         if: runner.os == 'Linux'
         run: node tests/desktop/acceptance.mjs build/desktop/linux-x64
+      - name: Linux native cross-version upgrade and crash acceptance
+        if: runner.os == 'Linux'
+        run: node tests/desktop/upgrade-acceptance.mjs build/desktop/linux-x64
       - name: Windows Command Prompt installer and packaged app under a standard user
         if: runner.os == 'Windows'
         shell: powershell

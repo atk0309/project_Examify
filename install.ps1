@@ -30,7 +30,7 @@ if (Test-Path -LiteralPath $InstallRoot) {
         throw 'The destination contains other files. Choose an empty dedicated Examify folder.'
     }
 }
-foreach ($Relative in @('installation.json', 'Examify.cmd', 'releases', 'config', 'data', "releases/$Version")) {
+foreach ($Relative in @('installation.json', 'Examify.cmd', 'bootstrap', 'releases', 'config', 'data', "releases/$Version")) {
     $Candidate = Join-Path $InstallRoot $Relative
     if ((Test-Path -LiteralPath $Candidate) -and ((Get-Item -LiteralPath $Candidate -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
         throw 'Existing installation paths must not be links or junctions.'
@@ -87,12 +87,7 @@ try {
     & $InstallerNode (Join-Path $App 'scripts/desktop/install-release.mjs') $InstallRoot $App $Version
     if ($LASTEXITCODE -ne 0) { throw 'Could not safely install this release. Existing learner data was preserved.' }
     $Launcher = Join-Path $InstallRoot 'Examify.cmd'
-    @"
-@echo off
-setlocal
-"%~dp0releases\$Version\runtime\node.exe" "%~dp0releases\$Version\scripts\launcher.mjs" --root "%~dp0." %*
-if errorlevel 1 pause
-"@ | Set-Content -Encoding ASCII -LiteralPath $Launcher
+    # The locked coordinator installed this stable entrypoint before activation.
     if (-not $NoShortcut) {
         $Shell = New-Object -ComObject WScript.Shell
         $Link = $Shell.CreateShortcut((Join-Path ([Environment]::GetFolderPath('Programs')) 'Examify.lnk'))

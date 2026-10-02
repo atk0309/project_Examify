@@ -1351,3 +1351,33 @@ A marker PID is diagnostic metadata, never proof of liveness: after a crash or
 PID reuse, an unheld instance lock permits safe marker recovery without a
 manual file deletion. These coordination files are outside learner data/config
 and must not be unlinked while an operation or instance is active.
+
+### Portable activation protocol 1
+
+Protocol-1 installations select an immutable release slot and optional private
+state generation through one `installation.json` pointer. Stable bootstrap v1
+selects the release runtime; the launcher revalidates the selected slot under the
+operation lock before either reopening a live instance or reading its state.
+Missing/corrupt selected state fails closed. Same-version repair creates another
+immutable slot rather than renaming the active release away.
+
+The installer owns operation, instance and worker locks while copying. Each real
+migration/server worker holds a separate OS-released lease and waits for its
+parent’s READY/GO exchange before importing application code or reading settings.
+An orphan worker prevents copying even if its parent has died. Migration timeouts
+wait for worker exit before releasing launcher protection.
+
+Complete offline data/config copies retain SQLite sidecars. Copy manifests check
+all bytes; links, special files and foreign-owned entries are refused. The old
+state stays untouched; only the candidate is migrated and health-tested. After
+all probe workers stop, candidate files are flushed and one pointer replacement
+activates app and state together. No automatic post-commit fallback is allowed.
+Old generations and failed candidates are retained rather than silently deleted.
+
+Only protocol-1 higher stable numeric versions can cross-upgrade. Legacy preview
+repairs remain legacy; no household conversion, prerelease ordering, silent
+downgrade or automatic old-code/new-schema combination is supported. Archive
+SHA-256 pins authenticate bytes relative to the trusted installer distribution;
+they are not a publisher-signature system. Windows directory durability cannot
+be established using these ordinary Node APIs; process-crash acceptance must
+not be reported as physical-power-loss proof.

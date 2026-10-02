@@ -7,15 +7,28 @@ import http from 'node:http';
 import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { acquireOperationLock, tryAcquireInstanceLock } from './desktop/operation-lock.mjs';
+import {
+  acquireOperationLock,
+  tryAcquireInstanceLock,
+  tryAcquireWorkerLock,
+} from './desktop/operation-lock.mjs';
+import {
+  readInstallation,
+  assertStateComplete,
+  releaseRoot,
+  durableJson,
+} from './desktop/state-store.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const secret = () => randomBytes(32).toString('hex');
 const securedWindowsPaths = new Set();
-function secureWindowsPath(file) {
-  if (process.platform !== 'win32' || securedWindowsPaths.has(file)) return;
-  const result = spawnSync(
+function secureWindowsPath(
+  file,
+  { helperDirectory = path.join(here, 'desktop'), spawn = spawnSync } = {},
+) {
+  if (securedWindowsPaths.has(file)) return;
+  const result = spawn(
     'powershell.exe',
     [
       '-NoLogo',
@@ -24,7 +37,7 @@ function secureWindowsPath(file) {
       '-ExecutionPolicy',
       'Bypass',
       '-File',
-      path.join(here, 'desktop', 'private-path.ps1'),
+      path.join(helperDirectory, 'private-path.ps1'),
       '-Path',
       file,
       '-Diagnostics',
@@ -75,7 +88,8 @@ export function assertExistingAncestors(dir) {
   }
 }
 
-export function privateDirectory(dir) {
+export function privateDirectory(dir, options = {}) {
+  const platform = options.platform ?? process.platform;
   const absolute = path.resolve(dir);
   let current = path.parse(absolute).root;
   for (const part of absolute.slice(current.length).split(path.sep).filter(Boolean)) {
@@ -99,19 +113,20 @@ export function privateDirectory(dir) {
   const stat = fs.statSync(absolute);
   if (process.getuid && stat.uid !== process.getuid())
     throw new Error('Installation belongs to another user.');
-  if (process.platform !== 'win32') fs.chmodSync(absolute, 0o700);
-  else secureWindowsPath(absolute);
+  if (platform !== 'win32') fs.chmodSync(absolute, 0o700);
+  else secureWindowsPath(absolute, options);
   return absolute;
 }
 
-export function privateFile(file) {
+export function privateFile(file, options = {}) {
+  const platform = options.platform ?? process.platform;
   const stat = fs.lstatSync(file);
   if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1)
     throw new Error('Unsafe launcher state file.');
   if (process.getuid && stat.uid !== process.getuid())
     throw new Error('Launcher state belongs to another user.');
-  if (process.platform === 'win32') secureWindowsPath(file);
-  if (process.platform !== 'win32' && stat.mode & 0o077)
+  if (platform === 'win32') secureWindowsPath(file, options);
+  if (platform !== 'win32' && stat.mode & 0o077)
     throw new Error('Launcher state must be private to its owner.');
 }
 
@@ -331,8 +346,8 @@ export async function startLauncher({
     throw new Error('This preview supports Windows x64 and Linux x64 only.');
   }
   root = path.resolve(root);
-  const configDir = path.join(root, 'config');
-  const dataDir = path.join(root, 'data');
+  let configDir = path.join(root, 'config');
+  let dataDir = path.join(root, 'data');
   const stateFile = path.join(root, 'running.json');
   assertExistingAncestors(root);
   assertExistingAncestors(configDir);
@@ -347,6 +362,30 @@ export async function startLauncher({
   let releaseInstance;
   let startedInstance = false;
   try {
+    const installation = readInstallation(root, privateFile);
+    if (installation) {
+      if (path.resolve(appDir) !== path.resolve(releaseRoot(root, installation)))
+        throw new Error(
+          'This application version is not active. Reopen Examify using its installed shortcut.',
+        );
+      let selected;
+      try {
+        selected = assertStateComplete(root, installation);
+      } catch (error) {
+        if (error.code === 'ENOENT')
+          throw new Error(
+            'The active study state is missing. Restore the complete private backup; no fallback was opened.',
+          );
+        throw error;
+      }
+      assertExistingAncestors(selected);
+      configDir = path.join(selected, 'config');
+      dataDir = path.join(selected, 'data');
+      assertExistingAncestors(configDir);
+      assertExistingAncestors(dataDir);
+    } else if (path.dirname(path.resolve(appDir)) === path.join(root, 'releases')) {
+      throw new Error('Installation metadata is missing. No study data was opened.');
+    }
     onPhase('existing');
     async function reuse(running) {
       if (!running.origin || !(await healthy(running.origin, running.instanceId))) return false;
@@ -392,6 +431,14 @@ export async function startLauncher({
         );
       await sleep(250);
     }
+    const workerLease = await tryAcquireWorkerLock({
+      root,
+      secureDirectory: privateDirectory,
+      secureFile: privateFile,
+    });
+    if (!workerLease)
+      throw new Error('An Examify database worker is still stopping. Wait briefly and relaunch.');
+    workerLease();
     // Only the lifetime lock proves a marker stale. A PID can name an unrelated
     // process after a crash; even a healthy saved endpoint is not liveness proof.
     let previous = false;
@@ -489,6 +536,8 @@ export async function startLauncher({
         NODE_ENV: 'production',
         NEXT_TELEMETRY_DISABLED: '1',
         EXAMIFY_MODE: 'solo',
+        EXAMIFY_INSTALL_ROOT: root,
+        EXAMIFY_LAUNCHER_PID: String(process.pid),
         EXAMIFY_CONFIG_DIR: configDir,
         EXAMIFY_DATA_DIR: dataDir,
         DATABASE_URL: `file:${path.join(dataDir, 'app.db')}`,
@@ -505,16 +554,33 @@ export async function startLauncher({
         TURNSTILE_ENABLED: '0',
       };
       onPhase('migration');
-      const migration = spawn(node, [path.join(appDir, 'scripts', 'migrate.mjs')], {
-        cwd: appDir,
-        env,
-        stdio: ['ignore', 'ignore', 'pipe'],
-        windowsHide: true,
-      });
+      function spawnWorker(target, settings = false) {
+        const worker = spawn(
+          node,
+          [
+            path.join(appDir, 'scripts', 'desktop', 'worker-runner.mjs'),
+            target,
+            ...(settings ? ['--settings'] : []),
+          ],
+          {
+            cwd: appDir,
+            env,
+            stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
+            windowsHide: true,
+          },
+        );
+        worker.on('message', (message) => {
+          if (message?.type === 'examify-worker-ready' && !stopped && worker.connected)
+            worker.send({ type: 'examify-worker-go' }, () => {});
+        });
+        return worker;
+      }
+      const migration = spawnWorker(path.join(appDir, 'scripts', 'migrate.mjs'));
+      child = migration;
       // Never print migration output: it can contain private paths or SQL data.
       migration.stderr.resume();
       const migrationCode = await new Promise((resolve, reject) => {
-        const timer = setTimeout(() => migration.kill(), 60000);
+        const timer = setTimeout(() => migration.kill('SIGKILL'), 60000);
         migration.once('error', (error) => {
           clearTimeout(timer);
           reject(error);
@@ -527,20 +593,8 @@ export async function startLauncher({
       if (migrationCode !== 0)
         throw new Error('Examify could not prepare its data. Existing files have been preserved.');
       onPhase('server');
-      child = spawn(
-        node,
-        [
-          '--require',
-          path.join(appDir, 'scripts', 'desktop', 'settings-loader.cjs'),
-          path.join(appDir, 'server.js'),
-        ],
-        {
-          cwd: appDir,
-          env,
-          stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
-          windowsHide: true,
-        },
-      );
+      child = spawnWorker(path.join(appDir, 'server.js'), true);
+      child.stderr.resume();
       child.once('error', () => {
         spawnError = true;
       });
@@ -557,6 +611,8 @@ export async function startLauncher({
           );
         await sleep(250);
       }
+      if (installation?.protocol === 1 && !installation.initialized)
+        durableJson(path.join(root, 'installation.json'), { ...installation, initialized: true });
       privateFile(stateFile);
       writeJson(stateFile, { pid: process.pid, instanceId, origin });
       onPhase('browser');

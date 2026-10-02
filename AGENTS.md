@@ -3,7 +3,9 @@
 Applies to this repository. Examify is a small, mobile-first, self-hosted exam-practice
 app for personal study, with optional household sharing: Next.js, TypeScript and SQLite.
 Keep changes focused and portable. Windows/Linux solo packaging is a preview;
-see docs/solo-installation.md before making installation claims.
+see docs/solo-installation.md before making installation claims. Protocol-1
+portable upgrades use immutable app/state generations and one activation pointer;
+never run inactive code against current study data or weaken worker lifetime locks.
 
 ## Start here
 

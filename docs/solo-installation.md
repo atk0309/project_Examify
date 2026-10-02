@@ -30,10 +30,12 @@ not run the unsubstituted installer templates directly from a source checkout.
 Keep the launcher terminal open while practicing. Ctrl+C stops the local service;
 closing the browser alone does not. Reopening the shortcut uses the existing
 running instance and opens a fresh browser session safely. There is no automatic
-background service or silent updater in this preview. The installer supports a
-fresh install and repair of the same pinned version, replacing app files only
-from the newly verified archive. Stop the launcher before repairing. Automatic
-cross-version upgrades are refused until their backup/rollback flow is validated.
+background service or silent updater in this preview. The installer supports fresh installs and same-version repairs. Upgrade-capable
+packages also support an explicit upgrade to a higher stable numeric version
+(for example, `0.1.0` to `0.2.0`) using that version’s verified installer. Stop
+the launcher first. The original preview format cannot be upgraded in place;
+keep that installation and use a separate empty folder. A same-version preview
+repair does not convert it into an upgrade-capable installation.
 Existing household upgrades still use `install.sh --upgrade`.
 
 ## What the launcher does
@@ -137,21 +139,70 @@ On clean Windows and Linux machines, verify the actual distributed package:
 
 No paid AI calls or real credentials are needed for this acceptance checklist.
 
-## Back up a solo installation
+## Upgrade safely
 
-Stop the launcher cleanly, then copy both the stable `data` and `config` folders
-to a private backup location. Keep them together; `config` contains authentication
-secrets and any saved provider keys. Do not post or share the backup. Copying a
-live SQLite database without its journal is not a reliable backup.
+Run the new version-pinned installer against the same installation folder, with
+Examify stopped. There is no automatic download or silent downgrade. CI preview
+labels and prereleases are not ordered as upgrade versions. The first public
+upgrade-capable package must have a version never used by a legacy preview.
 
-The small `.examify-operations` directory at the install root coordinates
-launch/repair operations and tracks the running instance with OS-released locks;
-it is outside learner data and configuration. Stale process-ID markers after a
-crash do not require manual cleanup or prevent relaunch/repair. It is not
-part of your study backup and must not be removed while an operation is running.
+An upgrade or upgrade-capable same-version repair:
 
-The existing `examify:data` backup command was designed for household checkouts;
-it does not yet include the solo launcher's separate `config/secrets.json` and
-provider-settings directory. A data-only backup is not a full solo-installation
-backup. Platform installers must retain these stable folders when replacing app
-versions; do not uninstall/delete them if you want to keep your progress.
+1. Acquires OS-released installation, launcher and database-worker locks. PID
+   numbers alone are never evidence that an installation is stopped
+2. Preserves the entire previous data/config generation, including SQLite WAL,
+   material, question banks, results, provider settings and authentication secrets
+3. Makes a private, hash-checked candidate copy and requires free space for twice
+   the copied bytes plus a 128 MiB migration reserve, after package extraction
+4. Migrates and starts the actual new application against the candidate, without
+   opening a browser. It stops all verification workers before activation
+5. Replaces one installation pointer, selecting the complete matching app and
+   study-state generation together. The ordinary shortcut resolves that pointer
+
+Migration, startup or preactivation interruption leaves the previous pair
+selected. Orphan candidate folders may remain; they are never automatically
+adopted or deleted. Re-running the verified installer prepares a fresh candidate.
+After activation, no automatic rollback occurs: newer work might already exist.
+Directly running an inactive supported version refuses to open study data.
+
+Use a local filesystem owned by your ordinary OS account. Network shares,
+cloud-synced installation folders, links/junctions, hard-linked study files and
+shared/foreign-owned state are unsupported. Keep adequate disk space; the reserve
+is a safety check, not a bound on every future migration’s requirements. If a
+fresh install is interrupted before it creates its installation marker, use a
+new empty folder. A damaged immutable bootstrap fails closed and needs recovery
+into a separate folder; repair does not overwrite its running Node executable.
+
+The automated checks cover process interruption. They do not simulate physical
+power failure or failing storage. In particular, Windows ordinary-user Node APIs
+do not provide a proven durable directory-commit guarantee; keep an independent
+backup before upgrading. This feature does not claim guaranteed recovery from
+sudden power loss on Windows.
+
+## Back up or recover a solo installation
+
+Stop Examify and copy the **whole installation folder** to a private location.
+This retains the installation pointer, matching application/runtime, all state
+generations, configuration and recovery metadata. After an upgrade, `data` and
+`config` at the root can be an older snapshot: copying only those folders can
+miss current work. Keep backup copies private; they include authentication
+secrets and saved provider keys. Never publish or share them.
+
+To recover, retain the damaged installation unchanged, restore the complete
+known-good backup into a separate private folder, and launch its `Examify` or
+`Examify.cmd` entrypoint. Do not overlay old app files onto a newer database or
+manually change just the version field. Recovery to a pre-upgrade backup loses
+changes made after that snapshot; preserve the newer installation for possible
+recovery of that work. Never run two copies against the same data directory.
+
+The retained previous generation and its matching release provide a recovery
+source, not a second automatically active installation. The previous pointer is
+recorded in `installation.json`, and candidate `backup-source.json` records the
+source snapshot’s hashes. Advanced selective recovery requires keeping that
+matched pair together in a separate folder; there is no one-click rollback or
+automatic old-generation cleanup in this release.
+
+The `.examify-operations` databases are coordination files, outside study state.
+Do not remove them while an operation is active. Stale process markers after a
+crash do not require manual deletion. The household `examify:data` backup command
+does not capture this complete solo layout; use the full-folder backup above.
