@@ -16,6 +16,9 @@ export async function requireOnboardingAdmin(): Promise<OnboardingAdminGate> {
   }
   const info = getOnboardingForUser(session.userId);
   const solo = isSoloMode();
+  // Solo always uses the study dashboard; its signed owner enters authoring here.
+  // Household Student View is an explicit non-author session.
+  if (!solo && session.studentMode === true) return { ok: false, reason: 'forbidden' };
   if (solo) {
     const identity = session.solo === true ? getSoloIdentity() : null;
     if (

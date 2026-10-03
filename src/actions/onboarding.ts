@@ -49,6 +49,7 @@ import {
 } from '@/lib/onboarding';
 import {
   SUBJECT_ICON_OPTIONS,
+  type OnboardingAuthorPreview,
   type OnboardingDryRun,
   type OnboardingGenerateResult,
   type OnboardingSnapshot,
@@ -362,7 +363,13 @@ export async function validateOnboardingAction(): Promise<
 }
 
 export async function previewOnboardingEmitAction(): Promise<
-  { ok: true; snapshot: OnboardingSnapshot; dryRun: OnboardingDryRun } | OnboardingActionError
+  | {
+      ok: true;
+      snapshot: OnboardingSnapshot;
+      dryRun: OnboardingDryRun;
+      authorPreview: OnboardingAuthorPreview;
+    }
+  | OnboardingActionError
 > {
   const gate = await requireOnboardingAdmin();
   if (!gate.ok) return gate;
@@ -382,6 +389,7 @@ export async function previewOnboardingEmitAction(): Promise<
     ok: true,
     snapshot: await snapshot(gate.householdId),
     dryRun: publicDryRun(preview),
+    authorPreview: preview.authorPreview,
   };
 }
 
@@ -399,6 +407,10 @@ export async function applyOnboardingEmitAction(formData?: FormData): Promise<
   if (!gate.ok) return gate;
   const state = getHouseholdOnboarding(gate.householdId).state;
   if (!state.dryRunHash) return { ok: false, reason: 'dry_run_required' };
+  const expectedHash = formData?.get('expectedHash');
+  if (typeof expectedHash !== 'string' || expectedHash !== state.dryRunHash) {
+    return { ok: false, reason: 'stale_preview' };
+  }
   const replaceSample = state.replaceSample === true;
   const confirmPrune = formData?.get('confirmPrune') === '1';
   // Single re-preview lives inside applyOnboardingEmit: hash must match the
@@ -406,7 +418,7 @@ export async function applyOnboardingEmitAction(formData?: FormData): Promise<
   // preview here would race and could apply an unconfirmed plan.
   const applied = applyOnboardingEmit({
     replaceSample,
-    expectedHash: state.dryRunHash,
+    expectedHash,
     confirmPrune,
   });
   if (!applied.ok) {

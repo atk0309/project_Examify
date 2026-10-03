@@ -412,7 +412,29 @@ test('admin signs in again, finishes setup, then manages AI without reopening se
   await page.getByTestId('wizard-next').click();
   await page.getByTestId('wizard-preview').click();
   await expect(page.getByTestId('wizard-dry-run-summary')).toBeVisible();
-  await page.getByTestId('wizard-to-apply').click();
+  const review = page.locator('.wizard-author-preview');
+  await expect(review.getByRole('heading', { name: 'Draft questions' })).toBeVisible();
+  await expect(review.getByText('Correct choice', { exact: true }).first()).toBeVisible();
+  await expect(review.getByRole('heading', { name: 'Marking guidance' }).first()).toBeVisible();
+  for (const width of [390, 820, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    await review.scrollIntoViewIfNeeded();
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    ).toBe(true);
+    expect(await review.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+  }
+  // Text zoom/reflow and keyboard-only continuation keep every card readable.
+  await page.setViewportSize({ width: 390, height: 900 });
+  await page.evaluate(() => {
+    document.documentElement.style.fontSize = '200%';
+  });
+  expect(await review.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+  await page.evaluate(() => {
+    document.documentElement.style.fontSize = '';
+  });
+  await page.getByTestId('wizard-to-apply').focus();
+  await page.keyboard.press('Enter');
   await page.getByTestId('wizard-apply-confirm').click();
   await expect(page.getByTestId('wizard-applied')).toBeVisible();
   await page.getByTestId('wizard-to-ready').click();

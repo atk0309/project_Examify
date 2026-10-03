@@ -354,7 +354,7 @@ describe('onboarding catalog emit', () => {
     const blocked = previewOnboardingEmit(false, root);
     expect(blocked.ok).toBe(false);
     if (blocked.ok) throw new Error('expected collision');
-    expect(JSON.stringify(blocked.issues)).toContain(nonFixture);
+    expect(JSON.stringify(blocked.issues)).toContain('sample replacement');
 
     const allowed = previewOnboardingEmit(true, root);
     expect(allowed.ok).toBe(true);
@@ -1457,5 +1457,102 @@ describe('onboarding writes only the family data folder', () => {
       vi.doUnmock('examify-ingest');
       vi.resetModules();
     }
+  });
+});
+
+describe('author-only draft projection', () => {
+  it('projects both question types from the planned banks without metadata and leaves public data redacted', async () => {
+    const { previewOnboardingEmit, publicDryRun } = await import('@/lib/onboarding');
+    const root = tempRoot();
+    const dir = path.join(root, 'content/subjects/history');
+    mkdirSync(dir, { recursive: true });
+    const bank = fixtureIr('history', 'History');
+    const written = {
+      id: 'history-hard-free-1',
+      type: 'free',
+      q: '<img src=x onerror=alert(1)>',
+      rubric: 'Private marking guidance\nAward credit.',
+      maxScore: 5,
+      provenance: { pdf: 'private-source.pdf', locator: 'private-locator' },
+    };
+    writeFileSync(
+      path.join(dir, 'bank.ir.json'),
+      JSON.stringify({
+        ...bank,
+        difficulties: { ...bank.difficulties, hard: [written] },
+        meta: { provider: 'private-provider', sourceHashes: { secret: 'private-hash' } },
+      }),
+    );
+    const before = readFileSync(path.join(dir, 'bank.ir.json'), 'utf8');
+    const preview = previewOnboardingEmit(false, root);
+    expect(preview.ok).toBe(true);
+    if (!preview.ok) throw new Error('preview failed');
+    expect(preview.authorPreview.subjects[0]?.difficulties).toEqual([
+      {
+        difficulty: 'easy',
+        questions: [
+          {
+            id: 'history-easy-1',
+            type: 'mcq',
+            q: 'A fixture question?',
+            choices: ['A', 'B', 'C', 'D'],
+            answer: 1,
+          },
+        ],
+      },
+      { difficulty: 'medium', questions: [] },
+      {
+        difficulty: 'hard',
+        questions: [
+          { id: written.id, type: 'free', q: written.q, rubric: written.rubric, maxScore: 5 },
+        ],
+      },
+    ]);
+    const serialized = JSON.stringify(preview.authorPreview);
+    for (const secret of [
+      'provenance',
+      'private-source',
+      'private-locator',
+      'private-provider',
+      'private-hash',
+      'planned',
+    ])
+      expect(serialized).not.toContain(secret);
+    for (const secret of ['"answer"', '"rubric"', 'Private marking guidance', 'private-source'])
+      expect(JSON.stringify(publicDryRun(preview))).not.toContain(secret);
+    expect(readFileSync(path.join(dir, 'bank.ir.json'), 'utf8')).toBe(before);
+    expect(existsSync(path.join(root, 'content/generated'))).toBe(false);
+  });
+
+  it.each([null, { difficulties: { easy: 123 } }, { difficulties: { easy: [null] } }])(
+    'safely refuses malformed banks without collision traversal (%j)',
+    async (data) => {
+      const { previewOnboardingEmit } = await import('@/lib/onboarding');
+      const root = tempRoot();
+      const dir = path.join(root, 'content/subjects/history');
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(path.join(dir, 'bank.ir.json'), JSON.stringify(data));
+      const result = previewOnboardingEmit(false, root);
+      expect(result.ok).toBe(false);
+      expect(JSON.stringify(result)).not.toContain(root);
+      expect(JSON.stringify(result)).not.toContain('authorPreview');
+    },
+  );
+
+  it('refuses changed marking guidance even when public questions are identical', async () => {
+    const { previewOnboardingEmit, applyOnboardingEmit } = await import('@/lib/onboarding');
+    const root = tempRoot();
+    const dir = path.join(root, 'content/subjects/history');
+    mkdirSync(dir, { recursive: true });
+    const bank = fixtureIr('history', 'History');
+    writeFileSync(path.join(dir, 'bank.ir.json'), JSON.stringify(bank));
+    const preview = previewOnboardingEmit(false, root);
+    if (!preview.ok) throw new Error('preview failed');
+    bank.difficulties.easy[0]!.answer = 3;
+    writeFileSync(path.join(dir, 'bank.ir.json'), JSON.stringify(bank));
+    expect(
+      applyOnboardingEmit({ replaceSample: false, expectedHash: preview.dryRun.hash }, root),
+    ).toMatchObject({ ok: false, reason: 'stale_preview' });
+    expect(existsSync(path.join(root, 'content/generated'))).toBe(false);
   });
 });
