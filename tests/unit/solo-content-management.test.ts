@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
+import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -90,6 +91,12 @@ function subjectForm(id: string) {
   form.set('icon', 'geography');
   return form;
 }
+function applyForm(expectedHash: string) {
+  const data = new FormData();
+  data.set('expectedHash', expectedHash);
+  return data;
+}
+
 function authorFixture(id: string) {
   fs.writeFileSync(
     path.join(root, 'content/subjects', id, 'bank.ir.json'),
@@ -138,8 +145,9 @@ describe('ongoing solo content management', () => {
     expect((await setOnboardingAiModeAction(ai)).ok).toBe(true);
     expect((await addOnboardingSubjectAction(subjectForm('history'))).ok).toBe(true);
     authorFixture('history');
-    expect((await previewOnboardingEmitAction()).ok).toBe(true);
-    expect((await applyOnboardingEmitAction()).ok).toBe(true);
+    const firstPreview = await previewOnboardingEmitAction();
+    if (!firstPreview.ok) throw new Error('expected first preview');
+    expect((await applyOnboardingEmitAction(applyForm(firstPreview.dryRun.hash))).ok).toBe(true);
     await expect(finishOnboardingAction()).rejects.toThrow('REDIRECT:/');
     expect(getHouseholdOnboarding(householdId)).toMatchObject({
       complete: true,
@@ -171,8 +179,9 @@ describe('ongoing solo content management', () => {
     expect(await applyOnboardingEmitAction()).toEqual({ ok: false, reason: 'dry_run_required' });
     expect(await finishOnboardingAction()).toEqual({ ok: false, reason: 'emit_required' });
     authorFixture('chemistry');
-    expect((await previewOnboardingEmitAction()).ok).toBe(true);
-    expect((await applyOnboardingEmitAction()).ok).toBe(true);
+    const secondPreview = await previewOnboardingEmitAction();
+    if (!secondPreview.ok) throw new Error('expected second preview');
+    expect((await applyOnboardingEmitAction(applyForm(secondPreview.dryRun.hash))).ok).toBe(true);
     await expect(finishOnboardingAction()).rejects.toThrow('REDIRECT:/');
     expect(getHouseholdOnboarding(householdId).complete).toBe(true);
     expect(
@@ -191,6 +200,7 @@ describe('ongoing solo content management', () => {
   it('does not reopen completed household setup even if a caller has a solo-shaped cookie', async () => {
     completeOnboarding(householdId);
     env.EXAMIFY_MODE = 'household';
+    session.value.studentMode = false;
     expect(await requireOnboardingAdmin()).toEqual({ ok: false, reason: 'already_complete' });
     expect(await addOnboardingSubjectAction(subjectForm('blocked'))).toEqual({
       ok: false,
@@ -207,6 +217,61 @@ describe('ongoing solo content management', () => {
       expect(await requireOnboardingAdmin()).toEqual({ ok: false, reason: 'forbidden' });
     },
   );
+  it('shows the explicit author preview to a completed, verified solo owner', async () => {
+    expect((await addOnboardingSubjectAction(subjectForm('history'))).ok).toBe(true);
+    authorFixture('history');
+    completeOnboarding(householdId);
+    const preview = await previewOnboardingEmitAction();
+    if (!preview.ok) throw new Error('expected verified solo author preview');
+    expect(preview.authorPreview.subjects[0]).toMatchObject({
+      id: 'history',
+      difficulties: [
+        { difficulty: 'easy', questions: [{ id: 'history-easy-1', answer: 1 }] },
+        {},
+        {},
+      ],
+    });
+    expect(JSON.stringify(preview.dryRun)).not.toMatch(/"answer"|"rubric"|"provenance"/);
+    expect(JSON.stringify(preview.snapshot)).not.toMatch(/"answer"|"rubric"|"provenance"/);
+    expect((await applyOnboardingEmitAction(applyForm(preview.dryRun.hash))).ok).toBe(true);
+    expect(getHouseholdOnboarding(householdId).complete).toBe(true);
+  });
+
+  it.each([
+    'unsigned session',
+    'missing solo marker',
+    'wrong owner',
+    'student role',
+    'missing profile',
+    'revoked admin membership',
+  ])('refuses direct solo author preview and Apply for %s', async (failure) => {
+    expect((await addOnboardingSubjectAction(subjectForm('history'))).ok).toBe(true);
+    authorFixture('history');
+    const preview = await previewOnboardingEmitAction();
+    if (!preview.ok) throw new Error('expected reviewed plan');
+    completeOnboarding(householdId);
+    const before = getHouseholdOnboarding(householdId);
+    if (failure === 'unsigned session') session.value = {};
+    else if (failure === 'missing solo marker') delete session.value.solo;
+    else if (failure === 'wrong owner') session.value.userId = 9876;
+    else if (failure === 'student role') session.value.role = 'student';
+    else if (failure === 'missing profile') db.delete(schema.soloProfiles).run();
+    else {
+      db.update(schema.householdMembers)
+        .set({ role: 'parent' })
+        .where(eq(schema.householdMembers.userId, session.value.userId!))
+        .run();
+    }
+    expect(await previewOnboardingEmitAction()).toEqual({ ok: false, reason: 'forbidden' });
+    expect(await applyOnboardingEmitAction(applyForm(preview.dryRun.hash))).toEqual({
+      ok: false,
+      reason: 'forbidden',
+    });
+    expect(getHouseholdOnboarding(householdId)).toEqual(before);
+    expect(fs.existsSync(path.join(root, 'content/generated/questions/history.json'))).toBe(false);
+    expect(fs.existsSync(path.join(root, 'content/generated/keys/history.json'))).toBe(false);
+  });
+
   it('keeps helper household defaults closed and requires an admin in every mode', () => {
     expect(adminCanOpenOnboarding({ role: 'admin', onboardingComplete: true })).toBe(false);
     expect(adminCanOpenOnboarding({ role: 'admin', onboardingComplete: true, solo: true })).toBe(

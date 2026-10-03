@@ -45,7 +45,10 @@ pnpm test:e2e
 ## Non-negotiable boundaries
 
 - **Server-only answers:** answer keys, rubrics, provenance and grading snapshots never
-  enter public question data, client imports, component props or serialized attempts.
+  enter public question data, client imports or serialized attempts. The only privileged
+  exception is the reauthorized onboarding author preview: allowlisted question text,
+  choices/correct index or rubric/maxScore, never provenance, raw keys or snapshots.
+  Keep it in wizard memory only; all other client props remain answer-free.
   `attempts.ts` stays client-safe. Validate papers and derive scores server-side.
 - **Own-user writes:** attempts and sessions belong to `session.userId`, including a
   parent in explicit student mode. Parent/child reads stay inside the same household.

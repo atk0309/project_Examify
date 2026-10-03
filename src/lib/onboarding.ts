@@ -16,20 +16,18 @@ import path from 'node:path';
 import { eq } from 'drizzle-orm';
 import {
   applyEmit,
+  DIFFICULTIES,
   collectQuestionIds,
   FamilyConfinementError,
   formatDataDirDisplay,
   formatFileDiff,
   GENERATED_DIR,
-  isAuthoritativeCatalogInput,
   hasExistingBankIr,
-  loadIrFiles,
   mergeResolvedEnvStoreFiles,
   planEmit,
   plannedInsideFamilyGenerated,
   publicQuestionIds,
   resolveAgentCliBinary,
-  resolveIrFiles,
   resolveSubjectSources,
   SUBJECT_ID_RE,
   SUBJECT_META_FILE,
@@ -37,6 +35,7 @@ import {
   type PlannedFile,
   type ValidatedBank,
 } from 'examify-ingest';
+import { loadOnboardingIrFiles } from '@/lib/onboarding-ir.server';
 import { agentCliSignIn } from '@/lib/agent-cli-sign-in';
 import { getOnboardingContentRoot, isFamilyWritePathSafe } from '@/lib/content-root';
 import { db, schema } from '@/lib/db';
@@ -71,6 +70,7 @@ import {
   type MarkingBackend,
   type MarkingStatus,
   type OnboardingAiMode,
+  type OnboardingAuthorPreview,
   type OnboardingDryRun,
   type OnboardingIssue,
   type OnboardingLiveSubject,
@@ -982,10 +982,18 @@ export function detachSourcePdf(
   return { ok: true };
 }
 
-function publicIssueFile(absPath: string | undefined, root: string): string {
-  if (!absPath) return '';
-  const rel = path.relative(root, absPath);
-  return rel.startsWith('..') ? path.basename(absPath) : rel;
+/** Validator messages can contain untrusted IDs, JSON values and absolute paths. */
+function publicValidationIssues(
+  errors: readonly { path?: string; message: string }[],
+): OnboardingIssue[] {
+  const messages = new Set(
+    errors.map((issue) =>
+      issue.message.includes('collides with a sample-bank id')
+        ? 'A question ID replaces a sample question. Enable sample replacement to continue.'
+        : 'Invalid question-bank format or duplicate IDs. Check the draft before reviewing again.',
+    ),
+  );
+  return [...messages].map((message) => ({ file: SUBJECTS_REL, message }));
 }
 
 export function rewriteOnboardingQuestionIds(
@@ -1032,10 +1040,7 @@ export function validateOnboardingIr(
   if (result.ok) return { ok: true };
   return {
     ok: false,
-    issues: result.errors.map((issue) => ({
-      file: publicIssueFile(issue.path, root),
-      message: issue.message,
-    })),
+    issues: publicValidationIssues(result.errors),
   };
 }
 
@@ -1065,7 +1070,12 @@ function hasFamilyGeneratedContent(root: string): boolean {
 }
 
 type SubjectsTree =
-  | { ok: true; files: ReturnType<typeof loadIrFiles>; pruneMissing: boolean; pruneOnly: false }
+  | {
+      ok: true;
+      files: ReturnType<typeof loadOnboardingIrFiles>;
+      pruneMissing: boolean;
+      pruneOnly: false;
+    }
   /** No BankIR left, but the family generated layer still serves subjects: remove them. */
   | { ok: true; files: []; pruneMissing: true; pruneOnly: true }
   | { ok: false; reason: 'invalid' | 'empty_catalog'; message: string };
@@ -1078,35 +1088,15 @@ function emptyTree(root: string): SubjectsTree {
 }
 
 function loadSubjectsTree(root: string): SubjectsTree {
-  const inputs = [SUBJECTS_REL];
-  let pruneMissing = false;
   try {
-    pruneMissing = isAuthoritativeCatalogInput(inputs, root);
+    const files = loadOnboardingIrFiles(root);
+    if (files.length === 0) return emptyTree(root);
+    return { ok: true, files, pruneMissing: true, pruneOnly: false };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    // The confined reader exposes constant, safe failures only.
+    const message = error instanceof Error ? error.message : 'Could not read question drafts.';
     return { ok: false, reason: 'invalid', message };
   }
-  if (!pruneMissing) {
-    const abs = path.resolve(root, SUBJECTS_REL);
-    if (!existsSync(abs)) return emptyTree(root);
-    return {
-      ok: false,
-      reason: 'invalid',
-      message: 'onboarding emit must target the subjects directory only',
-    };
-  }
-
-  let files;
-  try {
-    const paths = resolveIrFiles(inputs, root, { allowEmptyDirectory: true });
-    files = loadIrFiles(paths);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return { ok: false, reason: 'invalid', message };
-  }
-
-  if (files.length === 0) return emptyTree(root);
-  return { ok: true, files, pruneMissing, pruneOnly: false };
 }
 
 function toPublicPlan(files: readonly PlannedFile[]): OnboardingPlanEntry[] {
@@ -1192,8 +1182,43 @@ export function isPlanInsideFamilyGenerated(
   return plannedInsideFamilyGenerated(planned, root);
 }
 
+/** Narrow author-only projection; never serialize BankIR, split keys or provenance. */
+function projectAuthorPreview(banks: readonly ValidatedBank[]): OnboardingAuthorPreview {
+  return {
+    subjects: banks.map(({ bank }) => ({
+      id: bank.subject.id,
+      label: bank.subject.label,
+      difficulties: DIFFICULTIES.map((difficulty) => ({
+        difficulty,
+        questions: bank.difficulties[difficulty].map((item) =>
+          item.type === 'mcq'
+            ? {
+                id: item.id,
+                type: item.type,
+                q: item.q,
+                choices: [...item.choices],
+                answer: item.answer,
+              }
+            : {
+                id: item.id,
+                type: item.type,
+                q: item.q,
+                rubric: item.rubric,
+                maxScore: item.maxScore,
+              },
+        ),
+      })),
+    })),
+  };
+}
+
 export type CatalogEmitPreview =
-  | { ok: true; dryRun: OnboardingDryRun; planned: PlannedFile[] }
+  | {
+      ok: true;
+      dryRun: OnboardingDryRun;
+      authorPreview: OnboardingAuthorPreview;
+      planned: PlannedFile[];
+    }
   | { ok: false; reason: 'empty_catalog' | 'invalid'; message: string; issues?: OnboardingIssue[] };
 
 /**
@@ -1216,6 +1241,7 @@ export function previewOnboardingEmit(
     return {
       ok: true,
       planned,
+      authorPreview: { subjects: [] },
       dryRun: {
         hash: hashPlan(planned),
         questionCount: 0,
@@ -1234,30 +1260,13 @@ export function previewOnboardingEmit(
     frozenIds: FROZEN_SAMPLE_IDS,
   });
   const ids = result.ok ? questionIdsFromBanks(result.banks) : [];
-  const collisions = collisionsAgainstSample(
-    result.ok
-      ? ids
-      : loaded.files.flatMap((file) => {
-          const data = file.data as { difficulties?: Record<string, { id?: string }[]> };
-          const out: string[] = [];
-          for (const list of Object.values(data.difficulties ?? {})) {
-            for (const item of list ?? []) {
-              if (typeof item.id === 'string') out.push(item.id);
-            }
-          }
-          return out;
-        }),
-  );
 
   if (!result.ok) {
     return {
       ok: false,
       reason: 'invalid',
       message: `validate failed (${result.errors.length} issue${result.errors.length === 1 ? '' : 's'})`,
-      issues: result.errors.map((issue) => ({
-        file: publicIssueFile(issue.path, root),
-        message: issue.message,
-      })),
+      issues: publicValidationIssues(result.errors),
     };
   }
 
@@ -1272,11 +1281,12 @@ export function previewOnboardingEmit(
   return {
     ok: true,
     planned,
+    authorPreview: projectAuthorPreview(result.banks),
     dryRun: {
       hash: hashPlan(planned),
       questionCount: ids.length,
       subjectCount: result.banks.length,
-      collisions,
+      collisions: collisionsAgainstSample(ids),
       shadows: builtinShadows(result.banks),
       replaceSample,
       plan: toPublicPlan(planned),

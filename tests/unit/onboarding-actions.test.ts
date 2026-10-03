@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
+import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -58,6 +59,26 @@ function populatedIr(id = 'history', label = 'History') {
   };
 }
 
+function applyForm(expectedHash: string, confirmPrune = false): FormData {
+  const data = new FormData();
+  data.set('expectedHash', expectedHash);
+  if (confirmPrune) data.set('confirmPrune', '1');
+  return data;
+}
+
+function writeBankFixture(root: string, bank: unknown = populatedIr()): string {
+  const filename = path.join(root, 'content/subjects/history/bank.ir.json');
+  fs.mkdirSync(path.dirname(filename), { recursive: true });
+  writeFileSync(filename, JSON.stringify(bank));
+  return filename;
+}
+
+function expectPublicOnly(value: unknown) {
+  expect(JSON.stringify(value)).not.toMatch(
+    /"(?:answer|rubric|maxScore|provenance|meta|sourceHashes|authorPreview)"/,
+  );
+}
+
 function tempRoot(): string {
   const root = mkdtempSync(path.join(tmpdir(), 'examify-onboarding-act-'));
   writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'project-examify' }));
@@ -84,6 +105,8 @@ afterAll(() => {
 beforeEach(async () => {
   const { db, schema } = await import('@/lib/db');
   const { resetLegacyImportLatch } = await import('@/lib/households');
+  db.delete(schema.soloProfiles).run();
+  db.delete(schema.soloLaunchTokens).run();
   db.delete(schema.rateLimitEvents).run();
   db.delete(schema.householdMembers).run();
   db.delete(schema.households).run();
@@ -181,6 +204,237 @@ describe('onboarding actions', () => {
     expect(await applyOnboardingEmitAction()).toEqual({ ok: false, reason: 'dry_run_required' });
   });
 
+  it.each([
+    ['signed out', 'forbidden'],
+    ['student', 'forbidden'],
+    ['nonadmin parent', 'forbidden'],
+    ['admin in Student View with a parent role', 'forbidden'],
+    ['removed household membership', 'already_complete'],
+    ['completed household', 'already_complete'],
+  ] as const)('refuses direct author preview and Apply for %s', async (access, reason) => {
+    const root = tempRoot();
+    const { completeOnboarding, getHouseholdOnboarding, setOnboardingContentRootForTests } =
+      await import('@/lib/onboarding');
+    setOnboardingContentRootForTests(root);
+    const host = await signInHost();
+    const bankPath = writeBankFixture(root);
+    const beforeBank = readFileSync(bankPath, 'utf8');
+    const { previewOnboardingEmitAction, applyOnboardingEmitAction } =
+      await import('@/actions/onboarding');
+    const reviewed = await previewOnboardingEmitAction();
+    if (!reviewed.ok) throw new Error('expected admin preview');
+    const { db, schema } = await import('@/lib/db');
+
+    if (access === 'signed out') {
+      sessionHolder.current = { save: vi.fn(async () => {}) };
+    } else if (access === 'student' || access === 'nonadmin parent') {
+      const role = access === 'student' ? 'student' : 'parent';
+      db.update(schema.householdMembers)
+        .set({ role })
+        .where(eq(schema.householdMembers.userId, host.userId))
+        .run();
+      sessionHolder.current.role = role;
+    } else if (access === 'admin in Student View with a parent role') {
+      sessionHolder.current.studentMode = true;
+    } else if (access === 'removed household membership') {
+      db.delete(schema.householdMembers)
+        .where(eq(schema.householdMembers.userId, host.userId))
+        .run();
+    } else {
+      completeOnboarding(host.householdId);
+    }
+    const beforeState = getHouseholdOnboarding(host.householdId);
+
+    expect(await previewOnboardingEmitAction()).toEqual({ ok: false, reason });
+    expect(await applyOnboardingEmitAction(applyForm(reviewed.dryRun.hash))).toEqual({
+      ok: false,
+      reason,
+    });
+    expect(getHouseholdOnboarding(host.householdId)).toEqual(beforeState);
+    expect(readFileSync(bankPath, 'utf8')).toBe(beforeBank);
+    expect(fs.existsSync(path.join(root, 'content/generated/questions/history.json'))).toBe(false);
+    expect(fs.existsSync(path.join(root, 'content/generated/keys/history.json'))).toBe(false);
+  });
+
+  it('returns grading detail only in the explicit admin author DTO, never public data', async () => {
+    const root = tempRoot();
+    const { getOnboardingPageSnapshot, setOnboardingContentRootForTests } =
+      await import('@/lib/onboarding');
+    setOnboardingContentRootForTests(root);
+    const host = await signInHost();
+    const bank = {
+      ...populatedIr(),
+      difficulties: {
+        easy: populatedIr().difficulties.easy,
+        medium: [
+          {
+            id: 'history-medium-free-1',
+            type: 'free',
+            q: 'Explain the historical change.',
+            rubric: 'Award credit for the author-only explanation.',
+            maxScore: 7,
+            provenance: { pdf: 'private-source.pdf', locator: 'secret-page-12' },
+          },
+        ],
+        hard: [],
+      },
+      meta: {
+        provider: 'private-provider-name',
+        promptVersion: 'private-prompt-version',
+        sourceHashes: { 'private-source.pdf': 'private-source-hash' },
+      },
+    };
+    writeBankFixture(root, bank);
+    const { previewOnboardingEmitAction, applyOnboardingEmitAction } =
+      await import('@/actions/onboarding');
+    const preview = await previewOnboardingEmitAction();
+    if (!preview.ok) throw new Error('expected author preview');
+    expect(preview.authorPreview).toEqual({
+      subjects: [
+        {
+          id: 'history',
+          label: 'History',
+          difficulties: [
+            {
+              difficulty: 'easy',
+              questions: [
+                {
+                  id: 'history-easy-1',
+                  type: 'mcq',
+                  q: 'A prior question?',
+                  choices: ['A', 'B', 'C', 'D'],
+                  answer: 1,
+                },
+              ],
+            },
+            {
+              difficulty: 'medium',
+              questions: [
+                {
+                  id: 'history-medium-free-1',
+                  type: 'free',
+                  q: 'Explain the historical change.',
+                  rubric: 'Award credit for the author-only explanation.',
+                  maxScore: 7,
+                },
+              ],
+            },
+            { difficulty: 'hard', questions: [] },
+          ],
+        },
+      ],
+    });
+    expect(JSON.stringify(preview.authorPreview)).not.toMatch(
+      /provenance|meta|sourceHashes|private-source|private-provider|private-prompt|planned|bankIr/,
+    );
+    expectPublicOnly(preview.dryRun);
+    expectPublicOnly(preview.snapshot);
+    expectPublicOnly(await getOnboardingPageSnapshot(host.householdId));
+    expect(fs.existsSync(path.join(root, 'content/generated/questions/history.json'))).toBe(false);
+
+    const applied = await applyOnboardingEmitAction(applyForm(preview.dryRun.hash));
+    expect(applied.ok).toBe(true);
+    expectPublicOnly(applied);
+    const { loadLivePublicBank, loadLiveAnswerKeys } = await import('@/lib/exam/live-bank.server');
+    expectPublicOnly(loadLivePublicBank());
+    expectPublicOnly(
+      JSON.parse(readFileSync(path.join(root, 'content/generated/questions/history.json'), 'utf8')),
+    );
+    expect(loadLiveAnswerKeys()['history-easy-1']).toMatchObject({ type: 'mcq', answer: 1 });
+    expect(loadLiveAnswerKeys()['history-medium-free-1']).toMatchObject({
+      type: 'free',
+      rubric: 'Award credit for the author-only explanation.',
+      maxScore: 7,
+    });
+  });
+
+  it.each([undefined, '', 'wrong-review-hash'])(
+    'refuses Apply without the reviewed hash: %s',
+    async (hash) => {
+      const root = tempRoot();
+      const { getHouseholdOnboarding, setOnboardingContentRootForTests } =
+        await import('@/lib/onboarding');
+      setOnboardingContentRootForTests(root);
+      const host = await signInHost();
+      writeBankFixture(root);
+      const { previewOnboardingEmitAction, applyOnboardingEmitAction } =
+        await import('@/actions/onboarding');
+      const preview = await previewOnboardingEmitAction();
+      if (!preview.ok) throw new Error('expected dry-run');
+      const form = hash === undefined ? undefined : applyForm(hash);
+      expect(await applyOnboardingEmitAction(form)).toMatchObject({
+        ok: false,
+        reason: 'stale_preview',
+      });
+      expect(getHouseholdOnboarding(host.householdId).state.applied).not.toBe(true);
+      expect(fs.existsSync(path.join(root, 'content/generated/questions/history.json'))).toBe(
+        false,
+      );
+      expect(fs.existsSync(path.join(root, 'content/generated/keys/history.json'))).toBe(false);
+    },
+  );
+
+  it('rejects the first tab after a second preview changes only an answer key', async () => {
+    const root = tempRoot();
+    const { getHouseholdOnboarding, setOnboardingContentRootForTests } =
+      await import('@/lib/onboarding');
+    setOnboardingContentRootForTests(root);
+    const host = await signInHost();
+    const bank = populatedIr();
+    writeBankFixture(root, bank);
+    const { previewOnboardingEmitAction, applyOnboardingEmitAction } =
+      await import('@/actions/onboarding');
+    const firstTab = await previewOnboardingEmitAction();
+    if (!firstTab.ok) throw new Error('expected first preview');
+
+    bank.difficulties.easy[0]!.answer = 2;
+    writeBankFixture(root, bank);
+    const secondTab = await previewOnboardingEmitAction();
+    if (!secondTab.ok) throw new Error('expected second preview');
+    expect(secondTab.dryRun.hash).not.toBe(firstTab.dryRun.hash);
+    expect(secondTab.dryRun.questionCount).toBe(firstTab.dryRun.questionCount);
+    expectPublicOnly(firstTab.dryRun);
+    expectPublicOnly(secondTab.dryRun);
+    expect(secondTab.authorPreview.subjects[0]!.difficulties[0]!.questions[0]).toMatchObject({
+      answer: 2,
+    });
+    expect(await applyOnboardingEmitAction(applyForm(firstTab.dryRun.hash))).toMatchObject({
+      ok: false,
+      reason: 'stale_preview',
+    });
+    expect(getHouseholdOnboarding(host.householdId).state.dryRunHash).toBe(secondTab.dryRun.hash);
+    expect(fs.existsSync(path.join(root, 'content/generated/questions/history.json'))).toBe(false);
+    expect(fs.existsSync(path.join(root, 'content/generated/keys/history.json'))).toBe(false);
+
+    const applied = await applyOnboardingEmitAction(applyForm(secondTab.dryRun.hash));
+    expect(applied.ok).toBe(true);
+    const keys = JSON.parse(
+      readFileSync(path.join(root, 'content/generated/keys/history.json'), 'utf8'),
+    );
+    expect(keys['history-easy-1'].answer).toBe(2);
+  });
+
+  it('rejects an answer-only bank change after the saved preview', async () => {
+    const root = tempRoot();
+    const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
+    setOnboardingContentRootForTests(root);
+    await signInHost();
+    const bank = populatedIr();
+    writeBankFixture(root, bank);
+    const { previewOnboardingEmitAction, applyOnboardingEmitAction } =
+      await import('@/actions/onboarding');
+    const preview = await previewOnboardingEmitAction();
+    if (!preview.ok) throw new Error('expected dry-run');
+    bank.difficulties.easy[0]!.answer = 3;
+    writeBankFixture(root, bank);
+    expect(await applyOnboardingEmitAction(applyForm(preview.dryRun.hash))).toMatchObject({
+      ok: false,
+      reason: 'stale_preview',
+    });
+    expect(fs.existsSync(path.join(root, 'content/generated/questions/history.json'))).toBe(false);
+    expect(fs.existsSync(path.join(root, 'content/generated/keys/history.json'))).toBe(false);
+  });
+
   it('applies emit only after a matching dry-run', async () => {
     const root = tempRoot();
     const { setOnboardingContentRootForTests } = await import('@/lib/onboarding');
@@ -219,7 +473,7 @@ describe('onboarding actions', () => {
       /would create content\/generated\/questions\/history\.json/,
     );
     expect(preview.dryRun.diff).toContain('would create content/generated/keys/history.json');
-    const applied = await applyOnboardingEmitAction();
+    const applied = await applyOnboardingEmitAction(applyForm(preview.dryRun.hash));
     expect(applied.ok).toBe(true);
     expect(fs.existsSync(path.join(root, 'content/generated/questions/history.json'))).toBe(true);
     expect(fs.existsSync(path.join(root, 'content/generated/keys/history.json'))).toBe(true);
@@ -277,8 +531,9 @@ describe('onboarding actions', () => {
     writeFileSync(path.join(root, 'content/generated/keys/chemistry.json'), '{}\n');
     const { previewOnboardingEmitAction, applyOnboardingEmitAction } =
       await import('@/actions/onboarding');
-    expect((await previewOnboardingEmitAction()).ok).toBe(true);
-    const refused = await applyOnboardingEmitAction();
+    const preview = await previewOnboardingEmitAction();
+    if (!preview.ok) throw new Error('expected dry-run');
+    const refused = await applyOnboardingEmitAction(applyForm(preview.dryRun.hash));
     expect(refused.ok).toBe(false);
     if (refused.ok) throw new Error('expected prune confirm');
     expect(refused.reason).toBe('prune_confirm_required');
@@ -286,8 +541,7 @@ describe('onboarding actions', () => {
     expect(fs.existsSync(path.join(root, 'content/generated/questions/chemistry.json'))).toBe(true);
     expect(fs.existsSync(path.join(root, 'content/generated/keys/chemistry.json'))).toBe(true);
 
-    const data = new FormData();
-    data.set('confirmPrune', '1');
+    const data = applyForm(preview.dryRun.hash, true);
     const applied = await applyOnboardingEmitAction(data);
     expect(applied.ok).toBe(true);
     expect(fs.existsSync(path.join(root, 'content/generated/questions/chemistry.json'))).toBe(
@@ -371,6 +625,7 @@ describe('onboarding actions', () => {
       await import('@/actions/onboarding');
     const preview = await previewOnboardingEmitAction();
     expect(preview.ok).toBe(true);
+    if (!preview.ok) throw new Error('expected dry-run');
 
     writeFileSync(
       path.join(irDir, 'bank.ir.json'),
@@ -389,7 +644,7 @@ describe('onboarding actions', () => {
       }),
     );
 
-    expect(await applyOnboardingEmitAction()).toEqual({
+    expect(await applyOnboardingEmitAction(applyForm(preview.dryRun.hash))).toEqual({
       ok: false,
       reason: 'stale_preview',
       message: 'Subjects or BankIR changed since the last dry-run. Preview again.',
@@ -440,8 +695,9 @@ describe('onboarding actions', () => {
     );
     const { previewOnboardingEmitAction, applyOnboardingEmitAction, finishOnboardingAction } =
       await import('@/actions/onboarding');
-    expect((await previewOnboardingEmitAction()).ok).toBe(true);
-    expect((await applyOnboardingEmitAction()).ok).toBe(true);
+    const preview = await previewOnboardingEmitAction();
+    if (!preview.ok) throw new Error('expected dry-run');
+    expect((await applyOnboardingEmitAction(applyForm(preview.dryRun.hash))).ok).toBe(true);
     const { getHouseholdOnboarding } = await import('@/lib/onboarding');
     expect(getHouseholdOnboarding(host.householdId).state.applied).toBe(true);
     await expect(finishOnboardingAction()).rejects.toThrow(/NEXT_REDIRECT:\//);

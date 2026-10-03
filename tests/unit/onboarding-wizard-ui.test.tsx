@@ -3,9 +3,13 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { OnboardingSnapshot } from '@/lib/onboarding-types';
+import type {
+  OnboardingAuthorPreview,
+  OnboardingDryRun,
+  OnboardingSnapshot,
+} from '@/lib/onboarding-types';
 
 const applyOnboardingEmitAction = vi.fn();
 const previewOnboardingEmitAction = vi.fn();
@@ -422,6 +426,7 @@ describe('OnboardingWizard majors UI', () => {
     previewOnboardingEmitAction.mockResolvedValue({
       ok: true,
       snapshot: snapshot({ hasDryRun: true }),
+      authorPreview: { subjects: [] },
       dryRun: {
         hash: 'plan-hash',
         questionCount: 1,
@@ -470,6 +475,7 @@ describe('OnboardingWizard majors UI', () => {
     previewOnboardingEmitAction.mockResolvedValue({
       ok: true,
       snapshot: snapshot({ hasDryRun: true }),
+      authorPreview: { subjects: [] },
       dryRun: {
         hash: 'plan-hash',
         questionCount: 6,
@@ -757,6 +763,7 @@ describe('OnboardingWizard majors UI', () => {
     previewOnboardingEmitAction.mockResolvedValue({
       ok: true,
       snapshot: snapshot({ hasDryRun: true }),
+      authorPreview: { subjects: [] },
       dryRun: {
         hash: 'plan-hash',
         questionCount: 6,
@@ -876,7 +883,7 @@ function renderAtAiStep(snap: OnboardingSnapshot) {
   fireEvent.click(screen.getByTestId('wizard-get-started'));
   fireEvent.click(screen.getByTestId('wizard-next'));
   fireEvent.click(screen.getByTestId('wizard-next'));
-  expect(screen.getByTestId('wizard-generate')).toBeVisible();
+  expect(screen.getByTestId('wizard-ai')).toBeVisible();
 }
 
 function generatedIds(): string[] {
@@ -1174,6 +1181,7 @@ describe('OnboardingWizard generate fixes', () => {
     previewOnboardingEmitAction.mockResolvedValue({
       ok: true,
       snapshot: { ...withFolder, hasDryRun: true },
+      authorPreview: { subjects: [] },
       dryRun: {
         hash: 'plan-hash',
         questionCount: 2,
@@ -1437,5 +1445,258 @@ describe('OnboardingWizard AI modes: Claude Code, Codex and local', () => {
       await waitFor(() => expect(screen.getByTestId('wizard-error')).toHaveTextContent(text));
       expect(screen.getByTestId('wizard-error')).not.toHaveTextContent('API key');
     }
+  });
+});
+
+function reviewFixture(hash = 'displayed-plan-hash') {
+  const authorPreview: OnboardingAuthorPreview = {
+    subjects: [
+      {
+        id: 'demo',
+        label: 'Generate demo',
+        difficulties: [
+          {
+            difficulty: 'easy',
+            questions: [
+              {
+                id: 'demo-easy-1',
+                type: 'mcq',
+                q: '<img src=x onerror="alert(1)"> Which answer?',
+                choices: [
+                  '<script>alert(1)</script>',
+                  'Second choice',
+                  'Third choice',
+                  'Fourth choice',
+                ],
+                answer: 1,
+              },
+            ],
+          },
+          {
+            difficulty: 'hard',
+            questions: [
+              {
+                id: 'demo-hard-1',
+                type: 'free',
+                q: 'Explain your reasoning.\nUse your source material.',
+                rubric:
+                  '<a href="javascript:alert(1)">Award credit</a> for a supported explanation.',
+                maxScore: 5,
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+  const dryRun: OnboardingDryRun = {
+    hash,
+    questionCount: 2,
+    subjectCount: 1,
+    collisions: [],
+    shadows: [],
+    replaceSample: false,
+    plan: [{ path: 'content/generated/questions/demo.json', action: 'add' }],
+    diff: 'would add content/generated/questions/demo.json',
+  };
+  return { ok: true as const, snapshot: snapshot({ hasDryRun: true }), dryRun, authorPreview };
+}
+
+async function renderAtReviewStep(initial = snapshot()) {
+  validateOnboardingAction.mockResolvedValue({ ok: true, snapshot: initial });
+  renderAtAiStep(initial);
+  fireEvent.click(screen.getByTestId('wizard-next'));
+  fireEvent.click(screen.getByTestId('wizard-validate'));
+  await waitFor(() => expect(screen.getByTestId('wizard-next')).toBeEnabled());
+  fireEvent.click(screen.getByTestId('wizard-next'));
+}
+
+async function showAuthorPreview() {
+  fireEvent.click(screen.getByTestId('wizard-preview'));
+  await waitFor(() => expect(screen.getByTestId('wizard-to-apply')).toBeEnabled());
+}
+
+describe('OnboardingWizard author question review', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    previewOnboardingEmitAction.mockReset().mockResolvedValue(reviewFixture());
+    validateOnboardingAction.mockReset();
+    applyOnboardingEmitAction.mockReset();
+    setReplaceSampleAction.mockReset();
+    generateOnboardingSubjectAction.mockReset();
+    window.confirm = vi.fn(() => true);
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it('shows grouped MCQ and written-answer text without executing HTML or creating answer inputs', async () => {
+    const store = vi.spyOn(Storage.prototype, 'setItem');
+    await renderAtReviewStep();
+    await showAuthorPreview();
+    const preview = screen.getByRole('region', { name: 'Draft questions' });
+    expect(within(preview).getByRole('heading', { name: 'Generate demo' })).toBeVisible();
+    expect(within(preview).getByRole('heading', { name: 'easy' })).toBeVisible();
+    expect(within(preview).getByRole('heading', { name: 'hard' })).toBeVisible();
+    const choices = within(preview).getAllByRole('listitem');
+    expect(choices).toHaveLength(4);
+    expect(choices[0]).toHaveTextContent('<script>alert(1)</script>');
+    expect(choices[1]).toHaveTextContent('Second choice');
+    expect(choices[1]).toHaveTextContent('Correct choice');
+    expect(within(preview).getAllByText('Correct choice')).toHaveLength(1);
+    expect(preview).toHaveTextContent('<img src=x onerror="alert(1)"> Which answer?');
+    expect(preview).toHaveTextContent('<a href="javascript:alert(1)">Award credit</a>');
+    expect(within(preview).getByRole('heading', { name: 'Marking guidance' })).toBeVisible();
+    expect(preview).toHaveTextContent('Maximum score: 5');
+    expect(preview.querySelector('script, img, a, input, textarea, button')).toBeNull();
+    expect(store).not.toHaveBeenCalled();
+    expect(screen.getByTestId('wizard-preview-missing-subjects')).toHaveTextContent('Biology');
+    expect(applyOnboardingEmitAction).not.toHaveBeenCalled();
+  });
+
+  it('never treats persisted hasDryRun alone as a reviewed author preview', async () => {
+    await renderAtReviewStep(snapshot({ hasDryRun: true }));
+    expect(screen.queryByRole('region', { name: 'Draft questions' })).toBeNull();
+    expect(screen.getByTestId('wizard-to-apply')).toBeDisabled();
+    expect(previewOnboardingEmitAction).not.toHaveBeenCalled();
+  });
+
+  it('sends exactly the displayed hash when Apply is confirmed', async () => {
+    applyOnboardingEmitAction.mockResolvedValue({
+      ok: true,
+      snapshot: snapshot({ hasApplied: true }),
+      written: 2,
+      questionCount: 2,
+      subjectCount: 1,
+    });
+    await renderAtReviewStep();
+    await showAuthorPreview();
+    fireEvent.click(screen.getByTestId('wizard-to-apply'));
+    fireEvent.click(screen.getByTestId('wizard-apply-confirm'));
+    await screen.findByTestId('wizard-applied');
+    expect(applyOnboardingEmitAction).toHaveBeenCalledTimes(1);
+    const data = applyOnboardingEmitAction.mock.calls[0]![0] as FormData;
+    expect(data.get('expectedHash')).toBe('displayed-plan-hash');
+    expect([...data.keys()]).toEqual(['expectedHash']);
+  });
+
+  it('clears preview and approval on Back from Apply and requires a new review', async () => {
+    await renderAtReviewStep();
+    await showAuthorPreview();
+    fireEvent.click(screen.getByTestId('wizard-to-apply'));
+    fireEvent.click(screen.getByTestId('wizard-back'));
+    expect(screen.queryByRole('region', { name: 'Draft questions' })).toBeNull();
+    expect(screen.getByTestId('wizard-to-apply')).toBeDisabled();
+    await showAuthorPreview();
+    expect(previewOnboardingEmitAction).toHaveBeenCalledTimes(2);
+    fireEvent.click(screen.getByRole('button', { name: 'Validate' }));
+    expect(screen.getByTestId('wizard-next')).toBeDisabled();
+    fireEvent.click(screen.getByTestId('wizard-validate'));
+    await waitFor(() => expect(screen.getByTestId('wizard-next')).toBeEnabled());
+    fireEvent.click(screen.getByTestId('wizard-next'));
+    expect(screen.getByTestId('wizard-to-apply')).toBeDisabled();
+  });
+
+  it.each(['failure', 'exception'])(
+    'clears a prior preview before a re-review %s',
+    async (outcome) => {
+      await renderAtReviewStep();
+      await showAuthorPreview();
+      if (outcome === 'failure') {
+        previewOnboardingEmitAction.mockResolvedValueOnce({ ok: false, reason: 'invalid' });
+      } else {
+        previewOnboardingEmitAction.mockRejectedValueOnce(new Error('failed'));
+      }
+      fireEvent.click(screen.getByTestId('wizard-preview'));
+      expect(screen.queryByRole('region', { name: 'Draft questions' })).toBeNull();
+      await screen.findByTestId('wizard-error');
+      expect(screen.getByTestId('wizard-to-apply')).toBeDisabled();
+      expect(screen.queryByTestId('wizard-dry-run-summary')).toBeNull();
+    },
+  );
+
+  it('clears the displayed preview immediately when replacement settings change, even if saving fails', async () => {
+    const saving = deferred<{ ok: false; reason: 'disk' }>();
+    setReplaceSampleAction.mockReturnValue(saving.promise);
+    await renderAtReviewStep();
+    await showAuthorPreview();
+    fireEvent.click(screen.getByTestId('wizard-replace-sample'));
+    expect(screen.queryByRole('region', { name: 'Draft questions' })).toBeNull();
+    expect(screen.getByTestId('wizard-to-apply')).toBeDisabled();
+    await act(async () => saving.resolve({ ok: false, reason: 'disk' }));
+    expect(screen.getByTestId('wizard-error')).toHaveTextContent('Could not write the file');
+    expect(screen.getByTestId('wizard-to-apply')).toBeDisabled();
+  });
+
+  it('ignores an older preview response after a queued input change invalidates it', async () => {
+    const old = deferred<ReturnType<typeof reviewFixture>>();
+    previewOnboardingEmitAction.mockReturnValueOnce(old.promise);
+    setReplaceSampleAction.mockResolvedValue({
+      ok: true,
+      snapshot: snapshot({ replaceSample: true }),
+    });
+    await renderAtReviewStep();
+    // Browser events may queue together before pending disables the controls.
+    act(() => {
+      screen.getByTestId('wizard-preview').click();
+      screen.getByTestId('wizard-replace-sample').click();
+    });
+    await waitFor(() => expect(setReplaceSampleAction).toHaveBeenCalledTimes(1));
+    await act(async () => old.resolve(reviewFixture('obsolete-hash')));
+    expect(screen.queryByRole('region', { name: 'Draft questions' })).toBeNull();
+    expect(screen.getByTestId('wizard-to-apply')).toBeDisabled();
+    expect(screen.getByTestId('wizard-replace-sample')).toBeChecked();
+  });
+
+  it('ignores a refreshed preview after a queued forward navigation to Apply', async () => {
+    await renderAtReviewStep();
+    await showAuthorPreview();
+    const refresh = deferred<ReturnType<typeof reviewFixture>>();
+    previewOnboardingEmitAction.mockReturnValueOnce(refresh.promise);
+    act(() => {
+      screen.getByTestId('wizard-preview').click();
+      screen.getByTestId('wizard-to-apply').click();
+    });
+    await act(async () => refresh.resolve(reviewFixture('unseen-refreshed-hash')));
+    expect(screen.getByTestId('wizard-apply-confirm')).toBeDisabled();
+    expect(applyOnboardingEmitAction).not.toHaveBeenCalled();
+  });
+
+  it('does not restore a cancelled generation response after leaving and returning to AI setup', async () => {
+    const snap = snapshot({ aiMode: 'skip-stub', subjects: [sourceSubject('alpha', 'Alpha')] });
+    const old = deferred<ReturnType<typeof generated>>();
+    generateOnboardingSubjectAction.mockReturnValueOnce(old.promise);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ ok: true }))),
+    );
+    renderAtAiStep(snap);
+    fireEvent.click(screen.getByTestId('wizard-generate-alpha'));
+    await screen.findByTestId('wizard-generate-progress-alpha');
+    fireEvent.click(screen.getByTestId('wizard-generate-cancel'));
+    await waitFor(() => expect(screen.getByTestId('wizard-back')).toBeEnabled());
+    fireEvent.click(screen.getByTestId('wizard-back'));
+    fireEvent.click(screen.getByTestId('wizard-next'));
+    await act(async () => old.resolve(generated(snap, 'alpha')));
+    expect(screen.queryByTestId('wizard-generate-run-alpha')).toBeNull();
+    expect(screen.queryByTestId('wizard-ir-ready')).toBeNull();
+    expect(screen.getByTestId('wizard-generate-cancelled')).toHaveTextContent('Generate cancelled');
+    expect(screen.queryByTestId('wizard-error')).toBeNull();
+  });
+
+  it('clears approval after a stale Apply response and permits review again through Back', async () => {
+    applyOnboardingEmitAction.mockResolvedValue({ ok: false, reason: 'stale_preview' });
+    await renderAtReviewStep();
+    await showAuthorPreview();
+    fireEvent.click(screen.getByTestId('wizard-to-apply'));
+    fireEvent.click(screen.getByTestId('wizard-apply-confirm'));
+    await screen.findByTestId('wizard-apply-error');
+    fireEvent.click(screen.getByTestId('wizard-back'));
+    expect(screen.getByTestId('wizard-to-apply')).toBeDisabled();
+    expect(screen.queryByRole('region', { name: 'Draft questions' })).toBeNull();
+    await showAuthorPreview();
   });
 });

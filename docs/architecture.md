@@ -60,7 +60,7 @@ Surface:
   `onboardingAiCapabilityLine`: how it reads PDFs, how it signs in; the marking line,
   `onboardingMarkingCopy`, says which AI marks written answers for that mode and what the
   server still needs) → validate → Review
-  (dry-run HITL) → apply → ready. The wizard is one stage at a time: desktop
+  (dry-run HITL with read-only author question cards) → apply → ready. The wizard is one stage at a time: desktop
   (≥900px) uses a left step rail + stage + sticky footer; mobile uses compact
   “Step N of M · Label” progress and a sticky bottom bar. Everything the
   wizard reads and writes — subjects, uploaded PDFs, BankIR, generated JSON,
@@ -145,6 +145,22 @@ Surface:
   re-check (#65) refuses a write if the id is gone.
   While generate is in flight, Welcome “Use sample bank”, later skip, Back,
   and the desktop rail stay locked so Cancel remains reachable.
+  Review returns a separate allowlisted author DTO from the same validated banks
+  used to plan emit: question/id/type, four choices and correct index, or rubric
+  and maxScore, grouped by subject/difficulty. It never returns raw BankIR, keys,
+  provenance or provider metadata. Only the revalidated onboarding admin gate may
+  return it; household Student View is denied. Solo's forced study-dashboard flag
+  does not revoke its verified owner's dedicated authoring screen. Cards render inert
+  React text and live only in wizard memory. Changes, generation, failed refresh and
+  backward navigation invalidate the displayed preview; late responses cannot restore it.
+  Apply requires the displayed hash to match the saved approval and the freshly
+  planned contents (including key-only changes), preventing another tab's approval
+  from authorizing unseen content. Public dry-run diffs stay key-redacted.
+  Web draft reads are confined to immediate subject bank files below the vetted family
+  root, reject symlinks/nonregular files, and bound each file to 2 MiB and the total
+  to 8 MiB. Descriptor checks and ancestry rechecks reduce file-swap races; they do
+  not claim protection from a malicious OS user controlling the root. Oversized or
+  malformed drafts fail closed with sanitized errors, never a truncated preview.
   Finish (“Open dashboard”) requires
   a confirmed apply of that dry-run; a changed plan is refused (`stale_preview`).
   Skip-without-emit is Welcome “Use sample bank for now” / later “Skip to
@@ -782,7 +798,10 @@ These are non-negotiable. Don't "fix" them out.
   `buildExam()` runs in the client, so anything it returns ships in the bundle; never put an
   `answer` or `rubric` back into `data.ts`. The guard in `tests/unit/answer-keys.test.ts` asserts
   the no-leak rule, the `id`↔key bijection (ids are globally unique), type-match, key ranges, and
-  the mandatory-provenance rule below.
+  the mandatory-provenance rule below. The only answer-bearing client exception is
+  the authorized onboarding author DTO described above, never the public bank,
+  student components, exam sessions or serialized attempts. All other key imports
+  remain server-only.
 - **Every key carries `provenance { pdf, locator }`.** Each key records where the item came
   from: a source document (`pdf` = filename, `locator` = page/section — PDFs stay local-only
   in the gitignored `content/source-pdfs/`) or the `'hand-authored'` convention the sample

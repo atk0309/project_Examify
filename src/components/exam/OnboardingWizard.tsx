@@ -54,6 +54,7 @@ import {
   type AgentCliSignIn,
   type OnboardingAgentCliMode,
   type OnboardingAiMode,
+  type OnboardingAuthorPreview,
   type OnboardingDryRun,
   type OnboardingGenerateResult,
   type OnboardingPlanEntry,
@@ -86,7 +87,7 @@ const STAGE_HELP: Record<StepId, string> = {
   validate:
     'Check that the draft can be used. This checks its format, not whether the answers are correct.',
   'dry-run':
-    'Review which question-bank files will change, including any deletions. Only Apply changes the practice bank.',
+    'Read the draft questions and marking guidance, then review the planned file changes. Only Apply changes the practice bank.',
   apply: 'Confirm the changes you reviewed. Your practice bank cannot be left empty.',
   ready: 'The sample stays available unless you explicitly replace its questions.',
 };
@@ -286,6 +287,10 @@ export function OnboardingWizard({
   const [issues, setIssues] = useState<{ file: string; message: string }[]>([]);
   const [validated, setValidated] = useState(false);
   const [dryRun, setDryRun] = useState<OnboardingDryRun | null>(null);
+  const [authorPreview, setAuthorPreview] = useState<OnboardingAuthorPreview | null>(null);
+  // Input changes invalidate a response even before a state update renders.
+  const reviewVersionRef = useRef(0);
+  const navigationVersionRef = useRef(0);
   const [applyState, setApplyState] = useState<
     | { status: 'idle' }
     | { status: 'applying' }
@@ -318,7 +323,19 @@ export function OnboardingWizard({
   const holdWizard = generateBusy || (pending && !generateCancelAck);
   const navLocked = holdWizard;
 
-  const run = (task: () => Promise<void>) => {
+  const invalidateReview = () => {
+    reviewVersionRef.current += 1;
+    setDryRun(null);
+    setAuthorPreview(null);
+    setValidated(false);
+    setApplyState({ status: 'idle' });
+    return reviewVersionRef.current;
+  };
+
+  const run = (task: () => Promise<void>, invalidatesReview = true) => {
+    if (invalidatesReview) invalidateReview();
+    const version = reviewVersionRef.current;
+    const navigationVersion = navigationVersionRef.current;
     startTransition(async () => {
       setGenerateCancelAck(false);
       setError(null);
@@ -327,6 +344,12 @@ export function OnboardingWizard({
         await task();
       } catch (caught) {
         if (caught && typeof caught === 'object' && 'digest' in caught) throw caught;
+        if (
+          reviewVersionRef.current !== version ||
+          navigationVersionRef.current !== navigationVersion
+        )
+          return;
+        invalidateReview();
         setError('Something went wrong.');
       }
     });
@@ -339,6 +362,7 @@ export function OnboardingWizard({
       setSnapshot(result.snapshot);
       return true;
     }
+    invalidateReview();
     if (result.reason === 'cancelled') {
       setGenerateNoteKind('cancelled');
       setGenerateNote('Generate cancelled');
@@ -361,14 +385,13 @@ export function OnboardingWizard({
     run(async () => {
       const data = new FormData();
       data.set('replaceSample', enabled ? '1' : '0');
-      if (applyResult(await setReplaceSampleAction(data))) {
-        setValidated(false);
-        setDryRun(null);
-      }
+      applyResult(await setReplaceSampleAction(data));
     });
 
   const go = (next: StepId) => {
     if (generateBusy) return;
+    navigationVersionRef.current += 1;
+    if (STEPS.findIndex((entry) => entry.id === next) < stepIndex) invalidateReview();
     setError(null);
     setStep(next);
   };
@@ -457,6 +480,11 @@ export function OnboardingWizard({
           <div
             className={'wizard-stage' + (wideStage ? ' wizard-stage-wide' : '')}
             data-testid="wizard-stage"
+            onChangeCapture={() => {
+              if (step === 'subjects' || step === 'files' || step === 'ai' || step === 'dry-run') {
+                invalidateReview();
+              }
+            }}
           >
             {step !== 'welcome' ? (
               <div className="wizard-stage-head">
@@ -473,26 +501,17 @@ export function OnboardingWizard({
                 pending={holdWizard}
                 onAdd={(data) =>
                   run(async () => {
-                    if (applyResult(await addOnboardingSubjectAction(data))) {
-                      setDryRun(null);
-                      setValidated(false);
-                    }
+                    applyResult(await addOnboardingSubjectAction(data));
                   })
                 }
                 onRename={(data) =>
                   run(async () => {
-                    if (applyResult(await renameOnboardingSubjectAction(data))) {
-                      setDryRun(null);
-                      setValidated(false);
-                    }
+                    applyResult(await renameOnboardingSubjectAction(data));
                   })
                 }
                 onDelete={(data) =>
                   run(async () => {
-                    if (applyResult(await deleteOnboardingSubjectAction(data))) {
-                      setDryRun(null);
-                      setValidated(false);
-                    }
+                    applyResult(await deleteOnboardingSubjectAction(data));
                   })
                 }
               />
@@ -525,7 +544,10 @@ export function OnboardingWizard({
                 generateRuns={generateRuns}
                 activeGenerateId={activeGenerateId}
                 irReady={irReady}
-                onSeed={setGenerateSeed}
+                onSeed={(seed) => {
+                  invalidateReview();
+                  setGenerateSeed(seed);
+                }}
                 onSelect={(mode) =>
                   run(async () => {
                     const data = new FormData();
@@ -534,6 +556,7 @@ export function OnboardingWizard({
                   })
                 }
                 onAnthropicKey={async (data) => {
+                  invalidateReview();
                   try {
                     const result = await setOnboardingAnthropicKeyAction(data);
                     return applyResult(result);
@@ -544,6 +567,7 @@ export function OnboardingWizard({
                   }
                 }}
                 onOpenAiKey={async (data) => {
+                  invalidateReview();
                   try {
                     const result = await setOnboardingOpenAiKeyAction(data);
                     return applyResult(result);
@@ -618,6 +642,10 @@ export function OnboardingWizard({
                   }
 
                   const token = crypto.randomUUID();
+                  const navigationVersion = navigationVersionRef.current;
+                  const isCurrentGeneration = () =>
+                    generateCancelTokenRef.current === token &&
+                    navigationVersionRef.current === navigationVersion;
                   generateCancelTokenRef.current = token;
                   generateCancelRef.current = false;
                   generateBatchSizeRef.current = subjectIds.length;
@@ -649,8 +677,6 @@ export function OnboardingWizard({
                         ...currentRuns,
                         [subjectId]: result.result,
                       }));
-                      setDryRun(null);
-                      setValidated(false);
                       if (!result.result.wroteIr) return;
                       kept += 1;
                       if (generateCancelTokenRef.current === token) generateKeptRef.current = kept;
@@ -672,6 +698,7 @@ export function OnboardingWizard({
                         const label = subject?.label ?? subjectId;
                         if (subject?.hasIr) data.set('force', '1');
                         let result = await generateOnboardingSubjectAction(data);
+                        if (!isCurrentGeneration()) return;
                         if (!result.ok && result.reason === 'needs_confirm') {
                           const irRel = result.irRel ?? onboardingSubjectIrRel(subjectId);
                           setGenerateNoteKind('overwrite');
@@ -683,6 +710,7 @@ export function OnboardingWizard({
                           }
                           data.set('force', '1');
                           result = await generateOnboardingSubjectAction(data);
+                          if (!isCurrentGeneration()) return;
                         }
                         if (result.ok) {
                           recordSuccess(subjectId, result);
@@ -742,17 +770,19 @@ export function OnboardingWizard({
                 dataDirDisplay={snapshot.dataDirDisplay}
                 pending={holdWizard}
                 validated={validated}
-                onValidate={() =>
+                onValidate={() => {
+                  const version = invalidateReview();
+                  const navigationVersion = navigationVersionRef.current;
                   run(async () => {
                     const result = await validateOnboardingAction();
-                    if (applyResult(result)) {
-                      setValidated(true);
-                      setDryRun(null);
-                    } else {
-                      setValidated(false);
-                    }
-                  })
-                }
+                    if (
+                      reviewVersionRef.current !== version ||
+                      navigationVersionRef.current !== navigationVersion
+                    )
+                      return;
+                    if (applyResult(result)) setValidated(true);
+                  }, false);
+                }}
               />
             ) : null}
 
@@ -761,17 +791,24 @@ export function OnboardingWizard({
                 snapshot={snapshot}
                 pending={holdWizard}
                 dryRun={dryRun}
+                authorPreview={authorPreview}
                 onToggleReplace={toggleReplaceSample}
-                onPreview={() =>
+                onPreview={() => {
+                  const version = invalidateReview();
+                  const navigationVersion = navigationVersionRef.current;
                   run(async () => {
                     const result = await previewOnboardingEmitAction();
+                    if (
+                      reviewVersionRef.current !== version ||
+                      navigationVersionRef.current !== navigationVersion
+                    )
+                      return;
                     if (applyResult(result) && result.ok) {
                       setDryRun(result.dryRun);
-                    } else {
-                      setDryRun(null);
+                      setAuthorPreview(result.authorPreview);
                     }
-                  })
-                }
+                  }, false);
+                }}
               />
             ) : null}
 
@@ -779,17 +816,18 @@ export function OnboardingWizard({
               <ApplyStep
                 pending={holdWizard}
                 applyState={applyState}
-                hasDryRun={Boolean(snapshot.hasDryRun && dryRun)}
+                hasDryRun={Boolean(snapshot.hasDryRun && dryRun && authorPreview)}
                 deletes={dryRun ? onboardingPruneEntries(dryRun.plan) : []}
-                onApply={() =>
+                onApply={() => {
+                  if (!dryRun || !authorPreview || !snapshot.hasDryRun) return;
+                  const expectedHash = dryRun.hash;
+                  const deletes = onboardingPruneEntries(dryRun.plan);
+                  const pruneMessage = onboardingPruneConfirmMessage(deletes);
+                  if (pruneMessage && !window.confirm(pruneMessage)) return;
                   run(async () => {
-                    const deletes = dryRun ? onboardingPruneEntries(dryRun.plan) : [];
-                    const pruneMessage = onboardingPruneConfirmMessage(deletes);
-                    if (pruneMessage && !window.confirm(pruneMessage)) {
-                      return;
-                    }
                     setApplyState({ status: 'applying' });
                     const data = new FormData();
+                    data.set('expectedHash', expectedHash);
                     if (deletes.length > 0) data.set('confirmPrune', '1');
                     const result = await applyOnboardingEmitAction(data);
                     if (result.ok) {
@@ -806,8 +844,8 @@ export function OnboardingWizard({
                       setIssues(result.issues ?? []);
                       setApplyState({ status: 'error', message: errorCopy(result) });
                     }
-                  })
-                }
+                  });
+                }}
               />
             ) : null}
 
@@ -922,7 +960,7 @@ export function OnboardingWizard({
                 <button
                   type="button"
                   className="btn btn-primary"
-                  disabled={holdWizard || !dryRun || !snapshot.hasDryRun}
+                  disabled={holdWizard || !dryRun || !authorPreview || !snapshot.hasDryRun}
                   data-testid="wizard-to-apply"
                   onClick={() => {
                     setApplyState({ status: 'idle' });
@@ -2021,12 +2059,14 @@ function DryRunStep({
   snapshot,
   pending,
   dryRun,
+  authorPreview,
   onToggleReplace,
   onPreview,
 }: {
   snapshot: OnboardingSnapshot;
   pending: boolean;
   dryRun: OnboardingDryRun | null;
+  authorPreview: OnboardingAuthorPreview | null;
   onToggleReplace: (enabled: boolean) => void;
   onPreview: () => void;
 }) {
@@ -2069,6 +2109,9 @@ function DryRunStep({
               <span>collision{dryRun.collisions.length === 1 ? '' : 's'}</span>
             </p>
           </div>
+          {authorPreview ? (
+            <AuthorQuestionPreview preview={authorPreview} subjects={snapshot.subjects} />
+          ) : null}
           {dryRun.collisions.length > 0 ? (
             <ul className="wizard-issues" data-testid="wizard-collisions">
               {dryRun.collisions.map((id) => (
@@ -2101,6 +2144,83 @@ function DryRunStep({
         </div>
       ) : null}
     </div>
+  );
+}
+
+/** Author-only, read-only text. Never render model output as HTML or Markdown. */
+function AuthorQuestionPreview({
+  preview,
+  subjects,
+}: {
+  preview: OnboardingAuthorPreview;
+  subjects: OnboardingSubject[];
+}) {
+  const included = new Set(preview.subjects.map((subject) => subject.id));
+  const missing = subjects.filter((subject) => !included.has(subject.id));
+  return (
+    <section className="wizard-author-preview" aria-labelledby="wizard-questions-heading">
+      <h2 id="wizard-questions-heading">Draft questions</h2>
+      <p className="wizard-hint">
+        Read-only author review. Check the answers against your source material; validation checks
+        format, not accuracy. These questions enter the practice bank only after Apply.
+      </p>
+      {missing.length > 0 ? (
+        <p className="wizard-callout" data-testid="wizard-preview-missing-subjects">
+          No validated questions in this plan for:{' '}
+          {missing.map((subject) => subject.label).join(', ')}. Only the questions shown below are
+          included.
+        </p>
+      ) : null}
+      {preview.subjects.length === 0 ? (
+        <p className="wizard-callout">
+          No draft questions in this plan. Review the file changes below.
+        </p>
+      ) : null}
+      {preview.subjects.map((subject) => (
+        <section className="wizard-preview-subject" key={subject.id} aria-label={subject.label}>
+          <h3>{subject.label}</h3>
+          {subject.difficulties.map((group) => (
+            <section
+              className="wizard-preview-difficulty"
+              key={group.difficulty}
+              aria-label={`${subject.label}: ${group.difficulty}`}
+            >
+              <h4>{group.difficulty}</h4>
+              {group.questions.map((question, index) => (
+                <article className="wizard-question-card" key={question.id}>
+                  <p className="wizard-question-meta">
+                    Question {index + 1} ·{' '}
+                    {question.type === 'mcq' ? 'Multiple choice' : 'Written answer'}
+                  </p>
+                  <p className="wizard-question-text">{question.q}</p>
+                  {question.type === 'mcq' ? (
+                    <ol className="wizard-preview-choices" type="A">
+                      {question.choices.map((choice, choiceIndex) => (
+                        <li
+                          key={choiceIndex}
+                          className={choiceIndex === question.answer ? 'correct' : undefined}
+                        >
+                          <span>{choice}</span>
+                          {choiceIndex === question.answer ? (
+                            <strong className="wizard-correct-choice">Correct choice</strong>
+                          ) : null}
+                        </li>
+                      ))}
+                    </ol>
+                  ) : (
+                    <div className="wizard-preview-guidance">
+                      <h5>Marking guidance</h5>
+                      <p className="wizard-question-text">{question.rubric}</p>
+                      <p>Maximum score: {question.maxScore}</p>
+                    </div>
+                  )}
+                </article>
+              ))}
+            </section>
+          ))}
+        </section>
+      ))}
+    </section>
   );
 }
 
@@ -2148,8 +2268,8 @@ function ApplyStep({
       {applyState.status === 'success' ? (
         <p className="wizard-callout" data-testid="wizard-applied">
           Applied {applyState.written} file{applyState.written === 1 ? '' : 's'} ·{' '}
-          {applyState.questionCount} questions · {applyState.subjectCount} subjects. Keys stayed
-          server-only.
+          {applyState.questionCount} questions · {applyState.subjectCount} subjects. Practice
+          questions do not include answer keys.
         </p>
       ) : null}
       {applyState.status === 'error' ? (

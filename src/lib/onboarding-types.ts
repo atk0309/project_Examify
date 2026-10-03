@@ -622,6 +622,25 @@ export type OnboardingDryRun = {
   diff: string;
 };
 
+/**
+ * Short-lived author-only Review DTO returned by the gated preview action.
+ * Never use this for the public practice bank, snapshots, attempts, or storage.
+ * Every field is projected from the exact validated plan shown beside it.
+ */
+export type OnboardingAuthorPreview = {
+  subjects: {
+    id: string;
+    label: string;
+    difficulties: {
+      difficulty: string;
+      questions: (
+        | { id: string; type: 'mcq'; q: string; choices: string[]; answer: number }
+        | { id: string; type: 'free'; q: string; rubric: string; maxScore: number }
+      )[];
+    }[];
+  }[];
+};
+
 export type OnboardingSampleSubject = {
   id: string;
   label: string;

@@ -15,7 +15,7 @@ skipped it. After household setup is finished, use the CLI below for later chang
    For a local endpoint, save its URL and model in AI settings before returning
 4. Validate the draft format. This checks whether Examify can use the draft,
    not whether its answers are correct
-5. Open Review to inspect the planned file changes, then Apply. Generate alone does not make
+5. Open Review to check the questions, correct choices and marking guidance, plus planned file changes, then Apply. Generate alone does not make
    questions available for practice. Apply does not need an app rebuild
 
 Cancel leaves the current subject's previous question-bank file unchanged.
@@ -24,12 +24,22 @@ existing questions requires confirmation. Reusing a built-in subject ID replaces
 that entire subject; choose a new ID to keep both. The sample remains unless you
 explicitly choose to replace it.
 
-The wizard's Review screen shows counts and file changes, not an editor for every
-question and answer. For an accuracy check before Apply, inspect the private
-`content/subjects/SUBJECT_ID/bank.ir.json` in the active data folder with a local
-text editor. It contains questions, answers, rubrics and source references; never
-share it in a public issue. Check those against your material, especially scanned
-pages and diagrams. If you change a draft, Validate and Review again before Apply.
+The wizard's Review screen shows saved drafts as read-only cards, grouped by subject
+and difficulty. Multiple-choice cards mark the correct choice; written questions show
+**Marking guidance** and the maximum score. These drafts have no separate explanations
+or model answers. Format validation does not establish accuracy: check the content
+against your material, especially scanned pages and diagrams. Cancelled or partial
+Generate runs may leave a mix of retained and newly generated drafts; Review shows the
+saved drafts, not a claim that all subjects were regenerated.
+
+To edit a draft, use a local text editor on the private
+`content/subjects/SUBJECT_ID/bank.ir.json` in the active data folder. Source references
+remain in that file and are not displayed in Review; never share it in a public issue.
+Validate and Review again after editing. Apply is bound to the exact plan shown in this
+tab, including answers; a newer review in another tab cannot approve unseen changes.
+Leaving Review to change inputs clears its local preview. Reloading requires a new review.
+The web wizard rejects linked/nonregular drafts, files above 2 MiB or a combined
+8 MiB draft tree; it never silently omits excess questions to enable Apply.
 [Solo data locations](solo-maintenance.md#find-your-files) ·
 [Household data locations](operations.md).
 
@@ -97,8 +107,12 @@ installation, use the [upgrade workflow](operations.md#upgrading) instead.
 
 ## Public questions and private answers
 
-Public question text is sent to the browser. Correct answers, rubrics and source
-provenance stay server-side. For hand-edited sample questions:
+Public practice questions and saved exam sessions never contain correct answers,
+rubrics or source provenance. The privileged onboarding Review is a narrow exception:
+a revalidated solo owner, or household admin outside Student View while setup is open,
+may inspect the allowlisted draft answers and marking guidance in wizard memory.
+It does not expose provenance, provider metadata, raw key files or grading snapshots,
+and does not store answers in browser storage. For hand-edited sample questions:
 
 - `src/lib/exam/data.ts` holds IDs, question text and choices
 - `src/lib/exam/answer-keys.server.ts` holds the answer or rubric, joined by ID
