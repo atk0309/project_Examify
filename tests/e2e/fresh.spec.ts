@@ -276,7 +276,26 @@ test('first-run bootstrap creates the admin without Turnstile', async ({ page })
   await expect(page.getByTestId('wizard-file-sources-demo')).toContainText('notes.txt');
   await page.getByTestId('wizard-next').click();
   await expect(page.getByTestId('wizard-ai')).toBeVisible();
-  await page.getByTestId('wizard-ai-cloud').click();
+  await expect(page.getByRole('heading', { name: 'AI setup', exact: true })).toBeFocused();
+  const cloudRadio = page.getByTestId('wizard-ai-cloud');
+  await cloudRadio.focus();
+  await page.keyboard.press('Space');
+  await expect(cloudRadio).toBeChecked();
+  await expect(cloudRadio).toHaveAttribute('aria-disabled', 'false');
+  await expect(cloudRadio).toBeFocused();
+  await page.keyboard.press('ArrowRight');
+  await expect(page.getByTestId('wizard-ai-cloud-openai')).toBeChecked();
+  await expect(page.getByTestId('wizard-ai-cloud-openai')).toHaveAttribute(
+    'aria-disabled',
+    'false',
+  );
+  await expect(page.getByTestId('wizard-ai-cloud-openai')).toBeFocused();
+  await page.keyboard.press('ArrowLeft');
+  await expect(cloudRadio).toBeChecked();
+  await expect(cloudRadio).toHaveAttribute('aria-disabled', 'false');
+  await expect(cloudRadio).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(page.getByTestId('wizard-anthropic-key-input')).toBeFocused();
   await expect(page.getByTestId('wizard-ai-store')).toContainText('not configured');
   await expect(page.getByTestId('wizard-anthropic-key-clear')).toBeVisible();
   await expect(page.getByTestId('wizard-anthropic-key-rotate')).toBeVisible();

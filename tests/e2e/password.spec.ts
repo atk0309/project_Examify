@@ -73,7 +73,14 @@ async function answerCurrent(page: Page, questionNumber: number): Promise<Answer
   const count = await choices.count();
   expect(count, 'an MCQ needs choices').toBeGreaterThan(1);
   const choice = questionNumber % count;
-  await choices.nth(choice).click();
+  const radio = choices.nth(choice).getByRole('radio');
+  await radio.focus();
+  await page.keyboard.press('Space');
+  await expect(radio).toBeChecked();
+  await page.keyboard.press('ArrowRight');
+  await expect(choices.nth((choice + 1) % count).getByRole('radio')).toBeChecked();
+  await page.keyboard.press('ArrowLeft');
+  await expect(radio).toBeFocused();
   await expect(choices.nth(choice)).toHaveClass(/\bselected\b/);
   return { kind: 'mcq', choice };
 }
@@ -113,7 +120,9 @@ test('student signs in with a password, sits a whole exam, and sees results + pr
   // Maths · Easy mixes MCQ with a free-text question. Before it starts, the
   // page says what happens to written answers on this server (the test key).
   await page.getByTestId('subject-card-maths').click();
-  await page.getByTestId('difficulty-easy').click();
+  await page.getByTestId('difficulty-medium').getByRole('radio').focus();
+  await page.keyboard.press('ArrowLeft');
+  await expect(page.getByTestId('difficulty-easy').getByRole('radio')).toBeChecked();
   await expect(page.getByTestId('exam-written-line')).toHaveText(
     'Written answers get a test mark on this server.',
   );
