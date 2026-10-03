@@ -1539,6 +1539,26 @@ describe('author-only draft projection', () => {
     },
   );
 
+  it('deduplicates sanitized validation issues while preserving the raw issue count', async () => {
+    const { previewOnboardingEmit, validateOnboardingIr } = await import('@/lib/onboarding');
+    const root = tempRoot();
+    const dir = path.join(root, 'content/subjects/history');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, 'bank.ir.json'), JSON.stringify({ version: 1 }));
+    const preview = previewOnboardingEmit(false, root);
+    expect(preview.ok).toBe(false);
+    if (preview.ok) throw new Error('expected invalid draft');
+    expect(preview.issues).toEqual([
+      {
+        file: 'content/subjects',
+        message:
+          'Invalid question-bank format or duplicate IDs. Check the draft before reviewing again.',
+      },
+    ]);
+    expect(Number(preview.message.match(/\((\d+) issues\)/)?.[1])).toBeGreaterThan(1);
+    expect(validateOnboardingIr(false, root)).toEqual({ ok: false, issues: preview.issues });
+  });
+
   it('refuses changed marking guidance even when public questions are identical', async () => {
     const { previewOnboardingEmit, applyOnboardingEmit } = await import('@/lib/onboarding');
     const root = tempRoot();

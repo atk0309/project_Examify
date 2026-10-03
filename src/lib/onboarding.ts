@@ -986,12 +986,14 @@ export function detachSourcePdf(
 function publicValidationIssues(
   errors: readonly { path?: string; message: string }[],
 ): OnboardingIssue[] {
-  return errors.map((issue) => ({
-    file: SUBJECTS_REL,
-    message: issue.message.includes('collides with a sample-bank id')
-      ? 'A question ID replaces a sample question. Enable sample replacement to continue.'
-      : 'Invalid question-bank format or duplicate IDs. Check the draft before reviewing again.',
-  }));
+  const messages = new Set(
+    errors.map((issue) =>
+      issue.message.includes('collides with a sample-bank id')
+        ? 'A question ID replaces a sample question. Enable sample replacement to continue.'
+        : 'Invalid question-bank format or duplicate IDs. Check the draft before reviewing again.',
+    ),
+  );
+  return [...messages].map((message) => ({ file: SUBJECTS_REL, message }));
 }
 
 export function rewriteOnboardingQuestionIds(
