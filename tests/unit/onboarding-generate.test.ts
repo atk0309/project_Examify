@@ -289,8 +289,6 @@ describe('onboarding generate graph', () => {
     expect(wizard).toMatch(/case 'needs_confirm':/);
     expect(wizard).toMatch(/case 'rate_limited':/);
     expect(wizard).toMatch(/Clear the \$\{label\} from this host/);
-    expect(wizard).toContain('label="Anthropic API key"');
-    expect(wizard).toContain('label="OpenAI API key"');
     expect(wizard).toMatch(/Replace existing BankIR for \$\{/);
     expect(wizard).toMatch(/wizard-generate-skipped/);
     expect(wizard).toMatch(/data-testid="wizard-generate-overwrite-batch"/);
@@ -302,12 +300,6 @@ describe('onboarding generate graph', () => {
     expect(wizard).toMatch(/confirmPrune/);
     expect(wizard).toMatch(/A test sentinel is present/);
     expect(wizard).toMatch(/data\.set\('force', '1'\)/);
-    expect(wizard).toMatch(/data-testid="wizard-validate-panel"/);
-    expect(
-      [...wizard.matchAll(/data-testid="([^"]+)"/g)]
-        .map((match) => match[1])
-        .filter((id) => id === 'wizard-validate'),
-    ).toHaveLength(1);
     expect(wizard).toMatch(/setGenerateNote\(null\)/);
     expect(wizard).not.toMatch(/hasExistingIr \?/);
     expect(wizard).toMatch(/<h2 className="wizard-subhead">Generate from local sources<\/h2>/);
@@ -328,13 +320,6 @@ describe('onboarding generate graph', () => {
     const store = readFileSync(path.join(process.cwd(), 'src/lib/env-store.ts'), 'utf8');
     const flags = readFileSync(path.join(process.cwd(), 'src/lib/onboarding.ts'), 'utf8');
     const grading = readFileSync(path.join(process.cwd(), 'src/lib/grading/index.ts'), 'utf8');
-
-    const anthropicPanelAt = wizard.indexOf('testId="wizard-anthropic-key"');
-    expect(anthropicPanelAt).toBeGreaterThan(-1);
-    const cloudGate = wizard.lastIndexOf("snapshot.aiMode === 'cloud'", anthropicPanelAt);
-    expect(cloudGate).toBeGreaterThan(-1);
-    expect(wizard.slice(cloudGate, anthropicPanelAt)).not.toMatch(/cloud-openai/);
-    expect(wizard).toMatch(/snapshot\.aiMode === 'cloud-openai'/);
 
     expect(wizard).toMatch(/type="password"/);
     expect(wizard).toMatch(/autoComplete="off"/);
@@ -364,8 +349,6 @@ describe('onboarding generate graph', () => {
     expect(flags).toMatch(
       /anthropicWriteBlocked: envStoreSecretWriteBlocked\('ANTHROPIC_API_KEY'\)/,
     );
-    expect(wizard).toMatch(/liveTest=\{snapshot\.anthropicLiveTest\}/);
-    expect(wizard).toMatch(/writeBlocked=\{snapshot\.anthropicWriteBlocked\}/);
     expect(wizard).not.toMatch(/present && !configured/);
     expect(flags).not.toMatch(/ANTHROPIC_API_KEY: env\.ANTHROPIC_API_KEY/);
 

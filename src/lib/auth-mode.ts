@@ -20,37 +20,7 @@ export const AUTH_MODES = ['password', 'magic-link', 'local-otp'] as const;
 export type AuthMode = (typeof AUTH_MODES)[number];
 
 export const MAIL_TRANSPORTS = ['auto', 'resend', 'smtp', 'outbox'] as const;
-export type MailTransportSetting = (typeof MAIL_TRANSPORTS)[number];
 export type ResolvedMailTransport = 'resend' | 'smtp' | 'outbox';
-
-export function parseAuthMode(value: unknown): AuthMode | undefined {
-  if (value === 'password' || value === 'magic-link' || value === 'local-otp') return value;
-  return undefined;
-}
-
-/** Returns a supported auth mode, defaulting unknown values to magic-link. */
-export function resolveAuthMode(value: unknown): AuthMode {
-  return parseAuthMode(value) ?? 'magic-link';
-}
-
-export function parseMailTransport(value: unknown): MailTransportSetting | undefined {
-  if (value === 'auto' || value === 'resend' || value === 'smtp' || value === 'outbox') {
-    return value;
-  }
-  return undefined;
-}
-
-export function isPasswordAuth(mode: AuthMode): boolean {
-  return mode === 'password';
-}
-
-export function usesEmailChallenge(mode: AuthMode): boolean {
-  return mode === 'magic-link' || mode === 'local-otp';
-}
-
-export function usesLocalOtp(mode: AuthMode): boolean {
-  return mode === 'local-otp';
-}
 
 export function usesMagicLink(mode: AuthMode): boolean {
   return mode === 'magic-link';

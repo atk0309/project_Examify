@@ -40,12 +40,10 @@ import {
   previewOnboardingEmit,
   localTransportForOnboardingAiMode,
   providerForOnboardingAiMode,
-  publicDryRun,
   renameOnboardingSubject,
   saveOnboardingState,
   skipOnboarding,
   SUBJECT_LABEL_MAX,
-  validateOnboardingIr,
 } from '@/lib/onboarding';
 import {
   SUBJECT_ICON_OPTIONS,
@@ -349,19 +347,6 @@ export async function setReplaceSampleAction(
   return { ok: true, snapshot: await snapshot(gate.householdId) };
 }
 
-export async function validateOnboardingAction(): Promise<
-  { ok: true; snapshot: OnboardingSnapshot } | OnboardingActionError
-> {
-  const gate = await requireOnboardingAdmin();
-  if (!gate.ok) return gate;
-  const replaceSample = getHouseholdOnboarding(gate.householdId).state.replaceSample === true;
-  const result = validateOnboardingIr(replaceSample);
-  if (!result.ok) {
-    return { ok: false, reason: 'invalid', issues: result.issues };
-  }
-  return { ok: true, snapshot: await snapshot(gate.householdId) };
-}
-
 export async function previewOnboardingEmitAction(): Promise<
   | {
       ok: true;
@@ -388,7 +373,7 @@ export async function previewOnboardingEmitAction(): Promise<
   return {
     ok: true,
     snapshot: await snapshot(gate.householdId),
-    dryRun: publicDryRun(preview),
+    dryRun: preview.dryRun,
     authorPreview: preview.authorPreview,
   };
 }

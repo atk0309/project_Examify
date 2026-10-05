@@ -33,6 +33,66 @@ export function EnvKeyPanel({
   const showField = canMutate && (!configured || rotating);
   const inputId = `${testId}-input`;
 
+  const actions = (
+    <div className="wizard-secret-actions" data-testid={`${testId}-actions`}>
+      {showField ? (
+        <button
+          className="btn btn-primary"
+          type="submit"
+          disabled={busy || value.trim().length < 1}
+          data-testid={`${testId}-save`}
+        >
+          Save key
+        </button>
+      ) : null}
+      {rotating ? (
+        <button
+          className="btn btn-ghost"
+          type="button"
+          disabled={busy}
+          data-testid={`${testId}-cancel`}
+          onClick={() => {
+            setRotating(false);
+            setValue('');
+          }}
+        >
+          Cancel
+        </button>
+      ) : null}
+      {sentinel || !showField ? (
+        <button
+          className="btn btn-ghost"
+          type="button"
+          disabled={busy}
+          data-testid={`${testId}-rotate`}
+          onClick={() => setRotating(true)}
+        >
+          Rotate
+        </button>
+      ) : null}
+      {sentinel || !showField ? (
+        <button
+          className="btn btn-ghost"
+          type="button"
+          disabled={busy}
+          data-testid={`${testId}-clear`}
+          onClick={() => {
+            if (
+              !window.confirm(
+                `Clear the ${label} from this host’s .env store? Generate and grading that need this key fail closed until you set a new one. A restart will not brick the app.`,
+              )
+            ) {
+              return;
+            }
+            onClear();
+          }}
+        >
+          Clear
+        </button>
+      ) : null}
+    </div>
+  );
+
   return (
     <div className="wizard-secret" data-testid={testId}>
       <p className="login-fine">
@@ -75,92 +135,10 @@ export function EnvKeyPanel({
             data-testid={`${testId}-input`}
             onChange={(event) => setValue(event.target.value)}
           />
-          <div className="wizard-secret-actions" data-testid={`${testId}-actions`}>
-            <button
-              className="btn btn-primary"
-              type="submit"
-              disabled={busy || value.trim().length < 1}
-              data-testid={`${testId}-save`}
-            >
-              Save key
-            </button>
-            {rotating ? (
-              <button
-                className="btn btn-ghost"
-                type="button"
-                disabled={busy}
-                data-testid={`${testId}-cancel`}
-                onClick={() => {
-                  setRotating(false);
-                  setValue('');
-                }}
-              >
-                Cancel
-              </button>
-            ) : null}
-            {sentinel ? (
-              <button
-                className="btn btn-ghost"
-                type="button"
-                disabled={busy}
-                data-testid={`${testId}-rotate`}
-                onClick={() => setRotating(true)}
-              >
-                Rotate
-              </button>
-            ) : null}
-            {sentinel ? (
-              <button
-                className="btn btn-ghost"
-                type="button"
-                disabled={busy}
-                data-testid={`${testId}-clear`}
-                onClick={() => {
-                  if (
-                    !window.confirm(
-                      `Clear the ${label} from this host’s .env store? Generate and grading that need this key fail closed until you set a new one. A restart will not brick the app.`,
-                    )
-                  ) {
-                    return;
-                  }
-                  onClear();
-                }}
-              >
-                Clear
-              </button>
-            ) : null}
-          </div>
+          {actions}
         </form>
       ) : (
-        <div className="wizard-secret-actions" data-testid={`${testId}-actions`}>
-          <button
-            className="btn btn-ghost"
-            type="button"
-            disabled={busy}
-            data-testid={`${testId}-rotate`}
-            onClick={() => setRotating(true)}
-          >
-            Rotate
-          </button>
-          <button
-            className="btn btn-ghost"
-            type="button"
-            disabled={busy}
-            data-testid={`${testId}-clear`}
-            onClick={() => {
-              if (
-                !window.confirm(
-                  `Clear the ${label} from this host’s .env store? Generate and grading that need this key fail closed until you set a new one. A restart will not brick the app.`,
-                )
-              ) {
-                return;
-              }
-              onClear();
-            }}
-          >
-            Clear
-          </button>
-        </div>
+        actions
       )}
     </div>
   );

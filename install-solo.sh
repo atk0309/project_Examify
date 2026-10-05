@@ -11,6 +11,7 @@ usage() {
   printf '%s\n' 'Examify solo installer (Linux x64)' \
     'Usage: bash install-solo.sh [--root PATH] [--archive FILE] [--no-launch] [--no-shortcut]' \
     'Uses a release-pinned app, dependencies and private Node runtime. No sudo, Git or pnpm.' \
+    'Uses the matching archive beside this installer, or downloads that pinned release.' \
     'Keep the launcher terminal open; Ctrl+C stops Examify. Closing the browser alone does not stop it.'
 }
 while [ "$#" -gt 0 ]; do
@@ -55,6 +56,10 @@ chmod 700 -- "$ROOT"
 STAGE="$(mktemp -d "$ROOT/.install.XXXXXXXX")"
 trap 'rm -rf -- "$STAGE"' EXIT
 ASSET="examify-${VERSION}-linux-x64.tar.gz"
+if [ -z "$ARCHIVE" ]; then
+  LOCAL_ARCHIVE="$(dirname -- "${BASH_SOURCE[0]}")/$ASSET"
+  if [ -f "$LOCAL_ARCHIVE" ]; then ARCHIVE="$LOCAL_ARCHIVE"; fi
+fi
 if [ -n "$ARCHIVE" ]; then
   cp -- "$ARCHIVE" "$STAGE/package.tar.gz"
 else

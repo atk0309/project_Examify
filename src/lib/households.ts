@@ -1,6 +1,6 @@
 import 'server-only';
 import crypto from 'node:crypto';
-import { and, eq, gte, isNull } from 'drizzle-orm';
+import { and, eq, gte, isNull, sql } from 'drizzle-orm';
 import { db, schema } from './db';
 import { parseFamilies } from './families';
 import { isSoloMode } from './env';
@@ -516,8 +516,8 @@ export type RemoveMemberResult = { ok: true } | { ok: false; reason: 'forbidden'
 
 /**
  * Drop a household member. Does not delete the users row or their attempts.
- * Outstanding magic tokens for that email are marked consumed so a leftover
- * link cannot mint a new session; getSession also re-checks membership.
+ * Outstanding magic tokens are consumed and the session version is advanced
+ * atomically, so old cookies stay revoked even if the member joins again.
  */
 export function removeHouseholdMember(
   actorUserId: number,
@@ -532,6 +532,10 @@ export function removeHouseholdMember(
   db.transaction((tx) => {
     tx.delete(schema.householdMembers)
       .where(eq(schema.householdMembers.userId, targetUserId))
+      .run();
+    tx.update(schema.users)
+      .set({ sessionVersion: sql`${schema.users.sessionVersion} + 1` })
+      .where(eq(schema.users.id, targetUserId))
       .run();
     tx.update(schema.magicTokens)
       .set({ consumedAt: new Date(now) })

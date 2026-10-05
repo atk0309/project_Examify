@@ -17,7 +17,6 @@ import {
   setOnboardingOpenAiKeyAction,
   setReplaceSampleAction,
   skipOnboardingAction,
-  validateOnboardingAction,
   type OnboardingActionError,
 } from '@/actions/onboarding';
 import type { AuthMode } from '@/lib/auth-mode';
@@ -71,7 +70,6 @@ const STEPS = [
   { id: 'subjects', label: 'Subjects' },
   { id: 'files', label: 'Files' },
   { id: 'ai', label: 'AI setup' },
-  { id: 'validate', label: 'Validate' },
   { id: 'dry-run', label: 'Review' },
   { id: 'apply', label: 'Apply' },
   { id: 'ready', label: 'Ready' },
@@ -84,10 +82,8 @@ const STAGE_HELP: Record<StepId, string> = {
   files:
     'Your study files are saved here. They go to your chosen AI provider only when you select Generate; the original files are not included in the practice bank.',
   ai: 'Choose an AI provider to turn your study material into draft questions. Generation requires a configured provider.',
-  validate:
-    'Check that the draft can be used. This checks its format, not whether the answers are correct.',
   'dry-run':
-    'Read the draft questions and marking guidance, then review the planned file changes. Only Apply changes the practice bank.',
+    'Examify checks the draft format. Compare the questions and marking guidance with your study material; format checks do not prove the answers are correct. Only Apply changes the practice bank.',
   apply: 'Confirm the changes you reviewed. Your practice bank cannot be left empty.',
   ready: 'The sample stays available unless you explicitly replace its questions.',
 };
@@ -95,31 +91,31 @@ const STAGE_HELP: Record<StepId, string> = {
 const AI_COPY: Record<OnboardingAiMode, { title: string; body: string }> = {
   cloud: {
     title: 'Cloud (Anthropic)',
-    body: 'Uses ANTHROPIC_API_KEY from the env store (same .env as install.sh). Never NEXT_PUBLIC_*. Generate writes BankIR only.',
+    body: 'Generate draft questions with Anthropic using an API key. Usage may cost money.',
   },
   'cloud-openai': {
     title: 'Cloud (OpenAI)',
-    body: 'Uses OPENAI_API_KEY from the env store (not Next env.ts). Never NEXT_PUBLIC_*. Generate writes BankIR only.',
+    body: 'Generate draft questions with OpenAI using an API key. Usage may cost money.',
   },
   'claude-cli': {
     title: 'Claude Code (your Claude plan)',
-    body: 'Runs claude -p on this server with its own sign-in, so no API key. It gets no tools and none of this server’s secrets. Generate writes BankIR only.',
+    body: 'Use Claude Code installed and signed in on the computer running Examify. No API key needed.',
   },
   'codex-cli': {
     title: 'Codex (your ChatGPT plan)',
-    body: 'Runs codex exec on this server with its own sign-in, so no API key. Read-only, with commands and web search off, and none of this server’s secrets. Generate writes BankIR only.',
+    body: 'Use Codex installed and signed in on the computer running Examify. No API key needed.',
   },
   'local-agent': {
     title: 'Local endpoint',
-    body: 'Uses EXAMIFY_LLM_BASE_URL (OpenAI-compatible, e.g. Ollama or LM Studio) and the model named in EXAMIFY_LLM_MODEL. Generate writes BankIR only.',
+    body: 'Use a model you already run with Ollama, LM Studio or another compatible service. Set its URL and model in AI settings.',
   },
   'local-cli': {
     title: 'Local command',
-    body: 'Uses EXAMIFY_INGEST_LOCAL_CMD: your command reads a JSON request on stdin and prints BankIR. Generate writes BankIR only.',
+    body: 'Use a custom AI command configured by the person running this installation.',
   },
   'skip-stub': {
     title: 'Skip / test stub',
-    body: 'Deterministic fixture provider. No cloud key. Hand-authored BankIR can still skip generate.',
+    body: 'Creates example questions for testing. Use another provider for questions based on your study material.',
   },
 };
 
@@ -163,9 +159,9 @@ function errorCopy(error: OnboardingActionError, aiMode?: OnboardingAiMode | nul
     case 'empty_catalog':
       return error.message ?? EMPTY_AUTHORITATIVE_EMIT;
     case 'dry_run_required':
-      return 'Run a dry-run preview before applying.';
+      return 'Check the draft on Review before applying.';
     case 'stale_preview':
-      return 'Subjects or BankIR changed since the last dry-run. Preview again.';
+      return 'The draft changed since your review. Go back and check it again before applying.';
     case 'prune_confirm_required':
       return error.message ?? 'Confirm the leftover files that Apply will remove.';
     case 'emit_required':
@@ -173,9 +169,9 @@ function errorCopy(error: OnboardingActionError, aiMode?: OnboardingAiMode | nul
     case 'already_complete':
       return 'Content setup is already finished.';
     case 'missing_provider':
-      return 'Choose an AI mode before generating BankIR.';
+      return 'Choose an AI provider before generating questions.';
     case 'missing_key':
-      return 'This provider needs a real API key in the env store (fail closed — no stub).';
+      return 'Add an API key for this provider below, then try generating again.';
     case 'missing_local':
       return 'Local generate needs EXAMIFY_INGEST_LOCAL_CMD and/or EXAMIFY_LLM_BASE_URL.';
     case 'missing_cli':
@@ -207,9 +203,9 @@ function errorCopy(error: OnboardingActionError, aiMode?: OnboardingAiMode | nul
     case 'needs_confirm':
       return error.irRel
         ? generateIrWriteLabel(error.irRel, false, true)
-        : 'Replace the existing BankIR first.';
+        : 'Confirm replacing the existing draft first.';
     case 'already_committed':
-      return 'Generate already finished — review the new BankIR.';
+      return 'Generation already finished. Continue to review the draft questions.';
     case 'rate_limited':
       return 'Too many key updates. Try again in a bit.';
     case 'host_managed':
@@ -285,7 +281,6 @@ export function OnboardingWizard({
   const [step, setStep] = useState<StepId>('welcome');
   const [error, setError] = useState<string | null>(null);
   const [issues, setIssues] = useState<{ file: string; message: string }[]>([]);
-  const [validated, setValidated] = useState(false);
   const [dryRun, setDryRun] = useState<OnboardingDryRun | null>(null);
   const [authorPreview, setAuthorPreview] = useState<OnboardingAuthorPreview | null>(null);
   // Input changes invalidate a response even before a state update renders.
@@ -327,7 +322,6 @@ export function OnboardingWizard({
     reviewVersionRef.current += 1;
     setDryRun(null);
     setAuthorPreview(null);
-    setValidated(false);
     setApplyState({ status: 'idle' });
     return reviewVersionRef.current;
   };
@@ -396,12 +390,100 @@ export function OnboardingWizard({
     setStep(next);
   };
 
+  const reviewDraft = (enterReview = false) => {
+    if (generateBusy) return;
+    if (enterReview) go('dry-run');
+    const version = invalidateReview();
+    const navigationVersion = navigationVersionRef.current;
+    run(async () => {
+      const result = await previewOnboardingEmitAction();
+      if (
+        reviewVersionRef.current !== version ||
+        navigationVersionRef.current !== navigationVersion
+      )
+        return;
+      if (applyResult(result) && result.ok) {
+        setDryRun(result.dryRun);
+        setAuthorPreview(result.authorPreview);
+      }
+    }, false);
+  };
+
   const skip = () => {
     if (generateBusy) return;
     run(async () => {
       const result = await skipOnboardingAction();
       if (result) applyResult(result);
     });
+  };
+
+  // Render data stays separate from event handlers that update navigation refs.
+  const forward = (() => {
+    switch (step) {
+      case 'welcome':
+        return {
+          label: <>Get started {UIcon.arrow}</>,
+          testId: 'wizard-get-started',
+          disabled: holdWizard,
+        };
+      case 'subjects':
+      case 'files':
+        return {
+          label: 'Next',
+          testId: 'wizard-next',
+          disabled: navLocked || (step === 'subjects' && snapshot.subjects.length < 1),
+        };
+      case 'ai':
+        return {
+          label: 'Review questions',
+          testId: 'wizard-next',
+          disabled: navLocked,
+        };
+      case 'dry-run':
+        return {
+          label: 'Looks good',
+          testId: 'wizard-to-apply',
+          disabled: holdWizard || !dryRun || !authorPreview || !snapshot.hasDryRun,
+        };
+      case 'apply':
+        return applyState.status === 'success'
+          ? {
+              label: 'Next',
+              testId: 'wizard-to-ready',
+              disabled: holdWizard,
+            }
+          : null;
+      case 'ready':
+        return {
+          label: (
+            <>
+              {pending ? 'Opening…' : solo ? 'Back to practice' : 'Open dashboard'} {UIcon.arrow}
+            </>
+          ),
+          testId: 'wizard-finish',
+          disabled: holdWizard,
+        };
+    }
+  })();
+
+  const advance = () => {
+    switch (step) {
+      case 'ai':
+        reviewDraft(true);
+        break;
+      case 'dry-run':
+        setApplyState({ status: 'idle' });
+        go('apply');
+        break;
+      case 'ready':
+        run(async () => {
+          const result = await finishOnboardingAction();
+          if (result) applyResult(result);
+        });
+        break;
+      default:
+        go(STEPS[stepIndex + 1]!.id);
+    }
   };
 
   return (
@@ -555,21 +637,14 @@ export function OnboardingWizard({
                     applyResult(await setOnboardingAiModeAction(data));
                   })
                 }
-                onAnthropicKey={async (data) => {
+                onKey={async (provider, data) => {
                   invalidateReview();
                   try {
-                    const result = await setOnboardingAnthropicKeyAction(data);
-                    return applyResult(result);
-                  } catch (caught) {
-                    if (caught && typeof caught === 'object' && 'digest' in caught) throw caught;
-                    setError('Something went wrong.');
-                    return false;
-                  }
-                }}
-                onOpenAiKey={async (data) => {
-                  invalidateReview();
-                  try {
-                    const result = await setOnboardingOpenAiKeyAction(data);
+                    const action =
+                      provider === 'anthropic'
+                        ? setOnboardingAnthropicKeyAction
+                        : setOnboardingOpenAiKeyAction;
+                    const result = await action(data);
                     return applyResult(result);
                   } catch (caught) {
                     if (caught && typeof caught === 'object' && 'digest' in caught) throw caught;
@@ -614,7 +689,7 @@ export function OnboardingWizard({
                     }
                   })();
                 }}
-                onGoValidate={() => go('validate')}
+                onGoReview={() => reviewDraft(true)}
                 onToggleReplace={toggleReplaceSample}
                 onGenerate={(subjectIds) => {
                   if (generateBusy || subjectIds.length === 0) return;
@@ -765,27 +840,6 @@ export function OnboardingWizard({
               />
             ) : null}
 
-            {step === 'validate' ? (
-              <ValidateStep
-                dataDirDisplay={snapshot.dataDirDisplay}
-                pending={holdWizard}
-                validated={validated}
-                onValidate={() => {
-                  const version = invalidateReview();
-                  const navigationVersion = navigationVersionRef.current;
-                  run(async () => {
-                    const result = await validateOnboardingAction();
-                    if (
-                      reviewVersionRef.current !== version ||
-                      navigationVersionRef.current !== navigationVersion
-                    )
-                      return;
-                    if (applyResult(result)) setValidated(true);
-                  }, false);
-                }}
-              />
-            ) : null}
-
             {step === 'dry-run' ? (
               <DryRunStep
                 snapshot={snapshot}
@@ -793,22 +847,7 @@ export function OnboardingWizard({
                 dryRun={dryRun}
                 authorPreview={authorPreview}
                 onToggleReplace={toggleReplaceSample}
-                onPreview={() => {
-                  const version = invalidateReview();
-                  const navigationVersion = navigationVersionRef.current;
-                  run(async () => {
-                    const result = await previewOnboardingEmitAction();
-                    if (
-                      reviewVersionRef.current !== version ||
-                      navigationVersionRef.current !== navigationVersion
-                    )
-                      return;
-                    if (applyResult(result) && result.ok) {
-                      setDryRun(result.dryRun);
-                      setAuthorPreview(result.authorPreview);
-                    }
-                  }, false);
-                }}
+                onPreview={() => reviewDraft()}
               />
             ) : null}
 
@@ -908,96 +947,15 @@ export function OnboardingWizard({
                 </button>
               ) : null}
 
-              {step === 'welcome' ? (
+              {forward ? (
                 <button
                   type="button"
                   className="btn btn-primary"
-                  disabled={holdWizard}
-                  data-testid="wizard-get-started"
-                  onClick={() => go('subjects')}
+                  disabled={forward.disabled}
+                  data-testid={forward.testId}
+                  onClick={advance}
                 >
-                  Get started {UIcon.arrow}
-                </button>
-              ) : null}
-
-              {step === 'subjects' ? (
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  disabled={holdWizard || snapshot.subjects.length < 1}
-                  data-testid="wizard-next"
-                  onClick={() => go('files')}
-                >
-                  Next
-                </button>
-              ) : null}
-
-              {step === 'files' || step === 'ai' ? (
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  disabled={navLocked}
-                  data-testid="wizard-next"
-                  onClick={() => go(STEPS[stepIndex + 1]!.id)}
-                >
-                  Next
-                </button>
-              ) : null}
-
-              {step === 'validate' ? (
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  disabled={holdWizard || !validated}
-                  data-testid="wizard-next"
-                  onClick={() => go('dry-run')}
-                >
-                  Next
-                </button>
-              ) : null}
-
-              {step === 'dry-run' ? (
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  disabled={holdWizard || !dryRun || !authorPreview || !snapshot.hasDryRun}
-                  data-testid="wizard-to-apply"
-                  onClick={() => {
-                    setApplyState({ status: 'idle' });
-                    go('apply');
-                  }}
-                >
-                  Looks good
-                </button>
-              ) : null}
-
-              {step === 'apply' && applyState.status === 'success' ? (
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  disabled={holdWizard}
-                  data-testid="wizard-to-ready"
-                  onClick={() => go('ready')}
-                >
-                  Next
-                </button>
-              ) : null}
-
-              {step === 'ready' ? (
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  disabled={holdWizard}
-                  data-testid="wizard-finish"
-                  onClick={() =>
-                    run(async () => {
-                      const result = await finishOnboardingAction();
-                      if (result) applyResult(result);
-                    })
-                  }
-                >
-                  {pending ? 'Opening…' : solo ? 'Back to practice' : 'Open dashboard'}{' '}
-                  {UIcon.arrow}
+                  {forward.label}
                 </button>
               ) : null}
             </div>
@@ -1197,7 +1155,7 @@ function SubjectsStep({
                       onClick={() => {
                         if (
                           !window.confirm(
-                            `Delete subject “${subject.label}”? This removes its BankIR and study files. This cannot be undone.`,
+                            `Delete subject “${subject.label}”? This removes its draft questions and study files. This cannot be undone.`,
                           )
                         ) {
                           return;
@@ -1561,11 +1519,10 @@ function AiStep({
   irReady,
   onSeed,
   onSelect,
-  onAnthropicKey,
-  onOpenAiKey,
+  onKey,
   onGenerate,
   onCancel,
-  onGoValidate,
+  onGoReview,
   onToggleReplace,
 }: {
   snapshot: OnboardingSnapshot;
@@ -1577,16 +1534,26 @@ function AiStep({
   irReady: boolean;
   onSeed: (seed: number) => void;
   onSelect: (mode: OnboardingAiMode) => void;
-  onAnthropicKey: (data: FormData) => Promise<boolean>;
-  onOpenAiKey: (data: FormData) => Promise<boolean>;
+  onKey: (provider: 'anthropic' | 'openai', data: FormData) => Promise<boolean>;
   onGenerate: (subjectIds: string[]) => void;
   onCancel: () => void;
-  onGoValidate: () => void;
+  onGoReview: () => void;
   onToggleReplace: (enabled: boolean) => void;
 }) {
   const provider = snapshot.aiMode ? providerForOnboardingAiMode(snapshot.aiMode) : null;
   const busy = pending || generateBusy;
+  const keyProvider =
+    snapshot.aiMode === 'cloud'
+      ? 'anthropic'
+      : snapshot.aiMode === 'cloud-openai'
+        ? 'openai'
+        : null;
+  const anthropic = keyProvider === 'anthropic';
 
+  const batchIds = onboardingGenerateBatchIds(snapshot.subjects);
+  const batchOverwrites = onboardingGenerateOverwriteSubjects(snapshot.subjects, batchIds);
+  const sampleIdSubjects = onboardingSampleIdSubjects(snapshot.subjects, snapshot.sampleSubjects);
+  const sampleIdNames = sampleIdSubjects.map((subject) => `${subject.label} (${subject.id})`);
   return (
     <div className="wizard-panel" data-testid="wizard-ai">
       <p className="login-fine" data-testid="wizard-ai-store">
@@ -1608,8 +1575,8 @@ function AiStep({
       </p>
       {snapshot.aiModeFromInstaller && snapshot.aiMode ? (
         <p className="login-fine" data-testid="wizard-ai-installer">
-          The installer picked {AI_COPY[snapshot.aiMode].title} from what it found on this server
-          (EXAMIFY_AI_MODE). Pick another mode below to change it.
+          The installer picked {AI_COPY[snapshot.aiMode].title} from what it found on this server.
+          Pick another provider below to change it.
         </p>
       ) : null}
       <div className="wizard-modes" role="radiogroup" aria-label="AI setup mode">
@@ -1638,25 +1605,26 @@ function AiStep({
         })}
       </div>
 
-      {snapshot.aiMode === 'cloud' ? (
+      {keyProvider ? (
         <EnvKeyPanel
-          testId="wizard-anthropic-key"
-          label="Anthropic API key"
-          hostName="Anthropic"
-          configured={snapshot.anthropicConfigured}
-          liveTest={snapshot.anthropicLiveTest}
-          writeBlocked={snapshot.anthropicWriteBlocked}
+          key={keyProvider}
+          testId={anthropic ? 'wizard-anthropic-key' : 'wizard-openai-key'}
+          label={anthropic ? 'Anthropic API key' : 'OpenAI API key'}
+          hostName={anthropic ? 'Anthropic' : 'OpenAI'}
+          configured={anthropic ? snapshot.anthropicConfigured : snapshot.openaiConfigured}
+          liveTest={anthropic ? snapshot.anthropicLiveTest : snapshot.openaiLiveTest}
+          writeBlocked={anthropic ? snapshot.anthropicWriteBlocked : snapshot.openaiWriteBlocked}
           pending={busy}
           onSave={async (key) => {
             const data = new FormData();
             data.set('intent', 'set');
-            data.set('anthropicApiKey', key);
-            return onAnthropicKey(data);
+            data.set(anthropic ? 'anthropicApiKey' : 'openaiApiKey', key);
+            return onKey(keyProvider, data);
           }}
           onClear={() => {
             const data = new FormData();
             data.set('intent', 'clear');
-            onAnthropicKey(data);
+            onKey(keyProvider, data);
           }}
         />
       ) : null}
@@ -1687,253 +1655,192 @@ function AiStep({
         </p>
       ) : null}
 
-      {snapshot.aiMode === 'cloud-openai' ? (
-        <EnvKeyPanel
-          testId="wizard-openai-key"
-          label="OpenAI API key"
-          hostName="OpenAI"
-          configured={snapshot.openaiConfigured}
-          liveTest={snapshot.openaiLiveTest}
-          writeBlocked={snapshot.openaiWriteBlocked}
-          pending={busy}
-          onSave={async (key) => {
-            const data = new FormData();
-            data.set('intent', 'set');
-            data.set('openaiApiKey', key);
-            return onOpenAiKey(data);
-          }}
-          onClear={() => {
-            const data = new FormData();
-            data.set('intent', 'clear');
-            onOpenAiKey(data);
-          }}
-        />
-      ) : null}
-
       {provider ? (
         <div className="wizard-generate" data-testid="wizard-generate">
           <h2 className="wizard-subhead">Generate from local sources</h2>
-          <GeneratePanel
-            snapshot={snapshot}
-            provider={provider}
-            busy={busy}
-            generateBusy={generateBusy}
-            generateSeed={generateSeed}
-            generateRuns={generateRuns}
-            activeGenerateId={activeGenerateId}
-            irReady={irReady}
-            onSeed={onSeed}
-            onGenerate={onGenerate}
-            onCancel={onCancel}
-            onGoValidate={onGoValidate}
-            onToggleReplace={onToggleReplace}
-          />
+          <div className="wizard-generate-panel">
+            <PowerUserCommands
+              testId="wizard-cli-generate"
+              commands={onboardingGenerateAndEmitCli(
+                provider,
+                generateSeed,
+                snapshot.dataDirDisplay,
+                snapshot.aiMode ? localTransportForOnboardingAiMode(snapshot.aiMode) : null,
+              )}
+            />
+            {sampleIdSubjects.length > 0 ? (
+              <div
+                className="wizard-callout wizard-sample-ids"
+                data-testid="wizard-generate-sample-ids"
+              >
+                <p>
+                  {snapshot.replaceSample
+                    ? `Replacing sample-bank questions is on: questions generated for ${sampleIdNames.join(', ')} replace the matching sample questions when you apply.`
+                    : `${sampleIdNames.join(', ')} ${sampleIdSubjects.length === 1 ? 'uses the same id as a sample-bank subject' : 'use the same ids as sample-bank subjects'}, so generate refuses ${sampleIdSubjects.length === 1 ? 'it' : 'them'}: the questions would replace sample questions. Allow that here, or rename the subject in Subjects to keep both.`}
+                </p>
+                <ReplaceSampleCheckbox
+                  enabled={snapshot.replaceSample}
+                  pending={busy}
+                  onToggle={onToggleReplace}
+                  testId="wizard-generate-replace-sample"
+                />
+              </div>
+            ) : null}
+            <details className="wizard-details">
+              <summary>Advanced</summary>
+              <label className="wizard-advanced">
+                <span>Seed</span>
+                <input
+                  className="text-input"
+                  type="number"
+                  step={1}
+                  value={generateSeed}
+                  disabled={busy}
+                  aria-label="Generate seed"
+                  data-testid="wizard-generate-seed"
+                  onChange={(event) => onSeed(Number.parseInt(event.target.value, 10) || 0)}
+                />
+              </label>
+            </details>
+            <div className="wizard-generate-actions">
+              {batchOverwrites.length > 0 ? (
+                <details className="wizard-details" data-testid="wizard-generate-overwrite-batch">
+                  <summary>
+                    {onboardingIrOverwriteConfirmMessage(batchOverwrites) ??
+                      generateIrWriteLabel(
+                        onboardingSubjectIrRel(batchOverwrites[0]!.id),
+                        false,
+                        true,
+                      )}
+                  </summary>
+                  <ul className="wizard-issues">
+                    {batchOverwrites.map((subject) => (
+                      <li key={subject.id}>
+                        {subject.label} ·{' '}
+                        {generateIrWriteLabel(onboardingSubjectIrRel(subject.id), false, true)}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              ) : null}
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={busy || batchIds.length < 1}
+                data-testid="wizard-generate-all"
+                onClick={() => onGenerate(batchIds)}
+              >
+                {generateBusy ? 'Generating…' : 'Generate all'}
+              </button>
+              {generateBusy ? (
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  data-testid="wizard-generate-cancel"
+                  onClick={onCancel}
+                >
+                  Cancel
+                </button>
+              ) : null}
+            </div>
+
+            {snapshot.subjects.length === 0 ? (
+              <p className="wizard-empty" data-testid="wizard-generate-empty">
+                Add a subject first. Generate reads PDFs, notes.txt, and other local sources.
+              </p>
+            ) : (
+              <ul className="wizard-list">
+                {snapshot.subjects.map((subject) => {
+                  const run = generateRuns[subject.id];
+                  const active = activeGenerateId === subject.id;
+                  return (
+                    <li key={subject.id} className="wizard-generate-row">
+                      <div className="wizard-card">
+                        <span className="wizard-card-copy">
+                          <strong>{subject.label}</strong>
+                          <span className="invite-meta">{subject.id}</span>
+                        </span>
+                        <button
+                          type="button"
+                          className="btn btn-ghost"
+                          disabled={busy || subject.generateSources.length < 1}
+                          data-testid={`wizard-generate-${subject.id}`}
+                          onClick={() => onGenerate([subject.id])}
+                        >
+                          {active ? 'Generating…' : 'Generate questions'}
+                        </button>
+                      </div>
+                      {subject.hasIr ? (
+                        <p
+                          className="login-fine"
+                          data-testid={`wizard-generate-overwrite-${subject.id}`}
+                        >
+                          {generateIrWriteLabel(onboardingSubjectIrRel(subject.id), false, true)}
+                        </p>
+                      ) : null}
+                      {subject.generateSources.length === 0 ? (
+                        <p
+                          className="login-fine"
+                          data-testid={`wizard-generate-no-sources-${subject.id}`}
+                        >
+                          {subject.hasIr
+                            ? 'No study files yet. You can review the existing draft without generating again.'
+                            : 'No generate sources yet. Add a PDF or a notes.txt (or other CLI source) for this subject.'}
+                        </p>
+                      ) : (
+                        <div className="wizard-generate-sources">
+                          <p className="login-fine">
+                            {subject.generateSources.length} source
+                            {subject.generateSources.length === 1 ? '' : 's'}
+                          </p>
+                          <ul
+                            className="wizard-issues"
+                            data-testid={`wizard-generate-sources-${subject.id}`}
+                          >
+                            {subject.generateSources.map((rel) => (
+                              <li key={rel}>{rel}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      {active ? (
+                        <p
+                          className="login-fine"
+                          data-testid={`wizard-generate-progress-${subject.id}`}
+                        >
+                          {subject.id} · {provider} · seed {generateSeed} ·{' '}
+                          {subject.generateSources.length} source
+                          {subject.generateSources.length === 1 ? '' : 's'} · calling provider…
+                        </p>
+                      ) : null}
+                      {run ? <GenerateRunSummary run={run} /> : null}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+
+            {irReady ? (
+              <p className="wizard-callout" data-testid="wizard-ir-ready">
+                Draft questions are ready to review.{' '}
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  disabled={busy}
+                  data-testid="wizard-generate-to-review"
+                  onClick={onGoReview}
+                >
+                  Review questions
+                </button>
+              </p>
+            ) : null}
+          </div>
         </div>
       ) : (
         <p className="wizard-callout" data-testid="wizard-generate-choose-mode">
-          Choose a mode to generate BankIR, or continue if you already authored IR by hand.
+          Choose an AI provider to generate questions, or continue to review an existing draft.
         </p>
       )}
-    </div>
-  );
-}
-
-function GeneratePanel({
-  snapshot,
-  provider,
-  busy,
-  generateBusy,
-  generateSeed,
-  generateRuns,
-  activeGenerateId,
-  irReady,
-  onSeed,
-  onGenerate,
-  onCancel,
-  onGoValidate,
-  onToggleReplace,
-}: {
-  snapshot: OnboardingSnapshot;
-  provider: NonNullable<ReturnType<typeof providerForOnboardingAiMode>>;
-  busy: boolean;
-  generateBusy: boolean;
-  generateSeed: number;
-  generateRuns: Record<string, OnboardingGenerateResult>;
-  activeGenerateId: string | null;
-  irReady: boolean;
-  onSeed: (seed: number) => void;
-  onGenerate: (subjectIds: string[]) => void;
-  onCancel: () => void;
-  onGoValidate: () => void;
-  onToggleReplace: (enabled: boolean) => void;
-}) {
-  const batchIds = onboardingGenerateBatchIds(snapshot.subjects);
-  const batchOverwrites = onboardingGenerateOverwriteSubjects(snapshot.subjects, batchIds);
-  const sampleIdSubjects = onboardingSampleIdSubjects(snapshot.subjects, snapshot.sampleSubjects);
-  const sampleIdNames = sampleIdSubjects.map((subject) => `${subject.label} (${subject.id})`);
-  return (
-    <div className="wizard-generate-panel">
-      <PowerUserCommands
-        testId="wizard-cli-generate"
-        commands={onboardingGenerateAndEmitCli(
-          provider,
-          generateSeed,
-          snapshot.dataDirDisplay,
-          snapshot.aiMode ? localTransportForOnboardingAiMode(snapshot.aiMode) : null,
-        )}
-      />
-      {sampleIdSubjects.length > 0 ? (
-        <div className="wizard-callout wizard-sample-ids" data-testid="wizard-generate-sample-ids">
-          <p>
-            {snapshot.replaceSample
-              ? `Replacing sample-bank questions is on: questions generated for ${sampleIdNames.join(', ')} replace the matching sample questions when you apply.`
-              : `${sampleIdNames.join(', ')} ${sampleIdSubjects.length === 1 ? 'uses the same id as a sample-bank subject' : 'use the same ids as sample-bank subjects'}, so generate refuses ${sampleIdSubjects.length === 1 ? 'it' : 'them'}: the questions would replace sample questions. Allow that here, or rename the subject in Subjects to keep both.`}
-          </p>
-          <ReplaceSampleCheckbox
-            enabled={snapshot.replaceSample}
-            pending={busy}
-            onToggle={onToggleReplace}
-            testId="wizard-generate-replace-sample"
-          />
-        </div>
-      ) : null}
-      <details className="wizard-details">
-        <summary>Advanced</summary>
-        <label className="wizard-advanced">
-          <span>Seed</span>
-          <input
-            className="text-input"
-            type="number"
-            step={1}
-            value={generateSeed}
-            disabled={busy}
-            aria-label="Generate seed"
-            data-testid="wizard-generate-seed"
-            onChange={(event) => onSeed(Number.parseInt(event.target.value, 10) || 0)}
-          />
-        </label>
-      </details>
-      <div className="wizard-generate-actions">
-        {batchOverwrites.length > 0 ? (
-          <details className="wizard-details" data-testid="wizard-generate-overwrite-batch">
-            <summary>
-              {onboardingIrOverwriteConfirmMessage(batchOverwrites) ??
-                generateIrWriteLabel(onboardingSubjectIrRel(batchOverwrites[0]!.id), false, true)}
-            </summary>
-            <ul className="wizard-issues">
-              {batchOverwrites.map((subject) => (
-                <li key={subject.id}>
-                  {subject.label} ·{' '}
-                  {generateIrWriteLabel(onboardingSubjectIrRel(subject.id), false, true)}
-                </li>
-              ))}
-            </ul>
-          </details>
-        ) : null}
-        <button
-          type="button"
-          className="btn btn-primary"
-          disabled={busy || batchIds.length < 1}
-          data-testid="wizard-generate-all"
-          onClick={() => onGenerate(batchIds)}
-        >
-          {generateBusy ? 'Generating…' : 'Generate all'}
-        </button>
-        {generateBusy ? (
-          <button
-            type="button"
-            className="btn btn-ghost"
-            data-testid="wizard-generate-cancel"
-            onClick={onCancel}
-          >
-            Cancel
-          </button>
-        ) : null}
-      </div>
-
-      {snapshot.subjects.length === 0 ? (
-        <p className="wizard-empty" data-testid="wizard-generate-empty">
-          Add a subject first. Generate reads PDFs, notes.txt, and other local sources.
-        </p>
-      ) : (
-        <ul className="wizard-list">
-          {snapshot.subjects.map((subject) => {
-            const run = generateRuns[subject.id];
-            const active = activeGenerateId === subject.id;
-            return (
-              <li key={subject.id} className="wizard-generate-row">
-                <div className="wizard-card">
-                  <span className="wizard-card-copy">
-                    <strong>{subject.label}</strong>
-                    <span className="invite-meta">{subject.id}</span>
-                  </span>
-                  <button
-                    type="button"
-                    className="btn btn-ghost"
-                    disabled={busy || subject.generateSources.length < 1}
-                    data-testid={`wizard-generate-${subject.id}`}
-                    onClick={() => onGenerate([subject.id])}
-                  >
-                    {active ? 'Generating…' : 'Generate questions'}
-                  </button>
-                </div>
-                {subject.hasIr ? (
-                  <p className="login-fine" data-testid={`wizard-generate-overwrite-${subject.id}`}>
-                    {generateIrWriteLabel(onboardingSubjectIrRel(subject.id), false, true)}
-                  </p>
-                ) : null}
-                {subject.generateSources.length === 0 ? (
-                  <p
-                    className="login-fine"
-                    data-testid={`wizard-generate-no-sources-${subject.id}`}
-                  >
-                    {subject.hasIr
-                      ? 'No generate sources yet (PDFs, notes.txt, or other files). Hand-authored BankIR can skip generate.'
-                      : 'No generate sources yet. Add a PDF or a notes.txt (or other CLI source) for this subject.'}
-                  </p>
-                ) : (
-                  <div className="wizard-generate-sources">
-                    <p className="login-fine">
-                      {subject.generateSources.length} source
-                      {subject.generateSources.length === 1 ? '' : 's'}
-                    </p>
-                    <ul
-                      className="wizard-issues"
-                      data-testid={`wizard-generate-sources-${subject.id}`}
-                    >
-                      {subject.generateSources.map((rel) => (
-                        <li key={rel}>{rel}</li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-                {active ? (
-                  <p className="login-fine" data-testid={`wizard-generate-progress-${subject.id}`}>
-                    {subject.id} · {provider} · seed {generateSeed} ·{' '}
-                    {subject.generateSources.length} source
-                    {subject.generateSources.length === 1 ? '' : 's'} · calling provider…
-                  </p>
-                ) : null}
-                {run ? <GenerateRunSummary run={run} /> : null}
-              </li>
-            );
-          })}
-        </ul>
-      )}
-
-      {irReady ? (
-        <p className="wizard-callout" data-testid="wizard-ir-ready">
-          IR ready — continue to validate{' '}
-          <button
-            type="button"
-            className="btn btn-ghost"
-            data-testid="wizard-generate-to-validate"
-            onClick={onGoValidate}
-          >
-            Validate
-          </button>
-        </p>
-      ) : null}
     </div>
   );
 }
@@ -2000,61 +1907,6 @@ function ReplaceSampleCheckbox({
   );
 }
 
-function ReplaceSampleToggle({
-  enabled,
-  pending,
-  onToggle,
-}: {
-  enabled: boolean;
-  pending: boolean;
-  onToggle: (enabled: boolean) => void;
-}) {
-  return (
-    <details className="wizard-details">
-      <summary>Advanced</summary>
-      <ReplaceSampleCheckbox
-        enabled={enabled}
-        pending={pending}
-        onToggle={onToggle}
-        testId="wizard-replace-sample"
-      />
-    </details>
-  );
-}
-
-function ValidateStep({
-  dataDirDisplay,
-  pending,
-  validated,
-  onValidate,
-}: {
-  dataDirDisplay: string;
-  pending: boolean;
-  validated: boolean;
-  onValidate: () => void;
-}) {
-  return (
-    <div className="wizard-panel" data-testid="wizard-validate-panel">
-      <PowerUserCommands testId="wizard-cli" commands={onboardingIngestCli(dataDirDisplay)} />
-      <button
-        type="button"
-        className="btn btn-primary wizard-validate-btn"
-        disabled={pending}
-        data-testid="wizard-validate"
-        onClick={onValidate}
-      >
-        {pending ? 'Checking…' : validated ? 'Re-run' : 'Validate'}
-      </button>
-      {validated ? (
-        <p className="wizard-callout" data-testid="wizard-validate-ok">
-          The draft format is valid. Continue to review the changes; this does not verify answer
-          accuracy.
-        </p>
-      ) : null}
-    </div>
-  );
-}
-
 function DryRunStep({
   snapshot,
   pending,
@@ -2077,13 +1929,17 @@ function DryRunStep({
     <div className="wizard-panel" data-testid="wizard-dry-run">
       <PowerUserCommands
         testId="wizard-cli-emit"
-        commands={onboardingIngestCli(snapshot.dataDirDisplay).slice(1)}
+        commands={onboardingIngestCli(snapshot.dataDirDisplay)}
       />
-      <ReplaceSampleToggle
-        enabled={snapshot.replaceSample}
-        pending={pending}
-        onToggle={onToggleReplace}
-      />
+      <details className="wizard-details">
+        <summary>Advanced</summary>
+        <ReplaceSampleCheckbox
+          enabled={snapshot.replaceSample}
+          pending={pending}
+          onToggle={onToggleReplace}
+          testId="wizard-replace-sample"
+        />
+      </details>
       <button
         type="button"
         className="btn btn-ghost"
@@ -2091,7 +1947,7 @@ function DryRunStep({
         data-testid="wizard-preview"
         onClick={onPreview}
       >
-        {pending ? 'Previewing…' : dryRun ? 'Re-run review' : 'Review plan'}
+        {pending ? 'Checking draft…' : 'Refresh review'}
       </button>
       {dryRun ? (
         <div data-testid="wizard-dry-run-summary">

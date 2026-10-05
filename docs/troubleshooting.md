@@ -11,8 +11,8 @@ to troubleshoot a packaged installation. Keep your installation folder intact.
 Preview artifacts expire. A missing artifact or release-download error does not
 mean your computer needs developer tools. Download a complete matching artifact
 from a successful run, extract it, and keep its installer and archive together.
-On Linux, pass the archive filename with `--archive`; on Windows, keep
-`install.cmd`, `install.ps1` and the ZIP together.
+On Linux, keep `install-solo.sh` and the matching archive together; on Windows,
+keep `install.cmd`, `install.ps1` and the ZIP together.
 
 For a checksum mismatch, download that same complete artifact again. Do not edit
 the checksum, mix files from different runs or unpack and launch unchecked files.
