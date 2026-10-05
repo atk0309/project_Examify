@@ -1799,7 +1799,7 @@ describe('wizard accessibility', () => {
     expect(openai).toHaveFocus();
     expect(openai).not.toBeDisabled();
     expect(openai).toHaveAttribute('aria-disabled', 'true');
-    expect(screen.getByRole('status')).toHaveTextContent('Saving changes');
+    expect(screen.getByRole('status')).toHaveTextContent('Working');
     fireEvent.click(screen.getByTestId('wizard-ai-codex-cli'));
     expect(setOnboardingAiModeAction).toHaveBeenCalledTimes(1);
     await act(async () => resolve({ ok: false, reason: 'rate_limited' }));
