@@ -16,6 +16,7 @@ const previewOnboardingEmitAction = vi.fn();
 const setOnboardingAiModeAction = vi.fn();
 const setOnboardingAnthropicKeyAction = vi.fn();
 const setOnboardingOpenAiKeyAction = vi.fn();
+const finishOnboardingAction = vi.fn();
 const generateOnboardingSubjectAction = vi.fn();
 const setReplaceSampleAction = vi.fn();
 const attachOnboardingPdfAction = vi.fn();
@@ -26,7 +27,7 @@ vi.mock('@/actions/onboarding', () => ({
   attachOnboardingPdfAction: (...args: unknown[]) => attachOnboardingPdfAction(...args),
   deleteOnboardingSubjectAction: vi.fn(),
   detachOnboardingPdfAction: vi.fn(),
-  finishOnboardingAction: vi.fn(),
+  finishOnboardingAction: (...args: unknown[]) => finishOnboardingAction(...args),
   generateOnboardingSubjectAction: (...args: unknown[]) => generateOnboardingSubjectAction(...args),
   previewOnboardingEmitAction: (...args: unknown[]) => previewOnboardingEmitAction(...args),
   renameOnboardingSubjectAction: vi.fn(),
@@ -122,6 +123,7 @@ describe('OnboardingWizard majors UI', () => {
     setOnboardingAiModeAction.mockReset();
     setOnboardingAnthropicKeyAction.mockReset();
     setOnboardingOpenAiKeyAction.mockReset();
+    finishOnboardingAction.mockReset();
     generateOnboardingSubjectAction.mockReset();
     setReplaceSampleAction.mockReset();
     attachOnboardingPdfAction.mockReset();
@@ -498,7 +500,7 @@ describe('OnboardingWizard majors UI', () => {
     expect(applyOnboardingEmitAction).not.toHaveBeenCalled();
   });
 
-  it('shows live bank subject names on Ready', async () => {
+  it('shows live bank subject names on Ready and finishes only on explicit click', async () => {
     previewOnboardingEmitAction.mockResolvedValue({
       ok: true,
       snapshot: snapshot({ hasDryRun: true }),
@@ -543,6 +545,9 @@ describe('OnboardingWizard majors UI', () => {
     expect(screen.getByTestId('wizard-ready-subject-biology')).toHaveTextContent(
       'Biology (biology) · 6 questions',
     );
+    expect(finishOnboardingAction).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId('wizard-finish'));
+    await waitFor(() => expect(finishOnboardingAction).toHaveBeenCalledTimes(1));
   });
 
   it('reserves sticky-footer clearance for AI secret actions', () => {

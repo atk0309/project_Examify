@@ -253,7 +253,7 @@ test('first-run bootstrap creates the admin without Turnstile', async ({ page })
   await expect(page.getByTestId('wizard-rail')).toBeHidden();
   await page.getByTestId('wizard-get-started').click();
   await expect(page.getByTestId('wizard-subjects')).toBeVisible();
-  await expect(page.getByTestId('wizard-progress')).toContainText('Step 2 of 8');
+  await expect(page.getByTestId('wizard-progress')).toContainText('Step 2 of 7');
   await expect(page.getByTestId('wizard-progress')).toContainText('Subjects');
   if ((await page.getByTestId('wizard-add-subject').count()) === 0) {
     await page.getByRole('button', { name: 'Add a subject' }).click();

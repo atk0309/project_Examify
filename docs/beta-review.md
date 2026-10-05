@@ -122,7 +122,7 @@ were checked against source, tests, documentation and dynamic/string references.
 Applied findings, ranked by net reduction from that first pass:
 
 1. **reuse / yagni:** shared wizard navigation and provider-key controls; removed
-   two forwarding components. `OnboardingWizard.tsx`, `EnvKeyPanel.tsx`: **−119**.
+   two forwarding components. `OnboardingWizard.tsx`, `EnvKeyPanel.tsx`: **−111**.
 2. **delete:** obsolete auth/legacy selectors, unused lookups, types, metadata and
    class-name helper; retained active validation and SQLite boundaries: **−97**.
 3. **reuse:** one CAPTCHA script component and one field-error component across
@@ -136,8 +136,8 @@ Applied findings, ranked by net reduction from that first pass:
    of an unused restore-links CLI: **−23**.
 7. **delete:** unused CSS tokens and overridden rules: **−12**.
 
-**Net: −463 additional production lines, −2 dependencies.** Against the original
-checkout, production code is **459 lines smaller**, including new shared components
+**Net: −455 additional production lines, −2 dependencies.** Against the original
+checkout, production code is **451 lines smaller**, including new shared components
 and the earlier reliability fixes. Production counts include `src/`, `scripts/`,
 `tools/` and the changed installer. Test, documentation and lockfile lines are separate.
 

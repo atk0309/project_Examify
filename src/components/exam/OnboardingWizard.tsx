@@ -417,6 +417,7 @@ export function OnboardingWizard({
     });
   };
 
+  // Render data stays separate from event handlers that update navigation refs.
   const forward = (() => {
     switch (step) {
       case 'welcome':
@@ -424,7 +425,6 @@ export function OnboardingWizard({
           label: <>Get started {UIcon.arrow}</>,
           testId: 'wizard-get-started',
           disabled: holdWizard,
-          onClick: () => go('subjects'),
         };
       case 'subjects':
       case 'files':
@@ -432,24 +432,18 @@ export function OnboardingWizard({
           label: 'Next',
           testId: 'wizard-next',
           disabled: navLocked || (step === 'subjects' && snapshot.subjects.length < 1),
-          onClick: () => go(STEPS[stepIndex + 1]!.id),
         };
       case 'ai':
         return {
           label: 'Review questions',
           testId: 'wizard-next',
           disabled: navLocked,
-          onClick: () => reviewDraft(true),
         };
       case 'dry-run':
         return {
           label: 'Looks good',
           testId: 'wizard-to-apply',
           disabled: holdWizard || !dryRun || !authorPreview || !snapshot.hasDryRun,
-          onClick: () => {
-            setApplyState({ status: 'idle' });
-            go('apply');
-          },
         };
       case 'apply':
         return applyState.status === 'success'
@@ -457,7 +451,6 @@ export function OnboardingWizard({
               label: 'Next',
               testId: 'wizard-to-ready',
               disabled: holdWizard,
-              onClick: () => go('ready'),
             }
           : null;
       case 'ready':
@@ -469,14 +462,29 @@ export function OnboardingWizard({
           ),
           testId: 'wizard-finish',
           disabled: holdWizard,
-          onClick: () =>
-            run(async () => {
-              const result = await finishOnboardingAction();
-              if (result) applyResult(result);
-            }),
         };
     }
   })();
+
+  const advance = () => {
+    switch (step) {
+      case 'ai':
+        reviewDraft(true);
+        break;
+      case 'dry-run':
+        setApplyState({ status: 'idle' });
+        go('apply');
+        break;
+      case 'ready':
+        run(async () => {
+          const result = await finishOnboardingAction();
+          if (result) applyResult(result);
+        });
+        break;
+      default:
+        go(STEPS[stepIndex + 1]!.id);
+    }
+  };
 
   return (
     <div className="screen wizard wizard-shell" data-testid="onboarding-wizard">
@@ -945,7 +953,7 @@ export function OnboardingWizard({
                   className="btn btn-primary"
                   disabled={forward.disabled}
                   data-testid={forward.testId}
-                  onClick={forward.onClick}
+                  onClick={advance}
                 >
                   {forward.label}
                 </button>
