@@ -22,6 +22,7 @@ updates:
       next-runtime:
         patterns:
           - next
+          - eslint-config-next
           - '@next/*'
           - react
           - react-dom
@@ -71,8 +72,6 @@ updates:
           - tsx
           - '@types/*'
           - zod
-          - clsx
-          - tailwind-merge
   - package-ecosystem: github-actions
     directory: '/'
     schedule:

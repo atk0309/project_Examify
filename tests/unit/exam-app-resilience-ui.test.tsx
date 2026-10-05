@@ -2,7 +2,7 @@
 
 import '@testing-library/jest-dom/vitest';
 import { Component, type ReactNode } from 'react';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RecordAttemptInput, RecordAttemptResult } from '@/actions/recordAttempt';
 import type { SaveExamProgressInput } from '@/actions/saveExamProgress';
@@ -865,5 +865,186 @@ describe('personal study entry', () => {
   it('does not offer a starter when no suitable paper exists', () => {
     renderApp({ solo: true, questionBank: {}, subjects: [] });
     expect(screen.queryByTestId('solo-quick-start')).not.toBeInTheDocument();
+  });
+});
+
+describe('ExamApp accessible selection and navigation', () => {
+  beforeEach(() => {
+    recordAttempt.mockImplementation(defaultRecordAttempt);
+  });
+
+  it('uses a named native radio group for difficulties and exposes the selected option', async () => {
+    renderApp({
+      questionBank: {
+        ...bank,
+        maths: { easy: [mcq('m1')], medium: [mcq('m2')], hard: [mcq('m3')] },
+      },
+    });
+    // Initial loading does not unexpectedly move focus into the page.
+    expect(document.body).toHaveFocus();
+    fireEvent.click(screen.getByTestId('subject-card-maths'));
+    expect(screen.getByRole('heading', { name: 'Choose a difficulty' })).toHaveFocus();
+    const group = screen.getByRole('radiogroup', { name: 'Choose a difficulty' });
+    const options = within(group).getAllByRole('radio');
+    expect(options).toHaveLength(3);
+    expect(options[0]).toHaveAttribute('type', 'radio');
+    expect(options[0]).toBeChecked();
+    expect(options[1]).not.toBeChecked();
+    expect(options[0]).toHaveAccessibleName('Easy');
+    expect(options[0]).toHaveAccessibleDescription();
+    expect(new Set(options.map((option) => option.getAttribute('name'))).size).toBe(1);
+
+    options[1]!.focus();
+    fireEvent.click(options[1]!);
+    expect(options[1]).toBeChecked();
+    expect(options[0]).not.toBeChecked();
+    expect(options[1]).toHaveFocus();
+    fireEvent.click(screen.getByTestId('start-exam'));
+    await settle();
+    expect(beginExamSession.mock.lastCall?.[0]).toMatchObject({
+      difficulty: 'medium',
+      questionIds: ['m2'],
+    });
+    expect(screen.getByRole('heading', { name: 'Question m2', level: 1 })).toHaveFocus();
+  });
+
+  it('names the answer group, keeps focus while answering, and focuses each navigated question', async () => {
+    renderApp();
+    await startExam('maths');
+    const question = screen.getByRole('heading', { name: 'Question m1', level: 1 });
+    expect(question).toHaveFocus();
+    expect(question).toHaveAccessibleDescription('Question 1 of 3');
+    const group = screen.getByRole('radiogroup', { name: 'Question m1' });
+    const options = within(group).getAllByRole('radio');
+    expect(options.every((option) => option instanceof HTMLInputElement)).toBe(true);
+    expect(options.every((option) => !(option as HTMLInputElement).checked)).toBe(true);
+    expect(screen.getByTestId('exam-next')).toBeDisabled();
+
+    const selected = within(group).getByRole('radio', { name: 'B b' });
+    selected.focus();
+    fireEvent.click(selected);
+    await settle();
+    expect(selected).toBeChecked();
+    expect(selected).toHaveFocus();
+    expect(screen.getByTestId('exam-next')).toBeEnabled();
+    clickNext();
+    expect(screen.getByRole('heading', { name: 'Question m2' })).toHaveFocus();
+    expect(screen.getByTestId('exam-next')).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Go back' }));
+    expect(screen.getByRole('heading', { name: 'Question m1' })).toHaveFocus();
+    expect(screen.getByRole('radio', { name: 'B b' })).toBeChecked();
+    goHome();
+    expect(screen.getByRole('heading', { name: 'Pick a subject to practise.' })).toHaveFocus();
+    fireEvent.click(screen.getByTestId('resume-maths-easy'));
+    expect(screen.getByRole('heading', { name: 'Question m1' })).toHaveFocus();
+    expect(screen.getByRole('radio', { name: 'B b' })).toBeChecked();
+    await settle();
+  });
+
+  it('associates written answers with their question and marking note without stealing typing focus', async () => {
+    renderApp({
+      marking: { written: 'unmarked' },
+      resumable: [
+        {
+          subject: 'geo',
+          difficulty: 'easy',
+          questions: bank.geo!.easy!,
+          answers: [0, null],
+          currentIndex: 1,
+        },
+      ],
+    });
+    fireEvent.click(screen.getByTestId('resume-geo-easy'));
+    expect(screen.getByRole('heading', { name: 'Explain g2' })).toHaveFocus();
+    const answerBox = screen.getByRole('textbox', { name: 'Your answer' });
+    expect(answerBox).toHaveAccessibleDescription(
+      'Explain g2 This server can’t mark written answers yet, so they await marking and are excluded from scores.',
+    );
+    answerBox.focus();
+    fireEvent.change(answerBox, { target: { value: 'My written answer.' } });
+    await settle(800);
+    expect(answerBox).toHaveFocus();
+    expect(answerBox).toHaveValue('My written answer.');
+    goHome();
+    await settle();
+  });
+
+  it('focuses the progress heading when opening and returning from the progress view', () => {
+    renderApp();
+    fireEvent.click(screen.getByTestId('progress-link'));
+    expect(screen.getByRole('heading', { name: 'How you’re doing' })).toHaveFocus();
+    goHome();
+    expect(screen.getByRole('heading', { name: 'Pick a subject to practise.' })).toHaveFocus();
+  });
+
+  it('focuses marking then the result with a readable score and explicit review outcomes', async () => {
+    let finish!: (result: RecordAttemptResult) => void;
+    recordAttempt.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
+    renderApp({ questionBank: { maths: { easy: [mcq('m1'), mcq('m2')] } } });
+    await startExam('maths');
+    answer();
+    clickNext();
+    answer();
+    clickNext();
+    await settle();
+    expect(screen.getByRole('heading', { name: 'Marking your answers…' })).toHaveFocus();
+
+    const attempt = {
+      id: 90,
+      subject: 'maths',
+      difficulty: 'easy' as const,
+      total: 2,
+      correct: 1,
+      scorePct: 50,
+      createdAt: 0,
+      items: [
+        {
+          type: 'mcq' as const,
+          id: 'm1',
+          q: 'Question m1',
+          choices: ['a', 'b'],
+          chosen: 0,
+          answer: 0,
+        },
+        {
+          type: 'mcq' as const,
+          id: 'm2',
+          q: 'Question m2',
+          choices: ['a', 'b'],
+          chosen: 0,
+          answer: 1,
+        },
+      ],
+    };
+    await act(async () => {
+      finish({ ok: true, scorePct: 50, attempt, progress: { attempts: [attempt], subjects: [] } });
+    });
+    const result = screen.getByRole('heading', { name: 'Good progress.', level: 1 });
+    expect(result).toHaveFocus();
+    expect(result).toHaveAccessibleDescription(/1 of 2 marked answers correct. 50% correct./);
+    expect(screen.getByTestId('results-score')).toHaveAccessibleName(
+      '1 of 2 marked answers correct. 50% correct.',
+    );
+    expect(screen.getByRole('heading', { name: 'Review', level: 2 })).toBeInTheDocument();
+    const review = screen.getAllByTestId('review-row-mcq');
+    expect(review[0]).toHaveTextContent('Correct: a');
+    expect(review[1]).toHaveTextContent('Incorrect. You chose “a” · Answer: b');
+  });
+
+  it('focuses an actionable submission error after a failed request', async () => {
+    recordAttempt.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    renderApp({ questionBank: { maths: { easy: [mcq('m1')] } } });
+    await startExam('maths');
+    answer();
+    clickNext();
+    await settle();
+    const alert = screen.getByRole('alert');
+    expect(alert).toContainElement(document.activeElement as HTMLElement);
+    expect(document.activeElement).toHaveTextContent('your answers are still here');
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeEnabled();
   });
 });

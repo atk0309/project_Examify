@@ -13,7 +13,7 @@ import { digest } from '../../scripts/desktop/distribution.mjs';
 import { loadSupplementalNotices } from '../../scripts/desktop/supplemental-licenses.mjs';
 const repo = path.resolve(import.meta.dirname, '../..');
 const identity = { version: '0.1.0', platform: 'linux-x64', sourceCommit: 'a'.repeat(40) };
-function fixture(t) {
+function fixture(t, nextEnvVersion = '16.3.6') {
   const app = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-portable-policy-'));
   t.after(() => fs.rmSync(app, { recursive: true, force: true }));
   const put = (name, content) => {
@@ -24,7 +24,7 @@ function fixture(t) {
   const licenses = {
     packages: [
       { name: 'better-sqlite3', version: '13.0.3' },
-      { name: '@next/env', version: '16.3.6' },
+      { name: '@next/env', version: nextEnvVersion },
     ],
     compiledComponents: [],
     warnings: [],
@@ -81,6 +81,20 @@ test('portable policy verifies actual serialized mode, native inventory and exac
     { supplementalDocuments: [] },
   ])
     assert.throws(() => validateRuntimePolicy({ ...policy, ...patch }, identity));
+});
+test('runtime identities accept only reviewed Next versions', (t) => {
+  const { app, licenses } = fixture(t, '16.3.8');
+  const policy = createRuntimePolicy(app, identity, licenses);
+  assert.doesNotThrow(() => validateRuntimePolicy(policy, identity));
+  for (const version of ['16.3.7', '16.3.9', '16.4.0']) {
+    const packages = policy.packages.map((pkg) =>
+      pkg.name === '@next/env' ? { ...pkg, version } : pkg,
+    );
+    assert.throws(
+      () => validateRuntimePolicy({ ...policy, packages }, identity),
+      /Unreviewed runtime package identities/,
+    );
+  }
 });
 test('metadata labels cannot hide a real optimizer or retained native package', (t) => {
   const { app, put, licenses } = fixture(t);

@@ -23,20 +23,13 @@ export type ResolvePageImagesOptions = {
   rasterize?: (pdfAbsPath: string, prefix: string) => boolean;
 };
 
-function pdftoppmAvailable(): boolean {
-  const result = spawnSync('pdftoppm', ['-v'], { encoding: 'utf8' });
-  if (result.error) return false;
-  return result.status === 0 || /pdftoppm/.test(`${result.stderr}${result.stdout}`);
-}
-
 export function defaultRasterize(pdfAbsPath: string, prefix: string): boolean {
-  if (!pdftoppmAvailable()) return false;
   const result = spawnSync(
     'pdftoppm',
     ['-png', '-r', String(PAGE_RASTER_DPI), pdfAbsPath, prefix],
     { encoding: 'utf8' },
   );
-  return result.status === 0;
+  return !result.error && result.status === 0;
 }
 
 export function pageImageHashesOf(pages: readonly PageImage[]): string[] {
@@ -81,26 +74,19 @@ export function resolvePageImages(
       }
       continue;
     }
-    if (persist) {
-      mkdirSync(dir, { recursive: true });
-      const prefix = path.join(dir, 'page');
-      if (!rasterize(source.absPath, prefix)) continue;
-      writeFileSync(path.join(dir, '.done'), 'ok\n', 'utf8');
-      for (const absPath of listCachedPageImages(dir)) {
-        pages.push({ ...pageFromPath(absPath), sourceRelPath: source.relPath });
-      }
-      continue;
-    }
     // Outside every checkout, even when TMPDIR points into one.
-    const tmp = mkdtempSync(path.join(safeTempRoot(), 'examify-pages-'));
+    const workDir = persist ? dir : mkdtempSync(path.join(safeTempRoot(), 'examify-pages-'));
     try {
-      const prefix = path.join(tmp, 'page');
+      if (persist) mkdirSync(workDir, { recursive: true });
+      const prefix = path.join(workDir, 'page');
       if (!rasterize(source.absPath, prefix)) continue;
-      for (const absPath of listPagePngs(tmp)) {
+      if (persist) writeFileSync(path.join(workDir, '.done'), 'ok\n', 'utf8');
+      const paths = persist ? listCachedPageImages(workDir) : listPagePngs(workDir);
+      for (const absPath of paths) {
         pages.push({ ...pageFromPath(absPath), sourceRelPath: source.relPath });
       }
     } finally {
-      rmSync(tmp, { recursive: true, force: true });
+      if (!persist) rmSync(workDir, { recursive: true, force: true });
     }
   }
   return pages;

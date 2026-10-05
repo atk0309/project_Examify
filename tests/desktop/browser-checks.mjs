@@ -58,7 +58,9 @@ async function authorAndStudy(page, provider, fixture, index, origin) {
   await page.getByTestId('wizard-next').click();
   await page.getByTestId('wizard-ai-local-agent').click();
   if (index === 0) await configureLocalProvider(page, provider);
-  await expect(page.getByTestId('wizard-ai-local-agent')).toContainText('Configured');
+  const localProvider = page.getByRole('radio', { name: 'Local endpoint', exact: true });
+  await expect(localProvider).toBeChecked();
+  await expect(page.locator('label').filter({ has: localProvider })).toContainText('Configured');
   await page.getByTestId(`wizard-generate-${fixture.id}`).click();
   await expect(page.getByTestId(`wizard-generate-run-${fixture.id}`)).toBeVisible({
     timeout: 30000,
@@ -68,11 +70,7 @@ async function authorAndStudy(page, provider, fixture, index, origin) {
     fixture.id,
     'Real generate delivered the uploaded notes to the offline endpoint',
   );
-  await page.getByTestId('wizard-generate-to-validate').click();
-  await page.getByTestId('wizard-validate').click();
-  await expect(page.getByTestId('wizard-validate-ok')).toBeVisible();
-  await page.getByTestId('wizard-next').click();
-  await page.getByTestId('wizard-preview').click();
+  await page.getByTestId('wizard-generate-to-review').click();
   await expect(page.getByTestId('wizard-dry-run-summary')).toBeVisible();
   await page.getByTestId('wizard-to-apply').click();
   await page.getByTestId('wizard-apply-confirm').click();

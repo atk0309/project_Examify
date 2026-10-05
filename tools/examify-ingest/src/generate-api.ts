@@ -36,7 +36,7 @@ export {
   type WriteBankIrOptions,
 } from './write-atomic';
 export { mergeRepoEnvFiles, mergeResolvedEnvStoreFiles, parseEnvFile } from './repo-env';
-export { loadGeneratePrompt, findIngestPackageRoot, generatePromptPath } from './prompt';
+export { loadGeneratePrompt, generatePromptPath } from './prompt';
 export { sampleBankFrozenIds } from './frozen-ids';
 export {
   resolveGenerateTargets,

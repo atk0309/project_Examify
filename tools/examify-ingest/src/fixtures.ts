@@ -11,5 +11,3 @@ export const FIXTURE_IDS = [
 ] as const;
 
 export type FixtureId = (typeof FIXTURE_IDS)[number];
-
-export const FIXTURE_ID_SET: ReadonlySet<string> = new Set(FIXTURE_IDS);

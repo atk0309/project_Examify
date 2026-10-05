@@ -322,16 +322,45 @@ async function healthy(origin, instanceId) {
   }
 }
 
-export function openBrowser(url) {
+export function openBrowser(url, { spawn: startProcess = spawn, timeout = 2000 } = {}) {
   const command = process.platform === 'win32' ? 'rundll32.exe' : 'xdg-open';
   const args = process.platform === 'win32' ? ['url.dll,FileProtocolHandler', url] : [url];
-  const child = spawn(command, args, { detached: true, stdio: 'ignore', windowsHide: true });
-  child.on('error', () =>
-    console.error(
-      'The browser could not open. Keep this window open and launch Examify again after choosing a default browser.',
-    ),
-  );
-  child.unref();
+  const failure = () =>
+    new Error('The browser could not open. Choose a default browser, then launch Examify again.');
+  return new Promise((resolve, reject) => {
+    let child;
+    try {
+      child = startProcess(command, args, {
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: true,
+      });
+    } catch {
+      reject(failure());
+      return;
+    }
+    let settled = false;
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.unref();
+      if (error) reject(error);
+      else resolve();
+    };
+    // Some desktop openers stay alive for the browser's lifetime. Observe early
+    // failures, then detach without killing the opener or waiting for browser exit.
+    const timer = setTimeout(() => finish(), timeout);
+    child.once('error', () => {
+      if (settled) console.error(failure().message);
+      else finish(failure());
+    });
+    child.once('exit', (code) => {
+      if (settled) {
+        if (code !== 0) console.error(failure().message);
+      } else finish(code === 0 ? undefined : failure());
+    });
+  });
 }
 
 export async function startLauncher({
@@ -598,10 +627,21 @@ export async function startLauncher({
       child.once('error', () => {
         spawnError = true;
       });
+      child.once('exit', () => {
+        if (!stopped) {
+          if (startedInstance) {
+            console.error(
+              'Examify stopped unexpectedly. Your saved work is still in the private data folder.',
+            );
+            process.exitCode = 1;
+          }
+          void stop();
+        }
+      });
       const start = Date.now();
       onPhase('health');
       while (!(await healthy(origin, instanceId))) {
-        if (spawnError || child.exitCode !== null)
+        if (stopped || spawnError || child.exitCode !== null || child.signalCode !== null)
           throw new Error(
             'Examify did not start. Check that this release supports your operating system.',
           );
@@ -611,21 +651,20 @@ export async function startLauncher({
           );
         await sleep(250);
       }
+      if (stopped || spawnError || child.exitCode !== null || child.signalCode !== null)
+        throw new Error(
+          'Examify did not start. Check that this release supports your operating system.',
+        );
       if (installation?.protocol === 1 && !installation.initialized)
         durableJson(path.join(root, 'installation.json'), { ...installation, initialized: true });
       privateFile(stateFile);
       writeJson(stateFile, { pid: process.pid, instanceId, origin });
       onPhase('browser');
       await browser(`${origin}/solo/start#${browserCapability(launchToken)}`);
-      child.once('exit', () => {
-        if (!stopped) {
-          console.error(
-            'Examify stopped unexpectedly. Your saved work is still in the private data folder.',
-          );
-          process.exitCode = 1;
-          void stop();
-        }
-      });
+      if (stopped || spawnError || child.exitCode !== null || child.signalCode !== null)
+        throw new Error(
+          'Examify stopped during startup. Your saved work is still in the private data folder.',
+        );
       startedInstance = true;
       return { origin, internalPort, reused: false, stop, child };
     } catch (error) {
@@ -645,7 +684,21 @@ async function main() {
     if (args[index] === '--root' && args[index + 1]) root = path.resolve(args[++index]);
     else throw new Error('Usage: Examify [--root <private installation folder>]');
   }
-  const runtime = await startLauncher({ root });
+  const messages = {
+    lock: 'Starting Examify...',
+    'lock-wait': 'Waiting for another Examify operation to finish...',
+    reuse: 'Reopening your current Examify session...',
+    migration: 'Preparing your study data...',
+    browser: 'Opening Examify in your browser...',
+  };
+  let previousPhase;
+  const runtime = await startLauncher({
+    root,
+    onPhase: (phase) => {
+      if (phase !== previousPhase && messages[phase]) console.log(messages[phase]);
+      previousPhase = phase;
+    },
+  });
   if (!runtime.reused) {
     console.log(`Examify is ready at ${runtime.origin}`);
     console.log(

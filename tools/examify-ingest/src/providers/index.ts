@@ -18,7 +18,6 @@ export {
   hasUsableKey,
   isAbortError,
   providerRequestSignal,
-  providerTimeoutSignal,
   readRequiredKey,
   throwIfAborted,
   withProviderSignal,

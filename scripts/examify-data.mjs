@@ -17,6 +17,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 
 export const EXIT = Object.freeze({
@@ -409,10 +410,6 @@ function compactUtc(date) {
     .toISOString()
     .replace(/[-:]/g, '')
     .replace(/\.\d+Z$/, 'Z');
-}
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function lstatOrNull(abs) {

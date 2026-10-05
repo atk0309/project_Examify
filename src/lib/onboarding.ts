@@ -314,8 +314,7 @@ function isDiskError(error: unknown): boolean {
 function readJsonUnknown(absPath: string): unknown | null {
   try {
     return JSON.parse(readFileSync(absPath, 'utf8')) as unknown;
-  } catch (error) {
-    if (isEnoent(error)) return null;
+  } catch {
     return null;
   }
 }
@@ -1021,29 +1020,6 @@ export function rewriteOnboardingQuestionIds(
   return out;
 }
 
-export function validateOnboardingIr(
-  replaceSample = false,
-  root = getOnboardingContentRoot(),
-): { ok: true } | { ok: false; issues: OnboardingIssue[] } {
-  const loaded = loadSubjectsTree(root);
-  if (!loaded.ok) {
-    return {
-      ok: false,
-      issues: [{ file: SUBJECTS_REL, message: loaded.message }],
-    };
-  }
-  if (loaded.pruneOnly) return { ok: true };
-  const result = validateIrCollection(loaded.files, {
-    replaceSample,
-    frozenIds: FROZEN_SAMPLE_IDS,
-  });
-  if (result.ok) return { ok: true };
-  return {
-    ok: false,
-    issues: publicValidationIssues(result.errors),
-  };
-}
-
 /**
  * True when the family generated layer still serves something: catalog rows
  * or question / key files. Committed content is never in the family root.
@@ -1073,16 +1049,15 @@ type SubjectsTree =
   | {
       ok: true;
       files: ReturnType<typeof loadOnboardingIrFiles>;
-      pruneMissing: boolean;
       pruneOnly: false;
     }
   /** No BankIR left, but the family generated layer still serves subjects: remove them. */
-  | { ok: true; files: []; pruneMissing: true; pruneOnly: true }
+  | { ok: true; files: []; pruneOnly: true }
   | { ok: false; reason: 'invalid' | 'empty_catalog'; message: string };
 
 function emptyTree(root: string): SubjectsTree {
   if (hasFamilyGeneratedContent(root)) {
-    return { ok: true, files: [], pruneMissing: true, pruneOnly: true };
+    return { ok: true, files: [], pruneOnly: true };
   }
   return { ok: false, reason: 'empty_catalog', message: EMPTY_AUTHORITATIVE_EMIT };
 }
@@ -1091,7 +1066,7 @@ function loadSubjectsTree(root: string): SubjectsTree {
   try {
     const files = loadOnboardingIrFiles(root);
     if (files.length === 0) return emptyTree(root);
-    return { ok: true, files, pruneMissing: true, pruneOnly: false };
+    return { ok: true, files, pruneOnly: false };
   } catch (error) {
     // The confined reader exposes constant, safe failures only.
     const message = error instanceof Error ? error.message : 'Could not read question drafts.';
@@ -1144,14 +1119,6 @@ function hashPlan(files: readonly PlannedFile[]): string {
     })
     .join('\n');
   return crypto.createHash('sha256').update(material).digest('hex');
-}
-
-function questionIdsFromBanks(banks: readonly ValidatedBank[]): string[] {
-  const ids: string[] = [];
-  for (const bank of banks) {
-    ids.push(...publicQuestionIds(bank.split));
-  }
-  return ids;
 }
 
 function collisionsAgainstSample(ids: readonly string[]): string[] {
@@ -1233,61 +1200,43 @@ export function previewOnboardingEmit(
 ): CatalogEmitPreview {
   const loaded = loadSubjectsTree(root);
   if (!loaded.ok) return loaded;
-  if (loaded.pruneOnly) {
-    // The family deleted its last subject: empty the family catalog and
-    // delete its leftover files (Apply still needs the named prune confirm).
-    // Only the family layer is touched — committed subjects stay.
-    const planned = planEmit([], root, { pruneMissing: true, registrars: false, revisions: true });
-    return {
-      ok: true,
-      planned,
-      authorPreview: { subjects: [] },
-      dryRun: {
-        hash: hashPlan(planned),
-        questionCount: 0,
-        subjectCount: 0,
-        collisions: [],
-        shadows: [],
-        replaceSample,
-        plan: toPublicPlan(planned),
-        diff: formatPublicEmitPlan(planned),
-      },
-    };
+  // A deleted last subject still needs a hash-bound, explicitly confirmed prune.
+  let banks: ValidatedBank[] = [];
+  if (!loaded.pruneOnly) {
+    const result = validateIrCollection(loaded.files, {
+      replaceSample,
+      frozenIds: FROZEN_SAMPLE_IDS,
+    });
+    if (!result.ok) {
+      return {
+        ok: false,
+        reason: 'invalid',
+        message: `validate failed (${result.errors.length} issue${result.errors.length === 1 ? '' : 's'})`,
+        issues: publicValidationIssues(result.errors),
+      };
+    }
+    banks = result.banks;
   }
-
-  const result = validateIrCollection(loaded.files, {
-    replaceSample,
-    frozenIds: FROZEN_SAMPLE_IDS,
-  });
-  const ids = result.ok ? questionIdsFromBanks(result.banks) : [];
-
-  if (!result.ok) {
-    return {
-      ok: false,
-      reason: 'invalid',
-      message: `validate failed (${result.errors.length} issue${result.errors.length === 1 ? '' : 's'})`,
-      issues: publicValidationIssues(result.errors),
-    };
-  }
+  const ids = banks.flatMap((bank) => publicQuestionIds(bank.split));
 
   // Registrars are build-time checkout code: the wizard never plans them.
   // Family rows carry `rev` so the live bank never pairs questions and keys
   // from different Applies.
-  const planned = planEmit(result.banks, root, {
-    pruneMissing: loaded.pruneMissing,
+  const planned = planEmit(banks, root, {
+    pruneMissing: true,
     registrars: false,
     revisions: true,
   });
   return {
     ok: true,
     planned,
-    authorPreview: projectAuthorPreview(result.banks),
+    authorPreview: projectAuthorPreview(banks),
     dryRun: {
       hash: hashPlan(planned),
       questionCount: ids.length,
-      subjectCount: result.banks.length,
+      subjectCount: banks.length,
       collisions: collisionsAgainstSample(ids),
-      shadows: builtinShadows(result.banks),
+      shadows: builtinShadows(banks),
       replaceSample,
       plan: toPublicPlan(planned),
       diff: formatPublicEmitPlan(planned),
@@ -1367,8 +1316,4 @@ export function applyOnboardingEmit(
     subjectCount: preview.dryRun.subjectCount,
     plan: preview.dryRun.plan,
   };
-}
-
-export function publicDryRun(preview: Extract<CatalogEmitPreview, { ok: true }>): OnboardingDryRun {
-  return preview.dryRun;
 }

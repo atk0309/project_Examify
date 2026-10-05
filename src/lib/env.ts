@@ -495,7 +495,6 @@ export function parseEnv(raw: NodeJS.ProcessEnv = process.env): Env {
 export const env: Env = parseEnv();
 
 export const isProd = env.NODE_ENV === 'production';
-export const isTest = env.NODE_ENV === 'test';
 
 export function isSoloMode(): boolean {
   return env.EXAMIFY_MODE === 'solo';
