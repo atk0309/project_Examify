@@ -916,7 +916,7 @@ export function OnboardingWizard({
             ) : null}
 
             <p className="sr-only" role="status">
-              {holdWizard ? (generateBusy ? 'Generating content…' : 'Saving changes…') : ''}
+              {holdWizard ? (generateBusy ? 'Generating content…' : 'Working…') : ''}
             </p>
             {generateNote ? (
               <p
