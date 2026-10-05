@@ -868,9 +868,11 @@ function launcherFixture() {
     path.join(appDir, 'server.js'),
     `
     const http = require('node:http');
+    let healthy = true;
     const server = http.createServer((_request, response) => {
+      if (_request.url === '/unhealthy') healthy = false;
       response.writeHead(200, { 'content-type': 'application/json' });
-      response.end(JSON.stringify({ ok: true, pid: process.pid }));
+      response.end(JSON.stringify({ ok: healthy, pid: process.pid }));
       if (_request.url === '/stop') setTimeout(() => process.exit(23), 50);
     });
     server.listen(Number(process.env.PORT), '127.0.0.1');
@@ -970,6 +972,40 @@ test('a server exiting while the browser opens rejects startup and releases life
     );
     assert.equal(browserOpened, true);
     assert.equal(workerExited, true);
+    assert.equal(fs.existsSync(path.join(fixture.root, 'running.json')), false);
+    const release = await tryAcquireInstanceLock(lockOptions(fixture.root));
+    assert.equal(typeof release, 'function');
+    release();
+  } finally {
+    await runtime?.stop();
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('an unhealthy worker after the browser opens rejects startup and releases lifetime ownership', async () => {
+  const fixture = launcherFixture();
+  let workerPid;
+  let runtime;
+  fixture.browser = async (url) => {
+    const response = await fetch(`${new URL(url).origin}/unhealthy`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    assert.equal(response.ok, true);
+    const { ok, pid } = await response.json();
+    assert.equal(ok, false);
+    assert.doesNotThrow(() => process.kill(pid, 0), 'The unhealthy worker is still alive.');
+    workerPid = pid;
+  };
+  try {
+    await assert.rejects(
+      startLauncher(fixture).then((value) => {
+        runtime = value;
+        return value;
+      }),
+      /Examify stopped during startup/,
+    );
+    assert.ok(workerPid);
+    assert.throws(() => process.kill(workerPid, 0), { code: 'ESRCH' });
     assert.equal(fs.existsSync(path.join(fixture.root, 'running.json')), false);
     const release = await tryAcquireInstanceLock(lockOptions(fixture.root));
     assert.equal(typeof release, 'function');
