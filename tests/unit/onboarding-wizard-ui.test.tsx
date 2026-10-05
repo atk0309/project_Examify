@@ -303,7 +303,7 @@ describe('OnboardingWizard majors UI', () => {
       fireEvent.click(screen.getByTestId('wizard-get-started'));
       fireEvent.click(screen.getByTestId('wizard-next'));
       fireEvent.click(screen.getByTestId('wizard-next'));
-      expect(screen.getByTestId('wizard-ai-claude-cli')).toHaveAttribute('aria-checked', 'true');
+      expect(screen.getByTestId('wizard-ai-claude-cli')).toBeChecked();
       if (copy) expect(screen.getByTestId('wizard-ai-installer')).toHaveTextContent(copy);
       else expect(screen.queryByTestId('wizard-ai-installer')).toBeNull();
     },
@@ -1288,20 +1288,24 @@ describe('OnboardingWizard AI modes: Claude Code, Codex and local', () => {
     expect(screen.getByTestId('wizard-ai-store')).toHaveTextContent(
       'Claude Code found · Codex not found',
     );
-    const claude = screen.getByTestId('wizard-ai-claude-cli');
+    const claude = screen.getByTestId('wizard-ai-claude-cli').closest('label');
     expect(claude).toHaveTextContent('Claude Code (your Claude plan)');
     expect(claude).toHaveTextContent('Found');
     expect(screen.getByTestId('wizard-ai-claude-cli-caps')).toHaveTextContent(
       'Reads PDFs directly · uses the tool’s own sign-in (your plan), no API key.',
     );
-    const codex = screen.getByTestId('wizard-ai-codex-cli');
+    const codex = screen.getByTestId('wizard-ai-codex-cli').closest('label');
     expect(codex).toHaveTextContent('Codex (your ChatGPT plan)');
     expect(codex).not.toHaveTextContent('Found');
     expect(screen.getByTestId('wizard-ai-codex-cli-caps')).toHaveTextContent(
       'Reads PDFs as page images (the host needs pdftoppm)',
     );
-    expect(screen.getByTestId('wizard-ai-local-agent')).toHaveTextContent('Local endpoint');
-    expect(screen.getByTestId('wizard-ai-local-cli')).toHaveTextContent('Local command');
+    expect(screen.getByTestId('wizard-ai-local-agent').closest('label')).toHaveTextContent(
+      'Local endpoint',
+    );
+    expect(screen.getByTestId('wizard-ai-local-cli').closest('label')).toHaveTextContent(
+      'Local command',
+    );
   });
 
   it('badges only ready modes: Configured for keys and settings, Found for a CLI', () => {
@@ -1315,8 +1319,8 @@ describe('OnboardingWizard AI modes: Claude Code, Codex and local', () => {
       }),
     );
     const badge = (mode: string) =>
-      screen.getByTestId(`wizard-ai-${mode}`).querySelector('.wizard-mode-badge')?.textContent ??
-      null;
+      screen.getByTestId(`wizard-ai-${mode}`).closest('label')?.querySelector('.wizard-mode-badge')
+        ?.textContent ?? null;
     expect(badge('cloud')).toBe('Configured');
     expect(badge('cloud-openai')).toBeNull();
     expect(badge('codex-cli')).toBe('Found');
@@ -1341,8 +1345,8 @@ describe('OnboardingWizard AI modes: Claude Code, Codex and local', () => {
       'Claude Code not signed in · Codex signed in · Local endpoint',
     );
     const badge = (mode: string) =>
-      screen.getByTestId(`wizard-ai-${mode}`).querySelector('.wizard-mode-badge')?.textContent ??
-      null;
+      screen.getByTestId(`wizard-ai-${mode}`).closest('label')?.querySelector('.wizard-mode-badge')
+        ?.textContent ?? null;
     expect(badge('claude-cli')).toBe('Not signed in');
     expect(badge('codex-cli')).toBe('Signed in');
     cleanup();
@@ -1757,5 +1761,71 @@ describe('OnboardingWizard author question review', () => {
     expect(screen.queryByRole('region', { name: 'Draft questions' })).toBeNull();
     fireEvent.click(screen.getByTestId('wizard-preview'));
     await showAuthorPreview();
+  });
+});
+
+describe('wizard accessibility', () => {
+  afterEach(cleanup);
+  it('focuses the current heading after forward and back navigation', () => {
+    render(
+      <OnboardingWizard
+        snapshot={snapshot()}
+        pendingInvites={[]}
+        members={[]}
+        canInvite={false}
+        authMode="magic-link"
+      />,
+    );
+    fireEvent.click(screen.getByTestId('wizard-get-started'));
+    expect(screen.getByRole('heading', { name: 'Subjects', level: 1 })).toHaveFocus();
+    fireEvent.click(screen.getByTestId('wizard-next'));
+    expect(screen.getByRole('heading', { name: 'Files', level: 1 })).toHaveFocus();
+    fireEvent.click(screen.getByTestId('wizard-back'));
+    expect(screen.getByRole('heading', { name: 'Subjects', level: 1 })).toHaveFocus();
+  });
+
+  it('keeps provider focus and blocks duplicate changes while saving, then allows retry', async () => {
+    let resolve!: (value: unknown) => void;
+    setOnboardingAiModeAction.mockReset();
+    setOnboardingAiModeAction.mockReturnValueOnce(
+      new Promise((done) => {
+        resolve = done;
+      }),
+    );
+    renderAtAiStep(snapshot({ aiMode: 'cloud' }));
+    const openai = screen.getByTestId('wizard-ai-cloud-openai');
+    openai.focus();
+    fireEvent.click(openai);
+    expect(openai).toHaveFocus();
+    expect(openai).not.toBeDisabled();
+    expect(openai).toHaveAttribute('aria-disabled', 'true');
+    expect(screen.getByRole('status')).toHaveTextContent('Working');
+    fireEvent.click(screen.getByTestId('wizard-ai-codex-cli'));
+    expect(setOnboardingAiModeAction).toHaveBeenCalledTimes(1);
+    await act(async () => resolve({ ok: false, reason: 'rate_limited' }));
+    expect(openai).toHaveFocus();
+    expect(openai).toHaveAttribute('aria-disabled', 'false');
+    expect(screen.getByRole('alert')).toHaveTextContent('Too many key updates');
+    setOnboardingAiModeAction.mockResolvedValueOnce({
+      ok: true,
+      snapshot: snapshot({ aiMode: 'cloud-openai' }),
+    });
+    fireEvent.click(openai);
+    await waitFor(() => expect(openai).toBeChecked());
+    expect(openai).toHaveFocus();
+  });
+
+  it('uses one named native radio group for provider choices', () => {
+    renderAtAiStep(snapshot({ aiMode: 'cloud' }));
+    const group = screen.getByRole('group', { name: 'AI setup mode' });
+    const radios = within(group).getAllByRole('radio');
+    expect(radios).toHaveLength(7);
+    for (const radio of radios) {
+      expect(radio.tagName).toBe('INPUT');
+      expect(radio).toHaveAttribute('name', 'onboarding-ai-mode');
+      expect(radio).toHaveAccessibleName();
+      expect(radio).toHaveAccessibleDescription();
+    }
+    expect(screen.getByTestId('wizard-ai-cloud')).toBeChecked();
   });
 });

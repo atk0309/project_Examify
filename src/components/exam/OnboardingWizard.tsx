@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState, useTransition } from 'react';
+import { useEffect, useRef, useState, useTransition } from 'react';
 import Link from 'next/link';
 import {
   addOnboardingSubjectAction,
@@ -279,6 +279,17 @@ export function OnboardingWizard({
 }) {
   const [snapshot, setSnapshot] = useState(initial);
   const [step, setStep] = useState<StepId>('welcome');
+  const stageRef = useRef<HTMLDivElement>(null);
+  const previousStep = useRef(step);
+  useEffect(() => {
+    if (previousStep.current === step) return;
+    previousStep.current = step;
+    const heading = stageRef.current?.querySelector('h1');
+    if (heading) {
+      heading.tabIndex = -1;
+      heading.focus();
+    }
+  }, [step]);
   const [error, setError] = useState<string | null>(null);
   const [issues, setIssues] = useState<{ file: string; message: string }[]>([]);
   const [dryRun, setDryRun] = useState<OnboardingDryRun | null>(null);
@@ -560,10 +571,14 @@ export function OnboardingWizard({
           ) : null}
 
           <div
+            ref={stageRef}
             className={'wizard-stage' + (wideStage ? ' wizard-stage-wide' : '')}
             data-testid="wizard-stage"
             onChangeCapture={() => {
-              if (step === 'subjects' || step === 'files' || step === 'ai' || step === 'dry-run') {
+              if (
+                !holdWizard &&
+                (step === 'subjects' || step === 'files' || step === 'ai' || step === 'dry-run')
+              ) {
                 invalidateReview();
               }
             }}
@@ -900,8 +915,12 @@ export function OnboardingWizard({
               />
             ) : null}
 
+            <p className="sr-only" role="status">
+              {holdWizard ? (generateBusy ? 'Generating content…' : 'Working…') : ''}
+            </p>
             {generateNote ? (
               <p
+                role="status"
                 className="wizard-callout"
                 data-testid={
                   generateNoteKind === 'skipped'
@@ -1579,31 +1598,46 @@ function AiStep({
           Pick another provider below to change it.
         </p>
       ) : null}
-      <div className="wizard-modes" role="radiogroup" aria-label="AI setup mode">
+      <fieldset className="wizard-modes" aria-disabled={busy}>
+        <legend className="sr-only">AI setup mode</legend>
         {(Object.keys(AI_COPY) as OnboardingAiMode[]).map((mode) => {
           const selected = snapshot.aiMode === mode;
           const badge = modeBadge(mode, snapshot);
           return (
-            <button
-              key={mode}
-              type="button"
-              role="radio"
-              aria-checked={selected}
-              className={'wizard-mode' + (selected ? ' selected' : '')}
-              disabled={busy}
-              data-testid={`wizard-ai-${mode}`}
-              onClick={() => onSelect(mode)}
-            >
+            <label key={mode} className={'wizard-mode' + (selected ? ' selected' : '')}>
               <span className="wizard-mode-head">
+                <input
+                  type="radio"
+                  name="onboarding-ai-mode"
+                  value={mode}
+                  checked={selected}
+                  aria-label={AI_COPY[mode].title}
+                  aria-describedby={`wizard-ai-${mode}-description`}
+                  data-testid={`wizard-ai-${mode}`}
+                  aria-disabled={busy}
+                  onClick={(event) => {
+                    if (busy) event.preventDefault();
+                  }}
+                  onKeyDown={(event) => {
+                    if (
+                      busy &&
+                      [' ', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key)
+                    )
+                      event.preventDefault();
+                  }}
+                  onChange={() => {
+                    if (!busy) onSelect(mode);
+                  }}
+                />
                 <strong>{AI_COPY[mode].title}</strong>
                 {badge ? <span className="wizard-mode-badge">{badge}</span> : null}
               </span>
-              <span>{AI_COPY[mode].body}</span>
+              <span id={`wizard-ai-${mode}-description`}>{AI_COPY[mode].body}</span>
               <span data-testid={`wizard-ai-${mode}-caps`}>{onboardingAiCapabilityLine(mode)}</span>
-            </button>
+            </label>
           );
         })}
-      </div>
+      </fieldset>
 
       {keyProvider ? (
         <EnvKeyPanel
