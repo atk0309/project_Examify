@@ -198,8 +198,8 @@ Guidelines:
 
 ## How exams are built
 
-- `buildExam(subjectId, difficulty)` takes the bank for that combo, shuffles it
-  (`EXAM_CONFIG.shuffle`), and slices to `EXAM_CONFIG.length` (20 by default — smaller
+- `buildExam(subjectId, difficulty)` takes the bank for that combo, always shuffles it,
+  and slices to `EXAM_CONFIG.length` (20 by default — smaller
   banks just produce shorter exams). It runs on the client, which is exactly why the
   public bank must stay answer-free.
 - Mid-exam autosave stores only the ordered question **ids** + the user's answers.
