@@ -149,6 +149,8 @@ describe('onboarding catalog emit', () => {
 
     const preview = previewOnboardingEmit(false, root);
     if (!preview.ok) throw new Error('expected a prune-only preview');
+    expect(preview.authorPreview).toEqual({ subjects: [] });
+    expect(preview.dryRun.questionCount).toBe(0);
     expect(preview.dryRun.subjectCount).toBe(0);
     expect(preview.dryRun.diff).toContain('would delete content/generated/keys/chemistry.json');
     expect(preview.dryRun.diff).not.toContain('do-not-leak');
@@ -257,7 +259,6 @@ describe('onboarding catalog emit', () => {
       deleteOnboardingSubject,
       previewOnboardingEmit,
       setOnboardingContentRootForTests,
-      validateOnboardingIr,
     } = await import('@/lib/onboarding');
     const { loadLivePublicBank } = await import('@/lib/exam/live-bank.server');
     const root = tempRoot();
@@ -275,7 +276,7 @@ describe('onboarding catalog emit', () => {
     expect(loadLivePublicBank().subjects.some((subject) => subject.id === 'history')).toBe(true);
 
     expect(deleteOnboardingSubject('history', root)).toEqual({ ok: true });
-    expect(validateOnboardingIr(false, root)).toEqual({ ok: true });
+    expect(previewOnboardingEmit(false, root).ok).toBe(true);
     const preview = previewOnboardingEmit(false, root);
     if (!preview.ok) throw new Error(`expected a prune-only preview, got ${preview.reason}`);
     expect(preview.dryRun.subjectCount).toBe(0);
@@ -361,12 +362,6 @@ describe('onboarding catalog emit', () => {
     if (!allowed.ok) throw new Error('expected replace-sample preview');
     expect(allowed.dryRun.collisions).toContain(nonFixture);
     expect(allowed.dryRun.replaceSample).toBe(true);
-
-    const { validateOnboardingIr } = await import('@/lib/onboarding');
-    const blockedValidate = validateOnboardingIr(false, root);
-    expect(blockedValidate.ok).toBe(false);
-    const allowedValidate = validateOnboardingIr(true, root);
-    expect(allowedValidate.ok).toBe(true);
   });
 });
 
@@ -612,8 +607,8 @@ describe('onboarding subjects and files', () => {
     const {
       renameOnboardingSubject,
       rewriteOnboardingQuestionIds,
+      previewOnboardingEmit,
       setOnboardingContentRootForTests,
-      validateOnboardingIr,
     } = await import('@/lib/onboarding');
     const root = tempRoot();
     setOnboardingContentRootForTests(root);
@@ -676,7 +671,7 @@ describe('onboarding subjects and files', () => {
       'life-science-easy-free-1',
     ]);
     expect(existsSync(path.join(root, 'content/subjects/biology'))).toBe(false);
-    expect(validateOnboardingIr(false, root)).toEqual({ ok: true });
+    expect(previewOnboardingEmit(false, root).ok).toBe(true);
   });
 
   it('moves IR and source-pdf dirs together on a successful id rename', async () => {
@@ -1462,7 +1457,7 @@ describe('onboarding writes only the family data folder', () => {
 
 describe('author-only draft projection', () => {
   it('projects both question types from the planned banks without metadata and leaves public data redacted', async () => {
-    const { previewOnboardingEmit, publicDryRun } = await import('@/lib/onboarding');
+    const { previewOnboardingEmit } = await import('@/lib/onboarding');
     const root = tempRoot();
     const dir = path.join(root, 'content/subjects/history');
     mkdirSync(dir, { recursive: true });
@@ -1519,7 +1514,7 @@ describe('author-only draft projection', () => {
     ])
       expect(serialized).not.toContain(secret);
     for (const secret of ['"answer"', '"rubric"', 'Private marking guidance', 'private-source'])
-      expect(JSON.stringify(publicDryRun(preview))).not.toContain(secret);
+      expect(JSON.stringify(preview.dryRun)).not.toContain(secret);
     expect(readFileSync(path.join(dir, 'bank.ir.json'), 'utf8')).toBe(before);
     expect(existsSync(path.join(root, 'content/generated'))).toBe(false);
   });
@@ -1540,7 +1535,7 @@ describe('author-only draft projection', () => {
   );
 
   it('deduplicates sanitized validation issues while preserving the raw issue count', async () => {
-    const { previewOnboardingEmit, validateOnboardingIr } = await import('@/lib/onboarding');
+    const { previewOnboardingEmit } = await import('@/lib/onboarding');
     const root = tempRoot();
     const dir = path.join(root, 'content/subjects/history');
     mkdirSync(dir, { recursive: true });
@@ -1556,7 +1551,6 @@ describe('author-only draft projection', () => {
       },
     ]);
     expect(Number(preview.message.match(/\((\d+) issues\)/)?.[1])).toBeGreaterThan(1);
-    expect(validateOnboardingIr(false, root)).toEqual({ ok: false, issues: preview.issues });
   });
 
   it('refuses changed marking guidance even when public questions are identical', async () => {

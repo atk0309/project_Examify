@@ -317,40 +317,6 @@ function mapGenerateError(error: unknown): GenerateOnboardingError {
 }
 
 /**
- * Generate's environment. Local modes keep only their own transport
- * (`localTransportEnv`, the same filter as the CLI's `--local-transport`): the
- * ingest `local` provider runs `EXAMIFY_INGEST_LOCAL_CMD` whenever it is set.
- */
-function onboardingGenerateEnv(
-  transport: OnboardingLocalTransport | undefined,
-): Record<string, string | undefined> {
-  const env = onboardingHostEnv();
-  return transport ? ingestGenerate.localTransportEnv(env, transport) : env;
-}
-
-function publicGenerateResult(
-  subjectId: string,
-  root: string,
-  generated: Awaited<ReturnType<typeof ingestGenerate.generateSubject>>,
-  wroteIr: boolean,
-  overwrite: boolean,
-): OnboardingGenerateResult {
-  return {
-    subjectId,
-    provider: generated.manifest.provider,
-    model: generated.manifest.model,
-    seed: generated.manifest.seed,
-    cacheHit: generated.cacheHit,
-    cacheKey: generated.cacheKey,
-    sourceCount: Object.keys(generated.manifest.sourceHashes).length,
-    sourceHashes: generated.manifest.sourceHashes,
-    wroteIr,
-    irRel: posixRel(root, generated.irPath),
-    overwrite,
-  };
-}
-
-/**
  * Draft BankIR for one wizard subject via `examify-ingest/generate`.
  * Preview uses ingest `dryRunIr` so `generateSubject` does not write
  * `bank.ir.json`. Confirm happens before generate so a dry-run never
@@ -394,17 +360,9 @@ export async function generateOnboardingSubject(input: {
   return result;
 }
 
-async function generateOnboardingSubjectUnlocked(input: {
-  subjectId: string;
-  provider: OnboardingGenerateProvider;
-  localTransport?: OnboardingLocalTransport;
-  seed: number;
-  root?: string;
-  cancelToken?: string;
-  force?: boolean;
-  overwrite?: OnboardingIrOverwriteDecision;
-  replaceSample?: boolean;
-}): Promise<GenerateOnboardingSuccess | GenerateOnboardingError> {
+async function generateOnboardingSubjectUnlocked(
+  input: Parameters<typeof generateOnboardingSubject>[0],
+): Promise<GenerateOnboardingSuccess | GenerateOnboardingError> {
   const subjectId = normalizeSubjectId(input.subjectId);
   if (!isValidSubjectId(subjectId)) {
     return { ok: false, reason: 'invalid_id', message: 'Subject id must be kebab-case.' };
@@ -452,7 +410,11 @@ async function generateOnboardingSubjectUnlocked(input: {
   }
 
   // Keys live in the checkout `.env` (env store), not the family data folder.
-  const env = onboardingGenerateEnv(input.localTransport);
+  // Filter local settings so only the chosen transport can run.
+  const hostEnv = onboardingHostEnv();
+  const env = input.localTransport
+    ? ingestGenerate.localTransportEnv(hostEnv, input.localTransport)
+    : hostEnv;
   if (input.localTransport === 'endpoint' && !env[ingestGenerate.LOCAL_MODEL_ENV]?.trim()) {
     return {
       ok: false,
@@ -511,7 +473,20 @@ async function generateOnboardingSubjectUnlocked(input: {
     markOnboardingGenerateCommitted(token);
     return {
       ok: true,
-      result: publicGenerateResult(subjectId, root, generated, true, written.existed),
+      // Public progress only: no BankIR, answers or provider credentials.
+      result: {
+        subjectId,
+        provider: generated.manifest.provider,
+        model: generated.manifest.model,
+        seed: generated.manifest.seed,
+        cacheHit: generated.cacheHit,
+        cacheKey: generated.cacheKey,
+        sourceCount: Object.keys(generated.manifest.sourceHashes).length,
+        sourceHashes: generated.manifest.sourceHashes,
+        wroteIr: true,
+        irRel,
+        overwrite: written.existed,
+      },
     };
   } catch (error) {
     if (isGenerateCancelled(token) || isUserGenerateAbort(error)) {

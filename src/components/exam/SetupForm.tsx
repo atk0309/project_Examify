@@ -1,6 +1,5 @@
 'use client';
 
-import Script from 'next/script';
 import {
   startTransition,
   useActionState,
@@ -31,6 +30,8 @@ import {
   validateSetupFields,
   writeSetupFields,
 } from '@/lib/setup-form';
+import { TurnstileScript } from './ExplicitTurnstile';
+import { FieldError } from './FieldError';
 
 const errorCopy: Record<Exclude<BootstrapState, { status: 'idle' }>['reason'], string> = {
   invalid: 'Please enter a household name and a valid email address.',
@@ -49,15 +50,6 @@ const AUTH_MODE_COPY: Record<AuthMode, string> = {
   'local-otp':
     'This instance uses a local one-time code. After setup, codes are written to the mail outbox.',
 };
-
-function FieldError({ id, message }: { id: string; message?: string }) {
-  if (!message) return null;
-  return (
-    <p className="field-error" id={id} role="alert" data-testid={id}>
-      {message}
-    </p>
-  );
-}
 
 export function SetupForm({ siteKey, authMode }: { siteKey?: string; authMode: AuthMode }) {
   const [state, formAction, pending] = useActionState<BootstrapState, FormData>(
@@ -192,14 +184,7 @@ export function SetupForm({ siteKey, authMode }: { siteKey?: string; authMode: A
       }}
     >
       <div hidden={!siteKey} aria-hidden={!siteKey || undefined}>
-        {siteKey ? (
-          <Script
-            src="https://challenges.cloudflare.com/turnstile/v0/api.js"
-            async
-            defer
-            strategy="afterInteractive"
-          />
-        ) : null}
+        <TurnstileScript siteKey={siteKey} />
       </div>
       <div className="login-head">
         <span className="brand-mark">E</span>

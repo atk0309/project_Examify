@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
 import { test } from 'node:test';
 import { EventEmitter } from 'node:events';
 import { observeChildProgress } from './child-progress.mjs';
@@ -13,6 +14,7 @@ import {
   createGateway,
   forwardHeaders,
   loadSecrets,
+  openBrowser,
   privateDirectory,
   privateFile,
   startLauncher,
@@ -88,6 +90,119 @@ test('host secrets, Node preload injection and app settings are not inherited', 
       HOME: '/home/me',
     },
   );
+});
+test('browser opener waits for success and reports nonzero exits without private launch data', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-browser-opener-'));
+  const script = path.join(directory, 'opener.mjs');
+  const url = 'http://127.0.0.1:4321/solo/start#SYNTHETIC_PRIVATE_CAPABILITY';
+  fs.writeFileSync(script, 'process.exit(Number(process.argv[2]));');
+  try {
+    for (const code of [0, 23]) {
+      let received;
+      const outcome = openBrowser(url, {
+        timeout: 5000,
+        spawn: (command, args, options) => {
+          received = { command, args, options };
+          return spawn(process.execPath, [script, String(code)], options);
+        },
+      });
+      assert.equal(typeof outcome.then, 'function');
+      if (code === 0) await outcome;
+      else
+        await assert.rejects(outcome, (error) => {
+          assert.match(error.message, /Choose a default browser/);
+          assert.doesNotMatch(error.message, /SYNTHETIC|127\.0\.0\.1|4321|exit|23/);
+          return true;
+        });
+      assert.deepEqual(received, {
+        command: process.platform === 'win32' ? 'rundll32.exe' : 'xdg-open',
+        args: process.platform === 'win32' ? ['url.dll,FileProtocolHandler', url] : [url],
+        options: { detached: true, stdio: 'ignore', windowsHide: true },
+      });
+    }
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+test('browser opener sanitizes synchronous and asynchronous spawn failures', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-browser-missing-'));
+  const url = 'http://127.0.0.1:4321/solo/start#SYNTHETIC_PRIVATE_CAPABILITY';
+  try {
+    for (const startProcess of [
+      () => {
+        throw new Error(url);
+      },
+      (_command, _args, options) => spawn(path.join(directory, 'missing-opener'), [url], options),
+    ])
+      await assert.rejects(openBrowser(url, { spawn: startProcess }), (error) => {
+        assert.match(error.message, /The browser could not open/);
+        assert.doesNotMatch(error.message, /SYNTHETIC|127\.0\.0\.1|missing-opener/);
+        return true;
+      });
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+test('a long-lived browser opener detaches after the observation window without being killed', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-browser-running-'));
+  const script = path.join(directory, 'opener.mjs');
+  fs.writeFileSync(script, 'setInterval(() => {}, 1000);');
+  let child;
+  try {
+    await openBrowser('http://127.0.0.1:4321/solo/start#disposable', {
+      timeout: 50,
+      spawn: (_command, _args, options) => {
+        child = spawn(process.execPath, [script], options);
+        return child;
+      },
+    });
+    assert.equal(child.exitCode, null);
+    assert.equal(child.signalCode, null);
+    assert.equal(child.killed, false);
+    assert.doesNotThrow(() => process.kill(child.pid, 0));
+  } finally {
+    if (child && child.exitCode === null && child.signalCode === null) {
+      const exited = new Promise((resolve) => child.once('exit', resolve));
+      child.ref();
+      child.kill();
+      await exited;
+    }
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+test('a browser opener failing after detachment reports a safe error', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-browser-delayed-'));
+  const script = path.join(directory, 'opener.mjs');
+  const url = 'http://127.0.0.1:4321/solo/start#SYNTHETIC_PRIVATE_CAPABILITY';
+  fs.writeFileSync(script, 'setTimeout(() => process.exit(23), 200);');
+  const originalError = console.error;
+  const errors = [];
+  let child;
+  let exited;
+  console.error = (...args) => errors.push(args.join(' '));
+  try {
+    await openBrowser(url, {
+      timeout: 50,
+      spawn: (_command, _args, options) => {
+        child = spawn(process.execPath, [script], options);
+        exited = new Promise((resolve) => child.once('exit', resolve));
+        return child;
+      },
+    });
+    child.ref();
+    await exited;
+    assert.equal(errors.length, 1);
+    assert.match(errors[0], /Choose a default browser/);
+    assert.doesNotMatch(errors[0], /SYNTHETIC|127\.0\.0\.1|4321|23/);
+  } finally {
+    console.error = originalError;
+    if (child && child.exitCode === null && child.signalCode === null) {
+      child.ref();
+      child.kill();
+      await exited;
+    }
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
 });
 test('private generated secrets survive relaunch; malformed or linked files fail closed', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-launcher-'));
@@ -738,7 +853,8 @@ function launcherFixture() {
     const http = require('node:http');
     const server = http.createServer((_request, response) => {
       response.writeHead(200, { 'content-type': 'application/json' });
-      response.end('{"ok":true}');
+      response.end(JSON.stringify({ ok: true, pid: process.pid }));
+      if (_request.url === '/stop') setTimeout(() => process.exit(23), 50);
     });
     server.listen(Number(process.env.PORT), '127.0.0.1');
   `,
@@ -793,6 +909,51 @@ test('stale live-PID markers do not block startup, and healthy instances retain 
     }
     assert.deepEqual(cleanup, { childExited: true, instanceStillLocked: true });
     assert.equal(fs.existsSync(state), false);
+    const release = await tryAcquireInstanceLock(lockOptions(fixture.root));
+    assert.equal(typeof release, 'function');
+    release();
+  } finally {
+    await runtime?.stop();
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('a server exiting while the browser opens rejects startup and releases lifetime ownership', async () => {
+  const fixture = launcherFixture();
+  let browserOpened = false;
+  let workerExited = false;
+  let runtime;
+  fixture.browser = async (url) => {
+    browserOpened = true;
+    const response = await fetch(`${new URL(url).origin}/stop`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    assert.equal(response.ok, true);
+    const { pid } = await response.json();
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      try {
+        process.kill(pid, 0);
+      } catch (error) {
+        if (error.code !== 'ESRCH') throw error;
+        workerExited = true;
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    assert.fail('The disposable server did not exit while the browser callback was pending.');
+  };
+  try {
+    await assert.rejects(
+      startLauncher(fixture).then((value) => {
+        runtime = value;
+        return value;
+      }),
+      /Examify stopped during startup/,
+    );
+    assert.equal(browserOpened, true);
+    assert.equal(workerExited, true);
+    assert.equal(fs.existsSync(path.join(fixture.root, 'running.json')), false);
     const release = await tryAcquireInstanceLock(lockOptions(fixture.root));
     assert.equal(typeof release, 'function');
     release();

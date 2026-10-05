@@ -15,13 +15,6 @@ function promptCandidates(repoRoot?: string): string[] {
   ].filter((value): value is string => Boolean(value));
 }
 
-export function findIngestPackageRoot(repoRoot?: string): string {
-  for (const candidate of promptCandidates(repoRoot)) {
-    if (existsSync(candidate)) return path.dirname(path.dirname(candidate));
-  }
-  throw new Error(`could not find examify-ingest ${PROMPT_REL}`);
-}
-
 export function generatePromptPath(repoRoot?: string): string {
   for (const candidate of promptCandidates(repoRoot)) {
     if (existsSync(candidate)) return candidate;

@@ -1,6 +1,5 @@
 'use client';
 
-import Script from 'next/script';
 import { startTransition, useActionState, useState, type ChangeEvent, type FormEvent } from 'react';
 import {
   acceptInviteWithPassword,
@@ -21,7 +20,8 @@ import {
   type PasswordEntryFieldErrors,
 } from '@/lib/password-entry-form';
 import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, PASSWORD_MISMATCH } from '@/lib/password-policy';
-import { ExplicitTurnstile } from './ExplicitTurnstile';
+import { ExplicitTurnstile, TurnstileScript } from './ExplicitTurnstile';
+import { FieldError } from './FieldError';
 import { MailIcon, RoleIcon } from './icons';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -96,15 +96,6 @@ export function InviteAcceptForm({
       authMode={authMode}
       mailboxDelivery={mailboxDelivery}
     />
-  );
-}
-
-function FieldError({ id, message }: { id: string; message?: string }) {
-  if (!message) return null;
-  return (
-    <p className="field-error" id={id} role="alert" data-testid={id}>
-      {message}
-    </p>
   );
 }
 
@@ -196,14 +187,7 @@ function PasswordInviteForm({
         submit(new FormData(event.currentTarget));
       }}
     >
-      {siteKey ? (
-        <Script
-          src="https://challenges.cloudflare.com/turnstile/v0/api.js"
-          async
-          defer
-          strategy="afterInteractive"
-        />
-      ) : null}
+      <TurnstileScript siteKey={siteKey} />
       <InviteHeader
         role={role}
         subtitle={
@@ -354,14 +338,7 @@ function PasswordInviteOtpForm({
 
   return (
     <form className="screen login" data-testid="invite-otp-form" onSubmit={submit}>
-      {siteKey ? (
-        <Script
-          src="https://challenges.cloudflare.com/turnstile/v0/api.js"
-          async
-          defer
-          strategy="afterInteractive"
-        />
-      ) : null}
+      <TurnstileScript siteKey={siteKey} />
       <div className="sent-state" role="status">
         <span className="sent-icon">{MailIcon.inbox}</span>
         <h1 className="sent-title">Enter your confirmation code</h1>
@@ -456,14 +433,7 @@ function ChallengeInviteForm({
     if (otpMode) {
       return (
         <form className="screen login" action={otpAction} data-testid="invite-otp-form">
-          {siteKey ? (
-            <Script
-              src="https://challenges.cloudflare.com/turnstile/v0/api.js"
-              async
-              defer
-              strategy="afterInteractive"
-            />
-          ) : null}
+          <TurnstileScript siteKey={siteKey} />
           <div className="sent-state">
             <span className="sent-icon">{MailIcon.inbox}</span>
             <h1 className="sent-title">Enter your code</h1>
@@ -529,14 +499,7 @@ function ChallengeInviteForm({
 
   return (
     <form className="screen login" action={formAction} data-testid="invite-form">
-      {siteKey ? (
-        <Script
-          src="https://challenges.cloudflare.com/turnstile/v0/api.js"
-          async
-          defer
-          strategy="afterInteractive"
-        />
-      ) : null}
+      <TurnstileScript siteKey={siteKey} />
       <InviteHeader
         role={role}
         subtitle={
@@ -647,16 +610,7 @@ function EmailField({
         aria-describedby={error ? 'invite-email-error' : undefined}
         data-testid="invite-email-input"
       />
-      {error ? (
-        <p
-          className="field-error"
-          id="invite-email-error"
-          role="alert"
-          data-testid="invite-email-error"
-        >
-          {error}
-        </p>
-      ) : null}
+      <FieldError id="invite-email-error" message={error} />
     </div>
   );
 }

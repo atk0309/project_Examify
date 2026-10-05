@@ -6,7 +6,6 @@
    (when on) the server always returns a generic outcome so membership cannot
    be enumerated.
    ========================================================================== */
-import Script from 'next/script';
 import { startTransition, useActionState, useState, type FormEvent } from 'react';
 import {
   completePasswordReset,
@@ -28,7 +27,8 @@ import {
   type PasswordEntryFieldErrors,
 } from '@/lib/password-entry-form';
 import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, PASSWORD_MISMATCH } from '@/lib/password-policy';
-import { ExplicitTurnstile } from './ExplicitTurnstile';
+import { ExplicitTurnstile, TurnstileScript } from './ExplicitTurnstile';
+import { FieldError } from './FieldError';
 import { MailIcon, RoleIcon } from './icons';
 
 type Role = 'student' | 'parent';
@@ -64,15 +64,6 @@ const otpErrorCopy: Record<Exclude<VerifyLocalOtpState, { status: 'idle' }>['rea
   captcha: 'Verification failed. Please try again.',
   rate_limited: 'Too many attempts. Try again later.',
 };
-
-function FieldError({ id, message }: { id: string; message?: string }) {
-  if (!message) return null;
-  return (
-    <p className="field-error" id={id} role="alert" data-testid={id}>
-      {message}
-    </p>
-  );
-}
 
 function Turnstile({ siteKey }: { siteKey?: string }) {
   if (!siteKey) return null;
@@ -197,14 +188,7 @@ function PasswordLoginForm({
         submit(new FormData(event.currentTarget));
       }}
     >
-      {siteKey ? (
-        <Script
-          src="https://challenges.cloudflare.com/turnstile/v0/api.js"
-          async
-          defer
-          strategy="afterInteractive"
-        />
-      ) : null}
+      <TurnstileScript siteKey={siteKey} />
       <div className="login-head">
         <span className="brand-mark">E</span>
         <h1 className="brand-word">Examify</h1>
@@ -356,14 +340,7 @@ function PasswordResetFlow({
         submit(new FormData(event.currentTarget));
       }}
     >
-      {siteKey ? (
-        <Script
-          src="https://challenges.cloudflare.com/turnstile/v0/api.js"
-          async
-          defer
-          strategy="afterInteractive"
-        />
-      ) : null}
+      <TurnstileScript siteKey={siteKey} />
       <div className="login-head">
         <span className="brand-mark">E</span>
         <h1 className="brand-word">Reset password</h1>
@@ -488,14 +465,7 @@ function PasswordResetCodeForm({
         submit(new FormData(event.currentTarget));
       }}
     >
-      {siteKey ? (
-        <Script
-          src="https://challenges.cloudflare.com/turnstile/v0/api.js"
-          async
-          defer
-          strategy="afterInteractive"
-        />
-      ) : null}
+      <TurnstileScript siteKey={siteKey} />
       <div className="sent-state">
         <span className="sent-icon">{MailIcon.inbox}</span>
         <h1 className="sent-title">Choose a new password</h1>
@@ -615,14 +585,7 @@ function ChallengeLoginForm({
     if (otpMode) {
       return (
         <form className="screen login" action={otpAction} data-testid="otp-form">
-          {siteKey ? (
-            <Script
-              src="https://challenges.cloudflare.com/turnstile/v0/api.js"
-              async
-              defer
-              strategy="afterInteractive"
-            />
-          ) : null}
+          <TurnstileScript siteKey={siteKey} />
           <div className="sent-state">
             <span className="sent-icon">{MailIcon.inbox}</span>
             <h1 className="sent-title">Enter your code</h1>
@@ -716,14 +679,7 @@ function ChallengeLoginForm({
 
   return (
     <form className="screen login" action={submit} data-testid="signin-form">
-      {siteKey ? (
-        <Script
-          src="https://challenges.cloudflare.com/turnstile/v0/api.js"
-          async
-          defer
-          strategy="afterInteractive"
-        />
-      ) : null}
+      <TurnstileScript siteKey={siteKey} />
       <div className="login-head">
         <span className="brand-mark">E</span>
         <h1 className="brand-word">Examify</h1>

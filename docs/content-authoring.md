@@ -7,16 +7,19 @@ after Finish to add more subjects or material. **Household:** use `/onboarding`
 for initial setup, or **Finish content setup** on the parent dashboard if you
 skipped it. After household setup is finished, use the CLI below for later changes.
 
-1. Add a subject with a unique ID and a name you recognise
+1. Enter a subject name; Examify suggests its ID. Choose a different ID if the
+   app warns that it would replace a sample or built-in subject you want to keep
 2. Upload PDFs (up to 8 MiB each). Solo also accepts UTF-8 `.txt`/`.md` notes
    (up to 1 MiB each); household text sources use the CLI workflow below.
    Uploading stores them locally; it does not start generation
 3. Choose an AI provider and Generate. Check [provider prerequisites](configuration.md#ai-for-question-banks-and-marking).
    For a local endpoint, save its URL and model in AI settings before returning
-4. Validate the draft format. This checks whether Examify can use the draft,
-   not whether its answers are correct
-5. Open Review to check the questions, correct choices and marking guidance, plus planned file changes, then Apply. Generate alone does not make
-   questions available for practice. Apply does not need an app rebuild
+4. Choose **Review questions** to check the draft format and see the questions,
+   correct choices or marking guidance, and planned file changes. Check their
+   accuracy against your material
+5. Select **Looks good**, then **Confirm apply** to make the bank available.
+   Generate alone does not make questions available for practice. Apply does not
+   need an app rebuild
 
 Cancel leaves the current subject's previous question-bank file unchanged.
 If generating several subjects, those already completed remain saved. Replacing
@@ -35,8 +38,9 @@ saved drafts, not a claim that all subjects were regenerated.
 To edit a draft, use a local text editor on the private
 `content/subjects/SUBJECT_ID/bank.ir.json` in the active data folder. Source references
 remain in that file and are not displayed in Review; never share it in a public issue.
-Validate and Review again after editing. Apply is bound to the exact plan shown in this
-tab, including answers; a newer review in another tab cannot approve unseen changes.
+Choose **Refresh review** after editing to check and inspect the draft again.
+Apply is bound to the exact plan shown in this tab, including answers; a newer
+review in another tab cannot approve unseen changes.
 Leaving Review to change inputs clears its local preview. Reloading requires a new review.
 The web wizard rejects linked/nonregular drafts, files above 2 MiB or a combined
 8 MiB draft tree; it never silently omits excess questions to enable Apply.

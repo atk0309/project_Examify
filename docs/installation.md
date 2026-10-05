@@ -101,6 +101,13 @@ Share the invitation privately. In password mode the invitee chooses a password,
 then enters the code delivered by your configured mail transport. The account
 is not active until that step is complete.
 
+### Try exams as a parent
+
+Select **Student View** on the parent dashboard to practise with the student
+interface. Your attempts stay on your own account. Select **Back to parent view**
+in the banner above any student-preview screen to return to the dashboard.
+Students do not see these parent-only controls.
+
 ### Read a local outbox code
 
 Outbox mode writes mail to files; it does not send email. On the server, list

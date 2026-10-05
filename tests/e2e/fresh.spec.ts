@@ -406,11 +406,7 @@ test('admin signs in again, finishes setup, then manages AI without reopening se
   }
   await page.getByTestId('wizard-generate-demo').click();
   await expect(page.getByTestId('wizard-generate-run-demo')).toBeVisible();
-  await page.getByTestId('wizard-generate-to-validate').click();
-  await page.getByTestId('wizard-validate').click();
-  await expect(page.getByTestId('wizard-validate-ok')).toBeVisible();
-  await page.getByTestId('wizard-next').click();
-  await page.getByTestId('wizard-preview').click();
+  await page.getByTestId('wizard-generate-to-review').click();
   await expect(page.getByTestId('wizard-dry-run-summary')).toBeVisible();
   const review = page.locator('.wizard-author-preview');
   await expect(review.getByRole('heading', { name: 'Draft questions' })).toBeVisible();
