@@ -58,7 +58,9 @@ async function authorAndStudy(page, provider, fixture, index, origin) {
   await page.getByTestId('wizard-next').click();
   await page.getByTestId('wizard-ai-local-agent').click();
   if (index === 0) await configureLocalProvider(page, provider);
-  await expect(page.getByTestId('wizard-ai-local-agent')).toContainText('Configured');
+  const localProvider = page.getByRole('radio', { name: 'Local endpoint', exact: true });
+  await expect(localProvider).toBeChecked();
+  await expect(page.locator('label').filter({ has: localProvider })).toContainText('Configured');
   await page.getByTestId(`wizard-generate-${fixture.id}`).click();
   await expect(page.getByTestId(`wizard-generate-run-${fixture.id}`)).toBeVisible({
     timeout: 30000,

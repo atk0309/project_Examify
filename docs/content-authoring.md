@@ -21,6 +21,10 @@ skipped it. After household setup is finished, use the CLI below for later chang
    Generate alone does not make questions available for practice. Apply does not
    need an app rebuild
 
+Use Tab to reach the AI choices, then arrow keys to change provider or Space to
+select the focused choice. Choices wait for the current save before accepting
+another change. Moving between wizard steps focuses the new heading.
+
 Cancel leaves the current subject's previous question-bank file unchanged.
 If generating several subjects, those already completed remain saved. Replacing
 existing questions requires confirmation. Reusing a built-in subject ID replaces
