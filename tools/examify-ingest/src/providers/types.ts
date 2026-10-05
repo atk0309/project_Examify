@@ -122,16 +122,12 @@ export const PROVIDER_TIMEOUT_MS = 180_000;
  */
 export const CLI_PROVIDER_TIMEOUT_MS = 600_000;
 
-export function providerTimeoutSignal(timeoutMs = PROVIDER_TIMEOUT_MS): AbortSignal {
-  return AbortSignal.timeout(timeoutMs);
-}
-
 /** Provider deadline (180s by default), optionally combined with a caller AbortSignal. */
 export function providerRequestSignal(
   userSignal?: AbortSignal,
   timeoutMs = PROVIDER_TIMEOUT_MS,
 ): AbortSignal {
-  const timeout = providerTimeoutSignal(timeoutMs);
+  const timeout = AbortSignal.timeout(timeoutMs);
   if (!userSignal) return timeout;
   return AbortSignal.any([userSignal, timeout]);
 }

@@ -29,7 +29,6 @@
   --lh-snug: 1.3;
   --lh-body: 1.55;
 
-  --fw-regular: 400;
   --fw-medium: 500;
   --fw-semibold: 600;
   --fw-bold: 700;
@@ -45,7 +44,6 @@
   --sp-8: 32px;
   --sp-10: 40px;
   --sp-12: 48px;
-  --sp-16: 64px;
 
   /* Radii */
   --r-sm: 10px;
@@ -64,9 +62,6 @@
   --dur-fast: 140ms;
   --dur: 240ms;
   --dur-slow: 420ms;
-
-  /* Accent saturation multiplier (set on <html> at runtime) */
-  --sat: 1;
 
   /* Accent fallbacks (overridden per-subject at runtime) */
   --accent: #5b8a72;
@@ -101,7 +96,6 @@
     --shadow-sm: 0 1px 2px rgba(74, 58, 32, 0.06), 0 1px 3px rgba(74, 58, 32, 0.05);
     --shadow-md: 0 2px 6px rgba(74, 58, 32, 0.06), 0 8px 20px rgba(74, 58, 32, 0.08);
     --shadow-lg: 0 10px 24px rgba(74, 58, 32, 0.1), 0 24px 48px rgba(74, 58, 32, 0.12);
-    --ring: rgba(43, 39, 34, 0.1);
 
     --ok: #356b43;
     --ok-tint: #e7f1e6;
@@ -131,7 +125,6 @@
     --shadow-sm: 0 1px 2px rgba(29, 41, 61, 0.05), 0 1px 3px rgba(29, 41, 61, 0.05);
     --shadow-md: 0 2px 8px rgba(29, 41, 61, 0.06), 0 10px 24px rgba(29, 41, 61, 0.08);
     --shadow-lg: 0 12px 28px rgba(29, 41, 61, 0.1), 0 28px 56px rgba(29, 41, 61, 0.12);
-    --ring: rgba(29, 41, 61, 0.1);
 
     --ok: #20754e;
     --ok-tint: #e2f4ec;
@@ -161,7 +154,6 @@
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
     --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.35), 0 12px 28px rgba(0, 0, 0, 0.3);
     --shadow-lg: 0 16px 36px rgba(0, 0, 0, 0.45), 0 32px 64px rgba(0, 0, 0, 0.4);
-    --ring: rgba(255, 255, 255, 0.12);
 
     --ok: #4cc28a;
     --ok-tint: #1d2a26;
@@ -2091,9 +2083,6 @@
   .wizard-secret-actions .btn {
     width: auto;
   }
-  .wizard-validate-btn {
-    min-height: 58px;
-  }
   .wizard-summary-card {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
@@ -2207,7 +2196,6 @@
       min-height: calc(100dvh - (2 * var(--sp-8)));
       max-height: calc(100dvh - (2 * var(--sp-8)));
     }
-    .wizard-topbar,
     .wizard-footer {
       background: linear-gradient(transparent, var(--surface) 32%);
     }
@@ -2362,9 +2350,6 @@
     .wizard-file-tab {
       min-width: 0;
       width: 100%;
-    }
-    .wizard-modes {
-      grid-template-columns: 1fr 1fr;
     }
   }
   .wizard-list {

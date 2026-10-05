@@ -70,11 +70,7 @@ async function authorAndStudy(page, provider, fixture, index, origin) {
     fixture.id,
     'Real generate delivered the uploaded notes to the offline endpoint',
   );
-  await page.getByTestId('wizard-generate-to-validate').click();
-  await page.getByTestId('wizard-validate').click();
-  await expect(page.getByTestId('wizard-validate-ok')).toBeVisible();
-  await page.getByTestId('wizard-next').click();
-  await page.getByTestId('wizard-preview').click();
+  await page.getByTestId('wizard-generate-to-review').click();
   await expect(page.getByTestId('wizard-dry-run-summary')).toBeVisible();
   await page.getByTestId('wizard-to-apply').click();
   await page.getByTestId('wizard-apply-confirm').click();

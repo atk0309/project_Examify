@@ -582,9 +582,9 @@ describe('onboarding actions', () => {
         },
       }),
     );
-    const { setReplaceSampleAction, validateOnboardingAction } =
+    const { setReplaceSampleAction, previewOnboardingEmitAction } =
       await import('@/actions/onboarding');
-    const blocked = await validateOnboardingAction();
+    const blocked = await previewOnboardingEmitAction();
     expect(blocked.ok).toBe(false);
     if (blocked.ok) throw new Error('expected collision');
     expect(blocked.reason).toBe('invalid');
@@ -592,7 +592,7 @@ describe('onboarding actions', () => {
     const toggle = new FormData();
     toggle.set('replaceSample', '1');
     expect((await setReplaceSampleAction(toggle)).ok).toBe(true);
-    expect((await validateOnboardingAction()).ok).toBe(true);
+    expect((await previewOnboardingEmitAction()).ok).toBe(true);
   });
 
   it('does not apply a changed plan after a confirmed dry-run', async () => {
@@ -724,8 +724,11 @@ describe('onboarding actions', () => {
     writeFileSync(path.join(root, 'content/generated/subjects.json'), '[]\n');
     writeFileSync(path.join(root, 'content/generated/questions/biology.json'), '{}\n');
 
-    const { generateOnboardingSubjectAction, setOnboardingAiModeAction, validateOnboardingAction } =
-      await import('@/actions/onboarding');
+    const {
+      generateOnboardingSubjectAction,
+      setOnboardingAiModeAction,
+      previewOnboardingEmitAction,
+    } = await import('@/actions/onboarding');
     expect(await generateOnboardingSubjectAction(new FormData())).toEqual({
       ok: false,
       reason: 'invalid_id',
@@ -765,7 +768,7 @@ describe('onboarding actions', () => {
     expect(result.snapshot.hasApplied).toBe(false);
     // Empty / placeholder IR is non-existing for the shared overwrite gate.
     expect(result.result.overwrite).toBe(false);
-    expect((await validateOnboardingAction()).ok).toBe(true);
+    expect((await previewOnboardingEmitAction()).ok).toBe(true);
   });
 
   it("generates with the installer's EXAMIFY_AI_MODE until the household picks a mode", async () => {
@@ -1493,8 +1496,8 @@ describe('onboarding actions', () => {
         },
       }),
     );
-    const { validateOnboardingAction } = await import('@/actions/onboarding');
-    expect((await validateOnboardingAction()).ok).toBe(true);
+    const { previewOnboardingEmitAction } = await import('@/actions/onboarding');
+    expect((await previewOnboardingEmitAction()).ok).toBe(true);
   });
 
   it('does not let an invited parent or student open the write path', async () => {
@@ -2080,7 +2083,7 @@ describe('onboarding generate + upload fixes', () => {
       generateOnboardingSubjectAction,
       setOnboardingAiModeAction,
       setReplaceSampleAction,
-      validateOnboardingAction,
+      previewOnboardingEmitAction,
     } = await import('@/actions/onboarding');
     const mode = new FormData();
     mode.set('aiMode', 'skip-stub');
@@ -2103,8 +2106,8 @@ describe('onboarding generate + upload fixes', () => {
       readFileSync(path.join(root, 'content/subjects/maths/bank.ir.json'), 'utf8'),
     ) as { difficulties: { easy: { id: string }[] } };
     expect(ir.difficulties.easy[0]?.id).toBe('maths-easy-1');
-    // Same household setting drives validate, so the next step agrees.
-    expect((await validateOnboardingAction()).ok).toBe(true);
+    // The same household setting drives validation in Review.
+    expect((await previewOnboardingEmitAction()).ok).toBe(true);
   });
 
   it('returns a specific provider reason code, never the provider message or key', async () => {

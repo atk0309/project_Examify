@@ -71,8 +71,6 @@ updates:
           - tsx
           - '@types/*'
           - zod
-          - clsx
-          - tailwind-merge
   - package-ecosystem: github-actions
     directory: '/'
     schedule:

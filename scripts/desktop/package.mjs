@@ -1,13 +1,12 @@
 #!/usr/bin/env node
 /** Run after a native, frozen-lockfile production build. Never publishes a release. */
-import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertReleaseInventory, copyStandaloneRuntime, copyRuntimeTree } from './inventory.mjs';
-import { writeDistribution, policyName, committedLockfileSha256 } from './distribution.mjs';
+import { digest, writeDistribution, policyName, committedLockfileSha256 } from './distribution.mjs';
 import { retainRuntimeLicenses } from './licenses.mjs';
 import { createRuntimePolicy, standaloneConfig } from './distribution-policy.mjs';
 
@@ -50,7 +49,6 @@ if (fs.existsSync(destination) && fs.readdirSync(destination).length)
 fs.mkdirSync(destination, { recursive: true });
 const stage = fs.mkdtempSync(path.join(destination, 'stage-'));
 const app = path.join(stage, 'app');
-const sha256 = (file) => createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 const copy = (source, target) => {
   fs.mkdirSync(path.dirname(target), { recursive: true });
   copyRuntimeTree(source, target);
@@ -102,19 +100,10 @@ try {
   copy(path.join(repo, 'src/lib/db/migrations'), path.join(app, 'src/lib/db/migrations'));
   copy(path.join(repo, 'scripts/examify-data.mjs'), path.join(app, 'scripts/examify-data.mjs'));
   copy(path.join(repo, 'scripts/launcher.mjs'), path.join(app, 'scripts/launcher.mjs'));
-  copy(
-    path.join(repo, 'scripts/desktop/settings-loader.cjs'),
-    path.join(app, 'scripts/desktop/settings-loader.cjs'),
-  );
-  copy(
-    path.join(repo, 'scripts/desktop/private-path.ps1'),
-    path.join(app, 'scripts/desktop/private-path.ps1'),
-  );
-  copy(
-    path.join(repo, 'scripts/desktop/restore-links.mjs'),
-    path.join(app, 'scripts/desktop/restore-links.mjs'),
-  );
   for (const name of [
+    'settings-loader.cjs',
+    'private-path.ps1',
+    'restore-links.mjs',
     'operation-lock.mjs',
     'dispatch.mjs',
     'install-release.mjs',
@@ -183,7 +172,7 @@ try {
   const response = await fetch(`https://nodejs.org/download/release/v${pins.version}/${pin.file}`);
   if (!response.ok) throw new Error(`Node download failed (${response.status}).`);
   fs.writeFileSync(archive, Buffer.from(await response.arrayBuffer()));
-  if (sha256(archive) !== pin.sha256) throw new Error('Pinned Node archive checksum mismatch.');
+  if (digest(archive) !== pin.sha256) throw new Error('Pinned Node archive checksum mismatch.');
   const unpacked = path.join(stage, 'node');
   fs.mkdirSync(unpacked);
   if (process.platform === 'win32') {
@@ -259,19 +248,19 @@ try {
       output,
     ]);
   } else command('tar', ['-czf', output, '-C', app, '.']);
-  const digest = sha256(output);
-  fs.writeFileSync(`${output}.sha256`, `${digest}  ${file}\n`);
+  const archiveSha256 = digest(output);
+  fs.writeFileSync(`${output}.sha256`, `${archiveSha256}  ${file}\n`);
   const installer = process.platform === 'win32' ? 'install.ps1' : 'install-solo.sh';
   const script = fs
     .readFileSync(path.join(repo, installer), 'utf8')
     .replaceAll('__EXAMIFY_VERSION__', version)
-    .replaceAll('__EXAMIFY_SHA256__', digest);
+    .replaceAll('__EXAMIFY_SHA256__', archiveSha256);
   fs.writeFileSync(path.join(destination, installer), script);
   if (process.platform === 'win32') {
     const cmd = fs
       .readFileSync(path.join(repo, 'install.cmd'), 'utf8')
       .replaceAll('__EXAMIFY_VERSION__', version)
-      .replaceAll('__EXAMIFY_INSTALL_PS_SHA256__', sha256(path.join(destination, installer)));
+      .replaceAll('__EXAMIFY_INSTALL_PS_SHA256__', digest(path.join(destination, installer)));
     fs.writeFileSync(path.join(destination, 'install.cmd'), cmd);
   }
   fs.rmSync(stage, { recursive: true, force: true });
@@ -287,7 +276,7 @@ try {
     `${JSON.stringify(policy, null, 2)}\n`,
   );
   writeDistribution(destination, identity);
-  console.log(`Packaged ${file}; installer pins SHA-256 ${digest}`);
+  console.log(`Packaged ${file}; installer pins SHA-256 ${archiveSha256}`);
 } finally {
   fs.rmSync(stage, { recursive: true, force: true });
 }

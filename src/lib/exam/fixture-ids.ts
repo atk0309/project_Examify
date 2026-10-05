@@ -10,5 +10,3 @@ export const SAMPLE_FIXTURE_IDS = [
   'geography-medium-free-1',
   'geography-medium-free-2',
 ] as const;
-
-export const SAMPLE_FIXTURE_ID_SET: ReadonlySet<string> = new Set(SAMPLE_FIXTURE_IDS);

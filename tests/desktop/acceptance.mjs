@@ -42,8 +42,7 @@ function install(targetRoot, sourceArchive, stdio = 'inherit') {
         path.join(artifacts, 'install-solo.sh'),
         '--root',
         targetRoot,
-        '--archive',
-        sourceArchive,
+        ...(sourceArchive ? ['--archive', sourceArchive] : []),
         '--no-launch',
         '--no-shortcut',
       ],
@@ -72,7 +71,8 @@ try {
   );
   assert.equal(fs.existsSync(path.join(refusedRoot, 'data')), false);
   assert.equal(fs.existsSync(path.join(refusedRoot, 'installation.json')), false);
-  install(root, archive);
+  // Exercise the normal Linux entrypoint with its exact pinned sibling archive.
+  install(root, process.platform === 'win32' ? archive : undefined);
   const marker = JSON.parse(fs.readFileSync(path.join(root, 'installation.json'), 'utf8'));
   appDir = path.join(root, marker.release ?? `releases/${marker.version}`);
   node = path.join(appDir, process.platform === 'win32' ? 'runtime/node.exe' : 'runtime/bin/node');
