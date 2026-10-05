@@ -143,16 +143,24 @@ test('browser opener sanitizes synchronous and asynchronous spawn failures', asy
     fs.rmSync(directory, { recursive: true, force: true });
   }
 });
-test('a long-lived browser opener detaches after the observation window without being killed', async () => {
+test('a long-lived browser opener detaches without being killed and reports a later signal-only exit safely', async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'examify-browser-running-'));
   const script = path.join(directory, 'opener.mjs');
   fs.writeFileSync(script, 'setInterval(() => {}, 1000);');
+  const originalError = console.error;
+  const errors = [];
+  const url = 'http://127.0.0.1:4321/solo/start#SYNTHETIC_PRIVATE_CAPABILITY';
   let child;
+  let exited;
+  console.error = (...args) => errors.push(args.join(' '));
   try {
-    await openBrowser('http://127.0.0.1:4321/solo/start#disposable', {
+    await openBrowser(url, {
       timeout: 50,
       spawn: (_command, _args, options) => {
         child = spawn(process.execPath, [script], options);
+        exited = new Promise((resolve) =>
+          child.once('exit', (code, signal) => resolve({ code, signal })),
+        );
         return child;
       },
     });
@@ -160,13 +168,22 @@ test('a long-lived browser opener detaches after the observation window without 
     assert.equal(child.signalCode, null);
     assert.equal(child.killed, false);
     assert.doesNotThrow(() => process.kill(child.pid, 0));
+    assert.deepEqual(errors, []);
+    child.ref();
+    child.kill('SIGTERM');
+    const outcome = await exited;
+    assert.equal(outcome.code, null);
+    assert.equal(outcome.signal, 'SIGTERM');
+    assert.equal(errors.length, 1);
+    assert.match(errors[0], /Choose a default browser/);
+    assert.doesNotMatch(errors[0], /SYNTHETIC|127\.0\.0\.1|4321|SIGTERM/);
   } finally {
     if (child && child.exitCode === null && child.signalCode === null) {
-      const exited = new Promise((resolve) => child.once('exit', resolve));
       child.ref();
       child.kill();
       await exited;
     }
+    console.error = originalError;
     fs.rmSync(directory, { recursive: true, force: true });
   }
 });

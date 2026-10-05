@@ -357,7 +357,7 @@ export function openBrowser(url, { spawn: startProcess = spawn, timeout = 2000 }
     });
     child.once('exit', (code) => {
       if (settled) {
-        if (code !== null && code !== 0) console.error(failure().message);
+        if (code !== 0) console.error(failure().message);
       } else finish(code === 0 ? undefined : failure());
     });
   });
