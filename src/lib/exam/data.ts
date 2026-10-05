@@ -55,7 +55,6 @@ export type QuestionBank = Record<string, Partial<Record<DifficultyId, Question[
 
 export const EXAM_CONFIG = {
   length: 20, // questions per mini exam (falls back to bank size if smaller)
-  shuffle: true, // shuffle question order each attempt
 } as const;
 
 export const DIFFICULTIES: Difficulty[] = [
@@ -489,21 +488,6 @@ export function difficultiesWithQuestions(
   );
 }
 
-/**
- * Look up a public question by `id` within a specific subject + difficulty bank.
- * Used by the server-side scorer to resolve a submitted item's snapshot (and,
- * via the parallel ANSWER_KEYS entry, its correct answer / rubric).
- */
-export function questionById(
-  subjectId: string,
-  difficulty: DifficultyId,
-  id: string,
-  questions: QuestionBank = QUESTIONS,
-): Question | undefined {
-  const bank = questions[subjectId]?.[difficulty] ?? [];
-  return bank.find((q) => q.id === id);
-}
-
 export function shuffle<T>(arr: readonly T[]): T[] {
   const a = arr.slice();
   for (let i = a.length - 1; i > 0; i--) {
@@ -537,8 +521,7 @@ export function buildExam(
   options: { written?: boolean } = {},
 ): Question[] {
   const bank = examPool(questions[subjectId]?.[difficulty] ?? [], options.written ?? true);
-  const list = EXAM_CONFIG.shuffle ? shuffle(bank) : bank.slice();
-  return list.slice(0, Math.min(EXAM_CONFIG.length, list.length));
+  return shuffle(bank).slice(0, EXAM_CONFIG.length);
 }
 
 /**

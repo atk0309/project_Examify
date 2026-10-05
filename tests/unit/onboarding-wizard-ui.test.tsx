@@ -13,9 +13,10 @@ import type {
 
 const applyOnboardingEmitAction = vi.fn();
 const previewOnboardingEmitAction = vi.fn();
-const validateOnboardingAction = vi.fn();
 const setOnboardingAiModeAction = vi.fn();
 const setOnboardingAnthropicKeyAction = vi.fn();
+const setOnboardingOpenAiKeyAction = vi.fn();
+const finishOnboardingAction = vi.fn();
 const generateOnboardingSubjectAction = vi.fn();
 const setReplaceSampleAction = vi.fn();
 const attachOnboardingPdfAction = vi.fn();
@@ -26,16 +27,15 @@ vi.mock('@/actions/onboarding', () => ({
   attachOnboardingPdfAction: (...args: unknown[]) => attachOnboardingPdfAction(...args),
   deleteOnboardingSubjectAction: vi.fn(),
   detachOnboardingPdfAction: vi.fn(),
-  finishOnboardingAction: vi.fn(),
+  finishOnboardingAction: (...args: unknown[]) => finishOnboardingAction(...args),
   generateOnboardingSubjectAction: (...args: unknown[]) => generateOnboardingSubjectAction(...args),
   previewOnboardingEmitAction: (...args: unknown[]) => previewOnboardingEmitAction(...args),
   renameOnboardingSubjectAction: vi.fn(),
   setOnboardingAiModeAction: (...args: unknown[]) => setOnboardingAiModeAction(...args),
   setOnboardingAnthropicKeyAction: (...args: unknown[]) => setOnboardingAnthropicKeyAction(...args),
-  setOnboardingOpenAiKeyAction: vi.fn(),
+  setOnboardingOpenAiKeyAction: (...args: unknown[]) => setOnboardingOpenAiKeyAction(...args),
   setReplaceSampleAction: (...args: unknown[]) => setReplaceSampleAction(...args),
   skipOnboardingAction: vi.fn(),
-  validateOnboardingAction: (...args: unknown[]) => validateOnboardingAction(...args),
 }));
 
 import { OnboardingWizard } from '@/components/exam/OnboardingWizard';
@@ -120,9 +120,10 @@ describe('OnboardingWizard majors UI', () => {
   beforeEach(() => {
     applyOnboardingEmitAction.mockReset();
     previewOnboardingEmitAction.mockReset();
-    validateOnboardingAction.mockReset();
     setOnboardingAiModeAction.mockReset();
     setOnboardingAnthropicKeyAction.mockReset();
+    setOnboardingOpenAiKeyAction.mockReset();
+    finishOnboardingAction.mockReset();
     generateOnboardingSubjectAction.mockReset();
     setReplaceSampleAction.mockReset();
     attachOnboardingPdfAction.mockReset();
@@ -302,7 +303,7 @@ describe('OnboardingWizard majors UI', () => {
       fireEvent.click(screen.getByTestId('wizard-get-started'));
       fireEvent.click(screen.getByTestId('wizard-next'));
       fireEvent.click(screen.getByTestId('wizard-next'));
-      expect(screen.getByTestId('wizard-ai-claude-cli')).toHaveAttribute('aria-checked', 'true');
+      expect(screen.getByTestId('wizard-ai-claude-cli')).toBeChecked();
       if (copy) expect(screen.getByTestId('wizard-ai-installer')).toHaveTextContent(copy);
       else expect(screen.queryByTestId('wizard-ai-installer')).toBeNull();
     },
@@ -334,7 +335,7 @@ describe('OnboardingWizard majors UI', () => {
     expect(screen.getByTestId('wizard-generate')).toHaveTextContent('Generate from local sources');
     expect(screen.getByTestId('wizard-generate-sources-demo')).toHaveTextContent('notes.txt');
     expect(screen.getByTestId('wizard-generate-no-sources-biology')).toHaveTextContent(
-      'Hand-authored BankIR can skip generate',
+      'You can review the existing draft without generating again.',
     );
   });
 
@@ -420,9 +421,42 @@ describe('OnboardingWizard majors UI', () => {
     expect(screen.getByTestId('wizard-anthropic-key')).not.toHaveTextContent('test sentinel');
   });
 
+  it('discards an unsaved key on provider switch and routes Save/Clear to the selected provider', async () => {
+    const cloud = snapshot({ aiMode: 'cloud', anthropicLiveTest: false });
+    const openai = snapshot({ aiMode: 'cloud-openai' });
+    setOnboardingAiModeAction.mockResolvedValue({ ok: true, snapshot: openai });
+    setOnboardingOpenAiKeyAction.mockResolvedValue({
+      ok: true,
+      snapshot: { ...openai, openaiConfigured: true },
+    });
+    renderAtAiStep(cloud);
+    fireEvent.change(screen.getByTestId('wizard-anthropic-key-input'), {
+      target: { value: 'unsaved-anthropic-key' },
+    });
+    fireEvent.click(screen.getByTestId('wizard-ai-cloud-openai'));
+    const input = await screen.findByTestId('wizard-openai-key-input');
+    expect(input).toHaveValue('');
+    expect(screen.queryByTestId('wizard-anthropic-key')).toBeNull();
+    fireEvent.change(input, { target: { value: 'new-openai-key' } });
+    fireEvent.click(screen.getByTestId('wizard-openai-key-save'));
+    await waitFor(() => expect(setOnboardingOpenAiKeyAction).toHaveBeenCalledTimes(1));
+    const saved = setOnboardingOpenAiKeyAction.mock.calls[0]![0] as FormData;
+    expect(saved.get('intent')).toBe('set');
+    expect(saved.get('openaiApiKey')).toBe('new-openai-key');
+    expect(saved.get('anthropicApiKey')).toBeNull();
+    expect(setOnboardingAnthropicKeyAction).not.toHaveBeenCalled();
+    fireEvent.click(await screen.findByTestId('wizard-openai-key-clear'));
+    await waitFor(() => expect(setOnboardingOpenAiKeyAction).toHaveBeenCalledTimes(2));
+    const cleared = setOnboardingOpenAiKeyAction.mock.calls[1]![0] as FormData;
+    expect(cleared.get('intent')).toBe('clear');
+    expect(cleared.get('openaiApiKey')).toBeNull();
+    expect(window.confirm).toHaveBeenCalledWith(
+      expect.stringContaining('Clear the OpenAI API key'),
+    );
+  });
+
   it('cancels prune confirm with zero apply writes', async () => {
     window.confirm = vi.fn(() => false);
-    validateOnboardingAction.mockResolvedValue({ ok: true, snapshot: snapshot() });
     previewOnboardingEmitAction.mockResolvedValue({
       ok: true,
       snapshot: snapshot({ hasDryRun: true }),
@@ -455,10 +489,6 @@ describe('OnboardingWizard majors UI', () => {
     fireEvent.click(screen.getByTestId('wizard-next'));
     fireEvent.click(screen.getByTestId('wizard-next'));
     fireEvent.click(screen.getByTestId('wizard-next'));
-    fireEvent.click(screen.getByTestId('wizard-validate'));
-    await waitFor(() => expect(screen.getByTestId('wizard-next')).toBeEnabled());
-    fireEvent.click(screen.getByTestId('wizard-next'));
-    fireEvent.click(await screen.findByTestId('wizard-preview'));
     await waitFor(() => expect(screen.getByTestId('wizard-to-apply')).toBeEnabled());
     fireEvent.click(screen.getByTestId('wizard-to-apply'));
     expect(screen.getByTestId('wizard-apply-prune')).toHaveTextContent('chemistry.json');
@@ -470,8 +500,7 @@ describe('OnboardingWizard majors UI', () => {
     expect(applyOnboardingEmitAction).not.toHaveBeenCalled();
   });
 
-  it('shows live bank subject names on Ready', async () => {
-    validateOnboardingAction.mockResolvedValue({ ok: true, snapshot: snapshot() });
+  it('shows live bank subject names on Ready and finishes only on explicit click', async () => {
     previewOnboardingEmitAction.mockResolvedValue({
       ok: true,
       snapshot: snapshot({ hasDryRun: true }),
@@ -507,10 +536,6 @@ describe('OnboardingWizard majors UI', () => {
     fireEvent.click(screen.getByTestId('wizard-next'));
     fireEvent.click(screen.getByTestId('wizard-next'));
     fireEvent.click(screen.getByTestId('wizard-next'));
-    fireEvent.click(screen.getByTestId('wizard-validate'));
-    await waitFor(() => expect(screen.getByTestId('wizard-next')).toBeEnabled());
-    fireEvent.click(screen.getByTestId('wizard-next'));
-    fireEvent.click(await screen.findByTestId('wizard-preview'));
     await waitFor(() => expect(screen.getByTestId('wizard-to-apply')).toBeEnabled());
     fireEvent.click(screen.getByTestId('wizard-to-apply'));
     fireEvent.click(screen.getByTestId('wizard-apply-confirm'));
@@ -520,6 +545,9 @@ describe('OnboardingWizard majors UI', () => {
     expect(screen.getByTestId('wizard-ready-subject-biology')).toHaveTextContent(
       'Biology (biology) · 6 questions',
     );
+    expect(finishOnboardingAction).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId('wizard-finish'));
+    await waitFor(() => expect(finishOnboardingAction).toHaveBeenCalledTimes(1));
   });
 
   it('reserves sticky-footer clearance for AI secret actions', () => {
@@ -643,7 +671,8 @@ describe('OnboardingWizard majors UI', () => {
     expect(proofs.every((proof) => proof.unproven)).toBe(true);
   });
 
-  it('uses one wizard-validate testid on the Validate button', () => {
+  it('checks and previews the draft with one Review questions action', async () => {
+    previewOnboardingEmitAction.mockResolvedValue(reviewFixture());
     render(
       <OnboardingWizard
         snapshot={snapshot()}
@@ -656,11 +685,13 @@ describe('OnboardingWizard majors UI', () => {
     fireEvent.click(screen.getByTestId('wizard-get-started'));
     fireEvent.click(screen.getByTestId('wizard-next'));
     fireEvent.click(screen.getByTestId('wizard-next'));
+    expect(screen.getByTestId('wizard-next')).toHaveTextContent('Review questions');
     fireEvent.click(screen.getByTestId('wizard-next'));
-    expect(screen.getByTestId('wizard-validate-panel')).toBeVisible();
-    expect(screen.getAllByTestId('wizard-validate')).toHaveLength(1);
-    expect(screen.getByTestId('wizard-validate')).toHaveTextContent('Validate');
-    expect(screen.getByTestId('wizard-validate')).toHaveClass('wizard-validate-btn');
+    await waitFor(() => expect(screen.getByTestId('wizard-to-apply')).toBeEnabled());
+    expect(screen.getByRole('region', { name: 'Draft questions' })).toBeVisible();
+    expect(screen.getByText(/Step 5 of 7/)).toBeVisible();
+    expect(previewOnboardingEmitAction).toHaveBeenCalledTimes(1);
+    expect(applyOnboardingEmitAction).not.toHaveBeenCalled();
   });
 
   it('keeps generate and notes.txt visible when BankIR already exists', async () => {
@@ -759,7 +790,6 @@ describe('OnboardingWizard majors UI', () => {
         ],
       }),
     });
-    validateOnboardingAction.mockResolvedValue({ ok: true, snapshot: snapshot() });
     previewOnboardingEmitAction.mockResolvedValue({
       ok: true,
       snapshot: snapshot({ hasDryRun: true }),
@@ -814,12 +844,7 @@ describe('OnboardingWizard majors UI', () => {
       expect(screen.getByTestId('wizard-generate-skipped')).toHaveTextContent('Generate skipped'),
     );
     fireEvent.click(screen.getByTestId('wizard-next'));
-    expect(screen.getAllByTestId('wizard-validate')).toHaveLength(1);
-    fireEvent.click(screen.getByTestId('wizard-validate'));
-    await waitFor(() => expect(screen.getByTestId('wizard-next')).toBeEnabled());
     expect(screen.getByTestId('wizard-generate-skipped')).toBeVisible();
-    fireEvent.click(screen.getByTestId('wizard-next'));
-    fireEvent.click(await screen.findByTestId('wizard-preview'));
     await waitFor(() => expect(screen.getByTestId('wizard-to-apply')).toBeEnabled());
     fireEvent.click(screen.getByTestId('wizard-to-apply'));
     fireEvent.click(screen.getByTestId('wizard-apply-confirm'));
@@ -1177,7 +1202,6 @@ describe('OnboardingWizard generate fixes', () => {
 
   it('names built-in replacements on Review and the data folder in CLI hints', async () => {
     const withFolder = snapshot({ dataDirDisplay: '/srv/examify-data' });
-    validateOnboardingAction.mockResolvedValue({ ok: true, snapshot: withFolder });
     previewOnboardingEmitAction.mockResolvedValue({
       ok: true,
       snapshot: { ...withFolder, hasDryRun: true },
@@ -1206,17 +1230,12 @@ describe('OnboardingWizard generate fixes', () => {
     fireEvent.click(screen.getByTestId('wizard-next'));
     fireEvent.click(screen.getByTestId('wizard-next'));
     fireEvent.click(screen.getByTestId('wizard-next'));
-    expect(screen.getByTestId('wizard-cli')).toHaveTextContent(
+    expect(screen.getByTestId('wizard-cli-emit')).toHaveTextContent(
       'pnpm examify-ingest validate /srv/examify-data/content/subjects',
     );
-    fireEvent.click(screen.getByTestId('wizard-validate'));
-    await waitFor(() => expect(screen.getByTestId('wizard-next')).toBeEnabled());
-    fireEvent.click(screen.getByTestId('wizard-next'));
     expect(screen.getByTestId('wizard-cli-emit')).toHaveTextContent(
       'pnpm examify-ingest emit /srv/examify-data/content/subjects --dry-run',
     );
-    expect(screen.queryByTestId('wizard-shadows')).toBeNull();
-    fireEvent.click(await screen.findByTestId('wizard-preview'));
     expect(await screen.findByTestId('wizard-shadows')).toHaveTextContent(
       'Replaces built-in subject: Biology.',
     );
@@ -1269,20 +1288,24 @@ describe('OnboardingWizard AI modes: Claude Code, Codex and local', () => {
     expect(screen.getByTestId('wizard-ai-store')).toHaveTextContent(
       'Claude Code found · Codex not found',
     );
-    const claude = screen.getByTestId('wizard-ai-claude-cli');
+    const claude = screen.getByTestId('wizard-ai-claude-cli').closest('label');
     expect(claude).toHaveTextContent('Claude Code (your Claude plan)');
     expect(claude).toHaveTextContent('Found');
     expect(screen.getByTestId('wizard-ai-claude-cli-caps')).toHaveTextContent(
       'Reads PDFs directly · uses the tool’s own sign-in (your plan), no API key.',
     );
-    const codex = screen.getByTestId('wizard-ai-codex-cli');
+    const codex = screen.getByTestId('wizard-ai-codex-cli').closest('label');
     expect(codex).toHaveTextContent('Codex (your ChatGPT plan)');
     expect(codex).not.toHaveTextContent('Found');
     expect(screen.getByTestId('wizard-ai-codex-cli-caps')).toHaveTextContent(
       'Reads PDFs as page images (the host needs pdftoppm)',
     );
-    expect(screen.getByTestId('wizard-ai-local-agent')).toHaveTextContent('Local endpoint');
-    expect(screen.getByTestId('wizard-ai-local-cli')).toHaveTextContent('Local command');
+    expect(screen.getByTestId('wizard-ai-local-agent').closest('label')).toHaveTextContent(
+      'Local endpoint',
+    );
+    expect(screen.getByTestId('wizard-ai-local-cli').closest('label')).toHaveTextContent(
+      'Local command',
+    );
   });
 
   it('badges only ready modes: Configured for keys and settings, Found for a CLI', () => {
@@ -1296,8 +1319,8 @@ describe('OnboardingWizard AI modes: Claude Code, Codex and local', () => {
       }),
     );
     const badge = (mode: string) =>
-      screen.getByTestId(`wizard-ai-${mode}`).querySelector('.wizard-mode-badge')?.textContent ??
-      null;
+      screen.getByTestId(`wizard-ai-${mode}`).closest('label')?.querySelector('.wizard-mode-badge')
+        ?.textContent ?? null;
     expect(badge('cloud')).toBe('Configured');
     expect(badge('cloud-openai')).toBeNull();
     expect(badge('codex-cli')).toBe('Found');
@@ -1322,8 +1345,8 @@ describe('OnboardingWizard AI modes: Claude Code, Codex and local', () => {
       'Claude Code not signed in · Codex signed in · Local endpoint',
     );
     const badge = (mode: string) =>
-      screen.getByTestId(`wizard-ai-${mode}`).querySelector('.wizard-mode-badge')?.textContent ??
-      null;
+      screen.getByTestId(`wizard-ai-${mode}`).closest('label')?.querySelector('.wizard-mode-badge')
+        ?.textContent ?? null;
     expect(badge('claude-cli')).toBe('Not signed in');
     expect(badge('codex-cli')).toBe('Signed in');
     cleanup();
@@ -1503,16 +1526,11 @@ function reviewFixture(hash = 'displayed-plan-hash') {
 }
 
 async function renderAtReviewStep(initial = snapshot()) {
-  validateOnboardingAction.mockResolvedValue({ ok: true, snapshot: initial });
   renderAtAiStep(initial);
-  fireEvent.click(screen.getByTestId('wizard-next'));
-  fireEvent.click(screen.getByTestId('wizard-validate'));
-  await waitFor(() => expect(screen.getByTestId('wizard-next')).toBeEnabled());
   fireEvent.click(screen.getByTestId('wizard-next'));
 }
 
 async function showAuthorPreview() {
-  fireEvent.click(screen.getByTestId('wizard-preview'));
   await waitFor(() => expect(screen.getByTestId('wizard-to-apply')).toBeEnabled());
 }
 
@@ -1520,7 +1538,6 @@ describe('OnboardingWizard author question review', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     previewOnboardingEmitAction.mockReset().mockResolvedValue(reviewFixture());
-    validateOnboardingAction.mockReset();
     applyOnboardingEmitAction.mockReset();
     setReplaceSampleAction.mockReset();
     generateOnboardingSubjectAction.mockReset();
@@ -1558,10 +1575,15 @@ describe('OnboardingWizard author question review', () => {
   });
 
   it('never treats persisted hasDryRun alone as a reviewed author preview', async () => {
+    const loading = deferred<ReturnType<typeof reviewFixture>>();
+    previewOnboardingEmitAction.mockReturnValueOnce(loading.promise);
     await renderAtReviewStep(snapshot({ hasDryRun: true }));
     expect(screen.queryByRole('region', { name: 'Draft questions' })).toBeNull();
     expect(screen.getByTestId('wizard-to-apply')).toBeDisabled();
-    expect(previewOnboardingEmitAction).not.toHaveBeenCalled();
+    expect(previewOnboardingEmitAction).toHaveBeenCalledTimes(1);
+    await act(async () => loading.resolve(reviewFixture()));
+    await showAuthorPreview();
+    expect(applyOnboardingEmitAction).not.toHaveBeenCalled();
   });
 
   it('sends exactly the displayed hash when Apply is confirmed', async () => {
@@ -1590,14 +1612,53 @@ describe('OnboardingWizard author question review', () => {
     fireEvent.click(screen.getByTestId('wizard-back'));
     expect(screen.queryByRole('region', { name: 'Draft questions' })).toBeNull();
     expect(screen.getByTestId('wizard-to-apply')).toBeDisabled();
+    fireEvent.click(screen.getByTestId('wizard-preview'));
     await showAuthorPreview();
     expect(previewOnboardingEmitAction).toHaveBeenCalledTimes(2);
-    fireEvent.click(screen.getByRole('button', { name: 'Validate' }));
-    expect(screen.getByTestId('wizard-next')).toBeDisabled();
-    fireEvent.click(screen.getByTestId('wizard-validate'));
-    await waitFor(() => expect(screen.getByTestId('wizard-next')).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: 'AI setup' }));
+    expect(screen.queryByRole('region', { name: 'Draft questions' })).toBeNull();
     fireEvent.click(screen.getByTestId('wizard-next'));
     expect(screen.getByTestId('wizard-to-apply')).toBeDisabled();
+    await showAuthorPreview();
+    expect(previewOnboardingEmitAction).toHaveBeenCalledTimes(3);
+  });
+
+  it('keeps approval unavailable when the initial draft check fails and allows a fresh review', async () => {
+    previewOnboardingEmitAction.mockResolvedValueOnce({
+      ok: false,
+      reason: 'invalid',
+      issues: [{ file: 'content/subjects/demo/bank.ir.json', message: 'Missing question text.' }],
+    });
+    await renderAtReviewStep();
+    await screen.findByTestId('wizard-error');
+    expect(screen.getByTestId('wizard-issues')).toHaveTextContent('Missing question text.');
+    expect(screen.getByTestId('wizard-to-apply')).toBeDisabled();
+    expect(screen.queryByRole('region', { name: 'Draft questions' })).toBeNull();
+    expect(screen.queryByTestId('wizard-apply-confirm')).toBeNull();
+    expect(applyOnboardingEmitAction).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh review' }));
+    await showAuthorPreview();
+    expect(previewOnboardingEmitAction).toHaveBeenCalledTimes(2);
+    expect(screen.queryByTestId('wizard-error')).toBeNull();
+  });
+
+  it('ignores an initial review response after a queued Back navigation', async () => {
+    const initial = deferred<ReturnType<typeof reviewFixture>>();
+    previewOnboardingEmitAction.mockReturnValueOnce(initial.promise);
+    renderAtAiStep(snapshot());
+    // Both events may arrive before pending locks navigation.
+    act(() => {
+      screen.getByTestId('wizard-next').click();
+      screen.getByTestId('wizard-back').click();
+    });
+    await act(async () => initial.resolve(reviewFixture('obsolete-initial-hash')));
+    expect(screen.getByTestId('wizard-files')).toBeVisible();
+    expect(screen.queryByRole('region', { name: 'Draft questions' })).toBeNull();
+    expect(applyOnboardingEmitAction).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId('wizard-next'));
+    fireEvent.click(screen.getByTestId('wizard-next'));
+    await showAuthorPreview();
+    expect(previewOnboardingEmitAction).toHaveBeenCalledTimes(2);
   });
 
   it.each(['failure', 'exception'])(
@@ -1633,12 +1694,13 @@ describe('OnboardingWizard author question review', () => {
 
   it('ignores an older preview response after a queued input change invalidates it', async () => {
     const old = deferred<ReturnType<typeof reviewFixture>>();
-    previewOnboardingEmitAction.mockReturnValueOnce(old.promise);
     setReplaceSampleAction.mockResolvedValue({
       ok: true,
       snapshot: snapshot({ replaceSample: true }),
     });
     await renderAtReviewStep();
+    await showAuthorPreview();
+    previewOnboardingEmitAction.mockReturnValueOnce(old.promise);
     // Browser events may queue together before pending disables the controls.
     act(() => {
       screen.getByTestId('wizard-preview').click();
@@ -1697,6 +1759,73 @@ describe('OnboardingWizard author question review', () => {
     fireEvent.click(screen.getByTestId('wizard-back'));
     expect(screen.getByTestId('wizard-to-apply')).toBeDisabled();
     expect(screen.queryByRole('region', { name: 'Draft questions' })).toBeNull();
+    fireEvent.click(screen.getByTestId('wizard-preview'));
     await showAuthorPreview();
+  });
+});
+
+describe('wizard accessibility', () => {
+  afterEach(cleanup);
+  it('focuses the current heading after forward and back navigation', () => {
+    render(
+      <OnboardingWizard
+        snapshot={snapshot()}
+        pendingInvites={[]}
+        members={[]}
+        canInvite={false}
+        authMode="magic-link"
+      />,
+    );
+    fireEvent.click(screen.getByTestId('wizard-get-started'));
+    expect(screen.getByRole('heading', { name: 'Subjects', level: 1 })).toHaveFocus();
+    fireEvent.click(screen.getByTestId('wizard-next'));
+    expect(screen.getByRole('heading', { name: 'Files', level: 1 })).toHaveFocus();
+    fireEvent.click(screen.getByTestId('wizard-back'));
+    expect(screen.getByRole('heading', { name: 'Subjects', level: 1 })).toHaveFocus();
+  });
+
+  it('keeps provider focus and blocks duplicate changes while saving, then allows retry', async () => {
+    let resolve!: (value: unknown) => void;
+    setOnboardingAiModeAction.mockReset();
+    setOnboardingAiModeAction.mockReturnValueOnce(
+      new Promise((done) => {
+        resolve = done;
+      }),
+    );
+    renderAtAiStep(snapshot({ aiMode: 'cloud' }));
+    const openai = screen.getByTestId('wizard-ai-cloud-openai');
+    openai.focus();
+    fireEvent.click(openai);
+    expect(openai).toHaveFocus();
+    expect(openai).not.toBeDisabled();
+    expect(openai).toHaveAttribute('aria-disabled', 'true');
+    expect(screen.getByRole('status')).toHaveTextContent('Working');
+    fireEvent.click(screen.getByTestId('wizard-ai-codex-cli'));
+    expect(setOnboardingAiModeAction).toHaveBeenCalledTimes(1);
+    await act(async () => resolve({ ok: false, reason: 'rate_limited' }));
+    expect(openai).toHaveFocus();
+    expect(openai).toHaveAttribute('aria-disabled', 'false');
+    expect(screen.getByRole('alert')).toHaveTextContent('Too many key updates');
+    setOnboardingAiModeAction.mockResolvedValueOnce({
+      ok: true,
+      snapshot: snapshot({ aiMode: 'cloud-openai' }),
+    });
+    fireEvent.click(openai);
+    await waitFor(() => expect(openai).toBeChecked());
+    expect(openai).toHaveFocus();
+  });
+
+  it('uses one named native radio group for provider choices', () => {
+    renderAtAiStep(snapshot({ aiMode: 'cloud' }));
+    const group = screen.getByRole('group', { name: 'AI setup mode' });
+    const radios = within(group).getAllByRole('radio');
+    expect(radios).toHaveLength(7);
+    for (const radio of radios) {
+      expect(radio.tagName).toBe('INPUT');
+      expect(radio).toHaveAttribute('name', 'onboarding-ai-mode');
+      expect(radio).toHaveAccessibleName();
+      expect(radio).toHaveAccessibleDescription();
+    }
+    expect(screen.getByTestId('wizard-ai-cloud')).toBeChecked();
   });
 });

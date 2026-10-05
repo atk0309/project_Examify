@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 /** Restore only validated package-directory links, after verified extraction to its final path. */
 export function restoreRuntimeLinks(root, { installedRoot = root } = {}) {
@@ -47,13 +46,5 @@ export function restoreRuntimeLinks(root, { installedRoot = root } = {}) {
         process.platform === 'win32' ? 'junction' : 'dir',
       );
     }
-  }
-}
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  try {
-    restoreRuntimeLinks(process.argv[2]);
-  } catch {
-    console.error('Could not safely restore bundled runtime dependencies.');
-    process.exitCode = 1;
   }
 }

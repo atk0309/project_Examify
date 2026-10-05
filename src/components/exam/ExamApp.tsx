@@ -11,7 +11,7 @@
    covers the round-trip. A submit that never reached the server keeps the
    answers and offers a retry; a paper the server refuses says so instead.
    ========================================================================== */
-import { useEffect, useRef, useState, useTransition, type CSSProperties } from 'react';
+import { useEffect, useId, useRef, useState, useTransition, type CSSProperties } from 'react';
 import Link from 'next/link';
 import { unstable_rethrow, useRouter } from 'next/navigation';
 import {
@@ -118,29 +118,47 @@ function DifficultyCard({
   rankClass,
   selected,
   onClick,
+  name,
 }: {
   diff: (typeof DIFFICULTIES)[number];
   rankClass: string;
   selected: boolean;
   onClick: () => void;
+  name: string;
 }) {
+  const id = useId();
   return (
-    <button
+    <label
       className={'diff-card' + (selected ? ' selected' : '')}
-      onClick={onClick}
       data-testid={`difficulty-${diff.id}`}
     >
-      <span className={'diff-rank ' + rankClass}>
+      <input
+        className="sr-only"
+        type="radio"
+        name={name}
+        value={diff.id}
+        checked={selected}
+        onChange={onClick}
+        aria-labelledby={`${id}-label`}
+        aria-describedby={`${id}-description`}
+      />
+      <span className={'diff-rank ' + rankClass} aria-hidden="true">
         <i />
         <i />
         <i />
       </span>
       <span className="diff-text">
-        <h3>{diff.label}</h3>
-        <p>{diff.line}</p>
+        <span className="diff-label" id={`${id}-label`}>
+          {diff.label}
+        </span>
+        <span className="diff-description" id={`${id}-description`}>
+          {diff.line}
+        </span>
       </span>
-      <span className="diff-check">{UIcon.check}</span>
-    </button>
+      <span className="diff-check" aria-hidden="true">
+        {UIcon.check}
+      </span>
+    </label>
   );
 }
 
@@ -149,22 +167,34 @@ function Choice({
   index,
   selected,
   onClick,
+  name,
 }: {
   label: string;
   index: number;
   selected: boolean;
   onClick: () => void;
+  name: string;
 }) {
   const key = String.fromCharCode(65 + index);
+  const id = useId();
   return (
-    <button
-      className={'choice' + (selected ? ' selected' : '')}
-      onClick={onClick}
-      data-testid="exam-choice"
-    >
-      <span className="choice-key">{key}</span>
-      <span className="choice-label">{label}</span>
-    </button>
+    <label className={'choice' + (selected ? ' selected' : '')} data-testid="exam-choice">
+      <input
+        className="sr-only"
+        type="radio"
+        name={name}
+        value={index}
+        checked={selected}
+        onChange={onClick}
+        aria-labelledby={`${id}-key ${id}-label`}
+      />
+      <span className="choice-key" id={`${id}-key`}>
+        {key}
+      </span>
+      <span className="choice-label" id={`${id}-label`}>
+        {label}
+      </span>
+    </label>
   );
 }
 
@@ -263,7 +293,9 @@ function Dashboard({
       </header>
       <div className="hero">
         <p className="eyebrow">Exam Practice</p>
-        <h1 className="display-title">Pick a subject to practise.</h1>
+        <h1 className="display-title" tabIndex={-1} data-screen-focus>
+          Pick a subject to practise.
+        </h1>
         <p className="subtitle">
           Short, focused mini exams. Take your time — every attempt makes the real thing easier.
         </p>
@@ -378,7 +410,12 @@ function ProgressScreen({
       <div className="screen-body">
         <div className="hero">
           <p className="eyebrow">Exam Practice</p>
-          <h1 className="display-title" style={{ fontSize: 'var(--fs-h1)' }}>
+          <h1
+            className="display-title"
+            style={{ fontSize: 'var(--fs-h1)' }}
+            tabIndex={-1}
+            data-screen-focus
+          >
             How you&rsquo;re doing
           </h1>
         </div>
@@ -413,6 +450,7 @@ function DifficultyScreen({
   onHome: () => void;
   onStart: (diff: DifficultyId) => void;
 }) {
+  const id = useId();
   const available = DIFFICULTIES.filter((d) =>
     difficultiesWithQuestions(subject.id, questionBank).includes(d.id),
   );
@@ -436,12 +474,18 @@ function DifficultyScreen({
             <p className="eyebrow" style={{ color: 'var(--accent-ink)' }}>
               {subject.label}
             </p>
-            <h1 className="display-title" style={{ fontSize: 'var(--fs-h1)' }}>
+            <h1
+              className="display-title"
+              style={{ fontSize: 'var(--fs-h1)' }}
+              id={`${id}-title`}
+              tabIndex={-1}
+              data-screen-focus
+            >
               Choose a difficulty
             </h1>
           </div>
         </div>
-        <div className="diff-list">
+        <div className="diff-list" role="radiogroup" aria-labelledby={`${id}-title`}>
           {available.map((d) => (
             <DifficultyCard
               key={d.id}
@@ -449,6 +493,7 @@ function DifficultyScreen({
               rankClass={rankClass[d.id]}
               selected={sel === d.id}
               onClick={() => setSel(d.id)}
+              name={`${id}-difficulty`}
             />
           ))}
         </div>
@@ -508,6 +553,7 @@ function ExamScreen({
   onHome: () => void;
   onFinish: () => void;
 }) {
+  const id = useId();
   const i = current;
   const total = questions.length;
   const q = questions[i]!;
@@ -532,21 +578,29 @@ function ExamScreen({
       <div className="screen-body">
         <div className="exam-top">
           <div className="progress-row">
-            <span className="progress-count" data-testid="exam-progress">
+            <span className="progress-count" data-testid="exam-progress" id={`${id}-progress`}>
               Question {i + 1} of {total}
             </span>
             <span className="progress-subject">
               {DIFFICULTIES.find((d) => d.id === difficulty)?.label}
             </span>
           </div>
-          <div className="progress-track">
+          <div className="progress-track" aria-hidden="true">
             <div className="progress-fill" style={{ width: pct + '%' }} />
           </div>
         </div>
 
         <div className="question-card" key={i}>
           <span className="question-num">Question {i + 1}</span>
-          <h2 className="question-text">{q.q}</h2>
+          <h1
+            className="question-text"
+            id={`${id}-question`}
+            tabIndex={-1}
+            aria-describedby={`${id}-progress`}
+            data-screen-focus
+          >
+            {q.q}
+          </h1>
           {q.type === 'free' ? (
             <>
               <textarea
@@ -557,16 +611,17 @@ function ExamScreen({
                 rows={6}
                 maxLength={4000}
                 aria-label="Your answer"
+                aria-describedby={`${id}-question${marking.written === 'unmarked' ? ` ${id}-written-note` : ''}`}
                 data-testid="exam-free-answer"
               />
               {marking.written === 'unmarked' ? (
-                <p className="free-note" data-testid="exam-free-unmarked">
+                <p className="free-note" id={`${id}-written-note`} data-testid="exam-free-unmarked">
                   {examUnmarkedWrittenNote(marking)}
                 </p>
               ) : null}
             </>
           ) : (
-            <div className="choices">
+            <div className="choices" role="radiogroup" aria-labelledby={`${id}-question`}>
               {q.choices.map((c, ci) => (
                 <Choice
                   key={ci}
@@ -574,6 +629,7 @@ function ExamScreen({
                   index={ci}
                   selected={answer === ci}
                   onClick={() => setAnswer(ci)}
+                  name={`${id}-answer-${i}`}
                 />
               ))}
             </div>
@@ -611,8 +667,10 @@ function MarkingScreen({
       <TopBar label="Results" />
       <div className="screen-body">
         <div className="marking" role="status" aria-live="polite">
-          <span className="marking-spinner" />
-          <p className="marking-text">Marking your answers…</p>
+          <span className="marking-spinner" aria-hidden="true" />
+          <h1 className="marking-text" tabIndex={-1} data-screen-focus>
+            Marking your answers…
+          </h1>
           {written ? (
             <p className="marking-note" data-testid="marking-written-note">
               Written answers can take up to a minute to mark.
@@ -653,7 +711,7 @@ function ExamErrorScreen({
       <TopBar onHome={onHome} label="Results" />
       <div className="screen-body">
         <div className="marking" role="alert">
-          <p className="marking-text">
+          <p className="marking-text" tabIndex={-1} data-screen-focus>
             {canRetry
               ? 'We couldn’t save your exam just now. Your connection may have dropped — your answers are still here, so please try again.'
               : 'We couldn’t mark this exam. Its questions may have changed since you started, or you may need to sign in again — head back to subjects to start a fresh one.'}
@@ -714,7 +772,9 @@ function FreeReviewRow({
   if (status === 'needs_review' || verdict === null) {
     return (
       <div className="review-row" data-testid="review-row-free">
-        <span className="review-mark pending">{UIcon.retry}</span>
+        <span className="review-mark pending" aria-hidden="true">
+          {UIcon.retry}
+        </span>
         <div>
           <p className="review-q">{q}</p>
           <p className="review-a">{NEEDS_REVIEW_COPY}</p>
@@ -725,7 +785,9 @@ function FreeReviewRow({
   const ok = isFreePass(score ?? 0, maxScore);
   return (
     <div className="review-row" data-testid="review-row-free">
-      <span className={'review-mark ' + (ok ? 'ok' : 'err')}>{ok ? UIcon.check : UIcon.cross}</span>
+      <span className={'review-mark ' + (ok ? 'ok' : 'err')} aria-hidden="true">
+        {ok ? UIcon.check : UIcon.cross}
+      </span>
       <div>
         <p className="review-q">{q}</p>
         <p className="review-a">
@@ -766,9 +828,13 @@ function ResultsScreen({
   onChangeDiff: () => void;
   onHome: () => void;
 }) {
+  const id = useId();
   const { correct, total, scorePct: pct } = attempt;
   const pending = pendingCount(attempt.items);
   const marked = total - pending;
+  const scoreSummary = marked
+    ? `${correct} of ${marked} marked answers correct. ${pct}% correct.${pending ? ' Provisional result.' : ''}`
+    : 'Awaiting marking.';
   const v =
     pending > 0
       ? {
@@ -786,6 +852,8 @@ function ResultsScreen({
             className="score-ring"
             style={{ '--pct': pct } as CSSProperties}
             data-testid="results-score"
+            role="img"
+            aria-label={scoreSummary}
           >
             <div>
               <div className="score-num">
@@ -797,8 +865,18 @@ function ResultsScreen({
               </div>
             </div>
           </div>
-          <h1 className="results-verdict">{v.title}</h1>
-          <p className="results-note">{v.note}</p>
+          <h1
+            className="results-verdict"
+            tabIndex={-1}
+            aria-describedby={`${id}-summary`}
+            data-screen-focus
+          >
+            {v.title}
+          </h1>
+          <div id={`${id}-summary`} role="status" aria-live="polite" aria-atomic="true">
+            <span className="sr-only">{scoreSummary} </span>
+            <p className="results-note">{v.note}</p>
+          </div>
         </div>
 
         <div className="tally">
@@ -813,7 +891,7 @@ function ResultsScreen({
         </div>
 
         <div className="review">
-          <p className="review-title">Review</p>
+          <h2 className="review-title">Review</h2>
           {attempt.items.map((item, idx) => {
             const n = normalizeAttemptItem(item);
             if (n.kind === 'free') {
@@ -832,15 +910,19 @@ function ResultsScreen({
             const ok = mcq.chosen === mcq.answer;
             return (
               <div className="review-row" key={idx} data-testid="review-row-mcq">
-                <span className={'review-mark ' + (ok ? 'ok' : 'err')}>
+                <span className={'review-mark ' + (ok ? 'ok' : 'err')} aria-hidden="true">
                   {ok ? UIcon.check : UIcon.cross}
                 </span>
                 <div>
                   <p className="review-q">{mcq.q}</p>
-                  {!ok && (
+                  {ok ? (
                     <p className="review-a">
-                      You chose “{mcq.chosen != null ? mcq.choices[mcq.chosen] : '—'}” · Answer:{' '}
-                      <b>{mcq.choices[mcq.answer]}</b>
+                      Correct: <b>{mcq.choices[mcq.answer]}</b>
+                    </p>
+                  ) : (
+                    <p className="review-a">
+                      Incorrect. You chose “{mcq.chosen != null ? mcq.choices[mcq.chosen] : '—'}” ·
+                      Answer: <b>{mcq.choices[mcq.answer]}</b>
                     </p>
                   )}
                 </div>
@@ -948,6 +1030,7 @@ export function ExamApp({
   const roleLabel = solo ? 'Personal study' : role === 'parent' ? 'Parent' : 'Student';
 
   const [screen, setScreen] = useState<Screen>('dashboard');
+  const frame = useRef<HTMLDivElement>(null);
   const [subject, setSubject] = useState<Subject | null>(null);
   const [difficulty, setDifficulty] = useState<DifficultyId>('medium');
   const [progress, setProgress] = useState<ProgressData>(initialProgress);
@@ -957,6 +1040,15 @@ export function ExamApp({
   // survive a hop to the dashboard, drive the autosave, and seed a resume.
   const [answers, setAnswers] = useState<Answer[]>([]);
   const [current, setCurrent] = useState(0);
+  const previousView = useRef({ screen, current });
+  // These views change without a route navigation. Move focus to the new content
+  // only when navigating, never on initial load, answer edits or autosave updates.
+  useEffect(() => {
+    const previous = previousView.current;
+    previousView.current = { screen, current };
+    if (previous.screen === screen && (screen !== 'exam' || previous.current === current)) return;
+    frame.current?.querySelector<HTMLElement>('[data-screen-focus]')?.focus();
+  }, [screen, current]);
   const [submissionId, setSubmissionId] = useState('');
   const [retryingId, setRetryingId] = useState<number | null>(null);
   const [retryError, setRetryError] = useState<string | null>(null);
@@ -1439,7 +1531,7 @@ export function ExamApp({
 
   return (
     <div className="stage">
-      <div className="app-frame">
+      <div className="app-frame" ref={frame}>
         {studentMode && !solo && (
           <div className="student-mode-bar" role="status">
             <span className="student-mode-tag">Student View</span>

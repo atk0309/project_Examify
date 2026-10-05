@@ -29,7 +29,6 @@
   --lh-snug: 1.3;
   --lh-body: 1.55;
 
-  --fw-regular: 400;
   --fw-medium: 500;
   --fw-semibold: 600;
   --fw-bold: 700;
@@ -45,7 +44,6 @@
   --sp-8: 32px;
   --sp-10: 40px;
   --sp-12: 48px;
-  --sp-16: 64px;
 
   /* Radii */
   --r-sm: 10px;
@@ -64,9 +62,6 @@
   --dur-fast: 140ms;
   --dur: 240ms;
   --dur-slow: 420ms;
-
-  /* Accent saturation multiplier (set on <html> at runtime) */
-  --sat: 1;
 
   /* Accent fallbacks (overridden per-subject at runtime) */
   --accent: #5b8a72;
@@ -92,8 +87,8 @@
     --surface-2: #f4ecdd;
     --surface-sunken: #f0e7d6;
     --text: #2b2722;
-    --text-muted: #756c5e;
-    --text-faint: #a99e8c;
+    --text-muted: #6b6255;
+    --text-faint: #6b6255;
     --border: #ece2cf;
     --border-strong: #ddd0b7;
     --on-accent: #fffdf9;
@@ -101,11 +96,10 @@
     --shadow-sm: 0 1px 2px rgba(74, 58, 32, 0.06), 0 1px 3px rgba(74, 58, 32, 0.05);
     --shadow-md: 0 2px 6px rgba(74, 58, 32, 0.06), 0 8px 20px rgba(74, 58, 32, 0.08);
     --shadow-lg: 0 10px 24px rgba(74, 58, 32, 0.1), 0 24px 48px rgba(74, 58, 32, 0.12);
-    --ring: rgba(43, 39, 34, 0.1);
 
-    --ok: #4f8a5e;
+    --ok: #356b43;
     --ok-tint: #e7f1e6;
-    --err: #c0604c;
+    --err: #a34435;
     --err-tint: #f7e7e1;
 
     --brand: #5b8a72;
@@ -123,7 +117,7 @@
     --surface-sunken: #e7edf3;
     --text: #1d2530;
     --text-muted: #5d6b77;
-    --text-faint: #9aa6b4;
+    --text-faint: #5d6b77;
     --border: #e4eaf0;
     --border-strong: #d3dce5;
     --on-accent: #ffffff;
@@ -131,11 +125,10 @@
     --shadow-sm: 0 1px 2px rgba(29, 41, 61, 0.05), 0 1px 3px rgba(29, 41, 61, 0.05);
     --shadow-md: 0 2px 8px rgba(29, 41, 61, 0.06), 0 10px 24px rgba(29, 41, 61, 0.08);
     --shadow-lg: 0 12px 28px rgba(29, 41, 61, 0.1), 0 28px 56px rgba(29, 41, 61, 0.12);
-    --ring: rgba(29, 41, 61, 0.1);
 
-    --ok: #2f9e6f;
+    --ok: #20754e;
     --ok-tint: #e2f4ec;
-    --err: #d05a4e;
+    --err: #ac4036;
     --err-tint: #fbe7e4;
 
     --brand: #3f8f73;
@@ -153,7 +146,7 @@
     --surface-sunken: #15181e;
     --text: #edf0f5;
     --text-muted: #a3acbb;
-    --text-faint: #6b7585;
+    --text-faint: #a3acbb;
     --border: #2c323d;
     --border-strong: #3a4250;
     --on-accent: #14161b;
@@ -161,7 +154,6 @@
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
     --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.35), 0 12px 28px rgba(0, 0, 0, 0.3);
     --shadow-lg: 0 16px 36px rgba(0, 0, 0, 0.45), 0 32px 64px rgba(0, 0, 0, 0.4);
-    --ring: rgba(255, 255, 255, 0.12);
 
     --ok: #4cc28a;
     --ok-tint: #1d2a26;
@@ -517,9 +509,11 @@
     align-items: center;
     justify-content: center;
     gap: var(--sp-2);
-    padding: 0 var(--sp-6);
+    padding: var(--sp-2) var(--sp-6);
     width: 100%;
-    white-space: nowrap;
+    min-width: 0;
+    white-space: normal;
+    overflow-wrap: anywhere;
     text-decoration: none;
     transition:
       transform var(--dur-fast) var(--ease),
@@ -536,7 +530,7 @@
     flex: none;
   }
   .btn-primary {
-    background: var(--accent);
+    background: var(--brand-ink);
     color: var(--on-accent);
     box-shadow: var(--shadow-md);
   }
@@ -673,13 +667,17 @@
   .diff-rank.r2 i:nth-child(3) {
     background: var(--border-strong);
   }
-  .diff-text h3 {
+  .diff-text h3,
+  .diff-label {
+    display: block;
     margin: 0;
     font-size: var(--fs-h2);
     font-weight: var(--fw-semibold);
     font-family: var(--font-display);
   }
-  .diff-text p {
+  .diff-text p,
+  .diff-description {
+    display: block;
     margin: 2px 0 0;
     font-size: var(--fs-small);
     color: var(--text-muted);
@@ -1240,9 +1238,8 @@
 
   /* ============================================================================
      PARENT STUDENT-MODE + COMPARISON
-     A wrapping CTA (the long student-mode phrase overflows the nowrap
-     .btn), the persistent exit bar shown across every ExamApp screen in student
-     mode, and the parent-vs-child comparison panels.
+     The student-mode CTA, the persistent exit bar shown across every ExamApp
+     screen in student mode, and the parent-vs-child comparison panels.
      ========================================================================== */
   .btn-cta {
     white-space: normal;
@@ -2086,9 +2083,6 @@
   .wizard-secret-actions .btn {
     width: auto;
   }
-  .wizard-validate-btn {
-    min-height: 58px;
-  }
   .wizard-summary-card {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
@@ -2202,7 +2196,6 @@
       min-height: calc(100dvh - (2 * var(--sp-8)));
       max-height: calc(100dvh - (2 * var(--sp-8)));
     }
-    .wizard-topbar,
     .wizard-footer {
       background: linear-gradient(transparent, var(--surface) 32%);
     }
@@ -2357,9 +2350,6 @@
     .wizard-file-tab {
       min-width: 0;
       width: 100%;
-    }
-    .wizard-modes {
-      grid-template-columns: 1fr 1fr;
     }
   }
   .wizard-list {
@@ -2610,4 +2600,32 @@
 .solo-tools p {
   margin-block: 0.75rem;
   line-height: 1.5;
+}
+
+/* Keep keyboard location visible across cards, links, fields and disclosures. */
+:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 3px;
+}
+.wizard-mode:has(input:focus-visible),
+.wizard-dropzone:has(input:focus-visible),
+.diff-card:has(input:focus-visible),
+.choice:has(input:focus-visible) {
+  outline: 2px solid var(--text);
+  outline-offset: -3px;
+}
+.wizard-modes {
+  min-width: 0;
+}
+.wizard-mode {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.wizard-mode input[type='radio'] {
+  width: 20px;
+  height: 20px;
+  accent-color: var(--accent-ink);
+}
+.wizard-mode-head {
+  flex-wrap: wrap;
 }
