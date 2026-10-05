@@ -661,7 +661,14 @@ export async function startLauncher({
       writeJson(stateFile, { pid: process.pid, instanceId, origin });
       onPhase('browser');
       await browser(`${origin}/solo/start#${browserCapability(launchToken)}`);
-      if (stopped || spawnError || child.exitCode !== null || child.signalCode !== null)
+      // OS exit can precede the child exit event; verify the worker before reporting readiness.
+      if (
+        !(await healthy(origin, instanceId)) ||
+        stopped ||
+        spawnError ||
+        child.exitCode !== null ||
+        child.signalCode !== null
+      )
         throw new Error(
           'Examify stopped during startup. Your saved work is still in the private data folder.',
         );
