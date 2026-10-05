@@ -5,6 +5,9 @@ in-progress drafts, uploaded PDFs and notes, generated question banks and answer
 (all in the [family data folder](operations.md#where-your-familys-data-lives)), and the `.env` keys.
 Your browser holds an encrypted sign-in cookie. A password reset invalidates older
 sign-in cookies, so your other browsers must sign in again.
+Removing a household member also invalidates their existing sign-in cookies,
+including after they join again through a new invitation. Their saved study data
+stays on the server.
 
 Sent to a third party only when you turn the feature on:
 

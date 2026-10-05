@@ -59,8 +59,12 @@ Surface:
   uses the same transport; every card shows
   `onboardingAiCapabilityLine`: how it reads PDFs, how it signs in; the marking line,
   `onboardingMarkingCopy`, says which AI marks written answers for that mode and what the
-  server still needs) → validate → Review
-  (dry-run HITL with read-only author question cards) → apply → ready. The wizard is one stage at a time: desktop
+  server still needs) → Review
+  (automatic format validation and dry-run preview with read-only author question cards)
+  → apply → ready. Review questions opens and checks the draft in one action;
+  Refresh review repeats that check after changes. Validation does not verify
+  answer accuracy, and only explicit Apply publishes the reviewed draft.
+  The wizard is one stage at a time: desktop
   (≥900px) uses a left step rail + stage + sticky footer; mobile uses compact
   “Step N of M · Label” progress and a sticky bottom bar. Everything the
   wizard reads and writes — subjects, uploaded PDFs, BankIR, generated JSON,
@@ -614,7 +618,9 @@ These are non-negotiable. Don't "fix" them out.
   member (or role mismatch) redirects to `/signin/invalidate` so the sealed
   cookie is actually cleared. Verify/bootstrap write via `getRawSession` so a
   stale cookie cannot intercept a new sign-in. Parents/admins can remove members
-  via `removeMember` (cannot remove self or the household admin).
+  via `removeMember` (cannot remove self or the household admin). Removal consumes
+  outstanding sign-in tokens and increments `users.session_version` in the same
+  transaction; old cookies stay revoked even if that member accepts a new invite.
 - **The session cookie follows `SITE_URL`, not `NODE_ENV`.** `sessionCookieConfig()`
   (`src/lib/env.ts`) is the only source of iron-session's cookie name + `secure`:
   `Secure` exactly when `SITE_URL` is `https:`; the default name is

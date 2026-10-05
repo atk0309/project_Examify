@@ -1864,12 +1864,51 @@ describe('examify-ingest generate', () => {
     const dry = resolvePageImages(root, sources, { persist: false, rasterize });
     expect(dry).toHaveLength(1);
     expect(dry[0]?.page).toBe(1);
+    expect(dry[0]?.bytes.toString()).toBe('fake-png');
+    expect(existsSync(dry[0]!.absPath)).toBe(false);
     expect(existsSync(path.join(root, '.examify-ingest'))).toBe(false);
 
     const persisted = resolvePageImages(root, sources, { persist: true, rasterize });
     expect(persisted).toHaveLength(1);
+    expect(existsSync(persisted[0]!.absPath)).toBe(true);
     expect(existsSync(path.join(root, '.examify-ingest/cache/pages'))).toBe(true);
+    expect(
+      resolvePageImages(root, sources, {
+        rasterize: () => {
+          throw new Error('finished page cache must be reused');
+        },
+      }),
+    ).toEqual(persisted);
   });
+
+  it.each([false, true])(
+    'cleans partial scratch pages when rasterizing fails (throws=%s)',
+    (throws) => {
+      const root = examifyRepo();
+      const pdfPath = path.join(root, 'content/source-pdfs/plants/guide.pdf');
+      writeFileSync(pdfPath, '%PDF-1.4 fixture\n');
+      const sources = resolveSubjectSources(
+        root,
+        'plants',
+        path.join(root, 'content/subjects/plants'),
+      );
+      let scratch = '';
+      const run = () =>
+        resolvePageImages(root, sources, {
+          persist: false,
+          rasterize: (_pdf, prefix) => {
+            scratch = path.dirname(prefix);
+            writeFileSync(`${prefix}-1.png`, 'partial-page');
+            if (throws) throw new Error('rasterization failed');
+            return false;
+          },
+        });
+      if (throws) expect(run).toThrow('rasterization failed');
+      else expect(run()).toEqual([]);
+      expect(existsSync(scratch)).toBe(false);
+      expect(existsSync(path.join(root, '.examify-ingest'))).toBe(false);
+    },
+  );
 
   it('accepts a standalone source-pdfs/<id>.txt without a subject folder', () => {
     const root = examifyRepo();

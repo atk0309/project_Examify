@@ -52,17 +52,18 @@ is needed when all three files are present.
 
 ### Linux
 
-Open a terminal in the extracted folder. Run this with the **actual archive
-filename** from that folder in place of `examify-VERSION-linux-x64.tar.gz`:
+Open a terminal in the extracted folder and run:
 
 ```bash
-bash install-solo.sh --archive ./examify-VERSION-linux-x64.tar.gz
+bash install-solo.sh
 ```
 
 Keep the terminal open. Examify starts and opens your default browser. The
 installer adds **Examify** to your applications menu. The default location is
-`${XDG_DATA_HOME:-$HOME/.local/share}/examify`. Supplying `--archive` avoids a
-release download, so this also works offline after you have downloaded the files.
+`${XDG_DATA_HOME:-$HOME/.local/share}/examify`. The installer uses the matching
+archive beside it and verifies its pinned checksum, so installation works offline
+after you download the complete artifact. For an archive stored elsewhere, pass
+its path with `--archive`.
 
 ## Try your first exam
 
@@ -91,23 +92,26 @@ Examify instead. [Browser or startup problems](troubleshooting.md#personal-study
 
 Choose **Create your question bank** from the practice page:
 
-1. Add a subject with a unique ID and a name you recognise
+1. Enter a subject name; Examify suggests its ID. Choose a different ID if the
+   app warns that it would replace a sample or built-in subject you want to keep
 2. Upload a PDF (up to 8 MiB) or UTF-8 `.txt`/`.md` notes (up to 1 MiB).
    Uploading only stores the file locally; it does not start generation
 3. Choose and configure an AI provider. For **Local endpoint**, select
    **Configure endpoint URL and model**, save both in AI settings, then return
-4. Select **Generate questions**. When it finishes, choose **Validate** to open
-   the next screen, then **Validate** again to check the draft format. Select
-   **Next** for Review, then **Review plan** and inspect additions/replacements/deletions.
-   Select **Looks good**, then **Confirm apply** to make the bank available
+4. Select **Generate questions**. When it finishes, choose **Review questions**
+   to check the draft format and see the questions, answers and planned changes.
+   Check these against your material, then select **Looks good** and **Confirm apply**
+   to make the bank available
 5. Select **Next**, then **Back to practice** and choose your subject
 
 Return to **Create your question bank** to add more subjects or material. Your
 existing banks and progress remain. Replacing questions needs explicit review;
-the built-in sample stays available unless you explicitly replace it. **Optional AI settings** lets you change providers.
-Review shows planned file changes, not a question editor; Validate does not check
-answer accuracy. AI output can be wrong. [Question-bank help](content-authoring.md)
-explains private draft inspection before using generated questions for study.
+the built-in sample stays available unless you explicitly replace it.
+**Optional AI settings** lets you change providers.
+Review shows the generated questions, correct choices or marking guidance, and
+planned file changes. Check the questions against your material before Apply;
+Review checks format automatically, not answer accuracy. AI output can be wrong.
+[Question-bank help](content-authoring.md) explains how to edit a private draft.
 
 ### Choose AI only when you need it
 

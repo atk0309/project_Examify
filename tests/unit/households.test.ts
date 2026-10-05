@@ -4,7 +4,18 @@ import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 import { eq } from 'drizzle-orm';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { SessionData } from '@/lib/auth';
+
+const sessionHolder = vi.hoisted(() => ({ current: {} as SessionData }));
+
+vi.mock('iron-session', () => ({ getIronSession: async () => sessionHolder.current }));
+vi.mock('next/headers', () => ({ cookies: async () => ({}) }));
+vi.mock('next/navigation', () => ({
+  redirect: (url: string) => {
+    throw Object.assign(new Error(`NEXT_REDIRECT:${url}`), { url });
+  },
+}));
 
 const TMP = path.join(process.cwd(), 'tests', '.tmp');
 const DB_PATH = path.join(TMP, `households-${process.pid}.db`);
@@ -36,6 +47,7 @@ beforeEach(async () => {
   db.delete(schema.users).run();
   resetLegacyImportLatch();
   delete process.env.FAMILIES;
+  sessionHolder.current = {};
 });
 
 async function lib() {
@@ -256,6 +268,117 @@ describe('removeHouseholdMember', () => {
     expect(removeHouseholdMember(host.userId, kid.id)).toEqual({ ok: true });
     expect(getMembershipForEmail('kid@example.com')).toBeNull();
     expect(listHouseholdMembers(host.householdId).some((m) => m.userId === kid.id)).toBe(false);
+    expect(
+      db.select().from(schema.users).where(eq(schema.users.id, kid.id)).get()?.sessionVersion,
+    ).toBe(1);
+    expect(
+      db.select().from(schema.users).where(eq(schema.users.id, host.userId)).get()?.sessionVersion,
+    ).toBe(0);
+  });
+
+  it.each(['student', 'parent'] as const)(
+    'keeps old %s cookies revoked after rejoining and accepts a fresh sign-in',
+    async (role) => {
+      const {
+        bootstrapHousehold,
+        createHouseholdInvite,
+        attachMembershipFromInvite,
+        removeHouseholdMember,
+      } = await lib();
+      const { db, schema } = await import('@/lib/db');
+      const { hashPassword } = await import('@/lib/password');
+      const { authenticatePassword, getSession, issueMagicLink, consumeMagicToken } =
+        await import('@/lib/auth');
+      const host = bootstrapHousehold({ email: 'pat@example.com', householdName: 'Ours' });
+      mustOk(host, 'bootstrap failed');
+      const email = 'member@example.com';
+      const password = 'member-password-1';
+      const member = db
+        .insert(schema.users)
+        .values({ email, emailVerifiedAt: new Date(), passwordHash: hashPassword(password) })
+        .returning()
+        .get()!;
+      const invite = createHouseholdInvite({ actorUserId: host.userId, role, email });
+      mustOk(invite, 'invite creation failed');
+      expect(
+        db.transaction((tx) => attachMembershipFromInvite(tx, invite.invite.id, member.id, email)),
+      ).toEqual({ ok: true });
+      const original = authenticatePassword(email, password, role);
+      mustOk(original, 'sign-in failed');
+      sessionHolder.current = { ...original };
+      await expect(getSession()).resolves.toMatchObject({ userId: member.id, sessionVersion: 0 });
+      const outstanding = await issueMagicLink(email, role);
+
+      expect(removeHouseholdMember(host.userId, member.id)).toEqual({ ok: true });
+      await expect(getSession()).rejects.toMatchObject({ url: '/signin/invalidate' });
+      expect(consumeMagicToken(outstanding.token)).toEqual({ ok: false, reason: 'used' });
+      const replacement = createHouseholdInvite({ actorUserId: host.userId, role, email });
+      mustOk(replacement, 'replacement invite failed');
+      expect(
+        db.transaction((tx) =>
+          attachMembershipFromInvite(tx, replacement.invite.id, member.id, email),
+        ),
+      ).toEqual({ ok: true });
+
+      // Reinstated membership must not revive old signed or legacy cookies.
+      await expect(getSession()).rejects.toMatchObject({ url: '/signin/invalidate' });
+      delete sessionHolder.current.sessionVersion;
+      await expect(getSession()).rejects.toMatchObject({ url: '/signin/invalidate' });
+      const fresh = authenticatePassword(email, password, role);
+      mustOk(fresh, 'fresh sign-in failed');
+      expect(fresh.sessionVersion).toBe(1);
+      sessionHolder.current = { ...fresh };
+      await expect(getSession()).resolves.toMatchObject({ userId: member.id, sessionVersion: 1 });
+      expect(
+        db.select().from(schema.users).where(eq(schema.users.id, host.userId)).get()
+          ?.sessionVersion,
+      ).toBe(0);
+    },
+  );
+
+  it('rolls back removal and token consumption when session revocation fails', async () => {
+    const {
+      bootstrapHousehold,
+      createHouseholdInvite,
+      attachMembershipFromInvite,
+      removeHouseholdMember,
+      getMembershipForUser,
+    } = await lib();
+    const { db, schema } = await import('@/lib/db');
+    const { issueMagicLink } = await import('@/lib/auth');
+    const host = bootstrapHousehold({ email: 'pat@example.com', householdName: 'Ours' });
+    mustOk(host, 'bootstrap failed');
+    const member = db
+      .insert(schema.users)
+      .values({ email: 'member@example.com' })
+      .returning()
+      .get()!;
+    const invite = createHouseholdInvite({ actorUserId: host.userId, role: 'student' });
+    mustOk(invite, 'invite failed');
+    expect(
+      db.transaction((tx) =>
+        attachMembershipFromInvite(tx, invite.invite.id, member.id, member.email),
+      ),
+    ).toEqual({ ok: true });
+    const outstanding = await issueMagicLink(member.email, 'student');
+    const sqlite = new Database(DB_PATH);
+    sqlite.exec(
+      "CREATE TRIGGER fail_session_version BEFORE UPDATE OF session_version ON users BEGIN SELECT RAISE(ABORT, 'test failure'); END",
+    );
+    try {
+      expect(() => removeHouseholdMember(host.userId, member.id)).toThrow();
+      expect(getMembershipForUser(member.id)?.householdId).toBe(host.householdId);
+      expect(
+        db.select().from(schema.users).where(eq(schema.users.id, member.id)).get()?.sessionVersion,
+      ).toBe(0);
+      expect(
+        db.select().from(schema.magicTokens).where(eq(schema.magicTokens.id, outstanding.id)).get()
+          ?.consumedAt,
+      ).toBeNull();
+    } finally {
+      sqlite.exec('DROP TRIGGER fail_session_version');
+      sqlite.close();
+    }
   });
 });
 

@@ -30,7 +30,6 @@ export const users = sqliteTable(
 );
 
 export type User = typeof users.$inferSelect;
-export type NewUser = typeof users.$inferInsert;
 
 export const magicTokens = sqliteTable(
   'magic_tokens',
@@ -66,8 +65,6 @@ export const magicTokens = sqliteTable(
   ],
 );
 
-export type MagicToken = typeof magicTokens.$inferSelect;
-
 export const rateLimitEvents = sqliteTable(
   'rate_limit_events',
   {
@@ -80,8 +77,6 @@ export const rateLimitEvents = sqliteTable(
   },
   (t) => [index('rate_limit_events_ip_kind_created_idx').on(t.ip, t.kind, t.createdAt)],
 );
-
-export type RateLimitEvent = typeof rateLimitEvents.$inferSelect;
 
 /**
  * One family unit — the privacy boundary. A parent/admin only ever sees
@@ -133,8 +128,6 @@ export const householdMembers = sqliteTable(
     index('household_members_household_idx').on(t.householdId),
   ],
 );
-
-export type HouseholdMember = typeof householdMembers.$inferSelect;
 
 /** Explicit identity marker for a dedicated solo database; never inferred from an email. */
 export const soloProfiles = sqliteTable(
@@ -193,8 +186,6 @@ export const householdInvites = sqliteTable(
   ],
 );
 
-export type HouseholdInvite = typeof householdInvites.$inferSelect;
-
 /**
  * One row per completed mini exam, owned (via `userId`) by whoever sat it — the
  * student, or a parent who entered student mode. Ownership is always the
@@ -246,7 +237,6 @@ export type StoredGradingTask = {
 };
 
 export type ExamAttempt = typeof examAttempts.$inferSelect;
-export type NewExamAttempt = typeof examAttempts.$inferInsert;
 
 /**
  * An IN-PROGRESS mini exam, autosaved so a user who reloads, closes the browser
@@ -288,9 +278,6 @@ export const examSessions = sqliteTable(
     uniqueIndex('exam_sessions_user_subject_diff_unique').on(t.userId, t.subject, t.difficulty),
   ],
 );
-
-export type ExamSession = typeof examSessions.$inferSelect;
-export type NewExamSession = typeof examSessions.$inferInsert;
 
 /**
  * The bounded, client-renderable grading feedback for a free-text answer. These

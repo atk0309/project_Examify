@@ -102,24 +102,3 @@ export function parseFamilies(raw: string): ParseFamiliesResult {
 
   return { ok: true, families };
 }
-
-/** The student sign-in allowlist: every child email, de-duped, config order. */
-export function studentEmails(families: Family[]): string[] {
-  return Array.from(new Set(families.map((f) => f.child)));
-}
-
-/** The parent sign-in allowlist: every parent email across all families. */
-export function parentEmails(families: Family[]): string[] {
-  return Array.from(new Set(families.flatMap((f) => f.parents)));
-}
-
-/**
- * The child email(s) a given parent may view — the `child` of each family whose
- * `parents` includes this email. Empty for an unknown parent or a standalone
- * child's family (which has no parents). Drives `resolveChildren()`.
- */
-export function childEmailsForParent(families: Family[], parentEmail: string): string[] {
-  const normalised = normalise(parentEmail);
-  if (!normalised) return [];
-  return families.filter((f) => f.parents.includes(normalised)).map((f) => f.child);
-}

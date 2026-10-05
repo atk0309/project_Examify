@@ -1,6 +1,19 @@
 'use client';
 
+import Script from 'next/script';
 import { useEffect, useRef } from 'react';
+
+export function TurnstileScript({ siteKey }: { siteKey?: string }) {
+  if (!siteKey) return null;
+  return (
+    <Script
+      src="https://challenges.cloudflare.com/turnstile/v0/api.js"
+      async
+      defer
+      strategy="afterInteractive"
+    />
+  );
+}
 
 type TurnstileApi = {
   render: (
