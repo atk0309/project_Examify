@@ -147,6 +147,7 @@ test('default and hosted configuration are unchanged; portable tracing covers se
     disabled = config('0'),
     portable = config('1');
   assert.deepEqual(original, disabled);
+  assert.equal(original.experimental.agentUpgrade, false);
   assert.equal(original.images, undefined);
   assert.equal(original.outputFileTracingExcludes, undefined);
   assert.equal(portable.images.unoptimized, true);
