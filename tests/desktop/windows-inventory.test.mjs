@@ -8,6 +8,7 @@ import {
   assertReleaseInventory,
   copyStandaloneRuntime,
   relativeRuntimePath,
+  removePortableImageLinks,
 } from '../../scripts/desktop/inventory.mjs';
 import { restoreRuntimeLinks } from '../../scripts/desktop/restore-links.mjs';
 
@@ -228,9 +229,41 @@ test('portable copying omits only declared image links left after trace exclusio
     false,
   );
 });
+test('portable builds remove only dangling image links and never follow links', (t) => {
+  const f = fixture(t);
+  const pkg = f.pkg('react');
+  const images = [
+    'node_modules/.pnpm/next@1.2.3/node_modules/sharp',
+    'node_modules/.pnpm/node_modules/sharp',
+    'node_modules/.pnpm/node_modules/@img/sharp-win32-x64',
+    '.next/node_modules/sharp',
+  ];
+  for (const relative of images)
+    directoryLink(
+      path.join(f.standalone, 'node_modules/.pnpm/sharp@0.35.5/node_modules/sharp'),
+      path.join(f.standalone, relative),
+    );
+  directoryLink(pkg.traced, path.join(f.standalone, 'node_modules/react'));
+  const outside = path.join(f.root, 'outside');
+  directoryLink(path.join(f.root, 'missing'), path.join(outside, 'node_modules/sharp'));
+  directoryLink(outside, path.join(f.standalone, 'node_modules/.pnpm/node_modules/outside'));
+  assert.deepEqual(removePortableImageLinks(f.standalone), [...images].sort());
+  for (const relative of images)
+    assert.equal(
+      fs.lstatSync(path.join(f.standalone, relative), { throwIfNoEntry: false }),
+      undefined,
+    );
+  assert.equal(
+    fs.realpathSync(path.join(f.standalone, 'node_modules/react')),
+    fs.realpathSync(pkg.traced),
+  );
+  assert.equal(fs.lstatSync(path.join(outside, 'node_modules/sharp')).isSymbolicLink(), true);
+});
 test('portable link cleanup never conceals actual image package contents', (t) => {
   const f = fixture(t);
-  f.pkg('sharp');
+  const sharp = f.pkg('sharp');
+  assert.deepEqual(removePortableImageLinks(f.standalone), []);
+  assert.equal(fs.lstatSync(sharp.traced).isDirectory(), true);
   assert.throws(
     () =>
       copyStandaloneRuntime(f.standalone, f.destination, {
