@@ -83,10 +83,15 @@ test('portable policy verifies actual serialized mode, native inventory and exac
     assert.throws(() => validateRuntimePolicy({ ...policy, ...patch }, identity));
 });
 test('runtime identities accept only reviewed Next versions', (t) => {
+  for (const reviewed of ['16.3.8', '16.4.2']) {
+    const { app, licenses } = fixture(t, reviewed);
+    assert.doesNotThrow(() =>
+      validateRuntimePolicy(createRuntimePolicy(app, identity, licenses), identity),
+    );
+  }
   const { app, licenses } = fixture(t, '16.3.8');
   const policy = createRuntimePolicy(app, identity, licenses);
-  assert.doesNotThrow(() => validateRuntimePolicy(policy, identity));
-  for (const version of ['16.3.7', '16.3.9', '16.4.0']) {
+  for (const version of ['16.3.7', '16.3.9', '16.4.0', '16.4.1', '16.4.3']) {
     const packages = policy.packages.map((pkg) =>
       pkg.name === '@next/env' ? { ...pkg, version } : pkg,
     );
@@ -142,6 +147,7 @@ test('default and hosted configuration are unchanged; portable tracing covers se
     disabled = config('0'),
     portable = config('1');
   assert.deepEqual(original, disabled);
+  assert.equal(original.experimental.agentUpgrade, false);
   assert.equal(original.images, undefined);
   assert.equal(original.outputFileTracingExcludes, undefined);
   assert.equal(portable.images.unoptimized, true);

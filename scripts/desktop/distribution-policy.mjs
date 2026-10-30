@@ -146,7 +146,7 @@ export function validateRuntimePolicy(policy, identity) {
     ) ||
     !policy.packages.some((pkg) => pkg.name === 'better-sqlite3' && pkg.version === '13.0.3') ||
     !policy.packages.some(
-      (pkg) => pkg.name === '@next/env' && ['16.3.6', '16.3.8'].includes(pkg.version),
+      (pkg) => pkg.name === '@next/env' && ['16.3.6', '16.3.8', '16.4.2'].includes(pkg.version),
     )
   )
     throw new Error('Unreviewed runtime package identities.');

@@ -87,13 +87,14 @@ test('nested evidence works but linked ancestors are rejected', (t) => {
   assert.throws(() => loadSupplementalNotices([], { root }), /linked ancestors/);
 });
 test('checked-in original notices match verified hashes and retain attribution', () => {
-  for (const version of ['16.3.6', '16.3.8']) {
+  for (const version of ['16.3.6', '16.3.8', '16.4.2']) {
     const result = loadSupplementalNotices([{ name: '@next/env', version }]);
     assert.equal(result.documents.length, 2);
     for (const file of result.files) assert.match(file.bytes.toString(), /Scott Motte/);
   }
-  assert.throws(
-    () => loadSupplementalNotices([{ name: '@next/env', version: '16.3.9' }]),
-    /Missing exact-version/,
-  );
+  for (const version of ['16.3.9', '16.4.1', '16.4.3'])
+    assert.throws(
+      () => loadSupplementalNotices([{ name: '@next/env', version }]),
+      /Missing exact-version/,
+    );
 });

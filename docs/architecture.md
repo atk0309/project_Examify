@@ -1332,6 +1332,12 @@ admin AI settings are supported features.
 - Completion prints a shell-escaped absolute `cd` command: a piped install cannot
   change its caller's directory. `--skip-build` explicitly requires `pnpm build`
   before `pnpm start`; the installer never starts a service.
+- `next.config.mjs` sets `experimental.agentUpgrade: false` for hosted and portable
+  builds. Next 16.4's default checks npm advisories during every build and, under a
+  coding agent, exits 1 on the first build after a match until a `.next/cache`
+  receipt exists. `install.sh --upgrade` and `scripts/desktop/build.mjs` remove
+  `.next` first, so such builds could never pass, and Next's remedy rewrites the
+  pinned dependencies. Advisories are tracked through Dependabot and `pnpm audit`.
 - Keep the README as the short first-install entry point. User-facing setup,
   configuration, operations, privacy and recovery live in the focused `docs/`
   guides; `.env.example` remains the complete environment-variable reference.

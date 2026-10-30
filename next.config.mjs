@@ -30,6 +30,12 @@ const nextConfig = {
   poweredByHeader: false,
   serverExternalPackages: ['better-sqlite3'],
   experimental: {
+    // Next >=16.4 checks npm advisories during `next build`/`next dev` and, under a
+    // coding agent, fails the first build after a match until a `.next/cache`
+    // receipt exists. `install.sh --upgrade` and the desktop builder remove `.next`
+    // first, so retries never pass, and Next's remedy rewrites the pinned lockfile.
+    // Dependabot and `pnpm audit` track advisories; upgrades stay explicit.
+    agentUpgrade: false,
     serverActions: {
       // Above MAX_SOURCE_PDF_BYTES (8 MiB) so multipart headers + subjectId
       // still fit and attachSourcePdf can return the typed `too_large` result.

@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { removePortableImageLinks } from './inventory.mjs';
 const require = createRequire(import.meta.url);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
@@ -19,6 +20,7 @@ execFileSync(process.execPath, [require.resolve('next/dist/bin/next'), 'build'],
 });
 if (git('status', '--porcelain') || git('rev-parse', 'HEAD') !== commit)
   throw new Error('Source changed during the build.');
+removePortableImageLinks(path.join(root, '.next/standalone'));
 fs.writeFileSync(
   path.join(root, '.next/desktop-build.json'),
   JSON.stringify({ commit, clean: true, imageOptimization: 'disabled' }),

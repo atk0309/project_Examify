@@ -2,6 +2,34 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 export const STANDALONE_RUNTIME_ENTRIES = ['server.js', 'package.json', '.next', 'node_modules'];
+const PORTABLE_IMAGE_LINK = /(?:^|\/)node_modules\/(?:sharp|@img\/[^/]+)$/;
+
+/**
+ * Next keeps dependency-graph links to sharp/@img after portable tracing excludes their
+ * files; since 16.4 they target the excluded copies inside standalone and dangle, which
+ * stops recursive Windows tools (icacls /T) over the checkout. Remove only those links,
+ * without following any link; real image package contents stay for packaging to reject.
+ */
+export function removePortableImageLinks(standalone) {
+  const removed = [];
+  function visit(dir) {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const file = path.join(dir, entry.name);
+      const relative = path.relative(standalone, file).split(path.sep).join('/');
+      if (entry.isSymbolicLink()) {
+        if (PORTABLE_IMAGE_LINK.test(relative)) {
+          fs.unlinkSync(file);
+          removed.push(relative);
+        }
+      } else if (entry.isDirectory()) visit(file);
+    }
+  }
+  for (const name of ['node_modules', '.next']) {
+    const dir = path.join(standalone, name);
+    if (fs.lstatSync(dir, { throwIfNoEntry: false })?.isDirectory()) visit(dir);
+  }
+  return removed.sort();
+}
 
 /** Compare canonical paths with native Windows drive/UNC casing and namespace rules. */
 export function relativeRuntimePath(root, target, paths = path) {
@@ -131,7 +159,7 @@ export function copyStandaloneRuntime(
     // Next retains dependency-graph links even when their optional package files
     // were explicitly excluded from tracing. Drop only these declared links;
     // real image package contents still fail closed instead of being concealed.
-    if (omitPortableImageLinks && /(?:^|\/)node_modules\/(?:sharp|@img\/[^/]+)$/.test(relative)) {
+    if (omitPortableImageLinks && PORTABLE_IMAGE_LINK.test(relative)) {
       if (!stat.isSymbolicLink())
         throw new Error('Image package files remain despite portable tracing exclusions.');
       return;
