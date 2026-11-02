@@ -47,7 +47,7 @@
     "next": "16.4.2",
     "react": "19.3.1",
     "react-dom": "19.3.1",
-    "resend": "6.32.1",
+    "resend": "6.35.0",
     "zod": "4.6.7",
     "examify-ingest": "workspace:0.1.0"
   },
